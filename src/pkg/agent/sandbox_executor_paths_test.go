@@ -285,7 +285,11 @@ func TestSandboxCommand_BackendInvocations(t *testing.T) {
 		{"claude with model", configSnapshot{Backend: "claude", Model: "opus"}, "claude --model 'opus' --dangerously-skip-permissions"},
 		{"goose without model", configSnapshot{Backend: "goose"}, "goose run -s"},
 		{"goose with model", configSnapshot{Backend: "goose", Model: "gpt"}, "goose run -s --model 'gpt'"},
-		{"pi uses goose binary", configSnapshot{Backend: "pi"}, "goose run -s"},
+		{"pi uses its own binary", configSnapshot{Backend: "pi"}, "pi"},
+		{"codex runs exec unattended", configSnapshot{Backend: "codex", Model: "gpt-5"}, "codex exec --dangerously-bypass-approvals-and-sandbox -c features.daemon_auto_start=false --model 'gpt-5'"},
+		{"aider uses its own binary", configSnapshot{Backend: "aider"}, "aider"},
+		{"opencode uses its own binary", configSnapshot{Backend: "opencode"}, "opencode"},
+		{"litellm runs claude", configSnapshot{Backend: "litellm"}, "claude --dangerously-skip-permissions"},
 		{"copilot without model", configSnapshot{Backend: "copilot"}, "copilot --no-auto-update --allow-all"},
 		{"copilot with model", configSnapshot{Backend: "copilot", Model: "gpt-5"}, "copilot --no-auto-update --allow-all --model 'gpt-5'"},
 		{"launch_cmd wins over backend", configSnapshot{Backend: "copilot", LaunchCmd: "/usr/bin/custom --flag"}, "/usr/bin/custom --flag"},
@@ -311,19 +315,54 @@ func TestSandboxCommand_BackendInvocations(t *testing.T) {
 
 func TestSandboxBackendBinary(t *testing.T) {
 	cases := map[string]string{
-		"copilot": "copilot",
-		"gemini":  "gemini",
-		"goose":   "goose",
-		"pi":      "goose",
-		"bob":     "bob",
-		"claude":  "claude",
-		"litellm": "claude", // inference backends run through the claude CLI
-		"":        "claude",
+		"copilot":  "copilot",
+		"gemini":   "gemini",
+		"goose":    "goose",
+		"pi":       "pi",
+		"bob":      "bob",
+		"codex":    "codex",
+		"aider":    "aider",
+		"opencode": "opencode",
+		"kilo":     "kilo",
+		"claude":   "claude",
+		"litellm":  "claude", // inference backends run through the claude CLI
+		"":         "claude",
 	}
 	for backend, want := range cases {
-		if got := sandboxBackendBinary(backend); got != want {
-			t.Errorf("sandboxBackendBinary(%q) = %q, want %q", backend, got, want)
+		got, err := sandboxBackendBinary(backend)
+		if err != nil || got != want {
+			t.Errorf("sandboxBackendBinary(%q) = %q, %v, want %q", backend, got, err, want)
 		}
+	}
+	for _, backend := range config.CLIBackends {
+		want, err := backendBinaryName(backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := HeadlessBackendBinary(backend); err != nil || got != want {
+			t.Errorf("HeadlessBackendBinary(%q) = %q, %v, want launcher binary %q", backend, got, err, want)
+		}
+	}
+	if _, err := sandboxBackendBinary("not-a-backend"); err == nil {
+		t.Error("sandboxBackendBinary accepted an unknown backend")
+	}
+	if _, err := sandboxCommand(configSnapshot{Backend: "not-a-backend"}, sandboxPromptRelPath); err == nil {
+		t.Error("sandboxCommand accepted an unknown backend")
+	}
+}
+
+func TestHeadlessPromptCommandRefusesInferenceBackends(t *testing.T) {
+	for _, backend := range config.InferenceBackends {
+		if _, err := HeadlessPromptCommand(backend, "", sandboxPromptRelPath); err == nil {
+			t.Errorf("HeadlessPromptCommand(%q) launched without inference routing", backend)
+		}
+	}
+	cmd, err := HeadlessPromptCommand("codex", "", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(cmd[2], "codex exec ") {
+		t.Fatalf("codex headless command = %q", cmd[2])
 	}
 }
 
