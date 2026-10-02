@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -140,10 +141,11 @@ type CampaignJamActor struct {
 }
 
 type campaignJamPostRequest struct {
-	SpecContent string `json:"spec_content"`
-	Reason      string `json:"reason"`
-	Model       string `json:"model"`
-	Agent       string `json:"agent"`
+	SpecContent    string `json:"spec_content"`
+	BaseRevisionID string `json:"base_revision_id"`
+	Reason         string `json:"reason"`
+	Model          string `json:"model"`
+	Agent          string `json:"agent"`
 }
 
 type campaignJamThreadRequest struct {
@@ -191,7 +193,7 @@ var campaignJamIDSeq uint64
 func (s *Server) handleCampaignJamGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -212,12 +214,25 @@ func (s *Server) handleCampaignJamPost(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "spec_content required", http.StatusBadRequest)
 		return
 	}
+	conflictRevisionID := ""
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
+		// Same stale-edit rule the live socket applies (#10081): without it a
+		// REST client with a stale copy silently replaces concurrent live
+		// edits. The base revision may only be omitted while the campaign has
+		// no spec revision yet, so seeding the first revision still works.
+		if state.SpecRevisionID != "" && strings.TrimSpace(req.BaseRevisionID) != state.SpecRevisionID {
+			conflictRevisionID = state.SpecRevisionID
+			return errJamLiveConflict
+		}
 		recordJamRevision(state, req.SpecContent, strings.TrimSpace(req.Reason), jamActorFromRequest(r, req.Agent, req.Model), nil)
 		return nil
 	})
+	if errors.Is(err, errJamLiveConflict) {
+		jsonError(w, "stale base_revision_id; current spec revision is "+conflictRevisionID, http.StatusConflict)
+		return
+	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_revision", auditDetail("campaign", id), strings.TrimSpace(req.Agent))
@@ -227,7 +242,7 @@ func (s *Server) handleCampaignJamPost(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCampaignJamThreadsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "threads": state.Threads})
@@ -271,7 +286,7 @@ func (s *Server) handleCampaignJamThreadsPost(w http.ResponseWriter, r *http.Req
 		return nil
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -280,7 +295,7 @@ func (s *Server) handleCampaignJamThreadsPost(w http.ResponseWriter, r *http.Req
 func (s *Server) handleCampaignJamSuggestionsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "suggestions": state.Suggestions})
@@ -324,7 +339,7 @@ func (s *Server) handleCampaignJamSuggestionsPost(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -333,7 +348,7 @@ func (s *Server) handleCampaignJamSuggestionsPost(w http.ResponseWriter, r *http
 func (s *Server) handleCampaignJamPollsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "polls": state.Polls})
@@ -370,7 +385,7 @@ func (s *Server) handleCampaignJamPollsPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -443,13 +458,13 @@ func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 		return disk, nil
 	}
 	if err != nil {
-		return disk, err
+		return disk, fmt.Errorf("%w: %v", errJamStore, err)
 	}
 	if len(raw) == 0 {
 		return disk, nil
 	}
 	if err := json.Unmarshal(raw, &disk); err != nil {
-		return campaignJamDisk{}, err
+		return campaignJamDisk{}, fmt.Errorf("%w: %s is not valid JSON: %v", errJamStore, path, err)
 	}
 	if disk.Campaigns == nil {
 		disk.Campaigns = map[string]*CampaignJamState{}
@@ -460,14 +475,37 @@ func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 func (s *Server) writeCampaignJamDisk(disk campaignJamDisk) error {
 	path := s.campaignJamPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errJamStore, err)
 	}
 	raw, err := json.MarshalIndent(disk, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errJamStore, err)
 	}
-	return os.WriteFile(path, raw, 0o600)
+	// Temp file + rename (#10083): this one file holds every campaign's Jam
+	// state, so a crash or ENOSPC during a truncating write left invalid JSON
+	// that failed every later Jam read and write for every campaign.
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, raw, 0o600); err != nil {
+		return fmt.Errorf("%w: %v", errJamStore, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("%w: %v", errJamStore, err)
+	}
+	return nil
 }
+
+// campaignJamStatus keeps request-shape errors a client error and reports
+// store failures (unreadable or corrupt campaign-jam.json) as 5xx, which is
+// what they are.
+func campaignJamStatus(err error) int {
+	if errors.Is(err, errJamStore) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadRequest
+}
+
+var errJamStore = errors.New("jam store unavailable")
 
 func (s *Server) campaignJamPath() string {
 	base := ""
