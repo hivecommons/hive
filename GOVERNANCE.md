@@ -14,7 +14,7 @@ Current maintainers:
 | @hanthor | James Reilly | Universal Blue |
 | @Danathar | Doug Baggett | independent |
 | @nicholasjackson | Nic Jackson | IBM |
-| @abuelsaad | Kelly Abuelsaad | IBM |
+| @kellyaa | Kelly Abuelsaad | IBM |
 
 Routine changes use lazy consensus through GitHub review. Maintainers may merge when CI and review expectations are satisfied, DCO sign-off is present, and no unresolved objection remains.
 
