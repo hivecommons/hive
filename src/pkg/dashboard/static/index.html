@@ -1774,6 +1774,28 @@
     .bead-stat .num { font-weight: 700; font-size: 1.1rem; }
     .bead-stat .label { color: var(--muted); font-size: var(--fs-sm); }
 
+    .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
+    .contrib-card {
+      --contrib-accent: #5aa7ff;
+      --contrib-accent-2: #74df9a;
+      background:
+        radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--contrib-accent) 18%, transparent), transparent 48%),
+        linear-gradient(155deg, color-mix(in srgb, var(--contrib-accent-2) 12%, transparent), var(--card-bg) 58%);
+      border: 1px solid color-mix(in srgb, var(--contrib-accent) 35%, var(--border));
+      border-radius: 8px;
+      padding: var(--sp-6);
+      transition: border-color var(--duration-fast), box-shadow var(--duration-fast), background var(--duration-fast);
+    }
+    .contrib-card:hover { box-shadow: 0 10px 28px color-mix(in srgb, var(--contrib-accent) 14%, transparent); }
+    .contrib-card img { box-shadow: 0 0 0 2px color-mix(in srgb, var(--contrib-accent) 58%, transparent), 0 0 24px color-mix(in srgb, var(--contrib-accent-2) 16%, transparent); }
+    .contrib-card .contrib-role-pill > span, .contrib-card .trust-badge { border-color: color-mix(in srgb, var(--contrib-accent) 45%, transparent) !important; }
+    body.light-mode .contrib-card {
+      background:
+        radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--contrib-accent) 14%, transparent), transparent 48%),
+        linear-gradient(155deg, color-mix(in srgb, var(--contrib-accent-2) 9%, transparent), var(--card-bg) 62%);
+    }
+    @media (prefers-reduced-motion: reduce) { .contrib-card { transition: none; } }
+
     /* Connection indicator */
     .connection {
       position: fixed; top: 8px; right: 12px;
@@ -17941,7 +17963,7 @@ function burnAreaChart() {
     };
 
     function trustTierBadge(tier) {
-      return `<span style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm);font-size:0.7rem;color:var(--muted);border:1px solid var(--line)">${esc(tier || 'unknown')}</span>`;
+      return `<span class="trust-badge" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm);font-size:0.7rem;color:var(--muted);border:1px solid var(--line)">${esc(tier || 'unknown')}</span>`;
     }
 
     /* ---- Clickable user avatars ---------------------------------------
@@ -18110,6 +18132,117 @@ function burnAreaChart() {
       } catch (e) { /* silently retry on next poll */ }
     }
 
+    const CONTRIB_TINT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+    const _contribTintMemory = new Map();
+
+    function contribTintFallback(login) {
+      const text = String(login || 'contributor');
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+      const hue = Math.abs(hash) % 360;
+      const hue2 = (hue + 38 + (Math.abs(hash >> 8) % 74)) % 360;
+      return { accent: hslToHex(hue, 62, 58), accent2: hslToHex(hue2, 54, 48) };
+    }
+
+    function hslToHex(h, s, l) {
+      s /= 100; l /= 100;
+      const k = n => (n + h / 30) % 12;
+      const a = s * Math.min(l, 1 - l);
+      const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return '#' + [f(0), f(8), f(4)].map(v => Math.round(255 * v).toString(16).padStart(2, '0')).join('');
+    }
+
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(v => {
+        return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+      }).join('');
+    }
+
+    function rgbSaturation(r, g, b) {
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      return max === 0 ? 0 : (max - min) / max;
+    }
+
+    function contribTintFromPixels(pixels) {
+      const buckets = new Map();
+      for (let i = 0; i < pixels.length; i += 4) {
+        const a = pixels[i + 3] == null ? 255 : pixels[i + 3];
+        if (a < 180) continue;
+        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const sat = rgbSaturation(r, g, b);
+        if (lum < 28 || lum > 236 || sat < 0.18) continue;
+        const key = [r >> 4, g >> 4, b >> 4].join(',');
+        const prev = buckets.get(key) || { count: 0, r: 0, g: 0, b: 0, score: 0 };
+        prev.count++;
+        prev.r += r; prev.g += g; prev.b += b;
+        prev.score += 1 + sat * 2 + (lum > 48 && lum < 210 ? 0.5 : 0);
+        buckets.set(key, prev);
+      }
+      const ranked = Array.from(buckets.values()).map(v => ({ count: v.count, r: v.r / v.count, g: v.g / v.count, b: v.b / v.count, score: v.score })).sort((a, b) => b.score - a.score);
+      if (!ranked.length) return null;
+      const primary = ranked[0];
+      let secondary = ranked.find(c => Math.abs(c.r - primary.r) + Math.abs(c.g - primary.g) + Math.abs(c.b - primary.b) > 96) || ranked[1] || primary;
+      return { accent: rgbToHex(primary.r, primary.g, primary.b), accent2: rgbToHex(secondary.r, secondary.g, secondary.b) };
+    }
+
+    function contribTintCacheKey(login) { return 'hive-contrib-tint:' + String(login || '').toLowerCase(); }
+
+    function contribTintReadCache(login) {
+      const key = contribTintCacheKey(login);
+      if (_contribTintMemory.has(key)) return _contribTintMemory.get(key);
+      let raw = null;
+      try { raw = localStorage.getItem(key); } catch { return null; }
+      const parsed = safeJsonParse(raw || '{}', {});
+      if (!parsed || !parsed.accent || !parsed.accent2 || Date.now() - (parsed.ts || 0) > CONTRIB_TINT_CACHE_TTL_MS) return null;
+      const tint = { accent: parsed.accent, accent2: parsed.accent2 };
+      _contribTintMemory.set(key, tint);
+      return tint;
+    }
+
+    function contribTintWriteCache(login, tint) {
+      if (!tint) return;
+      const key = contribTintCacheKey(login);
+      _contribTintMemory.set(key, tint);
+      try { localStorage.setItem(key, JSON.stringify({ accent: tint.accent, accent2: tint.accent2, ts: Date.now() })); } catch {}
+    }
+
+    function applyContributorTint(card, tint) {
+      if (!card || !tint) return;
+      card.style.setProperty('--contrib-accent', tint.accent);
+      card.style.setProperty('--contrib-accent-2', tint.accent2);
+      card.dataset.contribTintReady = '1';
+    }
+
+    function tintContributorCards() {
+      document.querySelectorAll('.contrib-card[data-contrib-login]').forEach(card => {
+        const login = card.dataset.contribLogin || '';
+        const avatar = card.dataset.contribAvatar || '';
+        const cached = contribTintReadCache(login);
+        if (cached) { applyContributorTint(card, cached); return; }
+        const fallback = contribTintFallback(login);
+        applyContributorTint(card, fallback);
+        if (!avatar) { contribTintWriteCache(login, fallback); return; }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 16; canvas.height = 16;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) throw new Error('canvas unavailable');
+            ctx.drawImage(img, 0, 0, 16, 16);
+            const tint = contribTintFromPixels(ctx.getImageData(0, 0, 16, 16).data) || fallback;
+            contribTintWriteCache(login, tint);
+            applyContributorTint(card, tint);
+          } catch { contribTintWriteCache(login, fallback); }
+        };
+        img.onerror = () => contribTintWriteCache(login, fallback);
+        img.src = avatar;
+      });
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       const panel = document.getElementById('contributors-panel');
@@ -18169,12 +18302,14 @@ function burnAreaChart() {
           const trustedEligibleBadge = c.eligible_for_trusted
             ? '<span title="20+ PR tasks; use the tier dropdown to grant trusted" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--yellow);border:1px solid color-mix(in srgb, var(--yellow) 45%, transparent);background:color-mix(in srgb, var(--yellow) 10%, transparent);flex-shrink:0">eligible for trusted</span>'
             : '';
-          return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
+          const login = c.github_username || '';
+          const initialTint = contribTintReadCache(login) || contribTintFallback(login);
+          return `<div class="contrib-card" data-contrib-login="${esc(login)}" data-contrib-avatar="${esc(c.avatar_url || '')}" style="--contrib-accent:${esc(initialTint.accent)};--contrib-accent-2:${esc(initialTint.accent2)}">
             <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4);flex-wrap:wrap">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
               ${avatarHtml}
               <span style="font-weight:600">@${esc(c.github_username)}</span>
-              <span style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
+              <span class="contrib-role-pill" style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
               ${trustedEligibleBadge}
             </div>
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
@@ -18194,7 +18329,7 @@ function burnAreaChart() {
         // auto-fill,minmax(500px,1fr) never goes under its floor, which forced a
         // 500px column into a ~355px phone viewport — clipped, not scrollable,
         // because body has overflow-x:hidden.
-        html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr));gap:var(--sp-5)">${cards}</div>`;
+        html += `<div class="contributors-grid">${cards}</div>`;
       } else if (!revoked.length) {
         html += '<div style="color:var(--muted);padding:var(--sp-8);text-align:center;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">No contributors match the selected filters.</div>';
       }
@@ -18232,6 +18367,7 @@ function burnAreaChart() {
       }
 
       setIfChanged(panel, html);
+      tintContributorCards();
     }
 
     async function deleteContributor(contributorId) {

@@ -12,6 +12,8 @@ contributors and relays, issue claims and GitHub footprint, cost/cadence/models,
 and where to get help. Each answer links back to the relevant `src/docs/*.md`
 source of truth rather than becoming a second spec.
 
+Contributor cards use a client-side “album cover” tint: the dashboard samples each GitHub avatar in a tiny canvas, ignores low-saturation/near-black/near-white pixels, picks dominant and secondary accent colours, and applies them only as subtle background, border, avatar-ring, and role-pill washes. When avatar sampling fails, a deterministic hue derived from the login keeps the card distinct; results are cached in browser storage for seven days.
+
 When the FAQ names a dotted config key inside `<code>...</code>`, keep it in
 sync with the Go config schema. `pkg/dashboard` has a guard test that extracts
 those keys from the FAQ panel and asserts each path exists in `config.Config`
