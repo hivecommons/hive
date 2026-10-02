@@ -1,0 +1,1 @@
+- Move the dashboard ACMM level into the topbar and consolidate version/upgrade details into a sidebar chip menu.
