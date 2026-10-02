@@ -1414,13 +1414,15 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 		if store == nil {
 			continue
 		}
-		for _, b := range store.List(beads.ListFilter{}) {
+		// Read under the store lock: List hands out live *Bead pointers that
+		// a concurrent checkpoint approve mutates in place (ApprovePlan).
+		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
 			if b.Type != beads.TypeEpic || b.Meta(planning.MetaPlanStatus) == "" {
-				continue
+				return
 			}
 			repo, number, runKey := b.Meta(planning.MetaIssueRepo), b.Meta(planning.MetaIssueNumber), b.Meta(planning.MetaRunKey)
 			if repo == "" || (number == "" && runKey == "") {
-				continue
+				return
 			}
 			key := s.canonicalRunKey(repo, atoiOrZero(number), runKey, "")
 			if number == "" {
@@ -1456,7 +1458,7 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 					out[canonical] = snap
 				}
 			}
-		}
+		})
 	}
 	return out
 }
