@@ -23,7 +23,12 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 ## Reorder sections
 
-The main dashboard section order is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The order is saved in `localStorage` as `hive.dashboard.layout`, hidden sections keep their slots, the sidebar follows the saved order, and **Reset layout** restores the default v5 order without changing collapse state.
+The main dashboard section order is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The order is saved in `localStorage` as `hive.dashboard.layout`, ACMM-hidden sections keep their slots, feature-disabled sections are excluded, the sidebar follows the saved order, and **Reset layout** restores the default v5 order without changing collapse state.
+
+The Strategy Lab (`dashboard.strategy_lab`) is hidden by default while that
+surface is being reworked. Set `dashboard.strategy_lab: true` to show the
+Strategy Lab dashboard section, its sidebar navigation item, and its Nous
+status controls.
 
 ## Governor card
 

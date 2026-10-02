@@ -968,6 +968,19 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	}
 }
 
+func TestDashboardStrategyLabDefaultsHidden(t *testing.T) {
+	cfg := &Config{
+		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  GitHubConfig{Token: "t"},
+		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+	}
+	cfg.applyDefaults()
+
+	if cfg.Dashboard.StrategyLab {
+		t.Fatal("dashboard.strategy_lab defaulted on; Strategy Lab must stay hidden unless explicitly enabled")
+	}
+}
+
 func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	cfg := &Config{
 		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},

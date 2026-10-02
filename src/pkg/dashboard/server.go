@@ -407,9 +407,10 @@ type StatusPayload struct {
 	// selector is: whether a hive is hub-managed is not something the browser
 	// can determine, and a UI that guesses would either offer an edit that
 	// always 409s or hide one that is legitimately available.
-	HiveIDEditable   bool            `json:"hiveIdEditable"`
-	HiveIDLockReason string          `json:"hiveIdLockReason,omitempty"`
-	Agents           []FrontendAgent `json:"agents"`
+	HiveIDEditable   bool             `json:"hiveIdEditable"`
+	HiveIDLockReason string           `json:"hiveIdLockReason,omitempty"`
+	Features         FrontendFeatures `json:"features"`
+	Agents           []FrontendAgent  `json:"agents"`
 	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
 	// that were left out of Agents (the dashboard cards), each with the stable
 	// reason category it was omitted for. It exists so an operator whose
@@ -485,6 +486,12 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+// FrontendFeatures is the secret-free set of dashboard feature flags consumed
+// by the SPA.
+type FrontendFeatures struct {
+	StrategyLab bool `json:"strategy_lab"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.

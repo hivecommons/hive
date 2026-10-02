@@ -3693,7 +3693,7 @@
       <div class="oc-tree-children" id="oc-agent-tree">
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
       </div>
-      <div id="nous-sidebar-config" style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
+      <div id="nous-sidebar-config" data-feature="strategy_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
         <div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>
         <div id="nous-sb-phase" style="opacity:0.8"></div>
       </div>
@@ -3714,7 +3714,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="nous-section" data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="strategy_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Admin</div>
@@ -4111,7 +4111,7 @@
     </div>
   </div>
 
-  <div id="nous-section" data-dashboard-section="nous-section" style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+  <div id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span> <button class="hv-btn btn-danger btn-sm" data-action="openNousConfig" data-stop="1" title="Strategy Lab Configuration">⚙️</button></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
@@ -4651,18 +4651,21 @@
     var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
+    function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
+    function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
+    function dashboardFeatureSectionHidden(id){return id==='nous-section'&&!strategyLabEnabled();}
     function dashboardEnsureSections(){DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var el=document.getElementById(id);if(el&&!el.getAttribute('data-dashboard-section'))el.setAttribute('data-dashboard-section',id);});}
     function dashboardRegionEl(name){return document.getElementById('hive-dashboard-root');}
     function dashboardCardEl(id){return document.querySelector('[data-dashboard-section="'+id+'"]');}
     function dashboardLayoutAnnounce(msg){var live=document.getElementById('dashboard-layout-live');if(live)live.textContent=msg;}
     function dashboardLayoutCardName(card){var h=card&&card.querySelector('.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
-    function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.slice();}
+    function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.filter(function(id){return !dashboardFeatureSectionHidden(id);});}
     function dashboardLayoutRead(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
-    function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id)out.main.push(id);});return out;}
+    function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id&&!dashboardFeatureSectionHidden(id))out.main.push(id);});return out;}
     // Sections missing from a saved layout (added after the layout was
     // saved) slot in next to their template neighbour instead of being
     // appended after the trailing FAQ section (#9426).
-    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=DASHBOARD_LAYOUT_TEMPLATE.main;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
+    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardUpdateResetButton(){var show=!dashboardLayoutEquals(dashboardLayoutCurrent(),dashboardLayoutNormalize(null));['dashboard-layout-reset','dashboard-layout-reset-main'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=!show;});}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
@@ -4671,7 +4674,7 @@
     function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});}
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
-    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
     function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
     function resetDashboardLayout(){try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAnnounce('Dashboard section layout reset to the default order.');}
     function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
@@ -4957,6 +4960,7 @@
     }
 
     function ocNavigate(section, skipScroll) {
+      if (dashboardFeatureSectionHidden(section)) return;
       _ocSelectedAgent = null;
       history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#section-' + section) : '#section-' + section);
       ocStopPanePoll();
@@ -4976,6 +4980,33 @@
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-section="${section}"]`);
       if (active) active.classList.add('active');
+    }
+
+    function applyDashboardFeatureVisibility() {
+      const strategyOn = strategyLabEnabled();
+      document.querySelectorAll('[data-feature="strategy_lab"]').forEach(el => {
+        if (strategyOn) {
+          el.hidden = false;
+          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+        } else {
+          el.hidden = true;
+          el.style.display = 'none';
+        }
+      });
+      if (!strategyOn) {
+        if (_nousPollTimer) { clearInterval(_nousPollTimer); _nousPollTimer = null; }
+        _nousPollStarted = false;
+        const panel = document.getElementById('nous-panel');
+        if (panel) panel.innerHTML = '';
+        _nousCache = null;
+        if (location.hash === '#nous-section' || location.hash === '#section-nous-section') {
+          history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#') : '#');
+        }
+      } else {
+        ensureNousPolling();
+      }
+      dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
+      dashboardSortSidebar();
     }
 
     function ocToggleAgentTree(el) {
@@ -13761,11 +13792,14 @@ function burnAreaChart() {
 
     // ── Strategy Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
+    let _nousPollTimer = null;
+    let _nousPollStarted = false;
     const NOUS_POLL_MS = 30000;
     const NOUS_CONFIDENCE_THRESHOLD = 0.8;
     const NOUS_PRINCIPLE_HIGH_CONFIDENCE = 5;
 
     async function fetchNousStatus() {
+      if (!strategyLabEnabled()) return;
       try {
         const [statusRes, ledgerRes, principlesRes] = await Promise.all([
           fetch('/api/nous/status'), fetch('/api/nous/ledger'), fetch('/api/nous/principles'),
@@ -13784,6 +13818,12 @@ function burnAreaChart() {
       }
     }
 
+    function ensureNousPolling() {
+      if (!strategyLabEnabled() || _nousPollStarted) return Promise.resolve();
+      _nousPollStarted = true;
+      return fetchNousStatus().then(() => { if (strategyLabEnabled() && !_nousPollTimer) _nousPollTimer = setInterval(fetchNousStatus, NOUS_POLL_MS); });
+    }
+
     function _nousExplainerCard() {
       return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your hive’s strategy',
         'The Strategy Lab is the hive’s strategist: it designs controlled experiments on governor strategy — cadences, model assignments, thresholds — and measures each one against a recorded baseline of hive behavior. ' +
@@ -13792,6 +13832,7 @@ function burnAreaChart() {
     }
 
     function renderNous() {
+      if (!strategyLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
       const badge = document.getElementById('nous-mode-badge');
       if (!panel || !_nousCache) return;
@@ -14069,6 +14110,7 @@ function burnAreaChart() {
     }
 
     async function nousSetMode(mode) {
+      if (!strategyLabEnabled()) return;
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
       const modeOrder = { observe: 0, suggest: 1, evolve: 2 };
       let force = false;
@@ -14086,6 +14128,7 @@ function burnAreaChart() {
     }
 
     async function nousSetScope(scope) {
+      if (!strategyLabEnabled()) return;
       try {
         await fetch('/api/nous/scope', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
@@ -14097,6 +14140,7 @@ function burnAreaChart() {
     }
 
     async function nousApprove() {
+      if (!strategyLabEnabled()) return;
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
@@ -14106,6 +14150,7 @@ function burnAreaChart() {
     }
 
     async function nousReject() {
+      if (!strategyLabEnabled()) return;
       if (!(await hiveConfirm('Reject this experiment proposal?'))) return;
       try {
         await fetch('/api/nous/abort', { method: 'POST' });
@@ -14115,6 +14160,7 @@ function burnAreaChart() {
     }
 
     async function nousAbort() {
+      if (!strategyLabEnabled()) return;
       if (!(await hiveConfirm('Abort the active experiment? This will revert governor to default behavior.'))) return;
       try {
         const r = await fetch('/api/nous/abort', { method: 'POST' });
@@ -14128,6 +14174,7 @@ function burnAreaChart() {
     let _nousConfig = null;
 
     async function fetchNousConfig() {
+      if (!strategyLabEnabled()) return null;
       try {
         const r = await fetch('/api/nous/config');
         _nousConfig = await r.json();
@@ -14136,6 +14183,7 @@ function burnAreaChart() {
     }
 
     async function openNousConfig() {
+      if (!strategyLabEnabled()) return;
       const overlay = document.getElementById('nous-config-overlay');
       if (!overlay) return;
       overlay.style.display = 'flex';
@@ -14335,6 +14383,7 @@ function burnAreaChart() {
     }
 
     async function deleteNousPrinciple(id) {
+      if (!strategyLabEnabled()) return;
       if (!(await hiveConfirm('Invalidate this principle? It will be removed from the store.'))) return;
       try {
         const r = await fetch('/api/nous/principles/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -14350,6 +14399,7 @@ function burnAreaChart() {
     }
 
     async function saveNousConfig() {
+      if (!strategyLabEnabled()) return;
       const errors = [];
 
       // Goals
@@ -17403,6 +17453,7 @@ function burnAreaChart() {
       window._lastAgents = data.agents || [];
       window._configuredAgents = data.configuredAgents || [];
       window._lastStatus = data;
+      applyDashboardFeatureVisibility();
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
           window._acmmOverride = null;
@@ -22268,9 +22319,9 @@ function burnAreaChart() {
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
-        level >= ACMM_NOUS_MIN_LEVEL ? show(nousSection, '') : hide(nousSection);
+        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
         const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        level >= ACMM_NOUS_MIN_LEVEL ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
+        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -22287,7 +22338,7 @@ function burnAreaChart() {
           if (section === 'beads-section' && level < ACMM_BEADS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
-          if (section === 'nous-section' && level < ACMM_NOUS_MIN_LEVEL) hide(item);
+          if (section === 'nous-section' && (!strategyLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
         });
 
         // #7099: the pack-roster gate is NOT re-applied here. The server already
@@ -32574,7 +32625,7 @@ function burnAreaChart() {
           () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchBudgetHistory().then(() => { setInterval(fetchBudgetHistory, HISTORY_REFRESH_MS); }),
-          () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
+          () => ensureNousPolling(),
           () => fetchKnowledgeStats().then(() => { setInterval(fetchKnowledgeStats, KB_POLL_MS); }),
           () => fetchAuditLog().then(() => { setInterval(fetchAuditLog, AUDIT_POLL_MS); }),
           () => fetchReviewQueue().then(() => { setInterval(fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),

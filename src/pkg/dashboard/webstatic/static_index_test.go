@@ -252,6 +252,26 @@ func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
 	}
 }
 
+func TestStaticStrategyLabFeatureGateWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden`,
+		`data-section="nous-section" data-feature="strategy_lab" hidden`,
+		`function strategyLabEnabled()`,
+		`function applyDashboardFeatureVisibility()`,
+		`if (!strategyLabEnabled()) return;`,
+		`() => ensureNousPolling()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Strategy Lab feature gate missing %q", want)
+		}
+	}
+}
+
 // TestStaticPlanReviewWiring pins the plan-review view the governor PLANNING
 // tile promises (#7537).
 //

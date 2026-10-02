@@ -290,6 +290,7 @@ func BuildFrontendStatus(
 		HiveID:              cfg.HiveID,
 		HiveIDEditable:      !hiveIDLocked,
 		HiveIDLockReason:    hiveIDLockReason,
+		Features:            buildFeatures(cfg),
 		Agents:              agents,
 		HiddenAgents:        hiddenAgents,
 		ConfiguredAgents:    buildConfiguredAgents(cfg),
@@ -315,6 +316,15 @@ func BuildFrontendStatus(
 		ReleaseLineLag:      buildReleaseLineLag(),
 	}
 	return payload
+}
+
+func buildFeatures(cfg *config.Config) FrontendFeatures {
+	if cfg == nil {
+		return FrontendFeatures{}
+	}
+	return FrontendFeatures{
+		StrategyLab: cfg.Dashboard.StrategyLab,
+	}
 }
 
 func mergeAgentAuthHealth(health map[string]any, agents []FrontendAgent) {

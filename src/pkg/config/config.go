@@ -4968,6 +4968,9 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// StrategyLab opts the in-dashboard Strategy Lab/Nous UI back in while it
+	// is hidden by default for rework.
+	StrategyLab bool `yaml:"strategy_lab" json:"strategy_lab"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical
 	// fail-closed framing policy (X-Frame-Options: DENY plus CSP
