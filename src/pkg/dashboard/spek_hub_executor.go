@@ -1221,6 +1221,19 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	return writeSpekStageCaptureInDir(receiptDir, st.runKey, st.stage, st.gen, capture)
 }
 
+// interviewFromStatusHistory derives interview rows from the instruction (or
+// question/prompt/description) carried by each status poll. The pinned
+// Spektacular 0.22.0 `status` verb never emits any of those keys (its wire
+// shape is kind/name/artifact_id/document_status/current_step/
+// completed_steps/created_at/updated_at/closed_at/error/spec/plan, none of
+// which is a question), so against that CLI this tier is a no-op and
+// captureCompletedStage falls through to the completed_steps placeholder
+// rows below. It is kept, rather than removed, for a status payload that
+// does carry one of these keys (a future Spektacular release, or a non-
+// default backend) instead of silently dropping that richer source if it
+// ever appears; populating this tier without one requires a different data
+// source than the status verb and is tracked, unresolved, as
+// hivecommons/hive#10099.
 func interviewFromStatusHistory(history []RunDetailStageStatus, docs []RunDetailStageDocument, at time.Time) []RunDetailInterview {
 	var doc string
 	if len(docs) > 0 {
@@ -1406,6 +1419,11 @@ func (s spekHubArtifactStatus) JoinKey() string {
 	return strings.TrimSpace(s.Name)
 }
 
+// Instruction reads the status payload for any key that would name the
+// agent's current prompt. The pinned Spektacular 0.22.0 `status` verb never
+// emits one (see interviewFromStatusHistory), so this always returns "" in
+// production; it only matters for a status payload richer than that CLI's
+// (hivecommons/hive#10099).
 func (s spekHubArtifactStatus) Instruction() string {
 	return firstRunNonEmpty(
 		runDetailStringFromAny(firstAny(s.Raw, "instruction", "question", "prompt", "current_instruction", "step_instruction")),
