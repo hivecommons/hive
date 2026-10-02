@@ -407,30 +407,29 @@
       color: var(--amber);
     }
 
-    /* Fleet breaker — circular play/pause control + status pill in the topbar.
-       Mirrors the Ready-work queue's #queue-suspend-btn / .pill pattern from the
-       contribute surface (api_contribute.go) so the two read as one system: a
-       ghost circular button whose glyph swaps (pause bars when the fleet is
-       running, play triangle when the breaker holds it), plus a green/red pill.
-       Lives in .oc-topbar-left (the shortest group) so it never wraps the topbar
-       to a third row — see the padding-top:104px note above. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: var(--sp-3); margin-left: 10px; }
+    /* Fleet breaker status chip: one pill-shaped button in .oc-topbar-left so
+       state and action stay together without wrapping the topbar. */
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; margin-left: 10px; }
     #fleet-breaker-btn2 {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; padding: var(--sp-0); border-radius: var(--r-pill);
-      border: 1px solid var(--border); background: transparent; color: var(--muted);
-      cursor: pointer; line-height: 0;
-      transition: background .15s, color .15s, border-color .15s;
+      --component-status: var(--status-ok);
+      align-items: center; background: color-mix(in srgb, var(--component-status) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--component-status) 40%, transparent);
+      border-radius: var(--r-pill); color: var(--component-status); cursor: pointer;
+      display: inline-flex; font-size: var(--fs-xs); font-weight: 600; gap: var(--sp-2);
+      line-height: 1.5; text-decoration: none; white-space: nowrap;
+      transition: background .15s, border-color .15s, color .15s;
     }
+    #fleet-breaker-btn2[data-status="ok"] { --component-status: var(--status-ok); }
+    #fleet-breaker-btn2[data-status="error"] { --component-status: var(--status-error); }
     #fleet-breaker-btn2 svg { display: block; width: 12px; height: 12px; fill: currentColor; }
-    #fleet-breaker-btn2:hover { background: rgba(139,148,158,.12); color: var(--text); }
-    #fleet-breaker-btn2.paused { border-color: color-mix(in srgb, var(--status-error) 35%, transparent); color: var(--status-error); background: color-mix(in srgb, var(--status-error) 8%, transparent); }
-    #fleet-breaker-btn2.paused:hover { background: color-mix(in srgb, var(--status-error) 16%, transparent); }
-    #fleet-breaker-btn2:disabled { opacity: .5; cursor: not-allowed; }
-    /* Status pill — same shape/weight as the contribute surface's .pill. */
-    #fleet-breaker-pill { display: inline-flex; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill); font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
-    #fleet-breaker-pill.pill-passed, #fleet-breaker-pill[data-status="ok"] { --component-status: var(--status-ok); }
-    #fleet-breaker-pill.pill-blocked, #fleet-breaker-pill[data-status="error"] { --component-status: var(--status-error); }
+    #fleet-breaker-btn2:hover:not(:disabled), #fleet-breaker-btn2:focus-visible:not(:disabled) {
+      background: color-mix(in srgb, var(--component-status) 20%, transparent);
+      border-color: color-mix(in srgb, var(--component-status) 62%, transparent);
+    }
+    #fleet-breaker-btn2:hover:not(:disabled) #fleet-breaker-icon,
+    #fleet-breaker-btn2:focus-visible:not(:disabled) #fleet-breaker-icon { color: var(--text); transform: scale(1.08); }
+    #fleet-breaker-btn2:disabled { cursor: default; opacity: .7; }
+    #fleet-breaker-dot, #fleet-breaker-icon { display: inline-flex; align-items: center; transition: color .15s, transform .15s; }
 
     @media (max-width: 1280px) {
       body { padding-top: 88px; }
@@ -3073,7 +3072,7 @@
        route through the four recipes: entity chips, status badges, action chips,
        and count badges. Status color comes from --component-status/data-status. */
     .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
-    .summary-age, #fleet-breaker-pill,
+    .summary-age, #fleet-breaker-btn2,
     .model-chip, .token-model-chip, .repo-issue-pill, .repo-pr-pill,
     .ind-tag, .kb-type-badge, .kb-layer-badge, .kb-src-type,
     .nous-config-pill, .oc-nav-count {
@@ -3094,18 +3093,18 @@
       overflow: hidden; text-overflow: ellipsis;
     }
     .status-badge, .pause-badge, .off-badge, .on-demand-badge, .oc-health-badge,
-    .summary-age, #fleet-breaker-pill {
+    .summary-age, #fleet-breaker-btn2 {
       --component-status: var(--pill-c, var(--status-neutral));
       background: color-mix(in srgb, var(--component-status) 12%, transparent);
       border-color: color-mix(in srgb, var(--component-status) 40%, transparent);
       color: var(--component-status);
     }
-    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"], #fleet-breaker-pill[data-status="ok"] { --component-status: var(--status-ok); }
-    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"], #fleet-breaker-pill[data-status="warn"] { --component-status: var(--status-warn); }
-    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"], #fleet-breaker-pill[data-status="attention"] { --component-status: var(--status-attention); }
-    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"], #fleet-breaker-pill[data-status="error"] { --component-status: var(--status-error); }
-    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-pill[data-status="info"] { --component-status: var(--status-info); }
-    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-pill[data-status="neutral"] { --component-status: var(--status-neutral); }
+    .status-badge[data-status="ok"], .pause-badge[data-status="ok"], .off-badge[data-status="ok"], .on-demand-badge[data-status="ok"], .summary-age[data-status="ok"], #fleet-breaker-btn2[data-status="ok"] { --component-status: var(--status-ok); }
+    .status-badge[data-status="warn"], .pause-badge[data-status="warn"], .off-badge[data-status="warn"], .on-demand-badge[data-status="warn"], .summary-age[data-status="warn"], #fleet-breaker-btn2[data-status="warn"] { --component-status: var(--status-warn); }
+    .status-badge[data-status="attention"], .pause-badge[data-status="attention"], .off-badge[data-status="attention"], .on-demand-badge[data-status="attention"], .summary-age[data-status="attention"], #fleet-breaker-btn2[data-status="attention"] { --component-status: var(--status-attention); }
+    .status-badge[data-status="error"], .pause-badge[data-status="error"], .off-badge[data-status="error"], .on-demand-badge[data-status="error"], .summary-age[data-status="error"], #fleet-breaker-btn2[data-status="error"] { --component-status: var(--status-error); }
+    .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"], #fleet-breaker-btn2[data-status="info"] { --component-status: var(--status-info); }
+    .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"], #fleet-breaker-btn2[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
     /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
     .oc-nav-count { margin-left: auto; flex-shrink: 0; }
@@ -3876,17 +3875,18 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
       <button type="button" id="acmm-badge" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level"></button>
-      <!-- Fleet breaker — circular play/pause + status pill (agent queue-suspend
-           pattern). Kept in .oc-topbar-left, the shortest group, so it cannot
-           wrap the topbar to a third row. State + owner-gating rendered by
-           _renderFleetBreaker; pill visible to everyone, button interactive only
-           for read-write+ viewers (server also 403s the POST for read-only). -->
+      <!-- Fleet breaker status chip. Kept in .oc-topbar-left, the shortest group,
+           so it cannot wrap the topbar to a third row. State + owner-gating are
+           rendered by _renderFleetBreaker; read-only viewers see the disabled
+           status chip while owners can toggle it. -->
       <span id="fleet-breaker-wrap" style="display:none">
-        <span id="fleet-breaker-pill" class="pill-passed">running</span>
-        <button type="button" id="fleet-breaker-btn2" data-action="toggleFleetBreaker"
+        <button type="button" id="fleet-breaker-btn2" class="hv-btn fleet-breaker-chip"
+                data-action="toggleFleetBreaker" data-status="ok" aria-pressed="false"
                 title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."
-                aria-label="Fleet breaker">
-          <span id="fleet-breaker-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
+                aria-label="Fleet breaker: running — click to pause all agents">
+          <span id="fleet-breaker-dot" aria-hidden="true">●</span>
+          <span id="fleet-breaker-pill">running</span>
+          <span id="fleet-breaker-icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
       </span>
     </div>
@@ -5030,48 +5030,42 @@
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
-    // Renders the topbar breaker control (agent queue-suspend pattern):
-    //  - status pill next to it — green "running" when disengaged, red "PAUSED"
-    //    when engaged — so the held-fleet state is unmistakable at a glance;
-    //  - a circular icon button showing pause bars while the fleet runs
-    //    (click = engage/throw the breaker) and a play triangle once engaged
-    //    (click = release/resume). Same SVG glyphs as renderQueueSuspendControl.
-    // The pill is shown to everyone; the button is interactive only for owners
-    // (server also 403s the POST for non-owner viewers).
+    // Renders the topbar breaker as one status chip button: state dot + label +
+    // action icon. Owners can toggle it; read-only viewers get the same chip in a
+    // disabled status-only state (server also 403s non-owner POSTs).
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
       if (!wrap) return;
       wrap.style.display = '';
       const count = (agents || []).length;
-      const pill = document.getElementById('fleet-breaker-pill');
-      if (pill) {
-        const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
-        pill.className = 'badge-status ' + (_fleetBreakerEngaged ? 'pill-blocked' : 'pill-passed');
-        pill.dataset.status = fleetStatus.status;
-        pill.textContent = _fleetBreakerEngaged ? 'PAUSED' : fleetStatus.label;
-      }
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
-        // Owner-gating: hide the control for non-owner viewers, leaving only the
-        // status pill. window._hiveRole is set by showGHAuthState from /api/role.
-        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
-          btn.style.display = 'none';
-        } else {
-          btn.style.display = '';
-          btn.classList.toggle('paused', _fleetBreakerEngaged);
-          btn.title = _fleetBreakerEngaged
-            ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
-               ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
-            : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
-          btn.setAttribute('aria-label', _fleetBreakerEngaged ? 'Release fleet breaker' : 'Engage fleet breaker');
-          const icon = document.getElementById('fleet-breaker-icon');
-          // Same glyphs as renderQueueSuspendControl: play triangle when paused,
-          // pause bars when running.
-          if (icon) icon.innerHTML = _fleetBreakerEngaged
-            ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
-            : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
-        }
+        const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
+        const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const label = document.getElementById('fleet-breaker-pill');
+        const dot = document.getElementById('fleet-breaker-dot');
+        const icon = document.getElementById('fleet-breaker-icon');
+        const stateText = _fleetBreakerEngaged ? 'paused' : fleetStatus.label;
+        const actionText = _fleetBreakerEngaged ? 'resume paused agents' : 'pause all agents';
+        btn.style.display = '';
+        btn.classList.toggle('paused', _fleetBreakerEngaged);
+        btn.dataset.status = fleetStatus.status;
+        btn.disabled = !canToggle;
+        btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true');
+        btn.setAttribute('aria-pressed', _fleetBreakerEngaged ? 'true' : 'false');
+        btn.setAttribute('aria-label', canToggle
+          ? ('Fleet breaker: ' + stateText + ' — click to ' + actionText)
+          : ('Fleet breaker: ' + stateText));
+        btn.title = _fleetBreakerEngaged
+          ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
+             ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
+          : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
+        if (label) label.textContent = stateText;
+        if (dot) dot.textContent = _fleetBreakerEngaged ? '○' : '●';
+        if (icon) icon.innerHTML = _fleetBreakerEngaged
+          ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
+          : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
@@ -5100,7 +5094,7 @@
       } catch (e) {
         showToast('Fleet breaker failed: ' + e.message, 'error');
       } finally {
-        if (btn) btn.disabled = false;
+        if (btn) btn.disabled = !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
       }
     }
     document.addEventListener('DOMContentLoaded', refreshFleetBreakerState);

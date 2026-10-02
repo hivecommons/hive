@@ -27,8 +27,8 @@ type styleRatchetCounts struct {
 var styleRatchetBaselines = map[string]styleRatchetCounts{
 	"operator static/index.html": {
 		inlineStyles:   1625,
-		rawColors:      149,
-		rawFontSizes:   675,
+		rawColors:      148,
+		rawFontSizes:   674,
 		rawPadding:     235,
 		rawBorderRadii: 184,
 	},
