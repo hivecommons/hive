@@ -51,6 +51,12 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 	if err != nil {
 		return nil, "", err
 	}
+	// The governor re-enters here every cycle while the design label stays on
+	// the issue; an approved design is settled and must not be re-requested
+	// or re-admitted as a fresh spec run.
+	if planning.DesignStatus(epic) == planning.DesignStatusApproved {
+		return epic, runKey, nil
+	}
 	if err := planning.RequestDesign(store, epic.ID); err != nil {
 		return nil, "", err
 	}
@@ -62,7 +68,9 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 			return nil, "", err
 		}
 	}
-	_ = store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested); err != nil {
+		return nil, "", err
+	}
 	if err := s.AdmitTriagedRunRefWithContext(issueWorkRef(issue), worksource.WorkItemContextFromGitHubIssue(issue), "", "", time.Now()); err != nil {
 		return nil, "", err
 	}
