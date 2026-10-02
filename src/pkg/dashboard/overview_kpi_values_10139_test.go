@@ -36,7 +36,7 @@ const prSlices = [
   { key: 'draft', count: 0, items: [] },
 ];
 const out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
-const values = [...out.matchAll(/<span class="overview-kpi-value">([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
+const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
 assert.equal(values.length, 6);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
 assert.deepEqual(Object.fromEntries(values), {

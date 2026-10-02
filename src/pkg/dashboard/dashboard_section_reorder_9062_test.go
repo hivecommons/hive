@@ -116,7 +116,7 @@ func TestDashboardLayoutNormalizeFutureUnknownAndMissing(t *testing.T) {
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:99, main:['faq-section','unknown','governor','faq-section']});
-const want = ['faq-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
+const want = ['faq-section','runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
 if (got.v !== 1) throw new Error('version not normalized: '+got.v);
 if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normalized order '+JSON.stringify(got.main));
 `
@@ -189,12 +189,6 @@ const document = {
 };
 `)
 	for _, name := range funcs {
-		// jsFunc starts at the `function` keyword, so an `async function`
-		// (resetDashboardLayout awaits hiveConfirm since #10005) needs its
-		// modifier restored or node rejects the body's `await`.
-		if name == "resetDashboardLayout" {
-			b.WriteString("async ")
-		}
 		b.WriteString(jsFunc(t, html, name))
 		b.WriteByte('\n')
 	}
@@ -204,7 +198,7 @@ dashboardApplyLayout(dashboardLayoutNormalize({v:2, main:['faq-section','governo
 let first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,4).map(e => e.getAttribute('data-dashboard-section')).join(',');
 if (first !== 'faq-section,runs-section,overview-section,governor') throw new Error('page order '+first);
 let nav = navGroup.children.map(e => e.getAttribute('data-section')).join(',');
-if (nav !== 'faq-section,overview-section,governor,pr-throughput-section') throw new Error('sidebar order '+nav);
+if (nav !== 'faq-section,overview-section,governor,repos-section') throw new Error('sidebar order '+nav);
 if (oldGroup.hidden !== true) throw new Error('empty old nav group not hidden');
 if (helpGroup.hidden === true) throw new Error('non-section help group hidden');
 dashboardLayoutWrite();
@@ -212,7 +206,7 @@ if (JSON.parse(localStorage.data[DASHBOARD_LAYOUT_KEY]).main[0] !== 'faq-section
 if (layoutStatus.textContent !== 'Layout: custom (unsaved)') throw new Error('layout status '+layoutStatus.textContent);
 await resetDashboardLayout();
 first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,3).map(e => e.getAttribute('data-dashboard-section')).join(',');
-if (first !== 'overview-section,governor,pr-throughput-section') throw new Error('reset order '+first);
+if (first !== 'runs-section,overview-section,governor') throw new Error('reset order '+first);
 if (localStorage.data[DASHBOARD_LAYOUT_KEY] !== undefined) throw new Error('reset did not remove storage');
 if (layoutStatus.textContent !== 'Layout: default') throw new Error('reset status '+layoutStatus.textContent);
 })();
@@ -233,7 +227,7 @@ func TestDashboardLayoutNormalizeKeepsFAQLastForStaleSavedLayout(t *testing.T) {
 	}
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
-if (first !== 'runs-section,overview-section,governor') throw new Error('reset order '+first);
+const stale = {v:1, main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','faq-section']};
 const got = dashboardLayoutNormalize(stale).main;
 if (got[got.length-1] !== 'faq-section') throw new Error('FAQ not last: '+JSON.stringify(got));
 const tail = got.slice(-4).join(',');
