@@ -1,0 +1,1 @@
+- dashboard: add Test button to gateway form, fix clipped Cancel (#9916)
