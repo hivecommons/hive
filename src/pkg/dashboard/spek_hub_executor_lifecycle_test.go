@@ -411,6 +411,74 @@ func TestSpekHubExecutorWorkspaceFailureBacksOffWithoutSpendingGeneration(t *tes
 	assertSpekLeaseGens(t, hub, 1)
 }
 
+// A missing backend credential is infrastructure, not the stage's fault: it
+// backs off and retries instead of launching the agent anyway (#10077).
+func TestSpekHubExecutorMissingCredentialBacksOffWithoutLaunching(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "admit")] = &taskLease{identity: runAdmissionIdentity, taskID: "admit", repo: spekRepo, number: 57, key: spekRepo + "!" + spekRunKey + ":" + StageSpec, stage: StageSpec, gen: 1, expiresAt: time.Now().Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	worktree := runStageWorktreePath(config.DefaultSpektacularHubExecutorIdentity, spekRunKey, StageSpec, 1)
+	if err := os.MkdirAll(filepath.Join(worktree, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// bob requires a configured API key; leaving Governor.Bob unset makes
+	// executorEnv's credential lookup fail every time.
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "bob", "", nil, nil)
+	launched := make(chan struct{}, 4)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, _ ...string) ([]byte, error) {
+		if name == "bob" {
+			launched <- struct{}{}
+		}
+		return nil, nil
+	}
+	t.Cleanup(e.Stop)
+	tickAndJoin := func(now time.Time) {
+		t.Helper()
+		e.Tick(context.Background(), now)
+		e.mu.Lock()
+		var worker <-chan struct{}
+		for _, run := range e.inFlight {
+			worker = run.done
+		}
+		e.mu.Unlock()
+		if worker != nil {
+			waitSpekSignal(t, worker, "worker exit")
+		}
+	}
+	now := time.Now()
+	tickAndJoin(now)
+	select {
+	case <-launched:
+		t.Fatal("agent launched despite missing credential")
+	default:
+	}
+	if e.Status().LastError == "" {
+		t.Fatal("missing credential not surfaced")
+	}
+	assertSpekLeaseGens(t, hub, 1)
+	hub.leaseMu.Lock()
+	for _, lease := range hub.leases {
+		if !lease.stageEscalatedAt.IsZero() {
+			hub.leaseMu.Unlock()
+			t.Fatal("missing credential escalated the stage")
+		}
+	}
+	hub.leaseMu.Unlock()
+	e.mu.Lock()
+	held := len(e.held)
+	e.mu.Unlock()
+	if held != 0 {
+		t.Fatal("missing credential held the generation")
+	}
+
+	tickAndJoin(now.Add(spekHubInfraBackoffBase + time.Minute))
+	assertSpekLeaseGens(t, hub, 1)
+}
+
 // A settlement that fails to persist is retried instead of leaving the
 // generation held in memory only (#10108).
 func TestSpekHubExecutorRetriesFailedSettlement(t *testing.T) {

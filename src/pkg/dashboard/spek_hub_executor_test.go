@@ -923,6 +923,32 @@ func TestSpekHubExecutorPrepareWorkspaceRefreshesExistingRunWorktree(t *testing.
 	}
 }
 
+// Two unrelated run keys that sanitizeRunPromptPath collapses onto the same
+// worktree slug must not silently share a checkout: the second run is
+// rejected instead of reusing the first run's worktree (#10080).
+func TestSpekHubExecutorPrepareWorkspaceRejectsRunKeySlugCollision(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = spekHubRealGitExec
+	first := spekHubStage{runKey: "foo/bar-baz#1", stage: StageSpec, repo: spekRepo, gen: 1}
+	second := spekHubStage{runKey: "foo-bar/baz#1", stage: StageSpec, repo: spekRepo, gen: 1}
+	if sanitizeRunPromptPath(first.runKey) != sanitizeRunPromptPath(second.runKey) {
+		t.Fatalf("test fixture no longer collides: %q vs %q", sanitizeRunPromptPath(first.runKey), sanitizeRunPromptPath(second.runKey))
+	}
+	if err := e.prepareWorkspace(context.Background(), first); err != nil {
+		t.Fatalf("first prepareWorkspace: %v", err)
+	}
+	err := e.prepareWorkspace(context.Background(), second)
+	if err == nil {
+		t.Fatal("colliding run key reused the first run's worktree")
+	}
+	if !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("error = %v, want a slug collision error", err)
+	}
+}
+
 func TestSpekHubExecutorSharedCloneLockSerialisesLaunchAndSweep(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)

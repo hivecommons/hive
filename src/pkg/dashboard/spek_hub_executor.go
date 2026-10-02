@@ -495,6 +495,38 @@ func removeRunStageWorktreeByPath(path string) error {
 	return os.RemoveAll(path)
 }
 
+// spekHubRunKeyMarkerFile records which run key owns a run worktree. The
+// worktree/lock/artifact slot is named after sanitizeRunPromptPath(runKey),
+// which collapses distinct run keys onto the same slug (e.g. "foo/bar-baz#1"
+// and "foo-bar/baz#1" both become "foo-bar-baz-1"), so two unrelated runs can
+// otherwise silently share one worktree, lock and Spektacular project. The
+// marker lets a later prepare detect the collision instead of reusing another
+// run's checkout (hivecommons/hive#10080).
+const spekHubRunKeyMarkerFile = ".hive-run-key"
+
+// verifySpekHubRunWorktreeOwner rejects reusing a run worktree whose slug
+// already belongs to a different run key. A worktree created before this
+// marker existed has none yet and is adopted the next time it is prepared.
+func verifySpekHubRunWorktreeOwner(worktree, runKey string) error {
+	data, err := os.ReadFile(filepath.Join(worktree, spekHubRunKeyMarkerFile))
+	if err != nil {
+		return nil
+	}
+	if owner := strings.TrimSpace(string(data)); owner != "" && owner != runKey {
+		return fmt.Errorf("run worktree slug collision: %q is owned by run %q, refusing to reuse it for %q", worktree, owner, runKey)
+	}
+	return nil
+}
+
+// recordSpekHubRunWorktreeOwner writes the marker verifySpekHubRunWorktreeOwner
+// reads. A write failure only loses collision detection for this generation,
+// so it is logged, not fatal.
+func (e *SpekHubExecutor) recordSpekHubRunWorktreeOwner(worktree, runKey string) {
+	if err := os.WriteFile(filepath.Join(worktree, spekHubRunKeyMarkerFile), []byte(runKey), 0o644); err != nil {
+		e.log().Warn("[spektacular] recording run worktree owner failed", "run", runKey, "worktree", worktree, "error", err)
+	}
+}
+
 func spekHubRunWorktreePath(identity, runKey string) string {
 	if identity == "" || runKey == "" {
 		return ""
@@ -1189,6 +1221,19 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	return writeSpekStageCaptureInDir(receiptDir, st.runKey, st.stage, st.gen, capture)
 }
 
+// interviewFromStatusHistory derives interview rows from the instruction (or
+// question/prompt/description) carried by each status poll. The pinned
+// Spektacular 0.22.0 `status` verb never emits any of those keys (its wire
+// shape is kind/name/artifact_id/document_status/current_step/
+// completed_steps/created_at/updated_at/closed_at/error/spec/plan, none of
+// which is a question), so against that CLI this tier is a no-op and
+// captureCompletedStage falls through to the completed_steps placeholder
+// rows below. It is kept, rather than removed, for a status payload that
+// does carry one of these keys (a future Spektacular release, or a non-
+// default backend) instead of silently dropping that richer source if it
+// ever appears; populating this tier without one requires a different data
+// source than the status verb and is tracked, unresolved, as
+// hivecommons/hive#10099.
 func interviewFromStatusHistory(history []RunDetailStageStatus, docs []RunDetailStageDocument, at time.Time) []RunDetailInterview {
 	var doc string
 	if len(docs) > 0 {
@@ -1374,6 +1419,11 @@ func (s spekHubArtifactStatus) JoinKey() string {
 	return strings.TrimSpace(s.Name)
 }
 
+// Instruction reads the status payload for any key that would name the
+// agent's current prompt. The pinned Spektacular 0.22.0 `status` verb never
+// emits one (see interviewFromStatusHistory), so this always returns "" in
+// production; it only matters for a status payload richer than that CLI's
+// (hivecommons/hive#10099).
 func (s spekHubArtifactStatus) Instruction() string {
 	return firstRunNonEmpty(
 		runDetailStringFromAny(firstAny(s.Raw, "instruction", "question", "prompt", "current_instruction", "step_instruction")),
@@ -1543,15 +1593,21 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 		return err
 	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
+		// Never succeeds on a retry without operator intervention, so it
+		// spends the generation like the repo path check above.
+		return err
+	}
 	authArgs, _, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if err := e.syncRunWorktree(ctx, st, repoDir, worktree, authArgs); err != nil {
 		return err
 	}
+	e.recordSpekHubRunWorktreeOwner(worktree, st.runKey)
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
 		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
 		if copyErr != nil {
@@ -1762,10 +1818,13 @@ func (e *SpekHubExecutor) executorEnv() ([]string, error) {
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
 	creds, err := agent.HeadlessCredentialEnv(e.backend(), agent.HeadlessCredentialSources{BobAPIKey: e.bobAPIKey})
 	if err != nil {
-		e.log().Warn("[spektacular] headless credential env unavailable", "backend", e.backend(), "error", err)
-	} else {
-		env = append(env, creds...)
+		// A missing credential means the agent cannot authenticate; launching
+		// it anyway only burns the stage budget on a predictable failure.
+		// The caller wraps this as a spekHubInfraError so it backs off and
+		// retries instead of spending a generation (hivecommons/hive#10077).
+		return nil, fmt.Errorf("headless credential env unavailable for backend %s: %w", e.backend(), err)
 	}
+	env = append(env, creds...)
 	return env, nil
 }
 
