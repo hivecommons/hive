@@ -416,10 +416,12 @@ func inputSchema(name string) map[string]any {
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
+		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 	case ToolPrsByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": prBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
+		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) PRs before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
 	case ToolGovernorSetup:
