@@ -1,0 +1,1 @@
+- Admin MCP gains two read tools: `review_queue`, a prioritised list of the issues and pull requests that need a human now with a reason on every row, and `governor_setup_proposal`, a proposed governor setup naming the write operation and args that apply each setting.

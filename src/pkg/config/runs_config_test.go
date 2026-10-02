@@ -133,3 +133,14 @@ func TestSpektacularInterviewModeDefaultsToHuman(t *testing.T) {
 		t.Fatalf("unknown InterviewMode() = %q, want human", got)
 	}
 }
+
+func TestSpektacularConfigValidateInterview(t *testing.T) {
+	for _, ok := range []string{"", "auto", " Human "} {
+		if err := (SpektacularConfig{Interview: ok}).Validate(); err != nil {
+			t.Errorf("Validate(%q) = %v, want nil", ok, err)
+		}
+	}
+	if err := (SpektacularConfig{Interview: "atuo"}).Validate(); err == nil {
+		t.Error("Validate(\"atuo\") = nil, want error")
+	}
+}

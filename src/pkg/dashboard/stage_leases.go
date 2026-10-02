@@ -614,8 +614,10 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 				if strings.TrimSpace(body) != "" {
 					digest = designArtifactDigest(body)
 				}
+				// Best-effort: the digest is stored only on success, so a failed
+				// forge write is retried on the next advance without blocking it.
 				if err := s.postDesignArtifact(context.Background(), store, epic, digest, body); err != nil {
-					return err
+					s.logger.Warn("[runs] design artifact comment failed", "run", runKey, "epic", epic.ID, "error", err)
 				}
 			}
 		}

@@ -25486,6 +25486,7 @@ function burnAreaChart() {
       const statusText = ctx.statusText || (typeof versionStatusSummary === 'function' ? versionStatusSummary(v || {}, targetShort) : versionStatusText(v || {}, targetShort));
       const cadence = typeof versionCadenceLabel === 'function' ? versionCadenceLabel(v || {}) : '';
       const dashHTML = function(reason) { return typeof versionDashHTML === 'function' ? versionDashHTML(reason) : '<strong title="' + escapeHtml(reason || 'unavailable') + '">—</strong>'; };
+      const au = (v && v.autoUpdate) || {};
       const currentHTML = fullHash && fullHash !== 'unknown'
         ? '<strong><a href="' + escapeHtml(commitURL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(fullHash) + '">' + escapeHtml(shortHash) + '</a></strong>'
         : versionDashHTML('running commit is unavailable');
@@ -25501,6 +25502,11 @@ function burnAreaChart() {
       html += row('Tracking', trackingText ? value(trackingText, versionTrackingTooltip(v || {})) : versionDashHTML('hub has not sent a policy yet'), trackingText || 'hub has not sent a policy yet');
       html += row('Status', statusText ? value(statusText, (v && v.autoUpdate && v.autoUpdate.detail) || statusText) : versionDashHTML('status is still loading'), statusText || 'status is still loading');
       html += row('Cadence', cadence ? value(cadence) : versionDashHTML('hub has not sent a policy yet'), cadence || 'hub has not sent a policy yet');
+      if (au.enabled !== false && au.state !== 'disabled' && au.state !== 'paused') {
+        const nextAt = au.nextUpdateAt ? new Date(au.nextUpdateAt) : null;
+        const nextOK = nextAt && !isNaN(nextAt.getTime());
+        html += row('Next update', nextOK ? value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds') : value('unknown', 'The hub has not reported when the next update is expected'), nextOK ? au.nextUpdateAt : 'unknown');
+      }
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
@@ -29061,6 +29067,7 @@ function burnAreaChart() {
         if (au.policySource === 'hub') rows += '<div>Policy source: the hub (heartbeat)</div>';
         else rows += '<div>Policy source: this spoke\'s local config (the hub has not reported a policy)</div>';
         if (au.commitsBehind != null) rows += '<div>Commits behind: ' + escapeHtml(String(au.commitsBehind)) + '</div>';
+        if (au.state !== 'disabled' && au.state !== 'paused') rows += '<div>Next update: ' + (au.nextUpdateAt ? escapeHtml(au.nextUpdateAt) : 'unknown') + '</div>';
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div class="text-danger">Last error: ' + escapeHtml(au.lastError) + '</div>';
         el.style.color = 'var(--muted)';
