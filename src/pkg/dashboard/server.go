@@ -609,34 +609,34 @@ type FrontendAgent struct {
 	// the prompt. The SPA renders this as "Waiting on CI" instead of
 	// "Working" so a stalled-on-CI agent no longer looks indistinguishable
 	// from one making progress.
-	AwaitingCI             bool   `json:"awaitingCI,omitempty"`
-	Paused                 bool   `json:"paused"`
-	PausedAt               string `json:"pausedAt,omitempty"`
-	PausedReason           string `json:"pausedReason,omitempty"`
-	PausedTrigger          string `json:"pausedTrigger,omitempty"`
-	PausedBy               string `json:"pausedBy,omitempty"`
-	OffByCadence           bool   `json:"offByCadence"`
-	NoCadence              bool   `json:"noCadence"`
-	NeedsLogin             bool   `json:"needsLogin"`
-	LoginURL               string `json:"loginURL,omitempty"`
-	AuthAvailable          bool   `json:"authAvailable"`
-	AuthKnown              bool   `json:"authKnown"`
-	CLI                    string `json:"cli"`
-	Model                  string `json:"model"`
-	ReasoningEffort        string `json:"reasoningEffort,omitempty"`
-	Cadence                string `json:"cadence"`
-	Doing                  string `json:"doing"`
-	PinnedCli              bool   `json:"pinnedCli"`
-	PinnedModel            bool   `json:"pinnedModel"`
-	PinnedBoth             bool   `json:"pinnedBoth"`
-	Pinned                 bool   `json:"pinned"`
-	LastKick               string `json:"lastKick,omitempty"`
-	LastKickAt             string `json:"lastKickAt,omitempty"`
-	NextKick               string `json:"nextKick,omitempty"`
-	NextKickIn             string `json:"nextKickIn,omitempty"`
-	Continuous             bool   `json:"continuous,omitempty"`
-	ContinuousBackoff      string `json:"continuousBackoff,omitempty"`
-	ContinuousBackoffUntil string `json:"continuousBackoffUntil,omitempty"`
+	AwaitingCI        bool   `json:"awaitingCI,omitempty"`
+	Paused            bool   `json:"paused"`
+	PausedAt          string `json:"pausedAt,omitempty"`
+	PausedReason      string `json:"pausedReason,omitempty"`
+	PausedTrigger     string `json:"pausedTrigger,omitempty"`
+	PausedBy          string `json:"pausedBy,omitempty"`
+	OffByCadence      bool   `json:"offByCadence"`
+	NoCadence         bool   `json:"noCadence"`
+	NeedsLogin        bool   `json:"needsLogin"`
+	LoginURL          string `json:"loginURL,omitempty"`
+	AuthAvailable     bool   `json:"authAvailable"`
+	AuthKnown         bool   `json:"authKnown"`
+	CLI               string `json:"cli"`
+	Model             string `json:"model"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	Cadence           string `json:"cadence"`
+	Doing             string `json:"doing"`
+	PinnedCli         bool   `json:"pinnedCli"`
+	PinnedModel       bool   `json:"pinnedModel"`
+	PinnedBoth        bool   `json:"pinnedBoth"`
+	Pinned            bool   `json:"pinned"`
+	LastKick          string `json:"lastKick,omitempty"`
+	LastKickAt        string `json:"lastKickAt,omitempty"`
+	NextKick          string `json:"nextKick,omitempty"`
+	NextKickIn        string `json:"nextKickIn,omitempty"`
+	Continuous        bool   `json:"continuous,omitempty"`
+	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
+	FrontendAgentContinuous
 	KicksUndeliverable     int    `json:"kicksUndeliverable,omitempty"`
 	BusySince              string `json:"busySince,omitempty"`
 	LastTranscriptActivity string `json:"lastTranscriptActivity,omitempty"`

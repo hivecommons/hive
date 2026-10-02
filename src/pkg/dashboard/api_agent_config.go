@@ -117,31 +117,32 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	// (hivecommons/hive#8939). The flag only — never the key itself.
 	jsonResponse(w, map[string]interface{}{
 		"general": map[string]interface{}{
-			"enabled":            agentCfg.Enabled,
-			"launchCmd":          launchCmd,
-			"displayName":        displayName,
-			"description":        agentCfg.Description,
-			"cliPinned":          pinnedCLI,
-			"cliPinValue":        cli,
-			"modelOwner":         agentCfg.ModelOwner,
-			"backendOwner":       agentCfg.BackendOwner,
-			"staleTimeout":       staleTimeout,
-			"restartStrategy":    restartStrategy,
-			"model":              model,
-			"clearOnKick":        agentCfg.ClearOnKick,
-			"onDemand":           agentCfg.OnDemand,
-			"continuous":         agentCfg.Continuous,
-			"continuousCooldown": int64(agentCfg.EffectiveContinuousCooldown().Seconds()),
-			"emoji":              agentCfg.Emoji,
-			"color":              agentCfg.Color,
-			"sortOrder":          agentCfg.SortOrder,
-			"beadRole":           agentCfg.BeadRole,
-			"role":               agentCfg.Role,
-			"kickTemplate":       agentCfg.KickTemplate,
-			"promptSource":       agentCfg.PromptSource,
-			"definitionSource":   agentCfg.DefinitionSource,
-			"mode":               agentCfg.Mode,
-			"includeRepos":       includeRepos,
+			"enabled":             agentCfg.Enabled,
+			"launchCmd":           launchCmd,
+			"displayName":         displayName,
+			"description":         agentCfg.Description,
+			"cliPinned":           pinnedCLI,
+			"cliPinValue":         cli,
+			"modelOwner":          agentCfg.ModelOwner,
+			"backendOwner":        agentCfg.BackendOwner,
+			"staleTimeout":        staleTimeout,
+			"restartStrategy":     restartStrategy,
+			"model":               model,
+			"clearOnKick":         agentCfg.ClearOnKick,
+			"onDemand":            agentCfg.OnDemand,
+			"continuous":          agentCfg.Continuous,
+			"continuousCooldown":  int64(agentCfg.EffectiveContinuousCooldown().Seconds()),
+			"continuousBudgetPct": agentCfg.EffectiveContinuousBudgetPct(),
+			"emoji":               agentCfg.Emoji,
+			"color":               agentCfg.Color,
+			"sortOrder":           agentCfg.SortOrder,
+			"beadRole":            agentCfg.BeadRole,
+			"role":                agentCfg.Role,
+			"kickTemplate":        agentCfg.KickTemplate,
+			"promptSource":        agentCfg.PromptSource,
+			"definitionSource":    agentCfg.DefinitionSource,
+			"mode":                agentCfg.Mode,
+			"includeRepos":        includeRepos,
 			// The agent's repository scope (#6204), plus the hive's own repo
 			// list so the dialog can offer real choices instead of a free-text
 			// field the operator has to spell from memory.
@@ -408,6 +409,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["continuousCooldown"]; ok {
 		if f, ok := v.(float64); ok {
 			agentCfg.ContinuousCooldown = time.Duration(int64(f)) * time.Second
+		}
+	}
+	if v, ok := body["continuousBudgetPct"]; ok {
+		if f, ok := v.(float64); ok {
+			agentCfg.ContinuousBudgetPct = int(f)
 		}
 	}
 	if v, ok := body["displayName"]; ok {
