@@ -160,6 +160,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if m, ok := resp["upgradeMarker"].(map[string]any); ok {
 		marker = m
 	}
+	// Read the persisted last-LANDED upgrade record once and share it: the
+	// auto-update object uses it to answer "when was this hive last updated"
+	// (#10038) and the release-status view below uses it to classify the last
+	// attempt (#7092).
+	upgradeOutcomeRec := readUpgradeOutcome()
 	resp["autoUpdate"] = buildAutoUpdateStatus(autoUpdateInputs{
 		Enabled:       enabled,
 		Period:        period,
@@ -170,6 +175,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		CurrentCommit: versionShort,
 		CommitsBehind: behindPtr,
 		Marker:        marker,
+		LastUpdate:    upgradeOutcomeRec,
 	})
 
 	// Spoke release visibility (#7092): the channel this spoke follows and what
@@ -182,7 +188,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	lastBeat, beatOK := spoke.LastHeartbeatAttempt()
 	releaseStatus := buildSpokeReleaseStatus(
 		imageRef, "",
-		readUpgradeOutcome(), marker, versionHash,
+		upgradeOutcomeRec, marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
 	if marker == nil {

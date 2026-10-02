@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -74,6 +75,14 @@ type AutoUpdateStatus struct {
 	CurrentCommit string `json:"currentCommit,omitempty"`
 	CommitsBehind *int   `json:"commitsBehind,omitempty"`
 	LastAttemptAt string `json:"lastAttemptAt,omitempty"`
+	// LastUpdatedAt is the RFC3339 time the most recent instructed upgrade
+	// actually LANDED on this hive (#10038) — the answer to "when was my hive
+	// last updated". It is drawn from the persisted last-landed outcome, which
+	// survives the restart an upgrade causes; the in-flight Marker cannot carry
+	// it because it is cleared the moment the new image boots. Additive and
+	// omitempty: a hive that has never recorded a landed upgrade (or a spoke too
+	// old to persist one) reports it absent rather than guessing.
+	LastUpdatedAt string `json:"lastUpdatedAt,omitempty"`
 	LastError     string `json:"lastError,omitempty"`
 	Attempts      int    `json:"attempts,omitempty"`
 	MaxAttempts   int    `json:"maxAttempts,omitempty"`
@@ -98,6 +107,12 @@ type autoUpdateInputs struct {
 	CurrentCommit string
 	CommitsBehind *int           // nil = unknown
 	Marker        map[string]any // readUpgradeMarker() output; nil when no upgrade is in flight/failing
+	// LastUpdate is the persisted last-LANDED upgrade record (readUpgradeOutcome
+	// output); nil when no upgrade has ever landed on this hive. It is how the
+	// status answers "when was this hive last updated" (#10038) — the in-flight
+	// Marker is cleared the moment an upgrade lands, so only this outcome
+	// survives to carry the landed time.
+	LastUpdate *upgradeOutcome
 }
 
 // normalizeAutoUpdatePeriod maps a stored/legacy auto_upgrade_mode onto a
@@ -132,6 +147,9 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 		TargetCommit:  in.TargetCommit,
 		CurrentCommit: in.CurrentCommit,
 		CommitsBehind: in.CommitsBehind,
+	}
+	if o := in.LastUpdate; o != nil && !o.CompletedAt.IsZero() {
+		st.LastUpdatedAt = o.CompletedAt.UTC().Format(time.RFC3339)
 	}
 	if in.Enabled {
 		st.ManagedBy = autoUpdateManagedBySpoke
@@ -230,14 +248,25 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	if *in.CommitsBehind <= 0 {
 		st.State = autoUpdateStateUpToDate
 		st.Healthy = true
-		st.Detail = "This hive is running the latest built commit" + onBranchSuffix(in.TargetBranch) + onChannelSuffix(in.TargetChannel) + "."
+		st.Detail = "This hive is running the latest built commit" + onBranchSuffix(in.TargetBranch) + onChannelSuffix(in.TargetChannel) + "." + lastUpdatedSuffix(st.LastUpdatedAt)
 		return st
 	}
 	st.State = autoUpdateStateBehind
 	st.Healthy = false
 	st.Detail = fmt.Sprintf("This hive is %d commit(s) behind%s%s and the update has not been applied yet.",
-		*in.CommitsBehind, onBranchSuffix(in.TargetBranch), onChannelSuffix(in.TargetChannel))
+		*in.CommitsBehind, onBranchSuffix(in.TargetBranch), onChannelSuffix(in.TargetChannel)) + lastUpdatedSuffix(st.LastUpdatedAt)
 	return st
+}
+
+// lastUpdatedSuffix renders the "when was this hive last updated" clause that
+// #10038 asks for, appended to the detail of the states where it is meaningful.
+// Empty when no landed upgrade has been recorded, so the detail degrades to the
+// prior wording rather than claiming an update that never happened.
+func lastUpdatedSuffix(at string) string {
+	if strings.TrimSpace(at) == "" {
+		return ""
+	}
+	return " Last updated " + at + "."
 }
 
 func onChannelSuffix(channel string) string {
