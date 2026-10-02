@@ -226,7 +226,9 @@ same campaign path. The Spec checkpoint is the design-approval gate: when
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
-before Plan can start. Approving moves the reviewed spec generation to Plan
+before Plan can start. Until the Spec receipt exists the run is still drafting
+and the checkpoint cannot be decided. Rejecting re-mints the Spec generation
+and marks the design `requested` again, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
 first, then marks the design approved and applies the approved label/status on
 the work item. A failed label or status write does not undo or fail the
 approval: it is logged, audited as `design_signal_failed`, and recorded on the

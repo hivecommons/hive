@@ -1247,7 +1247,9 @@ func TestSpecCheckpointApproveAdvancesToPlan(t *testing.T) {
 	}
 }
 
-func TestSpecCheckpointRejectKeepsSpecParked(t *testing.T) {
+// Rejecting a design's spec re-mints the spec generation so a revised spec is
+// drafted, and marks the design requested (hivecommons/hive#10062).
+func TestSpecCheckpointRejectRetriesDesignSpec(t *testing.T) {
 	hub, s, store, _ := spekHub(t)
 	now := time.Now()
 	spekLease(t, hub, StageSpec, now)
@@ -1261,11 +1263,52 @@ func TestSpecCheckpointRejectKeepsSpecParked(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reject spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if stage, _ := spekLeaseState(hub); stage != StageSpec {
-		t.Fatalf("stage after spec reject = %s, want spec", stage)
+	stage, gen := spekLeaseState(hub)
+	if stage != StageSpec || gen <= spekGen {
+		t.Fatalf("lease after spec reject = %s gen %d, want spec past gen %d", stage, gen, spekGen)
 	}
-	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusQueued {
-		t.Fatalf("design status after reject = %q, want queued", planning.DesignStatus(got))
+	if s.runCheckpointStageHeld(spekRunKey, StageSpec, gen) {
+		t.Fatal("retried spec generation is still held")
+	}
+	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusRequested {
+		t.Fatalf("design status after reject = %q, want requested", planning.DesignStatus(got))
+	}
+	runs, err := s.activeRuns(true)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("activeRuns = %d, %v", len(runs), err)
+	}
+	if runs[0].WaitingOn == RunWaitingOnHuman {
+		t.Fatalf("retried design spec still waiting on a human: %+v", runs[0])
+	}
+}
+
+// A design run still drafting its spec is agent work: it is not waiting on a
+// human and its checkpoint cannot be read or approved (hivecommons/hive#10061).
+func TestSpecCheckpointPendingDesignNotHeldBeforeReceipt(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	spekLease(t, hub, StageSpec, time.Now())
+	epic := spekDesignEpic(t, store)
+
+	runs, err := s.activeRuns(true)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("activeRuns = %d, %v", len(runs), err)
+	}
+	if runs[0].WaitingOn == RunWaitingOnHuman {
+		t.Fatalf("design run waiting on a human before its spec exists: %+v", runs[0])
+	}
+	if _, err := s.RunCheckpointPayload(runs[0].Key); !errors.Is(err, errRunCheckpointNotHeld) {
+		t.Fatalf("checkpoint payload before spec receipt err = %v, want not held", err)
+	}
+	checkpointKey := spekRepo + "!" + spekRunKey + ":" + StageSpec
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(checkpointKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionApprove, Gen: spekGen})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("approve before spec receipt = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if stage, gen := spekLeaseState(hub); stage != StageSpec || gen != spekGen {
+		t.Fatalf("lease after refused approve = %s gen %d, want spec gen %d", stage, gen, spekGen)
+	}
+	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) == planning.DesignStatusApproved {
+		t.Fatal("design approved before any spec existed")
 	}
 }
 
