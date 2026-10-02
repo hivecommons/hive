@@ -220,7 +220,7 @@ Threats identified on this interface:
 | **Hub compromise → fleet-wide credential and config push** | Real and unmitigated by design of the lane; bounded only by hub hardening and by each spoke holding its own App key alone. Stated as the system's highest-value target. |
 | **Spoke impersonation** to the hub | Bounded. One leaked bearer authenticates one hive; the hub will not accept it for another hive ID, and rotation retires it within the dual-generation window. |
 | **Replay, rollback, or mis-delivery of a pushed configuration** (a TLS-terminating middlebox, a misconfigured `HIVE_HUB_URL`, a captured response replayed to a different hive) | **Mitigated ([#7082](https://github.com/hivecommons/hive/issues/7082)).** The heartbeat response is now signed with the hub's existing Ed25519 key and bound to `hive_id` plus a monotonic `seq`/timestamp, so a middlebox or mis-pointed hub URL cannot forge config/credentials, a response captured for hive A cannot be replayed to hive B (`hive_id` binding), and an old response cannot roll config back (`seq` floor). Enforcement is opt-in (`HIVE_HEARTBEAT_VERIFY=enforce`); by default a failed signature is logged and the response is still applied, so deployed spokes are never bricked against an un-upgraded hub. The residual **hub-compromise** row above is unchanged: a genuine hub can still sign a genuine (malicious) push. |
-| **Telemetry disclosure** | Low. Heartbeats carry no secrets; the hub-side view is admin-gated. |
+| **Telemetry disclosure** | Low to medium. Heartbeats carry no raw secrets and the hub-side view is admin-gated, but they include stable hive/project identifiers and selected usernames; see [Data collection and telemetry](telemetry.md). |
 
 ### Contributor relay authentication
 

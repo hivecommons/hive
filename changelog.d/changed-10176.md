@@ -1,1 +1,0 @@
-- docs: integration guide  work source providers, clanker (Flue-style), spektacular (#10176)

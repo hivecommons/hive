@@ -306,7 +306,7 @@
       display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0;
     }
     #acmm-badge { overflow: hidden; text-overflow: ellipsis; }
-    #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); min-width: 0; }
+    #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); min-width: 0; max-width: 100%; }
     #oc-git-version #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
     .oc-version-chip {
       width: 100%; display: flex; align-items: center; gap: var(--sp-2); min-height: 32px;
@@ -320,14 +320,20 @@
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
-    .oc-version-menu { left: 0; right: auto; bottom: calc(100% + 8px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
-    .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; }
-    .oc-version-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-1); padding: var(--sp-2) var(--sp-5); color: var(--muted); font-size: var(--fs-sm); min-width: 0; }
-    .oc-version-row strong { min-width: 0; text-align: left; overflow-wrap: anywhere; white-space: normal; }
+    .oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; }
+    .avatar-menu.oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
+    .oc-version-menu:empty { display: none; }
+    .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
+    .oc-version-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); color: var(--muted); font-size: var(--fs-sm); min-width: 0; max-width: 100%; overflow: hidden; }
+    .oc-version-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-version-row strong { min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; white-space: nowrap; }
     .oc-version-row strong, .oc-version-row a { color: var(--text); }
+    .oc-version-row strong a { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
+    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
-    .oc-version-upgrade-progress { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); }
+    .oc-version-upgrade-progress { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: hidden; }
     .oc-version-hive { position: relative; width: 42px; height: 42px; display: grid; place-items: center; color: var(--amber); }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
     .oc-version-bee { position: absolute; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
@@ -5413,15 +5419,30 @@
       }
     }
     /** Toggle a section's collapsed state and animate */
-    function toggleSection(sectionId, maybeSectionId) {
-      if (sectionId && typeof sectionId === 'object') sectionId = maybeSectionId;
-      const collapsed = !isSectionCollapsed(sectionId);
-      setSectionCollapsed(sectionId, collapsed);
+    function toggleSection(sectionId, maybeSectionId, opts) {
+      let options = opts || {};
+      if (sectionId && typeof sectionId === 'object') {
+        sectionId = maybeSectionId;
+      } else if (maybeSectionId && typeof maybeSectionId === 'object') {
+        options = maybeSectionId;
+      }
+      const section = document.getElementById(sectionId);
+      const wasNavPeek = section && section.getAttribute('data-nav-peek') === '1';
+      let collapsed;
+      if (wasNavPeek && !options.navPeek) {
+        section.removeAttribute('data-nav-peek');
+        if (_dashboardNavPeekSectionId === sectionId) _dashboardNavPeekSectionId = null;
+        collapsed = false;
+      } else if (Object.prototype.hasOwnProperty.call(options, 'collapsed')) {
+        collapsed = !!options.collapsed;
+      } else {
+        collapsed = !isSectionCollapsed(sectionId);
+      }
+      if (options.persist !== false) setSectionCollapsed(sectionId, collapsed);
       const body = document.querySelector(`#${sectionId} .dash-card-body, #${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .dash-card-header .section-chevron, #${sectionId} .section-chevron`);
       const card = document.querySelector(`#${sectionId} .dash-card`);
       const header = document.querySelector(`#${sectionId} .dash-card-header, #${sectionId} .section-header-toggle`);
-      const section = document.getElementById(sectionId);
       applySectionBodyCollapse(body, collapsed, true);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
       if (card) card.classList.toggle('collapsed', collapsed);
@@ -5430,18 +5451,44 @@
     }
     /** Apply persisted collapsed state to a section after render */
     function applySectionCollapse(sectionId) {
-      const collapsed = isSectionCollapsed(sectionId);
+      const section = document.getElementById(sectionId);
+      const navPeek = section && section.getAttribute('data-nav-peek') === '1';
+      const collapsed = navPeek ? false : isSectionCollapsed(sectionId);
       const body = document.querySelector(`#${sectionId} .dash-card-body, #${sectionId} .section-body`);
       const chevron = document.querySelector(`#${sectionId} .dash-card-header .section-chevron, #${sectionId} .section-chevron`);
       const card = document.querySelector(`#${sectionId} .dash-card`);
       const header = document.querySelector(`#${sectionId} .dash-card-header, #${sectionId} .section-header-toggle`);
-      const section = document.getElementById(sectionId);
+      if (!navPeek && _dashboardNavPeekSectionId === sectionId) _dashboardNavPeekSectionId = null;
       normalizeSectionCardChrome(sectionId);
       applySectionBodyCollapse(body, collapsed, false);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
       if (card) card.classList.toggle('collapsed', collapsed);
       if (section) section.classList.toggle('collapsed', collapsed);
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    var _dashboardNavPeekSectionId = null;
+    function navPeekExpand(sectionId) {
+      const section = document.getElementById(sectionId);
+      if (!section || section.getAttribute('data-nav-peek') === '1' || !isSectionCollapsed(sectionId)) return false;
+      toggleSection(sectionId, { collapsed: false, persist: false, navPeek: true });
+      section.setAttribute('data-nav-peek', '1');
+      _dashboardNavPeekSectionId = sectionId;
+      return true;
+    }
+    function navPeekRestore(nextSectionId) {
+      let sectionId = _dashboardNavPeekSectionId;
+      let section = sectionId ? document.getElementById(sectionId) : null;
+      if (!section || section.getAttribute('data-nav-peek') !== '1') {
+        section = document.querySelector('[data-nav-peek="1"]');
+        sectionId = section && section.id;
+      }
+      if (!sectionId || sectionId === nextSectionId) return false;
+      _dashboardNavPeekSectionId = null;
+      if (!section || section.getAttribute('data-nav-peek') !== '1') return false;
+      section.removeAttribute('data-nav-peek');
+      if (!isSectionCollapsed(sectionId)) return false;
+      toggleSection(sectionId, { collapsed: true, persist: false, navPeek: true });
+      return true;
     }
     // ── Dashboard section layout: drag/keyboard reorder, persisted per viewer ──
     // Keyed by stable top-level section ids. Saved shape: {v:1,main:[...]}; unknown
@@ -5792,6 +5839,8 @@
       const detail = document.getElementById('oc-agent-detail');
       if (detail) { detail.classList.remove('active'); detail.innerHTML = ''; }
       ocUpdateFocusedState();
+      navPeekRestore(section);
+      navPeekExpand(section);
       if (!skipScroll) {
         const el = document.getElementById(section);
         if (el) {
@@ -24072,29 +24121,34 @@ function burnAreaChart() {
         const raw = localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY);
         if (!raw) return null;
         const st = JSON.parse(raw);
-        if (!st || !st.target || !st.startedAt) {
-          localStorage.removeItem(VERSION_UPGRADE_STORAGE_KEY);
+        if (!st || !st.target || st.target === 'latest' || !st.startedAt) {
+          versionClearUpgradeProgress();
           return null;
         }
         st.startedAt = Number(st.startedAt);
         st.completedAt = st.completedAt ? Number(st.completedAt) : 0;
         if (st.completedAt && now - st.completedAt > VERSION_UPGRADE_DONE_MS) {
-          localStorage.removeItem(VERSION_UPGRADE_STORAGE_KEY);
+          versionClearUpgradeProgress();
           return null;
         }
-        st.overdue = !st.completedAt && now - st.startedAt > VERSION_UPGRADE_LONG_MS;
+        if (!st.completedAt && now - st.startedAt > VERSION_UPGRADE_LONG_MS) {
+          versionClearUpgradeProgress();
+          return null;
+        }
+        st.overdue = false;
         return st;
       } catch (_) {
-        try { localStorage.removeItem(VERSION_UPGRADE_STORAGE_KEY); } catch (e) {}
+        try { versionClearUpgradeProgress(); } catch (e) {}
         return null;
       }
     }
 
     function versionWriteUpgradeProgress(st) {
-      if (!st || !st.target) return null;
+      if (!st || !st.target || st.target === 'latest') return null;
       const next = {
         target: String(st.target),
         targetShort: versionShortSHA(st.targetShort || st.target),
+        startedFrom: String(st.startedFrom || ''),
         startedAt: Number(st.startedAt || versionNowMs()),
         completedAt: st.completedAt ? Number(st.completedAt) : 0
       };
@@ -24108,10 +24162,10 @@ function burnAreaChart() {
       _upgradeTargetHash = null;
     }
 
-    function versionRecordUpgradeStart(targetHash, targetShort) {
-      const st = versionWriteUpgradeProgress({ target: targetHash || 'latest', targetShort: targetShort || targetHash || 'latest', startedAt: versionNowMs() });
-      _upgradeInProgress = true;
-      _upgradeTargetHash = targetHash || null;
+    function versionRecordUpgradeStart(targetHash, targetShort, currentHash) {
+      const st = versionWriteUpgradeProgress({ target: targetHash || '', targetShort: targetShort || targetHash || '', startedFrom: currentHash || '', startedAt: versionNowMs() });
+      _upgradeInProgress = !!st;
+      _upgradeTargetHash = st ? targetHash : null;
       return st;
     }
 
@@ -24119,7 +24173,7 @@ function burnAreaChart() {
       if (!st) return null;
       now = now || versionNowMs();
       if (!st.completedAt) {
-        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedAt: st.startedAt, completedAt: now });
+        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedFrom: st.startedFrom || '', startedAt: st.startedAt, completedAt: now });
       }
       _upgradeInProgress = false;
       _upgradeTargetHash = null;
@@ -24129,7 +24183,33 @@ function burnAreaChart() {
     function versionReconcileUpgradeProgress(v, now) {
       const st = versionReadUpgradeProgress(now);
       if (!st) return null;
-      if (versionSameCommit(v && (v.hash || v.short), st.target)) return versionMarkUpgradeComplete(st, now);
+      const running = v && (v.hash || v.short);
+      const target = v && v.target || {};
+      const policy = versionPolicy(v) || {};
+      if (target.source === 'hub' && target.resolved === false) {
+        versionClearUpgradeProgress();
+        return null;
+      }
+      const knownTarget = target.sha || policy.target_sha || policy.armed_target || target.short || v && v.stableV4Hash || v && v.latestHash || v && v.targetHash || '';
+      if (versionSameCommit(running, st.target)) {
+        if (knownTarget && !versionSameCommit(knownTarget, st.target)) {
+          versionClearUpgradeProgress();
+          return null;
+        }
+        return versionMarkUpgradeComplete(st, now);
+      }
+      if (!st.startedFrom && running && !versionSameCommit(running, st.target)) {
+        versionClearUpgradeProgress();
+        return null;
+      }
+      if (st.startedFrom && running && !versionSameCommit(running, st.startedFrom)) {
+        versionClearUpgradeProgress();
+        return null;
+      }
+      if (!knownTarget) {
+        versionClearUpgradeProgress();
+        return null;
+      }
       if (!st.completedAt) {
         _upgradeInProgress = true;
         _upgradeTargetHash = st.target;
@@ -24261,7 +24341,14 @@ function burnAreaChart() {
       const managed = versionManagedSuffix(v);
       let base = '';
       if (v && v.tracking === 'pinned') base = 'pinned ' + versionShortSHA(v.hash || v.short || '');
-      else base = deliveryLabel || versionTrackingLabel(v || {});
+      else base = String(deliveryLabel || '').trim() || versionDeliveryLabel(v || {}) || versionTrackingLabel(v || {});
+      if (!base || base === 'tracking unknown') {
+        const channel = v && v.channel ? String(v.channel) : '';
+        const branch = v && v.branch && v.branch !== 'unknown' ? String(v.branch) : '';
+        if (channel) base = branch ? channel + ' (' + branch + ')' : channel;
+        else if (branch) base = branch;
+      }
+      if (!base) base = 'tracking unknown';
       return [base, managed].filter(Boolean).join(' · ');
     }
 
@@ -24322,36 +24409,40 @@ function burnAreaChart() {
         '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
     }
 
+    function versionButtonHTML(label, title, targetHash, enabled) {
+      const disabled = enabled ? '' : ' disabled aria-disabled="true"';
+      const action = enabled ? ' data-action="gh27" data-arg0="' + escapeHtml(targetHash || '') + '" data-mouseover-action="gh28" data-mouseout-action="gh29"' : '';
+      const available = enabled ? ' oc-version-upgrade-available' : '';
+      return '<button id="spoke-upgrade-btn" class="hv-btn btn-primary btn-sm' + available + '" type="button"' + action + disabled + ' title="' + escapeHtml(title || label) + '">' + escapeHtml(label) + '</button>';
+    }
+
     function renderVersionUpgradeAction(v, ctx) {
       ctx = ctx || {};
-      const targetHash = ctx.offeredUpgradeHash || '';
-      const targetShort = ctx.offeredUpgradeShort || (typeof versionShortSHA === 'function' ? versionShortSHA(targetHash) : String(targetHash || '').slice(0, 7));
+      const targetHash = String(ctx.offeredUpgradeHash || '').trim();
+      const targetShort = ctx.offeredUpgradeShort || versionShortSHA(targetHash) || 'target';
       const au = v && v.autoUpdate || {};
       const target = v && v.target || {};
-      const managedBy = target.managedBy || au.managedBy || '';
       const dep = v && v.deployment || {};
       const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
-      const progress = ctx.upgradeProgress || (typeof versionReadUpgradeProgress === 'function' ? versionReadUpgradeProgress() : null);
-      if (progress) {
-        const disabled = progress.completedAt ? '' : '<button id="spoke-upgrade-btn" class="hv-btn btn-primary btn-sm" disabled aria-disabled="true">Upgrading…</button>';
-        return disabled + versionBeeProgressHTML(progress, v || {});
+      const progress = ctx.upgradeProgress || null;
+      if (progress && !progress.completedAt) {
+        return versionButtonHTML('Upgrading…', 'Upgrade to ' + (progress.targetShort || targetShort) + ' is in progress', progress.target || targetHash, false) + versionBeeProgressHTML(progress, v || {});
       }
       if (!targetHash || target.resolved === false || au.state === 'unknown') {
-        return '<div class="oc-version-muted-action" title="Waiting for the hub to resolve the target commit">Checking…</div>';
+        return versionButtonHTML('Checking…', 'Checking upgrade target — the hub has not resolved a target commit yet', '', false);
       }
       if (versionSameCommit(v && (v.hash || v.short), targetHash) || au.state === 'up_to_date') {
-        return '<div class="oc-version-muted-action text-success" title="Running the resolved target commit">Up to date ✓</div>';
+        const done = progress && progress.completedAt ? versionBeeProgressHTML(progress, v || {}) : '';
+        return versionButtonHTML('Up to date ✓', 'Running the resolved target commit ' + targetShort, targetHash, false) + done;
       }
-      if (managedBy === 'hub' || (au.enabled && managedBy !== '')) {
-        const cadence = versionCadenceLabel(v);
-        const title = 'The hub owns this hive\'s upgrade policy; use the Hub dashboard if an immediate rollout is needed.';
-        return '<div class="oc-version-muted-action" title="' + escapeHtml(title) + '">Hub will upgrade automatically' + (cadence ? ' — next window: ' + escapeHtml(cadence) : '') + '</div>';
+      if (au.state === 'paused' || target.paused) {
+        return versionButtonHTML('Upgrade paused', 'Automatic upgrades are paused by the hub', targetHash, false);
       }
       if (dep.upgradeSupported !== true) {
         const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-        return '<div class="oc-version-muted-action" title="' + escapeHtml(why) + '">Manual update required (' + escapeHtml(runtimeLabel) + ')</div>';
+        return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false);
       }
-      return '<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="' + escapeHtml(targetHash) + '" data-mouseover-action="gh28" data-mouseout-action="gh29" title="' + escapeHtml(runtimeLabel) + ': current ' + escapeHtml(v.short || '?') + ' → ' + escapeHtml(ctx.offeredUpgradeLabel || 'target') + ' ' + escapeHtml(targetShort || '?') + '">Upgrade to ' + escapeHtml(targetShort || 'target') + ' →</button>';
+      return versionButtonHTML('Upgrade to ' + targetShort, runtimeLabel + ': current ' + (v.short || '?') + ' → ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort, targetHash, true);
     }
 
     function renderVersionDetails(v, ctx) {
@@ -24370,18 +24461,19 @@ function burnAreaChart() {
       const dashHTML = function(reason) { return typeof versionDashHTML === 'function' ? versionDashHTML(reason) : '<strong title="' + escapeHtml(reason || 'unavailable') + '">—</strong>'; };
       const currentHTML = fullHash && fullHash !== 'unknown'
         ? '<strong><a href="' + escapeHtml(commitURL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(fullHash) + '">' + escapeHtml(shortHash) + '</a></strong>'
-        : dashHTML('running commit is unavailable');
-      const row = function(label, valueHTML) { return '<div class="oc-version-row"><span>' + escapeHtml(label) + '</span>' + valueHTML + '</div>'; };
+        : versionDashHTML('running commit is unavailable');
+      const row = function(label, valueHTML, title) { return '<div class="oc-version-row"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><span>' + escapeHtml(label) + '</span>' + valueHTML + '</div>'; };
+      const value = function(text, title) { return '<strong title="' + escapeHtml(title || text || '') + '">' + escapeHtml(text || '—') + '</strong>'; };
       window._versionCopyText = ['Hive ' + shortHash, 'hash ' + fullHash, 'channel ' + deliveryLabel, 'tracking ' + trackingText, 'cadence ' + (cadence || '—'), statusText].join('\n');
       window._versionHashCopyText = fullHash;
       let html = '';
       html += '<div class="avatar-menu-label">Version</div>';
-      html += row('Current', currentHTML);
-      html += row('Channel', deliveryLabel ? '<strong>' + escapeHtml(deliveryLabel) + '</strong>' : dashHTML('release channel is unavailable'));
-      html += row('Tracking', trackingText ? '<strong title="' + escapeHtml(typeof versionTrackingTooltip === 'function' ? versionTrackingTooltip(v || {}) : trackingText) + '">' + escapeHtml(trackingText) + '</strong>' : dashHTML('hub has not sent a policy yet'));
-      html += row('Status', statusText ? '<strong title="' + escapeHtml((v && v.autoUpdate && v.autoUpdate.detail) || statusText) + '">' + escapeHtml(statusText) + '</strong>' : dashHTML('status is still loading'));
-      html += row('Cadence', cadence ? '<strong title="' + escapeHtml(cadence) + '">' + escapeHtml(cadence) + '</strong>' : dashHTML('hub has not sent a policy yet'));
-      if (lastUpgrade) html += row('History', '<strong title="' + escapeHtml(lastUpgrade.title || lastUpgrade.text) + '">' + escapeHtml(lastUpgrade.text) + '</strong>');
+      html += row('Current', currentHTML, fullHash);
+      html += row('Channel', deliveryLabel ? value(deliveryLabel) : versionDashHTML('release channel is unavailable'), deliveryLabel || 'release channel is unavailable');
+      html += row('Tracking', trackingText ? value(trackingText, versionTrackingTooltip(v || {})) : versionDashHTML('hub has not sent a policy yet'), trackingText || 'hub has not sent a policy yet');
+      html += row('Status', statusText ? value(statusText, (v && v.autoUpdate && v.autoUpdate.detail) || statusText) : versionDashHTML('status is still loading'), statusText || 'status is still loading');
+      html += row('Cadence', cadence ? value(cadence) : versionDashHTML('hub has not sent a policy yet'), cadence || 'hub has not sent a policy yet');
+      if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }
@@ -24395,6 +24487,14 @@ function burnAreaChart() {
       const menu = document.getElementById('oc-version-menu');
       if (!menu) return;
       menu.innerHTML = renderVersionDetails(v, ctx);
+    }
+
+    function versionManualUpgradeActive(v, offeredTargetHash) {
+      const mu = v && v.manualUpgrade;
+      if (!mu || mu.state !== 'started' || !mu.target) return false;
+      if (versionSameCommit(v.hash || v.short, mu.target)) return false;
+      if (offeredTargetHash && !versionSameCommit(offeredTargetHash, mu.target)) return false;
+      return true;
     }
 
     function renderVersionChip(v, ctx) {
@@ -24422,6 +24522,9 @@ function burnAreaChart() {
         const trackingLabel = versionTrackingLabel(v);
         const um = v.upgradeMarker;
         const mu = v.manualUpgrade;
+        const policyTargetHashEarly = v.upgradePolicy && (v.upgradePolicy.target_sha || v.upgradePolicy.armed_target) || '';
+        const liveOfferedTargetHash = (v.target && v.target.sha) || policyTargetHashEarly || v.stableV4Hash || v.latestHash || '';
+        let manualUpgradeActive = versionManualUpgradeActive(v, liveOfferedTargetHash);
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(upgradeTargetLabel(v))}: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
           : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase()
@@ -24429,9 +24532,15 @@ function burnAreaChart() {
               ? ` <span class="text-muted" title="${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
               : ` <span class="git-behind" title="Could not compare this commit with ${escapeHtml(upgradeTargetLabel(v))} ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
             : '');
-        if (mu && mu.state === 'started') {
-          _upgradeInProgress = true;
-          _upgradeTargetHash = mu.target || _upgradeTargetHash;
+        if (mu && mu.state === 'started' && mu.target) {
+          if (!manualUpgradeActive) {
+            versionClearUpgradeProgress();
+          } else {
+            _upgradeInProgress = true;
+            _upgradeTargetHash = mu.target || _upgradeTargetHash;
+          }
+        } else if (mu && mu.state === 'started') {
+          versionClearUpgradeProgress();
         } else if (mu && mu.state === 'done') {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
@@ -24439,9 +24548,10 @@ function burnAreaChart() {
         let upgradeProgress = typeof versionReconcileUpgradeProgress === 'function' ? versionReconcileUpgradeProgress(v) : null;
         const upgradeCurrentHash = String(v.hash || '').toLowerCase();
         const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
+        const policyTargetHash = v.upgradePolicy && (v.upgradePolicy.target_sha || v.upgradePolicy.armed_target) || '';
         const hasHubTarget = !!(v.target && v.target.source === 'hub');
-        const offeredUpgradeHash = (v.target && v.target.sha) || v.stableV4Hash || (hasHubTarget ? '' : (v.latestHash || ''));
-        const offeredUpgradeShort = (v.target && v.target.short) || v.stableV4Short || (hasHubTarget ? '' : (v.latestShort || 'latest'));
+        const offeredUpgradeHash = (v.target && v.target.sha) || policyTargetHash || v.stableV4Hash || (hasHubTarget ? '' : (v.latestHash || ''));
+        const offeredUpgradeShort = (v.target && v.target.short) || versionShortSHA(policyTargetHash) || v.stableV4Short || (hasHubTarget ? '' : (v.latestShort || 'latest'));
         const offeredUpgradeLabel = upgradeTargetLabel(v) || 'target';
         const upgradeTargetLanded = upgradeTargetHash && (upgradeCurrentHash.startsWith(upgradeTargetHash) || upgradeTargetHash.startsWith(upgradeCurrentHash));
         let compactStatusHTML = '';
@@ -24460,15 +24570,15 @@ function burnAreaChart() {
         } else if (mu && mu.state === 'failed') {
           statusText = 'Upgrade failed' + (mu.target ? ' → ' + mu.target : '');
           compactStatusHTML = '<span class="git-behind text-danger" title="Upgrade failed">⚠ upgrade failed</span>';
-        } else if (_upgradeInProgress && !upgradeTargetLanded) {
+        } else if (manualUpgradeActive && _upgradeInProgress && !upgradeTargetLanded) {
           statusText = 'Upgrading' + (offeredUpgradeShort ? ' → ' + offeredUpgradeShort : '');
           compactStatusHTML = `<span class="git-behind" title="Upgrading to ${escapeHtml(offeredUpgradeShort || '?')}">⬆ upgrading</span>`;
-        } else if (_upgradeInProgress && upgradeTargetLanded) {
-          upgradeProgress = typeof versionMarkUpgradeComplete === 'function' ? versionMarkUpgradeComplete(upgradeProgress || { target: _upgradeTargetHash, targetShort: offeredUpgradeShort || _upgradeTargetHash, startedAt: (typeof versionNowMs === 'function' ? versionNowMs() : Date.now()) }) : upgradeProgress;
+        } else if (manualUpgradeActive && _upgradeInProgress && upgradeTargetLanded) {
+          upgradeProgress = versionMarkUpgradeComplete(upgradeProgress || { target: _upgradeTargetHash, targetShort: offeredUpgradeShort || _upgradeTargetHash, startedAt: versionNowMs() });
           showToast('Upgrade complete!', 'success');
           statusText = 'Up to date';
           compactStatusHTML = '<span class="text-success" title="Up to date with remote">✓</span>';
-        } else if (v.behind && !(mu && mu.state === 'started')) {
+        } else if (v.behind && !manualUpgradeActive) {
           statusText = versionStatusText(v, offeredUpgradeShort);
           if (v.commitsBehind != null && Number(v.commitsBehind) > 0) statusText = String(v.commitsBehind) + ' behind';
           compactStatusHTML = commitsBehindText || `<span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
@@ -24487,8 +24597,7 @@ function burnAreaChart() {
         }
         if (!v.behind) compactStatusHTML += commitsBehindText;
         if (!statusText) statusText = versionStatusText(v, offeredUpgradeShort);
-        const sameVersionCommit = typeof versionSameCommit === 'function' ? versionSameCommit(v.hash || v.short, offeredUpgradeHash) : String(v.hash || v.short || '').toLowerCase().startsWith(String(offeredUpgradeHash || '').toLowerCase());
-        const hasUpgrade = !!(!upgradeProgress && offeredUpgradeHash && !sameVersionCommit && !(mu && mu.state === 'started') && !(v.target && v.target.resolved === false));
+        const hasUpgrade = !!(!upgradeProgress && offeredUpgradeHash && !versionSameCommit(v.hash || v.short, offeredUpgradeHash) && !manualUpgradeActive && !(v.target && v.target.resolved === false));
         const legacyHTML = compactStatusHTML;
         if (el) el.innerHTML = '';
         if (ocEl) {
@@ -24517,6 +24626,9 @@ function burnAreaChart() {
       const chip = document.getElementById('oc-version-chip');
       if (!menu || !chip) return;
       const nextHidden = !menu.hidden ? true : false;
+      if (!nextHidden && !menu.innerHTML.trim()) {
+        renderVersionMenu(window._lastVersionData || {}, window._lastVersionContext || {});
+      }
       menu.hidden = nextHidden;
       chip.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
       if (!nextHidden) {
@@ -24689,7 +24801,8 @@ function burnAreaChart() {
     function selfUpgrade(targetHash) {
       var btn = document.getElementById('spoke-upgrade-btn');
       const targetShort = versionShortSHA(targetHash || '') || 'latest';
-      const progress = versionRecordUpgradeStart(targetHash || 'latest', targetShort);
+      const currentHash = window._lastVersionData && (window._lastVersionData.hash || window._lastVersionData.short) || '';
+      const progress = versionRecordUpgradeStart(targetHash || 'latest', targetShort, currentHash);
       if (btn) { btn.disabled = true; btn.setAttribute('aria-disabled', 'true'); btn.textContent = 'Upgrading…'; btn.style.opacity = '0.6'; }
       if (window._lastVersionData && window._lastVersionContext) {
         window._lastVersionContext.upgradeProgress = progress;
