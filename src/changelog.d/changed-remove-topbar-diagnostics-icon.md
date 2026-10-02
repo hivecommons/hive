@@ -1,0 +1,1 @@
+- dashboard: removed the System Diagnostics pulse icon from the top navbar; Diagnostics stays reachable from the sidebar.
