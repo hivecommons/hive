@@ -104,6 +104,11 @@ func TestStartDesignSpektacularAdmitsNonGitHubWorkItem(t *testing.T) {
 }
 
 func TestAdmitExternalWorkItemsFlowToRunsAndDetail(t *testing.T) {
+	// LifecycleTimeline() is a process-wide singleton (api.go); without
+	// resetting it, completed journeys left behind by other tests in this
+	// package can leak into activeRuns() and inflate the run count here
+	// (hivecommons/hive#9934).
+	resetLifecycleStore()
 	s := covApiServer(t)
 	s.contributeHub.persistTaskLedgers = false
 	s.deps.Config.Runs.Spektacular.Enabled = true
