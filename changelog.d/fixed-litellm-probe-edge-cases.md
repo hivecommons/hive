@@ -1,0 +1,1 @@
+- Test Connection no longer blames an ingress proxy when a gateway answers a keyless `GET /v1/models` with a bare 401 and an empty body, and when an edge proxy blocks model listing while no default model is configured it now explains that the inference fallback check could not be tried.

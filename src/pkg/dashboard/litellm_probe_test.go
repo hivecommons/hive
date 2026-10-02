@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -354,5 +355,79 @@ func TestLiteLLMProbeResult_GatewayKeyRejectionSkipsFallback(t *testing.T) {
 	}
 	if chatCalls != 0 {
 		t.Errorf("gateway key rejection must not trigger the inference fallback (got %d chat calls)", chatCalls)
+	}
+}
+
+// A bare 401 with an empty body and no key configured is the gateway asking
+// for credentials, not an edge refusal: keep the actionable "no key is
+// configured" message instead of sending the operator to the ingress rules.
+func TestProbeLiteLLMModels_EmptyUnauthorizedWithoutKeyBlamesMissingKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "requires an API key and none is configured") {
+		t.Errorf("error %q should blame the missing key", err)
+	}
+	var edgeErr *probeEdgeRejectedError
+	if errors.As(err, &edgeErr) {
+		t.Errorf("error %q must not be classified as an edge rejection", err)
+	}
+}
+
+// An empty 401 WITH a key configured is still ambiguous enough to be an edge
+// refusal, so that classification is unchanged.
+func TestProbeLiteLLMModels_EmptyUnauthorizedWithKeyStillBlamesProxy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := probeLiteLLMModels(srv.URL, "sk-livekeyvalue")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var edgeErr *probeEdgeRejectedError
+	if !errors.As(err, &edgeErr) {
+		t.Errorf("error %q should be classified as an edge rejection", err)
+	}
+}
+
+// When the edge blocks GET /v1/models and no default model is configured,
+// there is nothing to POST — the probe must say why it could not run the
+// inference fallback instead of only reporting the proxy refusal.
+func TestLiteLLMProbeResult_EdgeBlockedWithoutDefaultModelExplainsSkip(t *testing.T) {
+	var chatCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			chatCalls++
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Server", "nginx")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><body>403 Forbidden</body></html>")
+	}))
+	defer srv.Close()
+
+	s := &Server{}
+	lc := &config.LiteLLMConfig{Endpoint: srv.URL}
+	probe := s.liteLLMProbeResult(lc, "sk-livekeyvalue")
+	if probe == nil || probe["ok"] != false {
+		t.Fatalf("expected failed probe, got %v", probe)
+	}
+	msg, _ := probe["error"].(string)
+	for _, want := range []string{srv.URL + "/v1/models", "no default model is configured"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+	if chatCalls != 0 {
+		t.Errorf("no default model must not trigger an inference POST (got %d chat calls)", chatCalls)
 	}
 }

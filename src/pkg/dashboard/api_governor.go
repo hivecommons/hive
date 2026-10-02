@@ -1449,7 +1449,11 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 			// hub's own egress proxy (if any) — a reporter's laptop can reach
 			// the gateway directly while the hive's egress takes a different,
 			// disallowed path (hivecommons/hive#9945).
-			if looksLikeIntermediaryRejection(contentType, gatewayMsg) {
+			// An empty body with no key configured is the gateway's own
+			// "you sent no credentials" answer (a bare 401 with only a
+			// WWW-Authenticate header), not an edge refusal: keep the more
+			// accurate missing-key message below.
+			if looksLikeIntermediaryRejection(contentType, gatewayMsg) && !(apiKey == "" && gatewayMsg == "") {
 				return 0, &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
 					" (content-type %q, server %q, non-JSON body) — the configured key was probably never evaluated;"+
 					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
@@ -1639,18 +1643,26 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 		// path the hive actually uses with the default model before
 		// declaring the connection failed (hivecommons/hive#9945).
 		var edgeErr *probeEdgeRejectedError
-		if errors.As(err, &edgeErr) && lc.DefaultModel != "" {
-			infErr := probeLiteLLMInference(ep, probeKey, lc.DefaultModel)
-			if infErr == nil {
-				return map[string]interface{}{
-					"ok":                true,
-					"models":            0,
-					"modelsListBlocked": true,
-					"inferenceModel":    lc.DefaultModel,
-					"warning":           redactSecret(err.Error(), probeKey),
+		if errors.As(err, &edgeErr) {
+			if lc.DefaultModel == "" {
+				// Nothing sensible to POST, so say why the inference check
+				// was not attempted instead of leaving the operator with a
+				// bare "refused by a proxy" error.
+				err = fmt.Errorf("%w; no default model is configured, so the inference fallback check could not be tried"+
+					" — set a default model to let Test Connection verify the inference path the hive actually uses", err)
+			} else {
+				infErr := probeLiteLLMInference(ep, probeKey, lc.DefaultModel)
+				if infErr == nil {
+					return map[string]interface{}{
+						"ok":                true,
+						"models":            0,
+						"modelsListBlocked": true,
+						"inferenceModel":    lc.DefaultModel,
+						"warning":           redactSecret(err.Error(), probeKey),
+					}
 				}
+				err = fmt.Errorf("%w; fallback inference check with default model also failed: %v", err, infErr)
 			}
-			err = fmt.Errorf("%w; fallback inference check with default model also failed: %v", err, infErr)
 		}
 		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
 	}
