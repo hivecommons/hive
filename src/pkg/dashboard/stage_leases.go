@@ -416,6 +416,9 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 	if ref.Repo == "" || (ref.Number <= 0 && ref.ExternalID == "") {
 		return errors.New("repo and issue number or external id are required")
 	}
+	if err := validateSpekHubRepoPath(ref.Repo); err != nil {
+		return err
+	}
 	ctx = ctx.Normalized()
 	if ctx.Repo == "" {
 		ctx.Repo = ref.Repo

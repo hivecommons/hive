@@ -32,8 +32,16 @@ The executor holds an exclusive file lock through preparation, execution, and
 capture; the agent inherits the lock descriptor. If the hub dies while the
 agent survives, a new hub skips launching or sweeping that worktree until the
 old process releases the lock. Do not delete these lock files to force a
-restart: terminate the surviving agent first. Hub execution fails closed on
-Windows, where inheritable worktree fencing is not implemented.
+restart: terminate the surviving agent first. Once a run has no active lease
+and its worktrees are swept, the sweep removes the lock (while holding it) and
+the empty run directory, so finished runs do not accumulate on the workspace;
+a fence whose lock file was unlinked or replaced after it was opened is
+retried on the current file. Hub execution fails closed on Windows, where
+inheritable worktree fencing is not implemented.
+
+Admission and the executor reject a run `repo` that is absolute or contains
+empty, `.` or `..` segments, so the shared clone path cannot leave the
+executor workspace.
 
 CLI output streams to the scrubbed stage log; only the last 64 KiB stays in
 memory for diagnostics and transcript capture. Sweeps discard held-generation
@@ -473,8 +481,8 @@ id is cached for the stage and used for subsequent status/export calls.
   `pkg/spektacular` keeps it that way.
 - The retry budget is owned by the hub executor, the one component that knows
   when a generation has been spent (#9143). A generation is spent when its
-  agent CLI fails (including a failed claim, workspace preparation, or
-  post-exit status check) or exits with the document still not final — Hive
+  agent CLI fails (including a failed post-exit status check) or exits with
+  the document still not final — Hive
   logs the exit/output tail at WARN and records
   `hub_executor_cli_exited_nonfinal` or `hub_executor_failed` on the run
   timeline. Each generation is launched exactly once, so
@@ -510,6 +518,20 @@ id is cached for the stage and used for subsequent status/export calls.
   replaced, nor a launch skipped because another process still holds the
   run's `.executor.lock` ([Hub executor lifecycle](#hub-executor-lifecycle));
   Tick tries a fenced generation again once the lock is released.
+- Infrastructure failures before the agent launches — a failed claim, token
+  mint, `git clone`/`fetch`/`worktree add`, `spektacular init`, or building
+  the executor environment — do not spend a generation either (#10077). The
+  executor records `last_error` and a `workspace_unavailable` progress event
+  and retries the same generation after a backoff that doubles from 1 minute
+  up to 30 minutes, so a short GitHub or network outage no longer escalates
+  every queued run.
+- The post-exit status check runs after the agent's stage timeout with its own
+  2-minute bound, so an agent that exits with a final document right at the
+  deadline is not failed by its own check (#10110).
+- If persisting a spent generation's settlement fails (for example the lease
+  ledger is unwritable), the lease rolls back and the executor retries the
+  settlement on every tick until it persists or the lease goes away, instead
+  of holding the generation in memory until a restart (#10108).
 - The hub executor also treats a live lease already owned by its own identity as
   restartable work when no in-flight process is tracked for that lease
   key/generation and the generation is not escalated.
