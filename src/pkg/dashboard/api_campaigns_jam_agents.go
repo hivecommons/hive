@@ -87,7 +87,7 @@ func (s *Server) handleCampaignJamAgentsPost(w http.ResponseWriter, r *http.Requ
 	}
 	state, err := s.loadCampaignJam(id)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	thread := findCampaignJamThread(state, threadID)
@@ -111,7 +111,7 @@ func (s *Server) handleCampaignJamAgentsPost(w http.ResponseWriter, r *http.Requ
 		return appendCampaignJamAgentReply(state, threadID, agent, actor, out)
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_agent_invite", auditDetail("campaign", id, "model", model, "suggestion", strconv.FormatBool(out.ProposedText != "")), agent)

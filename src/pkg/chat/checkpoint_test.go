@@ -55,7 +55,7 @@ func TestRunCheckpointPromptAndSinglePendingApproveReply(t *testing.T) {
 	s.diffRuns(cur, cur)
 	var sent []string
 	drainQueue(s, &sent)
-	if len(sent) != 1 || !strings.Contains(sent[0], "needs a decision") || !strings.Contains(sent[0], "bounded phone summary") || !strings.Contains(sent[0], "Full artifact") {
+	if len(sent) != 1 || !strings.Contains(sent[0], "needs a decision") || !strings.Contains(sent[0], "bounded phone summary") || !strings.Contains(sent[0], "Full artifact") || !strings.Contains(sent[0], "`!runs approve acme/widgets#7`") || !strings.Contains(sent[0], "`!runs reject acme/widgets#7 <reason>`") {
 		t.Fatalf("checkpoint prompts = %#v", sent)
 	}
 	if len(s.pendingCheckpoints) != 1 {

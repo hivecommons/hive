@@ -207,9 +207,12 @@ unit of work keyed by its stable session/spec id:
 - The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
   filters and keeps shipped/completed work visible instead of replacing it
   with a blank New Inception screen.
-- **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
-  campaign linked with `revision_of`/`revision`, so changed requirements branch
-  from the shipped campaign instead of erasing its trail.
+- **Revise** calls `POST /api/campaigns/{id}/revise` and revises the
+  campaign in place: an Inception campaign bumps its `revision` and pushes the
+  previous state into its `history`, so changed requirements keep the trail of
+  earlier revisions. No second campaign is created and `revision_of` stays
+  empty. Revising a Spektacular run updates the archive keyed by the slugified
+  run id, or creates one at revision 1 without history.
 
 ## Configuring the brainstorm agent
 

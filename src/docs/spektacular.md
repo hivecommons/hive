@@ -32,12 +32,54 @@ The executor holds an exclusive file lock through preparation, execution, and
 capture; the agent inherits the lock descriptor. If the hub dies while the
 agent survives, a new hub skips launching or sweeping that worktree until the
 old process releases the lock. Do not delete these lock files to force a
-restart: terminate the surviving agent first. Hub execution fails closed on
-Windows, where inheritable worktree fencing is not implemented.
+restart: terminate the surviving agent first. Once a run has no active lease
+and its worktrees are swept, the sweep removes the lock (while holding it) and
+the empty run directory, so finished runs do not accumulate on the workspace;
+a fence whose lock file was unlinked or replaced after it was opened is
+retried on the current file. Hub execution fails closed on Windows, where
+inheritable worktree fencing is not implemented.
+
+Admission and the executor reject a run `repo` that is absolute or contains
+empty, `.` or `..` segments, so the shared clone path cannot leave the
+executor workspace.
 
 CLI output streams to the scrubbed stage log; only the last 64 KiB stays in
-memory for diagnostics and transcript capture. Sweeps discard held-generation
+memory for diagnostics and transcript capture. The on-disk log is capped at
+32 MiB per generation (output past the cap is dropped and a marker line is
+appended), and `GET /api/runs/{key}/log` reads at most the last 4 MiB of it
+before taking the requested tail. Artifact slugs derived from run keys are
+capped at Spektacular's 64-character name limit, keeping the trailing
+run number. Sweeps discard held-generation
 and activity entries for obsolete generations once their workers have exited.
+
+The agent CLI receives an allowlisted environment: `PATH`, locale/terminal
+variables, `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`, and the proxy CA paths
+`NODE_EXTRA_CA_CERTS`/`GIT_SSL_CAINFO` (not `SSL_CERT_FILE`), plus the
+backend's credentials. On Linux, when the hive process holds inheritable or
+ambient capabilities (the image entrypoint grants `NET_ADMIN`), the CLI is
+launched through `setpriv --inh-caps=-all --ambient-caps=-all --no-new-privs`;
+if `setpriv` is missing or the capability sets cannot be read, the stage is
+not launched. The executor writes its prompt and stage log as fresh files
+(never through a symlink in the reused worktree), and transcript capture only
+reads regular `.spektacular` files that resolve inside the worktree, scrubbing
+their contents like CLI output. Clone credential files
+(`.hive-git-credentials-*` beside the shared clones) older than one hour are
+removed on each sweep, covering a hub that died during clone or fetch.
+
+With per-agent UID isolation active (the entrypoint wrote a UID map), the CLI
+does not run as the hive uid. The entrypoint allocates a UID for the executor
+identity (`hive-<identity>`, e.g. `hive-hive-spek`) when
+`runs.spektacular.enabled` is set, and the executor launches the CLI through
+`su-exec` as that user with the executor `HOME` and `umask 002`. That user
+cannot read the GitHub App key or clone credential files, its `:443` traffic
+goes through the proxy redirect and is attributed to the executor identity,
+and cancellation kills its process group through `su-exec`. Before launch the
+executor grants group write on the worktree and `HOME` (never through a
+symlink), leaves the worktree's `.git` entry alone and sets the sticky bit on
+the worktree root so the CLI cannot swap the gitdir pointer; after exit it
+restores group write on whatever the CLI created. If the map has no UID for
+the identity (Spektacular enabled after boot; restart hive) or `su-exec` is
+missing, the stage is not launched.
 
 ## Polling and timeouts
 
@@ -54,8 +96,9 @@ error. A poll stops visiting further stages once its context is canceled.
 ## Work sources
 
 Spek runs can start from any configured Hive work source. GitHub Issues and
-GitHub Projects keep the existing `owner/repo#number` behaviour and prompts tell
-agents to read the issue with `gh issue view`. Linear and Jira items use their
+GitHub Projects keep the existing `owner/repo#number` behaviour; hub prompts
+carry the issue description Hive captured and point agents at the GitHub REST
+API rather than `gh`, which the hub executor's environment cannot authenticate. Linear and Jira items use their
 source-native IDs (`owner/repo!ENG-123`, `owner/repo!PROJ-42`); Hive captures
 the title, description, URL, source kind, external ID, and target repository at
 admission and includes that context directly in spec/plan prompts, run detail,
@@ -197,7 +240,8 @@ The dashboard exposes `spektacularHubExecutor`,
 `spektacularHubExecutorBackend`, `spektacularHubExecutorModel`, and
 `spektacularHubExecutorTimeoutS`, and
 `spektacularHubExecutorMaxConcurrent` through
-`GET/PUT /api/config/governor/features`.
+`PUT /api/config/governor/features`; read them from the `features` key of
+`GET /api/config/governor` (there is no `GET` route on the `/features` path).
 
 On hosted hives the same no-file path is used to start work. Operators can:
 
@@ -225,9 +269,11 @@ server through the `LeaseRegistry` interface.
 On v6, design mode is admitted through the same run machinery as `!runs spec`.
 `hive-design`, the dashboard 📐 button, and `!runs design <owner/repo#n>` create
 or find the work item's Spektacular `spec` lease and link it to the Hive epic
-bead. GitHub issues use `owner/repo#N`; Jira and Linear items use the
-source-neutral `<repo>!<external-id>` key so non-GitHub work sources enter the
-same campaign path. The Spec checkpoint is the design-approval gate: when
+bead. GitHub issues use `owner/repo#N`. The dashboard 📐 button and
+`!runs design` (which posts to `/api/runs/spec`) accept only that
+`owner/repo#N` target and reject anything else. Jira and Linear items use the
+source-neutral `<repo>!<external-id>` key, but only the label loop carries that
+external id through, so non-GitHub design runs start from the label loop alone. The Spec checkpoint is the design-approval gate: when
 `runs.checkpoints.spec` is enabled (the fail-closed default, including an absent
 key), a final Spec parks the lease at `stage=spec`, surfaces
 `waiting_on=human` / `waiting_reason=checkpoint_enabled` in `/api/runs`, and
@@ -309,8 +355,10 @@ parks the lease for operator action rather than polling in an unrelated cwd.
 
 The first `spec` lease that admission creates (`run/spec` label, triage,
 `POST /api/runs/spec`, `!runs spec`) is owned by `hive-triage` and has no
-checkout yet by construction. If a run-stage-capable contributor relay claims it
-first, the relay path is unchanged and takes precedence. Otherwise, when
+checkout yet by construction. While the hub executor is enabled (the default
+whenever Spektacular is enabled and `hub_executor.enabled` is unset), spec and
+plan stages are deliberately hidden from relay worksource offers
+(`PendingRunStages`), so a relay cannot claim them first. When
 `runs.spektacular.hub_executor.enabled` is true, the hub claims the unclaimed
 admission lease as `hive-spek`, clones the repository under
 `/data/agents/hive-spek/<owner>/<repo>`, creates one detached worktree per run
@@ -417,7 +465,8 @@ Spektacular v0.22 may persist artifacts with timestamped ids such as
 the newest artifact whose id equals the slug or ends in `-<slug>`; that resolved
 id is cached for the stage and used for subsequent status/export calls.
 
-- `document_status: draft` leaves the lease alone.
+- `document_status: draft` leaves the lease alone. An empty `document_status`
+  (an artifact without that frontmatter key) counts as `draft`.
 - `document_status: final` writes a stage receipt
   (`/data/runs/receipts/<runKey>/<stage>-gen<gen>.json`, the
   `stage-receipt/v1` shape from `pkg/outputschema`), records a `stage_receipt`
@@ -429,7 +478,14 @@ id is cached for the stage and used for subsequent status/export calls.
   after the spek changed. Hive refuses the plan-to-implement advance, parks the
   run with `waiting_on=human` and `waiting_reason=stale_plan`, and records a
   `blocked` timeline event. The lease is not retried; recovery is a fresh
-  plan/re-approval.
+  plan/re-approval. Spektacular 0.22 never emits `stale`; 0.23+ does.
+- `document_status: superseded` refuses with reason `replaced_document` and
+  `document_status: archived` refuses with reason `archived_document`; both
+  park the lease for an explicit reset.
+- A `final` plan whose task list cannot be exported or imported (for example
+  an unparseable export or no bead store for the import) refuses with reason
+  `plan_import_failed` and parks the lease instead of re-exporting every poll;
+  it is polled again once its generation changes.
 - The status payload's `artifact_id`, when present, is the durable
   Spek artifact join key Hive stores in receipts and stage attributes.
   The bare `name` remains the CLI address and backward-compatible display
@@ -447,8 +503,8 @@ id is cached for the stage and used for subsequent status/export calls.
   `pkg/spektacular` keeps it that way.
 - The retry budget is owned by the hub executor, the one component that knows
   when a generation has been spent (#9143). A generation is spent when its
-  agent CLI fails (including a failed claim, workspace preparation, or
-  post-exit status check) or exits with the document still not final — Hive
+  agent CLI fails (including a failed post-exit status check) or exits with
+  the document still not final — Hive
   logs the exit/output tail at WARN and records
   `hub_executor_cli_exited_nonfinal` or `hub_executor_failed` on the run
   timeline. Each generation is launched exactly once, so
@@ -484,6 +540,20 @@ id is cached for the stage and used for subsequent status/export calls.
   replaced, nor a launch skipped because another process still holds the
   run's `.executor.lock` ([Hub executor lifecycle](#hub-executor-lifecycle));
   Tick tries a fenced generation again once the lock is released.
+- Infrastructure failures before the agent launches — a failed claim, token
+  mint, `git clone`/`fetch`/`worktree add`, `spektacular init`, or building
+  the executor environment — do not spend a generation either (#10077). The
+  executor records `last_error` and a `workspace_unavailable` progress event
+  and retries the same generation after a backoff that doubles from 1 minute
+  up to 30 minutes, so a short GitHub or network outage no longer escalates
+  every queued run.
+- The post-exit status check runs after the agent's stage timeout with its own
+  2-minute bound, so an agent that exits with a final document right at the
+  deadline is not failed by its own check (#10110).
+- If persisting a spent generation's settlement fails (for example the lease
+  ledger is unwritable), the lease rolls back and the executor retries the
+  settlement on every tick until it persists or the lease goes away, instead
+  of holding the generation in memory until a restart (#10108).
 - The hub executor also treats a live lease already owned by its own identity as
   restartable work when no in-flight process is tracked for that lease
   key/generation and the generation is not escalated.
@@ -609,7 +679,12 @@ artifact reach the runner through the CLI boundary (`Runner.Exec`), which is
 also the seam tests replace. The only filesystem fallback is timestamped-id
 discovery: when `status <slug>` says `artifact_not_found`, Hive may inspect
 `.spektacular/specs` or `.spektacular/plans` file names to find an id equal to
-the slug or ending in `-<slug>`, then asks the CLI for that resolved id.
+the slug or ending in `-<slug>`, then asks the CLI for that resolved id. When
+several ids share a slug, the file modification time ranks them (newest wins;
+ids reported only by `file list` carry no time and lose to a file with one);
+this is selection among name matches, never progress or staleness, which stay
+with the status document. A failing `file list` is reported by the resolver
+rather than treated as "not found" when the directory walk finds nothing.
 `TestNoDirectFileAccess` in `pkg/spektacular` keeps direct body reads out of
 the runner.
 

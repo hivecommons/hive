@@ -64,6 +64,7 @@ type RunCheckpointApproverRule struct {
 type runCheckpointDecisionRequest struct {
 	Action string `json:"action"`
 	Gen    uint64 `json:"gen"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func (s *Server) handleRunCheckpointGet(w http.ResponseWriter, r *http.Request) {
@@ -176,8 +177,23 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		s.auditFromRequest(r, "design_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
+		s.auditFromRequest(r, "design_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint", "reason", strings.TrimSpace(req.Reason)), agentName)
 	default:
+		// Retry the plan lease this checkpoint names at the reviewed
+		// generation first, as approve advances it, rather than finding it
+		// again through the epic's metadata: a held plan's reject re-mints
+		// it or refuses, never answers 200 with the run still parked
+		// (hivecommons/hive#10063).
+		if payload.Stage == StagePlan {
+			if _, err := s.retryCheckpointLease(payload.RunKey, StagePlan, payload.Gen, now); err != nil {
+				status := runResetErrorStatus(err)
+				if errors.Is(err, errRunCheckpointNotHeld) {
+					status = http.StatusConflict
+				}
+				jsonError(w, err.Error(), status)
+				return
+			}
+		}
 		if err := planning.RejectPlan(store, payload.PlanEpicID); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -186,7 +202,7 @@ func (s *Server) handleRunCheckpointDecision(w http.ResponseWriter, r *http.Requ
 			jsonError(w, err.Error(), runResetErrorStatus(err))
 			return
 		}
-		s.auditFromRequest(r, "plan_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint"), agentName)
+		s.auditFromRequest(r, "plan_reject", auditDetail("epic", payload.PlanEpicID, "run", payload.RunKey, "surface", "run_checkpoint", "reason", strings.TrimSpace(req.Reason)), agentName)
 	}
 	s.refreshAndPersist()
 	jsonResponse(w, map[string]any{"ok": true, "status": action, "run_key": payload.RunKey, "gen": req.Gen})

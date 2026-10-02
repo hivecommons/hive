@@ -22477,7 +22477,7 @@ function burnAreaChart() {
             ? `<button class="hv-btn btn-secondary btn btn-primary" data-action="planApprove" data-arg0="${escapeHtml(plan.epicId)}" title="Release the plan's tasks to the agent fleet">✓ Approve plan</button>`
             : `<button class="hv-btn btn-secondary btn" data-action="planReject" data-arg0="${escapeHtml(plan.epicId)}" title="Return the plan to draft, re-gating its tasks">↩ Return to draft</button>`);
         const designLine = plan.designStatus
-          ? `<div class="muted-note" style="margin-bottom:10px">Design: <strong>${escapeHtml(plan.designStatus)}</strong>${plan.designVia === 'spektacular' ? ' · via Spektacular' : ''}${plan.runKey ? ' · <a href="/runs?run=' + encodeURIComponent(plan.runKey) + '" data-stop="1">run ' + escapeHtml(plan.runKey) + '</a>' : ''}${plan.designRevision ? ' · revision ' + escapeHtml(String(plan.designRevision)) : ''}</div>`
+          ? `<div class="muted-note" style="margin-bottom:10px">Design: <strong>${escapeHtml(plan.designStatus)}</strong>${plan.designVia === 'spektacular' ? ' · via Spektacular' : ''}${plan.runKey ? ' · <a href="#" data-action="openRunDetail" data-arg0="' + escapeHtml(plan.runKey) + '" data-stop="1" data-prevent="1">run ' + escapeHtml(plan.runKey) + '</a>' : ''}${plan.designRevision ? ' · revision ' + escapeHtml(String(plan.designRevision)) : ''}</div>`
           : '';
         const canApproveDesign = (plan.designStatus === 'requested' || plan.designStatus === 'needs_human') && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const designGate = canApproveDesign
@@ -31951,6 +31951,7 @@ function burnAreaChart() {
             ${extensionToggleHTML(!!f.spektacularHubExecutor, 'spektacularHubExecutor', 'Hub executes unclaimed spec/plan stages (no ClankeR needed)')}
             <div class="config-field-row">
               <div class="config-field"><label for="ext-spektacular-hub-backend">Backend</label><input id="ext-spektacular-hub-backend" type="text" value="${esc(f.spektacularHubExecutorBackend || 'copilot')}" placeholder="copilot" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorBackend" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label for="ext-spektacular-hub-model">Model</label><input id="ext-spektacular-hub-model" type="text" value="${esc(f.spektacularHubExecutorModel || '')}" placeholder="backend default" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorModel" data-arg-types="s,s,w"></div>
               <div class="config-field"><label for="ext-spektacular-hub-timeout">Timeout seconds</label><input id="ext-spektacular-hub-timeout" type="number" min="1" step="1" value="${esc(String(f.spektacularHubExecutorTimeoutS || 1800))}" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularHubExecutorTimeoutS" data-arg-types="s,s,N"></div>
             </div>
             <div class="config-field-row">

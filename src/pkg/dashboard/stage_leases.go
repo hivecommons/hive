@@ -416,6 +416,9 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 	if ref.Repo == "" || (ref.Number <= 0 && ref.ExternalID == "") {
 		return errors.New("repo and issue number or external id are required")
 	}
+	if err := validateSpekHubRepoPath(ref.Repo); err != nil {
+		return err
+	}
 	ctx = ctx.Normalized()
 	if ctx.Repo == "" {
 		ctx.Repo = ref.Repo
@@ -1307,6 +1310,40 @@ func (s *Server) advanceCheckpointLease(runKey, epicID, fromStage, toStage strin
 	}
 	s.recordRunCheckpointApproval(leaseRunKey, epicID, fromStage, actor, leaseGen, now, nil)
 	return leaseRunKey, nil
+}
+
+// retryCheckpointLease is the reject counterpart of advanceCheckpointLease: it
+// finds the run's live stage lease at the reviewed generation and, when that
+// generation's receipt has parked it at the checkpoint, re-mints it so the
+// stage is drafted again. A stage still drafting (no receipt) is left alone
+// and reports false. With no matching live lease it returns
+// errRunCheckpointNotHeld, so a reject never answers success for a run whose
+// lease it could not find (hivecommons/hive#10063).
+func (s *Server) retryCheckpointLease(runKey, stage string, gen uint64, now time.Time) (bool, error) {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return false, errRunCheckpointNotHeld
+	}
+	var identity, taskID, leaseRunKey string
+	found := false
+	err := s.VisitActiveStageLeases(func(rk, key, st, id, task, repo string, g uint64, expiresAt time.Time) {
+		if found || (key != runKey && !s.sameRunKey(runKey, rk, repo)) || st != stage || now.After(expiresAt) || g != gen {
+			return
+		}
+		identity, taskID, leaseRunKey, found = id, task, rk, true
+	})
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, fmt.Errorf("%w: no live %s lease for %s at gen %d", errRunCheckpointNotHeld, stage, runKey, gen)
+	}
+	if !s.runCheckpointStageHeld(leaseRunKey, stage, gen) {
+		return false, nil
+	}
+	if _, err := s.contributeHub.retryLeaseStage(identity, taskID, gen, now); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // approveRunDesign records a crossed Spec checkpoint on the run's Spektacular

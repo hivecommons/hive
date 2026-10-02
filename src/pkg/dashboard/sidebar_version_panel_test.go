@@ -52,7 +52,7 @@ const window = {};
 		jsFunc(t, html, "renderVersionUpgradeAction") + "\n" +
 		jsFunc(t, html, "renderVersionDetails") + `
 const out = renderVersionDetails({hash:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', branch:'v5', channel:'candidate', tracking:'floating', latestHash:'07d99d8426ec7b5ae364e25abcdef0123456789', target:{sha:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', managedBy:'hub'}, autoUpdate:{state:'up_to_date', managedBy:'hub', enabled:true, detail:'ok'}, releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-02T10:00:00Z'}}}, {deliveryLabel:'candidate (v5)', offeredUpgradeHash:'07d99d8426ec7b5ae364e25abcdef0123456789', offeredUpgradeShort:'07d99d8'});
-if (!out.includes('>07d99d<')) throw new Error('short sha missing: '+out);
+if (!out.includes('>07d99d8<')) throw new Error('short sha missing: '+out);
 if (!out.includes('title="07d99d8426ec7b5ae364e25abcdef0123456789"')) throw new Error('full sha title missing: '+out);
 for (const row of ['Tracking','Status','Cadence']) if (!out.includes('>'+row+'</span>')) throw new Error('missing row '+row+': '+out);
 const fallback = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', branch:'v5', channel:'candidate', tracking:'', autoUpdate:{state:'unknown'}}, {deliveryLabel:''});
@@ -79,6 +79,7 @@ var _upgradeInProgress = false;
 		jsFunc(t, html, "versionCadenceLabel") + "\n" +
 		jsFunc(t, html, "versionSameCommit") + "\n" +
 		jsFunc(t, html, "versionShortSHA") + "\n" +
+		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
 		jsFunc(t, html, "versionBeeProgressHTML") + "\n" +
@@ -220,6 +221,7 @@ const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionClearUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionMarkUpgradeComplete") + "\n" +
+		jsFunc(t, html, "versionPolicy") + "\n" +
 		jsFunc(t, html, "versionReconcileUpgradeProgress") + `
 versionWriteUpgradeProgress({target:'bbb2222abcdef', targetShort:'bbb2222', startedAt:1000});
 let st = versionReconcileUpgradeProgress({hash:'bbb2222abcdef'}, 2000);

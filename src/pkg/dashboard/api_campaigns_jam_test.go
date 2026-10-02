@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func jamTestServer(t *testing.T) *Server {
@@ -242,7 +245,10 @@ func TestCampaignJamStoreFailuresKeepStateAndReport5xx(t *testing.T) {
 	if seed.Code != http.StatusOK {
 		t.Fatalf("seed thread = %d body=%s", seed.Code, seed.Body.String())
 	}
-	path := s.campaignJamPath()
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read jam store: %v", err)
@@ -290,7 +296,86 @@ func TestCampaignJamWriteLeavesNoTempFile(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("thread post = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(s.campaignJamPath() + ".tmp"); !os.IsNotExist(err) {
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("temp jam file still present after write: err=%v", err)
+	}
+}
+
+func TestCampaignJamRejectsUnknownCampaignIDs(t *testing.T) {
+	s := jamTestServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.Start("Prepare bootc-installer for a beta release")
+	if err != nil {
+		t.Fatalf("start inception: %v", err)
+	}
+
+	ghost := jamPostAs(t, s, "/api/campaigns/ghost-never/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "made-up campaign",
+	}, false)
+	if ghost.Code != http.StatusNotFound {
+		t.Fatalf("unknown campaign thread post = %d body=%s, want 404", ghost.Code, ghost.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err == nil && strings.Contains(string(raw), "ghost-never") {
+		t.Fatalf("unknown campaign was persisted:\n%s", raw)
+	}
+
+	known := jamPostAs(t, s, "/api/campaigns/"+state.IdeaSlug+"/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "real campaign",
+	}, false)
+	if known.Code != http.StatusOK {
+		t.Fatalf("known campaign thread post = %d body=%s", known.Code, known.Body.String())
+	}
+}
+
+func TestCampaignJamEmptyStoreIsAnErrorNotAnEmptyStore(t *testing.T) {
+	s := jamTestServer(t)
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write empty store: %v", err)
+	}
+	get := doOwnerGet(s, "/api/campaigns/spec-8/jam")
+	if get.Code != http.StatusInternalServerError {
+		t.Fatalf("empty jam store get = %d body=%s, want 500", get.Code, get.Body.String())
+	}
+	post := jamPostAs(t, s, "/api/campaigns/spec-8/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "must not overwrite the damaged store",
+	}, false)
+	if post.Code != http.StatusInternalServerError {
+		t.Fatalf("empty jam store post = %d body=%s, want 500", post.Code, post.Body.String())
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != 0 {
+		t.Fatalf("damaged store was rewritten: info=%v err=%v", info, err)
+	}
+}
+
+func TestCampaignJamRequiresConfiguredDataDir(t *testing.T) {
+	s := newMinimalServer(t)
+	t.Chdir(t.TempDir())
+	rec := jamPostAs(t, s, "/api/campaigns/spec-9/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "no data dir",
+	}, false)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("jam post without data dir = %d body=%s, want 500", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat("campaign-jam.json"); !os.IsNotExist(err) {
+		t.Fatalf("jam store written to the working directory: err=%v", err)
 	}
 }

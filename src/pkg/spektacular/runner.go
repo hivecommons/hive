@@ -35,8 +35,13 @@ const (
 	// DocumentFinal: the artifact is complete and the stage may advance.
 	DocumentFinal DocumentStatus = "final"
 	// DocumentStale: the artifact was invalidated by a later upstream change
-	// and must not advance until it is replanned or re-approved.
+	// and must not advance until it is replanned or re-approved. Spektacular
+	// 0.23+ emits it; 0.22 has no stale status.
 	DocumentStale DocumentStatus = "stale"
+	// DocumentSuperseded: a newer document replaced the artifact.
+	DocumentSuperseded DocumentStatus = "superseded"
+	// DocumentArchived: the artifact was withdrawn and will not be finished.
+	DocumentArchived DocumentStatus = "archived"
 )
 
 // Artifact kinds accepted by the status verb.
@@ -420,6 +425,22 @@ func (e *WorkDirError) Error() string {
 	return strings.Join(parts, " ")
 }
 
+// PlanImportError means a final plan could not be turned into the run's task
+// list: the plan export failed or the registry rejected the import. It is a
+// fact about the plan (or the hub's configuration), not a transient poll
+// failure, so the runner parks the stage instead of retrying every poll.
+type PlanImportError struct {
+	RunKey   string
+	Artifact string
+	Err      error
+}
+
+func (e *PlanImportError) Error() string {
+	return fmt.Sprintf("spektacular: plan %q for run %q could not be imported: %v", e.Artifact, e.RunKey, e.Err)
+}
+
+func (e *PlanImportError) Unwrap() error { return e.Err }
+
 // ContractError means the CLI produced output that does not match the #8301
 // shape (unparseable JSON, unknown document_status, wrong kind or name).
 type ContractError struct {
@@ -525,7 +546,11 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 	}
 	st.Name = name
 	switch st.DocumentStatus {
-	case DocumentDraft, DocumentFinal, DocumentStale:
+	case "":
+		// An artifact without a document_status frontmatter key is open;
+		// the CLI prints it as "".
+		st.DocumentStatus = DocumentDraft
+	case DocumentDraft, DocumentFinal, DocumentStale, DocumentSuperseded, DocumentArchived:
 	default:
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("unknown document_status %q", st.DocumentStatus)}
 	}
@@ -545,7 +570,8 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		return "", &ContractError{Kind: kind, Reason: "empty artifact name"}
 	}
 	candidates := map[string]time.Time{}
-	for id, mt := range r.artifactsFromFileList(ctx, dir, kind) {
+	listed, listErr := r.artifactsFromFileList(ctx, dir, kind)
+	for id, mt := range listed {
 		if artifactMatchesSlug(id, slug) {
 			candidates[id] = mt
 		}
@@ -558,6 +584,9 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		}
 	}
 	if len(candidates) == 0 {
+		if listErr != nil {
+			return "", fmt.Errorf("listing %s artifacts: %w", kind, listErr)
+		}
 		return "", &NotFoundError{Kind: kind, Name: slug, Message: "no matching artifact id found"}
 	}
 	type candidate struct {
@@ -585,18 +614,18 @@ func artifactMatchesSlug(id, slug string) bool {
 	return id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug)
 }
 
-func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
+func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) (map[string]time.Time, error) {
 	out, err := r.execInDir(ctx, dir, []string{kind, verbFile, "list"})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var raw any
-	if json.Unmarshal(bytes.TrimSpace(out), &raw) != nil {
-		return nil
+	if err := json.Unmarshal(bytes.TrimSpace(out), &raw); err != nil {
+		return nil, err
 	}
 	ids := map[string]time.Time{}
 	collectArtifactStrings(raw, ids)
-	return ids
+	return ids, nil
 }
 
 func collectArtifactStrings(v any, ids map[string]time.Time) {

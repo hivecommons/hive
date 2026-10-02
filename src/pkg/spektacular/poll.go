@@ -68,7 +68,8 @@ type Registry interface {
 	// plan), and advances the lease to the next stage.
 	Advance(ctx context.Context, st Stage, status ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error
 	// Refuse records that the runner will not advance st for reason (stale
-	// plan, replaced document) so an operator can see why the run is parked.
+	// plan, replaced or archived document, failed plan import) so an operator
+	// can see why the run is parked.
 	Refuse(st Stage, reason string, status *ArtifactStatus)
 }
 
@@ -85,6 +86,13 @@ const (
 	// exists after having been observed, so a new document with a new name has
 	// most likely replaced it. The lease needs an explicit reset.
 	RefuseReplacedDocument = "replaced_document"
+	// RefuseArchivedDocument: the artifact was archived, so it will never go
+	// final. The lease needs an explicit reset.
+	RefuseArchivedDocument = "archived_document"
+	// RefusePlanImportFailed: the plan is final but its task list could not be
+	// exported or imported. Retrying every poll cannot fix the plan or the
+	// hub's configuration, so the lease is parked for an explicit reset.
+	RefusePlanImportFailed = "plan_import_failed"
 	// RefuseMissingWorkDir: the registry could not resolve a repo checkout or
 	// per-stage worktree for the run, so polling would fall back to the hub cwd.
 	RefuseMissingWorkDir = "missing_workdir"
@@ -93,7 +101,8 @@ const (
 // Runner polls Spektacular for every active stage lease and drives the lease
 // registry. All time comes from the caller (Tick's now), so tests never sleep.
 //
-// The runner advances on final and refuses stale or replaced documents. It
+// The runner advances on final and refuses stale, replaced or archived
+// documents and final plans whose task list cannot be imported. It
 // never retries or escalates a stage: a non-final generation is settled by the
 // hub executor against runs.max_stage_retries (#9143).
 type Runner struct {
@@ -294,6 +303,11 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	var nf *NotFoundError
 	if errors.As(err, &nf) && state.lastStatus == "" {
 		resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+		var resolveNF *NotFoundError
+		if resolveErr != nil && !errors.As(resolveErr, &resolveNF) {
+			r.logger().Warn("[spektacular] resolving run artifact id failed",
+				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", resolveErr)
+		}
 		if resolveErr == nil && resolved != "" && resolved != artifact {
 			status, err = r.statusInDir(ctx, dir, kind, resolved)
 			if err == nil {
@@ -343,6 +357,23 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		return
 	}
 
+	switch status.DocumentStatus {
+	case DocumentSuperseded:
+		state.refused = true
+		res.Refused++
+		r.Registry.Refuse(st, RefuseReplacedDocument, &status)
+		r.logger().Warn("[spektacular] document superseded; lease needs reset",
+			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
+		return
+	case DocumentArchived:
+		state.refused = true
+		res.Refused++
+		r.Registry.Refuse(st, RefuseArchivedDocument, &status)
+		r.logger().Warn("[spektacular] document archived; lease needs reset",
+			"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact)
+		return
+	}
+
 	if !status.Final() {
 		if state.seenFinal || prev == DocumentFinal {
 			state.refused = true
@@ -364,9 +395,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	if st.Stage == StagePlan {
 		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, artifact)
 		if err != nil {
-			res.Errors++
-			r.logger().Warn("[spektacular] plan is final but task-list import failed; not advancing",
-				"run", st.RunKey, "artifact", artifact, "error", err)
+			r.refusePlanImport(st, state, status, res, &PlanImportError{RunKey: st.RunKey, Artifact: artifact, Err: err})
 			return
 		}
 		plan = &exported
@@ -382,6 +411,11 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	}
 	receipt := BuildReceipt(st, status, now)
 	if err := r.Registry.Advance(ctx, st, status, receipt, plan, now); err != nil {
+		var importErr *PlanImportError
+		if errors.As(err, &importErr) {
+			r.refusePlanImport(st, state, status, res, err)
+			return
+		}
 		res.Errors++
 		r.logger().Warn("[spektacular] advance failed", "run", st.RunKey, "stage", st.Stage, "error", err)
 		return
@@ -395,6 +429,16 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	}
 	r.logger().Info("[spektacular] stage advanced on final",
 		"run", st.RunKey, "stage", st.Stage, "next", nextStage(st.Stage), "gen", st.Gen)
+}
+
+// refusePlanImport parks a final plan whose task list cannot be imported, so
+// the run shows why it is not advancing instead of re-exporting every poll.
+func (r *Runner) refusePlanImport(st Stage, state *stageState, status ArtifactStatus, res *TickResult, err error) {
+	state.refused = true
+	res.Refused++
+	r.Registry.Refuse(st, RefusePlanImportFailed, &status)
+	r.logger().Warn("[spektacular] plan is final but task-list import failed; refusing to advance",
+		"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", err)
 }
 
 func (r *Runner) recordProgress(st Stage, attrs map[string]string, now time.Time) {

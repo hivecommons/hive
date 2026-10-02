@@ -428,6 +428,11 @@ func (s *Server) mutateCampaignJam(id string, fn func(*CampaignJamState) error) 
 	if err != nil {
 		return nil, err
 	}
+	if disk.Campaigns[strings.TrimSpace(id)] == nil {
+		if err := s.requireKnownJamCampaign(id); err != nil {
+			return nil, err
+		}
+	}
 	state := ensureCampaignJamState(disk, id)
 	if err := fn(state); err != nil {
 		return nil, err
@@ -450,9 +455,37 @@ func ensureCampaignJamState(disk campaignJamDisk, id string) *CampaignJamState {
 	return state
 }
 
+// requireKnownJamCampaign refuses to create a Jam entry for a campaign id the
+// hive does not know (#10083): every entry lives in the one shared
+// campaign-jam.json, so accepting arbitrary ids let any read-write caller grow
+// it without bound. Entries that already exist stay writable even after their
+// campaign leaves the catalog. Without an Inception engine there is no
+// authoritative campaign catalog to check against, so the guard is skipped.
+func (s *Server) requireKnownJamCampaign(id string) error {
+	if s == nil || s.deps == nil || s.deps.Inception == nil {
+		return nil
+	}
+	id = strings.TrimSpace(id)
+	campaigns, err := s.allCampaigns(nil)
+	if err != nil {
+		return fmt.Errorf("%w: campaign lookup: %v", errJamStore, err)
+	}
+	for _, campaign := range campaigns {
+		if campaign.ID == id || campaign.RunKey == id {
+			return nil
+		}
+	}
+	return errJamCampaignNotFound
+}
+
+var errJamCampaignNotFound = errors.New("campaign not found")
+
 func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 	disk := campaignJamDisk{Campaigns: map[string]*CampaignJamState{}}
-	path := s.campaignJamPath()
+	path, err := s.campaignJamPath()
+	if err != nil {
+		return disk, err
+	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return disk, nil
@@ -460,8 +493,12 @@ func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 	if err != nil {
 		return disk, fmt.Errorf("%w: %v", errJamStore, err)
 	}
+	// The store is only ever replaced via temp file + rename and always holds
+	// a JSON object, so a zero-length file is damage, not an empty store:
+	// treating it as empty made the next write silently drop every
+	// campaign's threads, polls and decisions (#10083).
 	if len(raw) == 0 {
-		return disk, nil
+		return campaignJamDisk{}, fmt.Errorf("%w: %s is empty", errJamStore, path)
 	}
 	if err := json.Unmarshal(raw, &disk); err != nil {
 		return campaignJamDisk{}, fmt.Errorf("%w: %s is not valid JSON: %v", errJamStore, path, err)
@@ -473,7 +510,10 @@ func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 }
 
 func (s *Server) writeCampaignJamDisk(disk campaignJamDisk) error {
-	path := s.campaignJamPath()
+	path, err := s.campaignJamPath()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("%w: %v", errJamStore, err)
 	}
@@ -499,6 +539,9 @@ func (s *Server) writeCampaignJamDisk(disk campaignJamDisk) error {
 // store failures (unreadable or corrupt campaign-jam.json) as 5xx, which is
 // what they are.
 func campaignJamStatus(err error) int {
+	if errors.Is(err, errJamCampaignNotFound) {
+		return http.StatusNotFound
+	}
 	if errors.Is(err, errJamStore) {
 		return http.StatusInternalServerError
 	}
@@ -507,7 +550,10 @@ func campaignJamStatus(err error) int {
 
 var errJamStore = errors.New("jam store unavailable")
 
-func (s *Server) campaignJamPath() string {
+// campaignJamPath refuses to fall back to the process working directory when
+// no data directory is configured (#10083): that silently scattered every
+// campaign's Jam state into whatever directory the hive was started from.
+func (s *Server) campaignJamPath() (string, error) {
 	base := ""
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		base = strings.TrimSpace(s.deps.Config.Data.MetricsDir)
@@ -519,9 +565,9 @@ func (s *Server) campaignJamPath() string {
 		}
 	}
 	if base == "" {
-		base = "."
+		return "", fmt.Errorf("%w: no data directory configured (data.metrics_dir, data.logs_dir or data.agents_dir)", errJamStore)
 	}
-	return filepath.Join(base, "campaign-jam.json")
+	return filepath.Join(base, "campaign-jam.json"), nil
 }
 
 func recordJamRevision(state *CampaignJamState, content, reason string, actor CampaignJamActor, decisions []CampaignDecision) CampaignRevision {

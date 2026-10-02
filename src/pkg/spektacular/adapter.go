@@ -73,8 +73,12 @@ func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
 
 func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	out := []Stage{}
+	var workDirErr error
 	err := a.reg.VisitActiveStageLeases(func(runKey, key, stage, identity, taskID, repo string, gen uint64, _ time.Time) {
-		workDir, _ := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
+		workDir, wdErr := a.reg.ResolveRunStageWorkDir(runKey, stage, identity, repo, gen)
+		if wdErr != nil && workDirErr == nil {
+			workDirErr = fmt.Errorf("resolving workdir for run %s stage %s: %w", runKey, stage, wdErr)
+		}
 		artifact := ArtifactKey(runKey)
 		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
 			artifact = RunArtifactName(runKey)
@@ -93,6 +97,9 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 	if err != nil {
 		return nil, err
 	}
+	if workDirErr != nil {
+		return nil, workDirErr
+	}
 	// The registry iterates a map; give the runner a stable order so ticks
 	// are reproducible.
 	sort.Slice(out, func(i, j int) bool {
@@ -110,7 +117,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error {
 	if plan != nil {
 		if err := a.reg.ImportRunPlan(st.RunKey, st.Repo, RenderTaskList(*plan)); err != nil {
-			return err
+			return &PlanImportError{RunKey: st.RunKey, Artifact: status.JoinKey(), Err: err}
 		}
 	}
 	data, err := json.MarshalIndent(receipt, "", "  ")

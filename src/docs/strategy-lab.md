@@ -45,8 +45,10 @@ configuration after a restart if you rely on non-default values.
    that has a governor state writes a baseline snapshot
    (`/data/nous/snapshots/<epoch-ms>.json`) with queue depth, MTTR, SLA
    violations, agents kicked, and token totals. The `NousBaselineTarget`
-   constant (672 snapshots) is treated as "enough baseline" by the dashboard
-   progress bar and the `baseline_pct` status field.
+   constant (672 snapshots) is treated as "enough baseline". The `baseline_pct` status
+   field is `snapshotCount / NousBaselineTarget` capped at 100; the dashboard
+   progress bar computes its own clamped value from `snapshotCount` and
+   `snapshotTarget` rather than reading `baseline_pct`.
 2. **Observing** — once at least one snapshot exists, phase auto-advances to
    `observing` (`refreshStatus()` in `pkg/dashboard/deps.go`).
 3. **Framing → Design → Design Review → Executing → Analysis → Findings

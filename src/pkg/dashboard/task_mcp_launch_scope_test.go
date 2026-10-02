@@ -86,7 +86,7 @@ func TestContributeMCPLaunchTokenScopesAndRefusesCrossTask(t *testing.T) {
 		t.Fatalf("launch token embeds the dashboard secret: %q", token)
 	}
 
-	// Own task via the URL query, the way a CLI --mcp-server URL carries it.
+	// Own task via the URL query, the way the --mcp-config server URL carries it.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, taskmcp.EndpointPath+"?"+taskmcp.TokenQueryParam+"="+token, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_context","arguments":{}}}`))
 	s.handleContributeMCP(rec, req)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,9 @@ type fakeLeaseRegistry struct {
 	expiresAt  time.Time
 	present    bool
 	visitErr   error
+	workDirErr error
 	advanceErr error
+	importErr  error
 	advances   []map[string]string
 	receipts   [][]byte
 	refusals   []map[string]string
@@ -46,6 +49,9 @@ func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage
 }
 
 func (f *fakeLeaseRegistry) ResolveRunStageWorkDir(_, _, _, _ string, _ uint64) (string, error) {
+	if f.workDirErr != nil {
+		return "", f.workDirErr
+	}
 	if f.workDir != "" {
 		return f.workDir, nil
 	}
@@ -76,6 +82,9 @@ func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[st
 }
 
 func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
+	if f.importErr != nil {
+		return f.importErr
+	}
 	f.plans = append(f.plans, taskList)
 	return nil
 }
@@ -139,6 +148,24 @@ func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 	}
 }
 
+func TestLeaseAdapter_FailedPlanImportRefusesWithReason(t *testing.T) {
+	reg := &fakeLeaseRegistry{stage: StagePlan, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, importErr: errors.New("no bead store configured for plan import")}
+	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
+	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
+		t.Fatalf("tick = %+v", res)
+	}
+	if len(reg.advances) != 0 || reg.stage != StagePlan {
+		t.Fatalf("advanced despite failed import: advances=%d stage=%q", len(reg.advances), reg.stage)
+	}
+	if len(reg.refusals) != 1 || reg.refusals[0][AttrReason] != RefusePlanImportFailed || reg.refusals[0][AttrDocumentStatus] != string(DocumentFinal) {
+		t.Fatalf("refusals = %+v", reg.refusals)
+	}
+	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 {
+		t.Fatalf("parked tick = %+v", res)
+	}
+}
+
 func TestHubRunner_BuildsFromConfigAndTicks(t *testing.T) {
 	reg := &fakeLeaseRegistry{}
 	cfg := config.RunsConfig{MaxStageRetries: 3, Spektacular: config.SpektacularConfig{Binary: "false", PollIntervalS: 7}}
@@ -199,5 +226,24 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 	// And again a same-instant tick is inert.
 	if res := r.Tick(context.Background(), now); res != (TickResult{}) {
 		t.Fatalf("second same-instant tick = %+v", res)
+	}
+}
+
+func TestLeaseAdapter_ActiveStagesSurfacesWorkDirError(t *testing.T) {
+	boom := errors.New("workdir unavailable")
+	reg := &fakeLeaseRegistry{runKey: testRunKey, stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, workDirErr: boom}
+	if _, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+}
+
+func TestLeaseAdapter_ActiveStagesCapsLongRunArtifactName(t *testing.T) {
+	reg := &fakeLeaseRegistry{runKey: "some-organization/" + strings.Repeat("very-long-repository-name-", 4) + "x#123", stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
+	stages, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stages[0].Artifact; len(got) != 64 || !strings.HasSuffix(got, "-x-123") {
+		t.Fatalf("artifact = %q (len %d), want 64 chars ending in -x-123", got, len(got))
 	}
 }
