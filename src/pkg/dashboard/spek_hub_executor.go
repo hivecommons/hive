@@ -42,6 +42,15 @@ const (
 	// spekHubCloneCredentialMaxAge matches the lifetime of the installation
 	// token a credential file holds; an older file is never in use.
 	spekHubCloneCredentialMaxAge = time.Hour
+	// spekHubPostExitTimeout bounds the post-exit status check and capture,
+	// which run after the stage deadline so an agent that exits just before
+	// it does not lose its final check (#10110).
+	spekHubPostExitTimeout = 2 * time.Minute
+	// Infrastructure failures before the agent launches (claim, clone, fetch,
+	// init) back off from the base to the cap instead of spending a stage
+	// generation (#10077).
+	spekHubInfraBackoffBase = time.Minute
+	spekHubInfraBackoffMax  = 30 * time.Minute
 )
 
 type SpekHubCloneAuth func(ctx context.Context, repo, dir string) (authArgs []string, token string, cleanup func(), err error)
@@ -74,10 +83,34 @@ type SpekHubExecutor struct {
 	// held marks generations (executionKey) Tick must not launch again: the
 	// document is already final, or the generation was spent and settled
 	// against the stage budget. The key changes with every new generation.
-	held      map[string]bool
+	held map[string]bool
+	// backoff delays relaunching a generation whose workspace could not be
+	// prepared; the generation is not spent.
+	backoff map[string]spekHubBackoff
+	// unsettled holds spent generations whose settlement failed to persist;
+	// Tick retries them so the run is neither stuck nor double-launched.
+	unsettled map[string]spekHubUnsettled
 	activity  map[string]runActivitySignal
 	lastError string
 }
+
+type spekHubBackoff struct {
+	until    time.Time
+	failures int
+}
+
+type spekHubUnsettled struct {
+	stage  spekHubStage
+	reason string
+}
+
+// spekHubInfraError marks a failure before the agent launched (claim,
+// workspace preparation, executor env). It says nothing about the stage, so
+// it is retried with backoff instead of spending a generation.
+type spekHubInfraError struct{ err error }
+
+func (e *spekHubInfraError) Error() string { return e.err.Error() }
+func (e *spekHubInfraError) Unwrap() error { return e.err }
 
 type spekHubExecution struct {
 	started time.Time
@@ -153,6 +186,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 	if err := e.sweepStaleWorktrees(ctx); err != nil {
 		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
 	}
+	e.retryUnsettled()
 	stages, err := e.unclaimedStages()
 	if err != nil {
 		e.setLastError(err.Error())
@@ -175,7 +209,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		if e.held == nil {
 			e.held = map[string]bool{}
 		}
-		if _, running := e.inFlight[key]; e.stopped || running || e.held[key] || e.runningLocked() >= e.maxConcurrent() {
+		if _, running := e.inFlight[key]; e.stopped || running || e.held[key] || now.Before(e.backoff[key].until) || e.runningLocked() >= e.maxConcurrent() {
 			e.mu.Unlock()
 			continue
 		}
@@ -265,6 +299,16 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 			delete(e.held, key)
 		}
 	}
+	for key := range e.backoff {
+		if !active[key] {
+			delete(e.backoff, key)
+		}
+	}
+	for key := range e.unsettled {
+		if !active[key] {
+			delete(e.unsettled, key)
+		}
+	}
 	for key := range e.activity {
 		if !active[key] {
 			delete(e.activity, key)
@@ -286,28 +330,51 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 		if !runDir.IsDir() {
 			continue
 		}
-		// The stable lock lives outside the removable worktree. Never unlink it:
-		// another hub or an orphaned CLI may still hold that inode.
-		fence, err := acquireSpekHubFence(filepath.Join(root, runDir.Name(), ".executor.lock"))
+		runPath := filepath.Join(root, runDir.Name())
+		lockPath := filepath.Join(runPath, ".executor.lock")
+		// The stable lock lives outside the removable worktree. Another hub or
+		// an orphaned CLI may still hold it, so it is only unlinked below while
+		// this sweep holds it; acquireSpekHubFence rejects a lock whose path
+		// was unlinked or replaced after it was opened.
+		fence, err := acquireSpekHubFence(lockPath)
 		if err != nil {
 			continue
 		}
-		stageDirs, err := os.ReadDir(filepath.Join(root, runDir.Name()))
+		stageDirs, err := os.ReadDir(runPath)
 		if err != nil {
 			fence.Close()
 			continue
+		}
+		runLive := false
+		for path := range live {
+			if strings.HasPrefix(path, runPath+string(filepath.Separator)) {
+				runLive = true
+				break
+			}
 		}
 		for _, stageDir := range stageDirs {
 			if !stageDir.IsDir() {
 				continue
 			}
-			path := filepath.Join(root, runDir.Name(), stageDir.Name())
+			path := filepath.Join(runPath, stageDir.Name())
 			if live[path] {
 				continue
 			}
 			if err := e.removeWorktree(ctx, repos, path); err != nil {
 				e.log().Warn("[spektacular] removing stale worktree failed", "path", path, "error", err)
 			}
+		}
+		if !runLive && spekHubRunDirOnlyLock(runPath) {
+			// A finished run leaves only its lock behind; drop it and the run
+			// directory so they do not accumulate on the workspace (#10111).
+			if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Warn("[spektacular] removing finished run lock failed", "path", lockPath, "error", err)
+			}
+			fence.Close()
+			if err := os.Remove(runPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Debug("[spektacular] removing finished run directory skipped", "path", runPath, "error", err)
+			}
+			continue
 		}
 		fence.Close()
 	}
@@ -344,6 +411,21 @@ func (e *SpekHubExecutor) sweepStaleCloneCredentials(now time.Time) {
 			}
 		}
 	}
+}
+
+// spekHubRunDirOnlyLock reports whether a run directory holds nothing but its
+// `.executor.lock`.
+func spekHubRunDirOnlyLock(runPath string) bool {
+	entries, err := os.ReadDir(runPath)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".executor.lock" {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *SpekHubExecutor) sharedRepoDirs() []string {
@@ -430,24 +512,35 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 		}
 		e.mu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
-	defer cancel()
 	// The snapshot in Tick may predate a stage advance made by a run that
 	// finished in the meantime; never relaunch a stage the lease has left.
 	if !e.stageStillActive(st) {
 		e.log().Info("[spektacular] hub executor skipping stale stage snapshot", "run", st.runKey, "stage", st.stage, "gen", st.gen)
 		return
 	}
+	err := e.executeStage(parent, st)
+	var infra *spekHubInfraError
+	switch {
 	// A canceled parent is hub shutdown, not a failed generation: spending
 	// the stage budget on it would burn a retry on every restart.
 	// A fence held by another process is not a failed generation either.
-	if err := e.executeStage(ctx, st); err != nil && parent.Err() == nil && !errors.Is(err, errSpekHubFenceBusy) {
+	case err == nil, parent.Err() != nil, errors.Is(err, errSpekHubFenceBusy):
+		e.clearBackoff(key)
+	case errors.As(err, &infra):
+		e.recordInfraFailure(st, key, err)
+	default:
+		e.clearBackoff(key)
 		e.recordFailure(st, key, err)
 		e.settleGeneration(st, spekHubFailureReason)
 	}
 }
 
-func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) error {
+// executeStage runs one generation. The agent runs under the stage timeout;
+// the post-exit status check gets its own bound from parent so an agent that
+// exits right at the deadline is still judged by its document.
+func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) error {
+	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
+	defer cancel()
 	fence, err := acquireSpekHubFence(filepath.Join(filepath.Dir(spekHubRunWorktreePath(e.Identity, st.runKey)), ".executor.lock"))
 	if err != nil {
 		return err
@@ -463,13 +556,17 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	if st.identity != e.Identity {
 		e.log().Info("[spektacular] hub executor claiming stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID)
 		if err := e.Server.contributeHub.recordLeaseForKeyStage(e.Identity, taskID, st.repo, st.number, st.key, spekHubExecutorTier, st.stage, st.gen, now); err != nil {
-			return err
+			return &spekHubInfraError{err: err}
 		}
 	}
 	stopRenew := e.startRenewing(ctx, taskID)
 	defer stopRenew()
-	if err := e.prepareWorkspace(ctx, st); err != nil {
+	if err := validateSpekHubRepoPath(st.repo); err != nil {
+		// Never succeeds on a retry, so it spends the generation.
 		return err
+	}
+	if err := e.prepareWorkspace(ctx, st); err != nil {
+		return &spekHubInfraError{err: err}
 	}
 	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
 		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
@@ -485,7 +582,7 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	artifact := e.artifact(st.runKey)
 	env, err := e.executorEnv()
 	if err != nil {
-		return err
+		return &spekHubInfraError{err: err}
 	}
 	if status, final := e.finalArtifact(ctx, worktree, env, st.stage, artifact); final {
 		// The document is already final (e.g. the plan is held for human
@@ -541,7 +638,10 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
-	if err := e.afterCLIExit(ctx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
+	postCtx, postCancel := context.WithTimeout(parent, spekHubPostExitTimeout)
+	defer postCancel()
+	postCtx = context.WithValue(postCtx, spekHubFenceContextKey{}, fence)
+	if err := e.afterCLIExit(postCtx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
 		// The CLI exited but whether it reached final is unknown; treat the
 		// generation as spent rather than relaunching it on every tick. If the
 		// document is in fact final the poll runner still advances it.
@@ -1192,6 +1292,9 @@ func (e *SpekHubExecutor) startRenewing(ctx context.Context, taskID string) func
 // credential is used only for these git calls; it is never handed to the
 // agent CLI.
 func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) error {
+	if err := validateSpekHubRepoPath(st.repo); err != nil {
+		return err
+	}
 	repoDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(st.repo))
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
 		return err
@@ -1249,6 +1352,21 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	// `upgrade_required` until `migrate` runs.
 	if out, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "migrate"); err != nil {
 		e.log().Warn("[spektacular] migrate of existing Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
+	}
+	return nil
+}
+
+// validateSpekHubRepoPath rejects a repo that cannot be joined under the
+// executor workspace as owner/name (or a nested group path): absolute paths,
+// backslashes, and empty, "." or ".." segments would escape it (#10080).
+func validateSpekHubRepoPath(repo string) error {
+	if repo == "" || strings.ContainsAny(repo, "\\\x00") || strings.HasPrefix(repo, "/") || filepath.IsAbs(repo) {
+		return fmt.Errorf("invalid run repo %q: must be a relative owner/name path", repo)
+	}
+	for _, seg := range strings.Split(repo, "/") {
+		if seg == "" || seg == "." || seg == ".." || strings.TrimSpace(seg) != seg {
+			return fmt.Errorf("invalid run repo %q: must be a relative owner/name path", repo)
+		}
 	}
 	return nil
 }
@@ -1408,6 +1526,52 @@ func filteredSpekEnv(env []string, keys ...string) []string {
 	return out
 }
 
+// retryUnsettled settles again every spent generation whose settlement
+// failed to persist.
+func (e *SpekHubExecutor) retryUnsettled() {
+	e.mu.Lock()
+	pending := make([]spekHubUnsettled, 0, len(e.unsettled))
+	for _, p := range e.unsettled {
+		pending = append(pending, p)
+	}
+	e.mu.Unlock()
+	for _, p := range pending {
+		e.settleGeneration(p.stage, p.reason)
+	}
+}
+
+// recordInfraFailure reports a failure before the agent launched and backs
+// the generation off without holding or spending it (#10077).
+func (e *SpekHubExecutor) recordInfraFailure(st spekHubStage, key string, err error) {
+	msg := spekHubLastErrorSummary(err.Error())
+	now := time.Now().UTC()
+	e.mu.Lock()
+	if e.backoff == nil {
+		e.backoff = map[string]spekHubBackoff{}
+	}
+	b := e.backoff[key]
+	b.failures++
+	delay := spekHubInfraBackoffMax
+	if b.failures <= 10 {
+		delay = min(spekHubInfraBackoffBase<<(b.failures-1), spekHubInfraBackoffMax)
+	}
+	b.until = now.Add(delay)
+	e.backoff[key] = b
+	e.lastError = msg
+	e.mu.Unlock()
+	e.recordStageProgress(st, "workspace_unavailable", map[string]string{
+		"attempt":     strconv.Itoa(b.failures),
+		"retry_after": b.until.Format(time.RFC3339),
+	})
+	e.log().Warn("[spektacular] hub executor could not prepare stage; retrying without spending the generation", "run", st.runKey, "stage", st.stage, "gen", st.gen, "attempt", b.failures, "retry_after", b.until, "error", msg)
+}
+
+func (e *SpekHubExecutor) clearBackoff(key string) {
+	e.mu.Lock()
+	delete(e.backoff, key)
+	e.mu.Unlock()
+}
+
 func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) {
 	msg := spekHubLastErrorSummary(err.Error())
 	e.mu.Lock()
@@ -1449,8 +1613,25 @@ func (e *SpekHubExecutor) settleGeneration(st spekHubStage, reason string) {
 		identity, taskID = st.identity, st.taskID
 		outcome, lease, attempts, err = hub.settleStageGeneration(identity, taskID, st.gen, budget, now)
 	}
+	key := e.executionKey(st)
 	if err != nil {
 		e.log().Warn("[spektacular] settling spent stage generation failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID, "error", err)
+		if !errors.Is(err, errLeaseNotFound) {
+			// The lease rolled back to this generation; Tick settles it again
+			// rather than leaving the run held in memory only (#10108).
+			e.mu.Lock()
+			if e.unsettled == nil {
+				e.unsettled = map[string]spekHubUnsettled{}
+			}
+			e.unsettled[key] = spekHubUnsettled{stage: st, reason: reason}
+			e.mu.Unlock()
+			return
+		}
+	}
+	e.mu.Lock()
+	delete(e.unsettled, key)
+	e.mu.Unlock()
+	if err != nil {
 		return
 	}
 	switch outcome {
