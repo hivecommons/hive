@@ -131,3 +131,17 @@ func TestExportPlanFallback_PublicWrapperReadsPlanMarkdown(t *testing.T) {
 		t.Fatal("empty artifact name must be rejected")
 	}
 }
+
+func TestProbe_InTreeFixtureReportsVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fake binary is POSIX-only")
+	}
+	script, err := filepath.Abs(filepath.Join("testdata", "spektacular-fake", "spektacular"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Probe(context.Background(), script)
+	if err != nil || !res.Present || res.Version != "spektacular 0.22.0" {
+		t.Fatalf("fixture probe: %v %+v", err, res)
+	}
+}
