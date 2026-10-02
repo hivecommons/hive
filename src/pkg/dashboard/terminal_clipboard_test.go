@@ -56,7 +56,8 @@ func TestTerminalProxyInjectsClipboardScript(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		terminalClipboardMarker,
-		"window.term.getSelection",
+		"var term = window.term;",
+		"term.getSelection()",
 		"navigator.clipboard.writeText(text)",
 		"document.addEventListener('copy'",
 		"e.metaKey ? !e.ctrlKey : (e.ctrlKey && e.shiftKey)",
