@@ -1170,16 +1170,44 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
-		if copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree); copyErr != nil {
+		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
+		if copyErr != nil {
 			e.log().Warn("[spektacular] copying previous Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", copyErr)
-		} else if copied {
+		}
+		if !copied || copyErr != nil {
+			if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", spekProjectName(st.repo)); err != nil {
+				return "", err
+			}
 			return appToken, nil
 		}
-		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
-			return "", err
-		}
+	}
+	// A project committed to the repo (or copied from an earlier generation)
+	// may come from another Spektacular version, which gates every verb behind
+	// `upgrade_required` until `migrate` runs.
+	if out, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "migrate"); err != nil {
+		e.log().Warn("[spektacular] migrate of existing Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
 	}
 	return appToken, nil
+}
+
+// spekProjectName turns a repo basename into a name `spektacular init`
+// accepts: lowercase letters, digits, '-' or '_', starting with a letter or
+// digit (`hive.github.io` -> `hive-github-io`, `.github` -> `github`).
+func spekProjectName(repo string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(filepath.Base(repo)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "-_")
+	if name == "" {
+		return "project"
+	}
+	return name
 }
 
 func copyPreviousSpektacularProject(identity, runKey, worktree string) (bool, error) {

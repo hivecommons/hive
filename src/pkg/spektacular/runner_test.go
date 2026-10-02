@@ -1119,6 +1119,9 @@ func TestFixture_DraftFinalThroughBinaryExec(t *testing.T) {
 	if err != nil || len(plan.Tasks) != 3 {
 		t.Fatalf("fixture export: %v %+v", err, plan)
 	}
+	if plan.Tasks[0].Repo != testRepo || plan.Tasks[0].Execution != "agent_suitable" || plan.Tasks[2].Execution != "human_required" {
+		t.Fatalf("fixture export object fields: %+v", plan.Tasks)
+	}
 }
 
 func TestFixture_MissingIsTypedNotFound(t *testing.T) {
@@ -1345,5 +1348,115 @@ func TestTick_CanceledContextSkipsPolling(t *testing.T) {
 	r.Tick(ctx, t0)
 	if ex.statusCalls() != 0 {
 		t.Fatal("canceled tick still polled a stage")
+	}
+}
+
+// Spektacular 0.23+ exports task repo and execution as objects; the pre-0.23
+// string shape keeps decoding too.
+func TestExportPlan_AcceptsObjectRepoAndExecution(t *testing.T) {
+	const export023 = `{"kind":"plan","name":"` + testRunKey + `","tasks":[` +
+		`{"ref":"T1","title":"A","repo":{"name":"hivecommons/hive","location":"/w/hive"},"execution":{"type":"agent_suitable","reason":"code"}},` +
+		`{"ref":"T2","title":"B","repo":{"name":"hive","location":"https://github.com/hivecommons/hive.git"},"execution":{"type":"human_required","reason":"sign-off"},"depends_on":["T1"]},` +
+		`{"ref":"T3","title":"C","repo":{"name":"hive","location":"/w/hive"},"execution":null},` +
+		`{"ref":"T4","title":"D","repo":"myorg/repo1","execution":"agent_suitable"}]}`
+	r := &Runner{Exec: (&scriptedExec{exportJSON: export023}).exec}
+	plan, err := r.ExportPlan(context.Background(), testRunKey)
+	if err != nil {
+		t.Fatalf("ExportPlan: %v", err)
+	}
+	want := []PlanTask{
+		{Ref: "T1", Title: "A", Repo: "hivecommons/hive", Execution: "agent_suitable"},
+		{Ref: "T2", Title: "B", Repo: "hivecommons/hive", Execution: "human_required", DependsOn: []string{"T1"}},
+		{Ref: "T3", Title: "C", Repo: "hive"},
+		{Ref: "T4", Title: "D", Repo: "myorg/repo1", Execution: "agent_suitable"},
+	}
+	if len(plan.Tasks) != len(want) {
+		t.Fatalf("tasks = %+v", plan.Tasks)
+	}
+	for i, w := range want {
+		got := plan.Tasks[i]
+		if got.Ref != w.Ref || got.Title != w.Title || got.Repo != w.Repo || got.Execution != w.Execution || strings.Join(got.DependsOn, ",") != strings.Join(w.DependsOn, ",") {
+			t.Fatalf("task %d = %+v, want %+v", i, got, w)
+		}
+	}
+	for name, body := range map[string]string{
+		"bad repo":      `{"tasks":[{"ref":"T1","title":"A","repo":7}]}`,
+		"bad execution": `{"tasks":[{"ref":"T1","title":"A","execution":[1]}]}`,
+		"bad task":      `{"tasks":[{"ref":1}]}`,
+	} {
+		r := &Runner{Exec: (&scriptedExec{exportJSON: body}).exec}
+		var ce *ContractError
+		if _, err := r.ExportPlan(context.Background(), testRunKey); !errors.As(err, &ce) {
+			t.Fatalf("%s: err = %v, want ContractError", name, err)
+		}
+	}
+}
+
+func TestPlanTaskRepo(t *testing.T) {
+	for _, tc := range []struct{ name, location, want string }{
+		{"owner/repo", "", "owner/repo"},
+		{"repo", "git@github.com:owner/repo.git", "owner/repo"},
+		{"repo", "github.com/owner/repo/", "owner/repo"},
+		{"repo", "/abs/path/repo", "repo"},
+		{"repo", "", "repo"},
+	} {
+		if got := planTaskRepo(tc.name, tc.location); got != tc.want {
+			t.Errorf("planTaskRepo(%q, %q) = %q, want %q", tc.name, tc.location, got, tc.want)
+		}
+	}
+}
+
+// unexpectedExtensionExec mimics Spektacular 0.23+ `file read`: extension-
+// bearing paths are rejected and the extension-less address is served.
+func unexpectedExtensionExec(files map[string]string, reads *[]string) ExecFunc {
+	return func(_ context.Context, _ string, args []string) ([]byte, error) {
+		if len(args) >= 2 && args[1] == verbExport {
+			return []byte(`{"error":true,"code":"plan_structure_invalid","message":"plan has no task headings"}`), errors.New("exit status 1")
+		}
+		if len(args) >= 4 && args[1] == verbFile && args[2] == verbRead {
+			*reads = append(*reads, args[3])
+			if filepath.Ext(args[3]) != "" {
+				return []byte(`{"error":true,"code":"unexpected_extension","message":"path must not carry an extension"}`), errors.New("exit status 1")
+			}
+			if out, ok := files[args[3]]; ok {
+				return []byte(out), nil
+			}
+			return []byte(`{"error":true,"code":"not_found","message":"file not found"}`), errors.New("exit status 1")
+		}
+		return nil, fmt.Errorf("unexpected args: %v", args)
+	}
+}
+
+func TestReadSpec_RetriesWithoutExtension(t *testing.T) {
+	var reads []string
+	r := &Runner{Exec: unexpectedExtensionExec(map[string]string{"feature-x": "# spec body"}, &reads)}
+	body, err := r.ReadSpec(context.Background(), "feature-x")
+	if err != nil || body != "# spec body" {
+		t.Fatalf("ReadSpec = %q, %v", body, err)
+	}
+	if strings.Join(reads, ",") != "feature-x.md,feature-x" {
+		t.Fatalf("reads = %v", reads)
+	}
+	reads = nil
+	if _, err := r.ReadSpec(context.Background(), "missing"); !isNotFound(err) {
+		t.Fatalf("missing spec err = %v, want not found", err)
+	}
+	if _, err := r.readFileInDir(context.Background(), "", KindSpec, "x", ".md"); !isUnexpectedExtension(err) {
+		t.Fatalf("extension-only path err = %v, want unexpected_extension without retry", err)
+	}
+}
+
+func TestExportPlanWithFallback_PlanStructureInvalidReadsExtensionlessPlan(t *testing.T) {
+	var reads []string
+	r := &Runner{Exec: unexpectedExtensionExec(map[string]string{"feature-y/plan": spekNativePlanMD}, &reads)}
+	plan, err := r.ExportPlanWithFallback(context.Background(), "feature-y")
+	if err != nil {
+		t.Fatalf("ExportPlanWithFallback: %v (reads %v)", err, reads)
+	}
+	if len(plan.Tasks) != 3 || plan.Tasks[0].Ref != "P1.1" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if got := strings.Join(reads, ","); got != "feature-y/tasks.json,feature-y/tasks,feature-y/plan.md,feature-y/plan" {
+		t.Fatalf("reads = %s", got)
 	}
 }
