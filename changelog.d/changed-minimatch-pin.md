@@ -1,0 +1,1 @@
+- Pinned the CI scripts' transitive minimatch dependency to the ISC-licensed 9.x line for CNCF license allowlist compatibility.
