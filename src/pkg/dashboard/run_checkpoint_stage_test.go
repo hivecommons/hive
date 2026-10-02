@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -82,7 +83,7 @@ func TestPlanCheckpointApproveIgnoresPendingDesign(t *testing.T) {
 }
 
 func TestPlanCheckpointRejectIgnoresPendingDesign(t *testing.T) {
-	_, s, store, epic := spekDesignRunAtPlanCheckpoint(t)
+	hub, s, store, epic := spekDesignRunAtPlanCheckpoint(t)
 	if err := store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested); err != nil {
 		t.Fatalf("reset design status: %v", err)
 	}
@@ -94,6 +95,9 @@ func TestPlanCheckpointRejectIgnoresPendingDesign(t *testing.T) {
 	}
 	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusRequested {
 		t.Fatalf("design status after plan reject = %q, want requested (untouched)", planning.DesignStatus(got))
+	}
+	if stage, gen := spekLeaseState(hub); stage != StagePlan || gen <= payload.Gen {
+		t.Fatalf("lease after design-run plan reject = %s gen %d, want plan past gen %d", stage, gen, payload.Gen)
 	}
 }
 
@@ -202,5 +206,58 @@ func TestPlanRejectLeavesUnheldPlanLease(t *testing.T) {
 	}
 	if stage, gen := spekLeaseState(hub); stage != StagePlan || gen != spekGen {
 		t.Fatalf("lease after reject of unheld plan = %s gen %d, want plan gen %d", stage, gen, spekGen)
+	}
+}
+
+// POST /api/plan/{epicID}/reject shares the plan checkpoint's reject contract:
+// a held plan has its generation re-minted (hivecommons/hive#10063).
+func TestPlanEndpointRejectRetriesHeldPlan(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	epic := spekDraftEpic(t, store)
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StageImplement, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held plan advance: %v", err)
+	}
+
+	rec := doOwnerPost(s, "/api/plan/"+epic.ID+"/reject", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject plan = %d body=%s", rec.Code, rec.Body.String())
+	}
+	stage, gen := spekLeaseState(hub)
+	if stage != StagePlan || gen <= spekGen {
+		t.Fatalf("lease after plan reject = %s gen %d, want plan past gen %d", stage, gen, spekGen)
+	}
+	if s.runCheckpointStageHeld(spekRunKey, StagePlan, gen) {
+		t.Fatal("retried plan generation is still held")
+	}
+}
+
+// The checkpoint reject acts on the lease at the reviewed generation only: a
+// generation the run no longer holds is refused, and a plan still drafting
+// keeps its generation.
+func TestRetryCheckpointLeasePinsReviewedGeneration(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StagePlan, now)
+	runKey := spekRepo + "!" + spekRunKey + ":" + StagePlan
+
+	if retried, err := s.retryCheckpointLease(runKey, StagePlan, spekGen, now); err != nil || retried {
+		t.Fatalf("retry of a drafting plan = %v, %v; want false, nil", retried, err)
+	}
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StageImplement, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held plan advance: %v", err)
+	}
+	if _, err := s.retryCheckpointLease(runKey, StagePlan, spekGen+1, now); !errors.Is(err, errRunCheckpointNotHeld) {
+		t.Fatalf("retry of a stale generation err = %v, want not held", err)
+	}
+	if stage, gen := spekLeaseState(hub); stage != StagePlan || gen != spekGen {
+		t.Fatalf("lease after refused retry = %s gen %d, want plan gen %d", stage, gen, spekGen)
+	}
+	if retried, err := s.retryCheckpointLease(runKey, StagePlan, spekGen, now); err != nil || !retried {
+		t.Fatalf("retry of the held plan = %v, %v; want true, nil", retried, err)
+	}
+	if stage, gen := spekLeaseState(hub); stage != StagePlan || gen <= spekGen {
+		t.Fatalf("lease after retry = %s gen %d, want plan past gen %d", stage, gen, spekGen)
 	}
 }

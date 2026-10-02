@@ -1674,7 +1674,13 @@ func spekHubStagePromptWithBinary(stage, repo string, number int, runKey, title,
 		fmt.Fprintf(&b, "You are authoring a Spektacular %s for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. %s", stageNoun, item.Repo, cliSteps)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "You are authoring a Spektacular %s for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. %s", stageNoun, issue, titleText, number, repo, cliSteps)
+	// The executor env carries no GitHub token, and the image's `gh` is a
+	// wrapper that refuses without a per-agent token cache, so the prompt
+	// carries the captured description and never sends the agent to `gh`.
+	if item.Body != "" {
+		fmt.Fprintf(&b, "Issue description:\n%s\n\n", item.Body)
+	}
+	fmt.Fprintf(&b, "You are authoring a Spektacular %s for GitHub issue %s%s in this repository checkout. Read the issue description above (if it is missing or incomplete, fetch the issue from the GitHub REST API at `https://api.github.com/repos/%s/issues/%d`; the `gh` CLI is not authenticated here) and the relevant code. %s", stageNoun, issue, titleText, item.Repo, item.Number, cliSteps)
 	return b.String()
 }
 

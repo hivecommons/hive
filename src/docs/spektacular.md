@@ -54,8 +54,9 @@ error. A poll stops visiting further stages once its context is canceled.
 ## Work sources
 
 Spek runs can start from any configured Hive work source. GitHub Issues and
-GitHub Projects keep the existing `owner/repo#number` behaviour and prompts tell
-agents to read the issue with `gh issue view`. Linear and Jira items use their
+GitHub Projects keep the existing `owner/repo#number` behaviour; hub prompts
+carry the issue description Hive captured and point agents at the GitHub REST
+API rather than `gh`, which the hub executor's environment cannot authenticate. Linear and Jira items use their
 source-native IDs (`owner/repo!ENG-123`, `owner/repo!PROJ-42`); Hive captures
 the title, description, URL, source kind, external ID, and target repository at
 admission and includes that context directly in spec/plan prompts, run detail,
@@ -415,7 +416,8 @@ Spektacular v0.22 may persist artifacts with timestamped ids such as
 the newest artifact whose id equals the slug or ends in `-<slug>`; that resolved
 id is cached for the stage and used for subsequent status/export calls.
 
-- `document_status: draft` leaves the lease alone.
+- `document_status: draft` leaves the lease alone. An empty `document_status`
+  (an artifact without that frontmatter key) counts as `draft`.
 - `document_status: final` writes a stage receipt
   (`/data/runs/receipts/<runKey>/<stage>-gen<gen>.json`, the
   `stage-receipt/v1` shape from `pkg/outputschema`), records a `stage_receipt`
@@ -427,7 +429,14 @@ id is cached for the stage and used for subsequent status/export calls.
   after the spek changed. Hive refuses the plan-to-implement advance, parks the
   run with `waiting_on=human` and `waiting_reason=stale_plan`, and records a
   `blocked` timeline event. The lease is not retried; recovery is a fresh
-  plan/re-approval.
+  plan/re-approval. Spektacular 0.22 never emits `stale`; 0.23+ does.
+- `document_status: superseded` refuses with reason `replaced_document` and
+  `document_status: archived` refuses with reason `archived_document`; both
+  park the lease for an explicit reset.
+- A `final` plan whose task list cannot be exported or imported (for example
+  an unparseable export or no bead store for the import) refuses with reason
+  `plan_import_failed` and parks the lease instead of re-exporting every poll;
+  it is polled again once its generation changes.
 - The status payload's `artifact_id`, when present, is the durable
   Spek artifact join key Hive stores in receipts and stage attributes.
   The bare `name` remains the CLI address and backward-compatible display
