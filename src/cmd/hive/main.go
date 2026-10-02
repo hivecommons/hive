@@ -4316,6 +4316,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 	hubTgt := resolveHubTarget(b.cfg.Hub, os.Getenv("HIVE_HUB_URL"), os.Getenv("HIVE_CLUSTER_ID"))
 	b.hubURL = hubTgt.url
 	b.cfg.Hub.Enabled, b.cfg.Hub.URL, b.cfg.Hub.ClusterID = hubTgt.enabled, hubTgt.url, hubTgt.clusterID
+	spoke.SetHeartbeatOmit(b.cfg.Hub.HeartbeatOmit)
 	if hubTgt.heartbeatsToHub() {
 		// Publish the collect-independent identity BEFORE the loop starts, so
 		// this spoke can report liveness even if its very first collects time
