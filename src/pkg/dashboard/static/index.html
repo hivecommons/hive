@@ -3914,6 +3914,13 @@
     </div>
     <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Repos</button>
   </div>
+  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">Issues Disabled on a Watched Repo</div>
+      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
+    </div>
+  </div>
   <div id="hub-banner" style="display:none"></div>
   <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
@@ -8340,6 +8347,44 @@
         banner.setAttribute('hidden', '');
         banner.style.display = 'none';
       }
+    }
+
+    // #9972: watched repos with has_issues=false. Agents cannot file issues
+    // there, so warn up front; each repo can be dismissed (persisted in
+    // localStorage) for operators who keep Issues off on purpose.
+    var ISSUES_DISABLED_DISMISSED_KEY = 'issues-disabled-dismissed';
+    var _lastIssuesDisabledRepos = [];
+    function issuesDisabledDismissed() {
+      try { return JSON.parse(localStorage.getItem(ISSUES_DISABLED_DISMISSED_KEY) || '[]') || []; } catch (e) { return []; }
+    }
+    function renderIssuesDisabledBanner(data) {
+      var banner = document.getElementById('issues-disabled-banner');
+      if (!banner) return;
+      _lastIssuesDisabledRepos = (data && data.issuesDisabledRepos) || [];
+      var dismissed = issuesDisabledDismissed();
+      var shown = _lastIssuesDisabledRepos.filter(function(r) { return r && r.repo && dismissed.indexOf(r.repo) === -1; });
+      var list = document.getElementById('issues-disabled-banner-list');
+      if (!shown.length || !list) {
+        banner.setAttribute('hidden', '');
+        banner.style.display = 'none';
+        if (list) list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = shown.map(function(r) {
+        return '<div style="display:flex;align-items:center;gap:var(--sp-4);margin-top:var(--sp-2)">'
+          + '<span style="flex:1"><strong>' + escapeHtml(r.repo) + '</strong>' + (r.fork ? ' (fork)' : '') + ': ' + escapeHtml(r.message || '') + '</span>'
+          + '<button type="button" class="hv-btn btn-icon btn-sm" data-action="dismissIssuesDisabledRepo" data-arg0="' + escapeHtml(r.repo) + '" title="Dismiss for this repo">✕</button>'
+          + '</div>';
+      }).join('');
+      banner.removeAttribute('hidden');
+      banner.style.cssText = 'display:flex !important';
+    }
+    function dismissIssuesDisabledRepo(repo) {
+      if (!repo) return;
+      var dismissed = issuesDisabledDismissed();
+      if (dismissed.indexOf(repo) === -1) dismissed.push(repo);
+      localStorage.setItem(ISSUES_DISABLED_DISMISSED_KEY, JSON.stringify(dismissed));
+      renderIssuesDisabledBanner({ issuesDisabledRepos: _lastIssuesDisabledRepos });
     }
 
     var _hubBannerColorMap = {
@@ -17423,6 +17468,7 @@ function burnAreaChart() {
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
+      renderIssuesDisabledBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
       maybePlanningIntro(data);

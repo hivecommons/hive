@@ -45,6 +45,26 @@ func (e *IssuesDisabledError) Error() string {
 	return fmt.Sprintf("Issues are disabled on %s (%s) — enable Issues in the repo's Settings > General > Features, or point the hive at the upstream repo", e.Repo, why)
 }
 
+// ProbeIssuesDisabled reads owner/repo's metadata and reports whether its
+// Issues feature is off. It returns a non-nil *IssuesDisabledError when
+// has_issues=false, (nil, nil) when Issues are on, and the lookup error when
+// the metadata probe itself failed — callers decide whether that fails open.
+// Shared by the advisory create path (#4329) and the dashboard's proactive
+// watched-repo check (#9972) so both name the same cause and remedy.
+func (c *Client) ProbeIssuesDisabled(ctx context.Context, owner, repo string) (*IssuesDisabledError, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	ghRepo, _, err := c.client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	if ghRepo != nil && !ghRepo.GetHasIssues() {
+		return &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}, nil
+	}
+	return nil, nil
+}
+
 // EnsureAdvisoryIssue finds or creates the pinned advisory issue for a repo.
 // Returns the issue number.
 func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, error) {
@@ -72,9 +92,9 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	// and the fleet alert would blame the App. Name the real cause instead
 	// (#4329). A failed metadata probe fails OPEN — the create attempt then
 	// produces its own, real error.
-	if ghRepo, _, repoErr := c.client.Repositories.Get(ctx, owner, repo); repoErr == nil {
-		if ghRepo != nil && !ghRepo.GetHasIssues() {
-			return 0, &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}
+	if disabled, repoErr := c.ProbeIssuesDisabled(ctx, owner, repo); repoErr == nil {
+		if disabled != nil {
+			return 0, disabled
 		}
 	} else {
 		c.logger.Warn("could not check repo has_issues before advisory issue create",

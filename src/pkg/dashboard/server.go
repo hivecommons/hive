@@ -463,13 +463,17 @@ type StatusPayload struct {
 	// countdown, so the install banner keys off this field FIRST — no recheck,
 	// classification, or raw-URL sniffing may gate it (the vllmd-13 reset left
 	// blank raw fields suppressing the banner while auth was not-installed).
-	GitHubAppInstallMissing bool               `json:"githubAppInstallMissing,omitempty"`
-	RepoTargetMisconfigured bool               `json:"repoTargetMisconfigured,omitempty"`
-	RepoTargetIssue         string             `json:"repoTargetIssue,omitempty"`
-	GitHubBaseURL           string             `json:"githubBaseURL,omitempty"`
-	InferenceBackends       []InferenceBackend `json:"inferenceBackends,omitempty"`
-	SystemAlerts            []SystemAlert      `json:"systemAlerts,omitempty"`
-	HubBanner               *HubBannerState    `json:"hubBanner,omitempty"`
+	GitHubAppInstallMissing bool   `json:"githubAppInstallMissing,omitempty"`
+	RepoTargetMisconfigured bool   `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue         string `json:"repoTargetIssue,omitempty"`
+	// IssuesDisabledRepos lists watched repos with has_issues=false, from the
+	// metrics collector's proactive probe (#9972). Drives the Issues-disabled
+	// banner; omitted when every watched repo accepts issues.
+	IssuesDisabledRepos []IssuesDisabledRepo `json:"issuesDisabledRepos,omitempty"`
+	GitHubBaseURL       string               `json:"githubBaseURL,omitempty"`
+	InferenceBackends   []InferenceBackend   `json:"inferenceBackends,omitempty"`
+	SystemAlerts        []SystemAlert        `json:"systemAlerts,omitempty"`
+	HubBanner           *HubBannerState      `json:"hubBanner,omitempty"`
 	// Platform surfaces the v4 spoke capabilities — the configured forge, the
 	// mint token service state, and the skills registry. It is additive and
 	// nil-safe: a github-only, mint-off hive with no skills dir still gets a

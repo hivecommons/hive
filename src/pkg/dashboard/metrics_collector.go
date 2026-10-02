@@ -43,6 +43,10 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+	// issuesDisabled is the latest proactive has_issues probe over every
+	// watched repo (#9972); the dashboard banner renders it.
+	issuesDisabledMu sync.RWMutex
+	issuesDisabled   []IssuesDisabledRepo
 }
 
 func NewMetricsCollector(ghClient *ghpkg.Client, org, primaryRepo, badgeURL, aiAuthor, projectName string, logger *slog.Logger) *MetricsCollector {
@@ -139,6 +143,7 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 
 	mc.collectMTTR(ctx)
 	mc.collectPRIssueCounts(ctx)
+	mc.collectIssuesDisabled(ctx)
 
 	mc.mu.Lock()
 	mc.metrics = metrics

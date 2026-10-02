@@ -143,3 +143,36 @@ func TestIssuesDisabledError_MessageNonFork(t *testing.T) {
 		t.Errorf("message must name the settings remedy, got %q", msg)
 	}
 }
+
+// #9972: the dashboard's proactive watched-repo check reuses this probe.
+func TestProbeIssuesDisabled(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/off", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"has_issues": false, "fork": true})
+	})
+	mux.HandleFunc("/repos/o/on", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"has_issues": true})
+	})
+	mux.HandleFunc("/repos/o/broken", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	c := newTestClient(t, server, "o", nil)
+	ctx := context.Background()
+
+	disabled, err := c.ProbeIssuesDisabled(ctx, "o", "off")
+	if err != nil || disabled == nil || disabled.Repo != "o/off" || !disabled.Fork {
+		t.Fatalf("off: got (%+v, %v), want fork IssuesDisabledError for o/off", disabled, err)
+	}
+	if disabled, err := c.ProbeIssuesDisabled(ctx, "o", "on"); err != nil || disabled != nil {
+		t.Fatalf("on: got (%+v, %v), want (nil, nil)", disabled, err)
+	}
+	if disabled, err := c.ProbeIssuesDisabled(ctx, "o", "broken"); err == nil || disabled != nil {
+		t.Fatalf("broken: got (%+v, %v), want a probe error", disabled, err)
+	}
+	var nilClient *Client
+	if _, err := nilClient.ProbeIssuesDisabled(ctx, "o", "on"); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client err = %v, want ErrNoGitHubClient", err)
+	}
+}

@@ -305,6 +305,7 @@ func BuildFrontendStatus(
 		AgentMetrics:        agentMetrics,
 		Hold:                buildHold(actionable),
 		IssueToMerge:        issueToMerge,
+		IssuesDisabledRepos: metricsCollector.GetIssuesDisabledRepos(),
 		ACMMLevel:           detectACMMLevel(cfg),
 		ACMMLevelConfigured: cfg.ACMMLevel != nil,
 		ACMMPackAgents:      buildACMMPackAgents(cfg),
