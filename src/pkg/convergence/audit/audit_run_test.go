@@ -755,7 +755,8 @@ func TestSplitListAndNormalizeHelpers(t *testing.T) {
 
 func TestContentHashAndStableHashAreOrderAndBoundarySensitive(t *testing.T) {
 	a := Component{Name: "n", Files: []string{"a", "b"}, Content: "c"}
-	if contentHash(a) != contentHash(a) {
+	same := Component{Name: "n", Files: []string{"a", "b"}, Content: "c"}
+	if contentHash(a) != contentHash(same) {
 		t.Fatal("contentHash is not deterministic")
 	}
 	if contentHash(a) == contentHash(Component{Name: "n", Files: []string{"b", "a"}, Content: "c"}) {
