@@ -1,0 +1,1 @@
+- New `hub.heartbeat_omit` setting withholds sensitive identifier classes (`repos`, `users`, `task_titles`, `dashboard_urls`) from the hub heartbeat and task-status push while upgrade/config delivery keeps working; the dashboard Hub tab shows what is withheld and `docs/telemetry.md` documents each tradeoff (#10260, #10261).
