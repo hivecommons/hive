@@ -153,6 +153,8 @@ capped at 256 KiB.
 | `agent_nudge_status` | Outcome of a nudge; needs `agent` |
 | `issues_by_band` | Issues grouped by band; optional `repo`, `band`, `stale` |
 | `prs_by_band` | Pull requests grouped by band; optional `repo`, `band`, `stale` |
+| `review_queue` | Issues and pull requests that need a human now, in priority order, each with a reason; optional `repo`, `offset` |
+| `governor_setup_proposal` | Proposed governor setup, each setting with a reason and the write operation and args that apply it |
 
 Meta tools:
 
