@@ -45,11 +45,16 @@ import (
 // THE AGENT CLI'S OWN SELECTION (#9941 follow-up). Every agent CLI turns mouse
 // reporting on, so tmux forwards an ordinary drag to the APPLICATION: the
 // highlight the operator sees is the CLI's selection, which xterm.js knows
-// nothing about. The CLI copies it with an OSC 52 escape; tmux used to keep
-// that in its own paste buffer (set-clipboard defaults to `external`) and the
-// CLI then toasted a tmux paste hint, so the browser clipboard never changed.
-// ttyd-tmux.sh now sets `set-clipboard on`, which forwards the escape to the
-// attached client, and the script below handles OSC 52 — ttyd 1.7.7 loads no
+// nothing about. The CLI copies it with an OSC 52 escape, and per tmux(1)
+// EITHER set-clipboard mode forwards that escape to the attached client only
+// when its terminfo entry carries an `Ms` capability. ttyd's default TERM,
+// xterm-256color, has no such entry, so the escape dead-ended with no `Ms` to
+// act on — set-clipboard's default of `external` was never the defect; a
+// missing `Ms` makes `on` just as inert. ttyd-tmux.sh now declares the
+// `clipboard` terminal-feature outright (supplying `Ms` without depending on
+// tmux's own secondary-DA auto-detection through this proxy chain) and sets
+// `set-clipboard on`, so the escape reaches the attached client, and the
+// script below handles OSC 52 — ttyd 1.7.7 loads no
 // clipboard addon — by writing the decoded text to the browser clipboard.
 
 // maxTerminalDocumentBytes bounds how much of a proxied response is buffered

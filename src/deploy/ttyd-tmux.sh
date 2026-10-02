@@ -216,12 +216,20 @@ attach_with() {
   # NEXT wheel scroll — possibly before any browser attach — also hides it.
   "${run[@]}" tmux -S "$TMUX_SOCKET" bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
   # #9941: the agent CLI owns the mouse, so a drag selects in the CLI, which
-  # copies with an OSC 52 escape. tmux's default set-clipboard (external)
-  # swallows an application's OSC 52 into tmux's own paste buffer, so the
-  # browser clipboard never changed. `on` forwards it to this attached client,
-  # where the dashboard's injected terminal script writes it to the browser
-  # clipboard (src/pkg/dashboard/terminal_clipboard.go). Server-wide and not
-  # restored, like the wheel rebind above.
+  # copies with an OSC 52 escape. tmux only ever forwards that escape — in
+  # EITHER set-clipboard mode, per tmux(1) — when the attached client's
+  # terminfo entry carries an `Ms` capability; ttyd's default TERM,
+  # xterm-256color, has no such entry, and whether tmux's own auto-detection
+  # (a secondary-DA probe matched against "XTerm") succeeds through the
+  # ttyd/xterm.js proxy is not something this script can rely on. Declaring
+  # the `clipboard` terminal-feature here supplies `Ms` unconditionally, and
+  # `on` (rather than the default `external`) also lets tmux accept the
+  # escape into its own buffer, so a later paste still works if the browser
+  # write is refused. Forwarded on to the dashboard's injected terminal
+  # script, which writes it to the browser clipboard
+  # (src/pkg/dashboard/terminal_clipboard.go). Server-wide and not restored,
+  # like the wheel rebind above.
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s set-clipboard on 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true

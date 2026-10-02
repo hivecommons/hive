@@ -1,0 +1,1 @@
+- Fixed: the browser terminal's OSC 52 clipboard forwarding (#9970) never actually reached the browser, because `set-clipboard` (in either mode) requires an `Ms` terminfo capability tmux never had for ttyd's TERM; `ttyd-tmux.sh` now declares the `clipboard` terminal-feature outright instead of depending on tmux's own auto-detection (#9941).

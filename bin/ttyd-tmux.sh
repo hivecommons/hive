@@ -92,9 +92,15 @@ tmux set-option -gt "$SESSION" status-interval "$TTYD_STATUS_INTERVAL" 2>/dev/nu
 # flag, hence || true, and simply keeps the marker). Server-wide by nature and
 # deliberately not restored on detach, so the NEXT wheel scroll also hides it.
 tmux bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
-# #9941: forward the agent CLI's OSC 52 copy to the browser instead of keeping
-# it in tmux's paste buffer (the default set-clipboard, external, does that).
-# Server-wide and not restored, like the wheel rebind above.
+# #9941: forward the agent CLI's OSC 52 copy to the browser. tmux only does
+# that — in either set-clipboard mode, per tmux(1) — when the attached
+# client's terminfo entry has an `Ms` capability; TERM here has none, and
+# relying on tmux's own auto-detection (a secondary-DA probe) through this
+# pty chain is unproven, so declare the `clipboard` feature outright. `on`
+# (not the default `external`) also lets tmux buffer the copy so a later
+# paste still works if the browser write is refused. Server-wide and not
+# restored, like the wheel rebind above.
+tmux set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
 tmux set-option -s set-clipboard on 2>/dev/null || true
 EXIT_CODE=0
 tmux attach-session -t "$SESSION" || EXIT_CODE=$?
