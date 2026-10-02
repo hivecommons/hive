@@ -13,8 +13,10 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 	}
 	s := string(html)
 	for _, want := range []string{
-		"repo-automerge-off-pill",
-		"repo-automerge-btn",
+		"repo-automerge-toggle",
+		"repo-automerge-switch",
+		"role=\"switch\"",
+		"aria-checked=",
 		"function toggleRepoAutoMerge(repo, enabled, btn)",
 		"function maybeShowLevelAutoMergeActiveModal(data)",
 		"Level 6 auto-merge is now active",
@@ -24,12 +26,13 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 		"hive:l6-automerge-info:",
 		"PRs currently labelled <code>hold</code> stay held",
 		"data-level-automerge-repo",
-		"Switch off any repository that should not participate in L6 auto-merge.",
+		"Switching to Level 6 turns auto-merge on for all active repositories.",
 		"fetch('/api/repos/auto-merge'",
 		"r.autoMerge !== false",
+		"Requires Level 6",
 		"data-action=\"toggleRepoAutoMerge\"",
 		// #9070: enabling is owner-only in the UI, mirroring the server gate.
-		"const canSetAutoMerge = autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');",
+		"const canSetAutoMerge = autoMergeLevelOK && (autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner'));",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static dashboard missing %q", want)

@@ -832,7 +832,8 @@ func TestSelfAuthorizationHoldForRepoResolution(t *testing.T) {
 func TestRepoAutoMergeEnabledResolution(t *testing.T) {
 	f := false
 	tr := true
-	cfg := &Config{Project: ProjectConfig{
+	level := SelfMergeMinACMMLevel
+	cfg := &Config{ACMMLevel: &level, Project: ProjectConfig{
 		Org: "acme",
 		RepoPolicies: []RepoPolicy{
 			{Repo: "api", AutoMerge: &f},
@@ -851,8 +852,20 @@ func TestRepoAutoMergeEnabledResolution(t *testing.T) {
 	if !cfg.RepoAutoMergeEnabled("other") {
 		t.Fatal("missing auto_merge override should default to enabled")
 	}
-	if !(*Config)(nil).RepoAutoMergeEnabled("acme/api") {
-		t.Fatal("nil config should default to enabled")
+	if (*Config)(nil).RepoAutoMergeEnabled("acme/api") {
+		t.Fatal("nil config should default to disabled")
+	}
+}
+
+func TestRepoAutoMergeEnabledFailsClosedBelowL6(t *testing.T) {
+	tr := true
+	level := SelfMergeMinACMMLevel - 1
+	cfg := &Config{ACMMLevel: &level, Project: ProjectConfig{
+		Org:          "acme",
+		RepoPolicies: []RepoPolicy{{Repo: "api", AutoMerge: &tr}},
+	}}
+	if cfg.RepoAutoMergeEnabled("api") {
+		t.Fatal("stored auto_merge=true must resolve false below L6")
 	}
 }
 

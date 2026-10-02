@@ -108,12 +108,33 @@ func TestRepoAutoMergeEndpointPersistsAndAuthorizes(t *testing.T) {
 		t.Fatal("repo auto-merge disable was not persisted")
 	}
 
+	level := config.SelfMergeMinACMMLevel
+	srv.deps.Config.ACMMLevel = &level
 	w = postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":true}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("enable auto-merge: code = %d body = %s", w.Code, w.Body.String())
 	}
 	if !srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
 		t.Fatal("repo auto-merge not re-enabled")
+	}
+}
+
+func TestRepoAutoMergeEnableRejectedBelowL6(t *testing.T) {
+	srv := newFullServer(t)
+	disabled := false
+	if _, err := srv.deps.Config.SetRepoAutoMergeForRepoAndSave("testrepo", &disabled); err != nil {
+		t.Fatal(err)
+	}
+
+	w := postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":true}`, true)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("enable below L6: code = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "auto-merge requires autonomy level 6") {
+		t.Fatalf("enable below L6 body = %s, want clear L6 message", w.Body.String())
+	}
+	if srv.deps.Config.RepoAutoMergeEnabled("testrepo") {
+		t.Fatal("repo auto-merge became effective below L6")
 	}
 }
 
@@ -160,6 +181,8 @@ func TestRepoAutoMergeEnableRequiresVerifiedOwner(t *testing.T) {
 		t.Fatalf("unverified owner enable: code = %d, want 403", w.Code)
 	}
 
+	level := config.SelfMergeMinACMMLevel
+	srv.deps.Config.ACMMLevel = &level
 	w = postRepoPause(t, srv, "/api/repos/auto-merge", `{"repo":"testrepo","enabled":true}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("verified owner enable: code = %d body = %s", w.Code, w.Body.String())

@@ -252,6 +252,10 @@ func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "repo "+body.Repo+" is not in project.repos — nothing would be updated", http.StatusBadRequest)
 		return
 	}
+	if body.Enabled && s.deps.Config.ACMMLevelOrZero() < config.SelfMergeMinACMMLevel {
+		jsonError(w, "auto-merge requires autonomy level 6", http.StatusConflict)
+		return
+	}
 	enabled := body.Enabled
 	changed, err := s.deps.Config.SetRepoAutoMergeForRepoAndSave(body.Repo, &enabled)
 	if err != nil {

@@ -163,6 +163,8 @@ func TestSetSelfAuthorizationHoldForRepoAndSave(t *testing.T) {
 
 func TestSetRepoAutoMergeForRepoAndSave(t *testing.T) {
 	cfg := newPauseTestConfig(t, "api", "web")
+	level := SelfMergeMinACMMLevel
+	cfg.ACMMLevel = &level
 	f := false
 	changed, err := cfg.SetRepoAutoMergeForRepoAndSave("api", &f)
 	if err != nil || !changed {

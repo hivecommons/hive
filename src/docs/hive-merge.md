@@ -29,12 +29,13 @@ check and a `CanMerge` ACMM gate (`AuthorizeMerge`) that a direct merge would
 need — an agent whose mode allows opening PRs but not merging them still
 cannot merge through this path.
 
-`project.repo_policies[].auto_merge: false` is also enforced here. A repo with
-that switch off may still receive Hive-opened PRs, but the relay refuses to
-merge them and reports that auto-merge is disabled for the repository. The same
-repo policy is enforced by the App self-merge sweep and by the proxy's direct
-REST/GraphQL merge denial path, so agents cannot bypass it by calling GitHub
-directly.
+Auto-merge is effective only at L6. Below L6, stored per-repo values resolve
+to off; at L6, `project.repo_policies[].auto_merge: false` is also enforced
+here. A repo with that switch off may still receive Hive-opened PRs, but the
+relay refuses to merge them and reports that auto-merge is disabled for the
+repository. The same repo policy is enforced by the App self-merge sweep and by
+the proxy's direct REST/GraphQL merge denial path, so agents cannot bypass it
+by calling GitHub directly.
 
 On top of `AuthorizeMerge`, the watcher's authorizer is wrapped with a second,
 target-specific check (the F4 target-binding, CWE-863) before any merge is
@@ -148,9 +149,10 @@ promotion into L6 never auto-releases existing level-applied `hold` labels; use
 `release_level_holds: true` on `PUT /api/packs/level` for a deliberate one-off
 release. Hub, config-driven, and ordinary dashboard promotions leave those holds
 for human removal. On a dashboard promotion into L6, Hive shows an informational
-modal with the held App-authored PRs and per-repo auto-merge toggles so the
-owner can decide which repositories should participate before manually removing
-`hold`.
+modal with the held App-authored PRs and per-repo auto-merge switches.
+Switching to L6 turns auto-merge on for all active repositories; the owner can
+then switch off repositories that should not participate before manually
+removing `hold`.
 
 ```yaml
 auto_merge:

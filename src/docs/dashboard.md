@@ -141,7 +141,7 @@ tooltip), issue held pills, plan chips, hold/release controls, issue state
 glyphs (`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`,
 `◐`, `⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, stale `🕒`,
 reviewed `💬`, auto-merge `🔀`, agent role badges, and review-class badges
-such as `FIX`).
+such as `FIX`). Repository cards also show a labelled auto-merge switch: it is effectively off below L6, switching the hive to L6 turns it on for every active repo, and owners may toggle individual repos afterward.
 
 Actionable issue pills are grouped client-side for display only; enumeration,
 holds, filters, ranking, and agent kick behaviour are unchanged. Bands are

@@ -88,7 +88,7 @@ Agents open issues AND pull requests. Agent PRs get literal `hold` from the leve
 
 ### L6 — Fully Autonomous (14 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for every active repository, after which owners can toggle repositories individually. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here — its `requires_human` verdict is what pulls a PR out of the auto-merge lane. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -201,8 +201,8 @@ hive reconciles its agent roster and per-agent modes to match the target level.
 
 **From the dashboard:** open the Governor config and set the ACMM level. This is
 the normal path. When a change makes the L6 self-authored merge sweep eligible,
-the dashboard shows an informational modal listing held App-authored PRs and
-the watched repositories' auto-merge toggles; it does not release holds.
+Hive turns auto-merge on for every active repository, and the dashboard shows an informational modal listing held App-authored PRs and
+the watched repositories' auto-merge switches so owners can switch off repos that should not participate; it does not release holds.
 
 **Over the API:** `PUT /api/packs/level` with `{"level": N}` where N is 1–6.
 Level-applied `hold` labels are never released automatically on a level change.
@@ -287,8 +287,9 @@ seam and teaches the live proxy to apply the repo override on matching
 repository requests so enforcement observes the decision without a restart.
 
 For the narrow L6-except-one-repo case, `project.repo_policies[].auto_merge:
-false` disables only auto-merge on that repository. The hive-wide ACMM level
-still determines issue/PR creation authority, but merge authority is removed at
+false` disables only auto-merge on that repository. Below L6, auto-merge is
+effectively off for every repo regardless of stored values. The hive-wide ACMM
+level still determines issue/PR creation authority, but merge authority is removed at
 the `hive-merge` relay, App self-authored sweep, and proxy direct-merge seam.
 The dashboard toggle (`POST /api/repos/auto-merge`) is gated asymmetrically:
 switching auto-merge *off* needs the same tier as pausing the repo (verified

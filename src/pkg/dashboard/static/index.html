@@ -1389,9 +1389,10 @@
     .repo-card:has(.repo-paused-pill) { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); background: color-mix(in srgb, var(--yellow) 5%, var(--surface)); }
     .repo-card:has(.repo-paused-pill) .repo-stats { opacity: 0.55; }
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
-    .repo-automerge-off-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: auto; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
-    .repo-automerge-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 600; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
+    .repo-automerge-toggle { flex: 0 0 auto; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
+    .repo-automerge-switch { flex: 0 0 auto; }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -1406,8 +1407,7 @@
     .repo-card:hover .repo-pause-btn { opacity: 1; }
     .repo-pause-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
     .repo-pause-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
-    .repo-automerge-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
-    .repo-automerge-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-automerge-switch[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-hold-toggle { cursor: pointer; }
     .repo-hold-toggle:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); }
     .repo-hold-toggle[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -4220,7 +4220,7 @@
           <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; CI-maintainer watches build health.</li>
           <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs.</li>
           <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer agent joins and works the queue every 30 minutes.</li>
-          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge on green CI; reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
+          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos off or back on afterward. Reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
         </ul>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Promotion adds agents and capability; demotion narrows them again. Hive also removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-queue-triage.md" target="_blank" rel="noopener noreferrer">review queue triage</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
 
@@ -9162,8 +9162,17 @@
     async function toggleRepoAutoMerge(repo, enabled, btn) {
       if (btn && btn.dataset.busy === '1') return;
       const nextEnabled = !enabled;
+      const isSwitch = btn && btn.classList && btn.classList.contains('config-toggle-switch');
       const label = btn ? btn.textContent : '';
-      if (btn) { btn.dataset.busy = '1'; btn.textContent = nextEnabled ? 'Enabling…' : 'Disabling…'; }
+      if (btn) {
+        btn.dataset.busy = '1';
+        if (isSwitch) {
+          btn.classList.toggle('on', nextEnabled);
+          btn.setAttribute('aria-checked', nextEnabled ? 'true' : 'false');
+        } else {
+          btn.textContent = nextEnabled ? 'Enabling…' : 'Disabling…';
+        }
+      }
       try {
         const resp = await fetch('/api/repos/auto-merge', {
           method: 'POST',
@@ -9176,7 +9185,15 @@
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-        if (btn) { btn.dataset.busy = ''; btn.textContent = label || (enabled ? 'auto-merge off' : 'auto-merge on'); }
+        if (btn) {
+          btn.dataset.busy = '';
+          if (isSwitch) {
+            btn.classList.toggle('on', enabled);
+            btn.setAttribute('aria-checked', enabled ? 'true' : 'false');
+          } else {
+            btn.textContent = label || (enabled ? 'auto-merge off' : 'auto-merge on');
+          }
+        }
       }
     }
 
@@ -10678,16 +10695,19 @@
           : '';
         const pausedPill = r.paused ? `<span class="repo-paused-pill" title="${esc(pauseTip)}">⏸ paused</span>` : '';
         const autoMergeOn = r.autoMerge !== false;
-        const autoMergeOffPill = autoMergeOn ? '' : `<span class="repo-automerge-off-pill" title="${esc('Auto-merge is disabled for this repository. Hive can open PRs, but the relay, self-authored sweep, and proxy will not merge them.')}">auto-merge off</span>`;
+        const autoMergeLevelOK = Number((status && status.acmmLevel) || 0) >= 6;
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
         const canPauseRepo = canToggleHold;
         // Asymmetric gate (#9070): repo-write users may switch auto-merge OFF,
         // but only a verified owner may switch it back ON — mirror the server.
-        const canSetAutoMerge = autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
-        const autoMergeBtn = canSetAutoMerge
-          ? `<button class="repo-automerge-btn" data-action="toggleRepoAutoMerge" data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo'}">${autoMergeOn ? 'auto-merge off' : 'auto-merge on'}</button>`
-          : '';
+        const canSetAutoMerge = autoMergeLevelOK && (autoMergeOn ? canPauseRepo : dashboardRoleAtLeast(window._hiveRole || 'read', 'owner'));
+        const autoMergeTip = !autoMergeLevelOK
+          ? 'Requires Level 6'
+          : (canSetAutoMerge
+              ? (autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo')
+              : (autoMergeOn ? 'Requires repo write or owner role to disable Hive auto-merge' : 'Requires owner role to enable Hive auto-merge'));
+        const autoMergeBtn = `<label class="config-toggle repo-automerge-toggle" title="${esc(autoMergeTip)}"><span class="config-toggle-label">auto-merge</span><span class="config-toggle-switch repo-automerge-switch ${autoMergeOn ? 'on' : ''} ${canSetAutoMerge ? '' : 'disabled'}" role="switch" tabindex="0" aria-checked="${autoMergeOn ? 'true' : 'false'}" aria-label="${esc('auto-merge for ' + cardRepo)}" data-disabled="${canSetAutoMerge ? 'false' : 'true'}" ${canSetAutoMerge ? `data-action="toggleRepoAutoMerge" data-keydown-action="toggleRepoAutoMerge" data-keys="Enter, " data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1"` : ''}></span></label>`;
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
@@ -10712,7 +10732,7 @@
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div style="font-size:var(--fs-2xs);font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:var(--sp-1)" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${autoMergeOffPill}${swarmBtn}${autoMergeBtn}${pauseBtn}</div>
+          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${swarmPill}${pausedPill}${swarmBtn}${autoMergeBtn}${pauseBtn}</div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -19106,7 +19126,7 @@ function burnAreaChart() {
               const enabled = repo.auto_merge !== false;
               return `<div class="level-automerge-row" data-level-automerge-repo="${name}">
                 <div class="level-automerge-row-main"><span class="level-automerge-row-title">${name}</span><span class="level-automerge-row-meta">Auto-merge ${enabled ? 'enabled' : 'disabled'}</span></div>
-                <button type="button" class="hv-btn ${enabled ? 'btn-secondary' : 'btn-primary'} hive-dialog-btn level-automerge-toggle" data-repo-index="${i}" data-enabled="${enabled ? '1' : '0'}">${enabled ? 'auto-merge off' : 'auto-merge on'}</button>
+                <label class="config-toggle repo-automerge-toggle" title="${enabled ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo'}"><span class="config-toggle-label">auto-merge</span><span role="switch" tabindex="0" aria-checked="${enabled ? 'true' : 'false'}" aria-label="${'auto-merge for ' + name}" class="config-toggle-switch repo-automerge-switch level-automerge-toggle ${enabled ? 'on' : ''}" data-repo-index="${i}" data-enabled="${enabled ? '1' : '0'}"></span></label>
               </div>`;
             }).join('')}</div>`
           : '<p>No active repositories are configured.</p>';
@@ -19116,7 +19136,7 @@ function burnAreaChart() {
             <p>PRs currently labelled <code>hold</code> stay held, including holds Hive applied at the previous level. Hive never removes <code>hold</code> on a level change. Remove <code>hold</code> yourself, or use the PR's Release affordance if available, before L6 can merge those PRs automatically.</p>
             ${warningHTML}
             ${heldHTML}
-            <p>The merge sweep only runs on repositories with auto-merge enabled. Switch off any repository that should not participate in L6 auto-merge.</p>
+            <p>Switching to Level 6 turns auto-merge on for all active repositories. Switch off any repository that should not participate in L6 auto-merge.</p>
             ${repoHTML}
           </div>
           <div class="hive-dialog-buttons">
@@ -19127,14 +19147,20 @@ function burnAreaChart() {
           try { localStorage.setItem(storageKey, '1'); } catch (_) {}
         };
         overlay.querySelectorAll('.level-automerge-toggle').forEach(btn => {
+          btn.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              btn.click();
+            }
+          });
           btn.addEventListener('click', async () => {
             const idx = Number(btn.dataset.repoIndex || -1);
             const repo = repos[idx];
             if (!repo || btn.dataset.busy === '1') return;
             const nextEnabled = btn.dataset.enabled !== '1';
-            const previous = btn.textContent;
             btn.dataset.busy = '1';
-            btn.textContent = nextEnabled ? 'Enabling…' : 'Disabling…';
+            btn.classList.toggle('on', nextEnabled);
+            btn.setAttribute('aria-checked', nextEnabled ? 'true' : 'false');
             try {
               const resp = await fetch('/api/repos/auto-merge', {
                 method: 'POST',
@@ -19145,9 +19171,8 @@ function burnAreaChart() {
               if (!resp.ok) throw new Error(resBody.error || ('HTTP ' + resp.status));
               repo.auto_merge = nextEnabled;
               btn.dataset.enabled = nextEnabled ? '1' : '0';
-              btn.classList.toggle('btn-primary', !nextEnabled);
-              btn.classList.toggle('btn-secondary', nextEnabled);
-              btn.textContent = nextEnabled ? 'auto-merge off' : 'auto-merge on';
+              btn.classList.toggle('on', nextEnabled);
+              btn.setAttribute('aria-checked', nextEnabled ? 'true' : 'false');
               const row = btn.closest('.level-automerge-row');
               const meta = row && row.querySelector('.level-automerge-row-meta');
               if (meta) meta.textContent = 'Auto-merge ' + (nextEnabled ? 'enabled' : 'disabled');
@@ -19155,7 +19180,8 @@ function burnAreaChart() {
               fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
             } catch (e) {
               showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
-              btn.textContent = previous;
+              btn.classList.toggle('on', !nextEnabled);
+              btn.setAttribute('aria-checked', !nextEnabled ? 'true' : 'false');
             } finally {
               btn.dataset.busy = '';
             }
