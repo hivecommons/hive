@@ -1455,7 +1455,10 @@ func TestFixture_LeaseSpelledAsFileAddressPollsBareName(t *testing.T) {
 }
 
 func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
+	// A spec stage: the pinned 0.22 CLI has no `plan export`, so a final plan
+	// against the fixture's empty store would park on plan import before the
+	// final -> draft regression under test could ever be observed.
+	reg := newFakeRegistry(StageSpec)
 	reg.advanceErr = errors.New("persist failed")
 	r := &Runner{Exec: fixtureExec(t, "final-then-draft"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	r.Tick(context.Background(), t0)
