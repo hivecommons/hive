@@ -242,6 +242,29 @@ func TestStaticDashboardPRAuthorUserMenuWiring(t *testing.T) {
 	}
 }
 
+func TestStaticAddAgentDiscoverabilityWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="agents-add-btn"`,
+		`data-action="openAddAgentDialog"`,
+		`title="Add a new agent from a template or from scratch"`,
+		`＋ Add agent`,
+		`＋ Add your first agent`,
+		`applyAgentQuickStart`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Add agent discoverability wiring missing %q", want)
+		}
+	}
+	if strings.Contains(html, `>+ agent</a>`) {
+		t.Fatal("sidebar still exposes the low-contrast '+ agent' link")
+	}
+}
+
 func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {

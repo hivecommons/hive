@@ -1,0 +1,1 @@
+- Make the dashboard Add agent workflow easier to find with sidebar/header CTAs, first-agent empty state, and create-dialog quick starts.

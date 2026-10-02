@@ -18,6 +18,8 @@ The biggest mistake new users make: seeing agent output and either (a) panicking
 
 > Hive is deeply configurable. There are agent policy templates, knowledge layers, custom agents, issue label filters, multi-repo setups, and a lot more. This guide doesn't cover any of that — and that's intentional. You don't need any of it to start. The goal of your first few months is to get comfortable with one or two agents at a low level, not to explore every feature. Features will still be there when you're ready for them. When you are ready for label behavior details, use [Hive Labels and Control Signals](labels-and-control-signals.md).
 
+When you are ready for a specialist, the dashboard has **＋ Add agent** in the Agents sidebar and at the top of the Agents section. It opens a create dialog with quick-start templates for common roles (scanner, reviewer, quality, CI maintainer, guide) plus import-from-YAML for shared agent definitions.
+
 ## What to expect (and what not to)
 
 ✅ **Expect:**
