@@ -57,6 +57,10 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 		return []byte(commit + " parent\n"), nil
 	}
 	switch {
+	case key == "config --list -z --show-scope":
+		// The repository-scoped config of a fresh clone: nothing outside the
+		// broker's allowlist, so the hostile-config gate lets Run proceed.
+		return []byte("local\x00core.bare\nfalse\x00local\x00remote.origin.url\nhttps://github.com/hivecommons/hive.git\x00"), nil
 	case key == "var GIT_AUTHOR_IDENT":
 		return []byte("Hive Test <hive@example.com> 1700000000 +0000\n"), nil
 	case strings.HasPrefix(key, "log --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e "):
