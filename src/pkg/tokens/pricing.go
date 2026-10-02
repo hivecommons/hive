@@ -332,11 +332,10 @@ type EstimatedCost struct {
 // dollar cost from an AggregateSummary using its ByModelDetail / ByAgentDetail
 // token buckets. It is a pure function of the summary — no clock, no network.
 //
-// Per-agent cost is estimated by pricing each agent's aggregated token bucket
-// at the price of the model that agent used most (the agent buckets do not
-// carry a model id, so this is a best-effort attribution). When an agent's
-// model can't be determined, its bucket is priced only if a single model
-// dominates the summary; otherwise it is marked unpriced.
+// Per-agent cost is the sum of that agent's own sessions, each priced at its
+// own session's model (via agg.Sessions), so sum(by_agent) stays additive
+// with total_usd even when an agent's sessions span more than one model
+// (hivecommons/hive#10025).
 func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 	out := EstimatedCost{
 		ByModel:        make(map[string]ModelCost),
@@ -411,20 +410,35 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 		}
 	}
 
-	// Determine each agent's dominant model from the session list so per-agent
-	// cost can be priced. Agent buckets don't carry a model id, so we attribute
-	// via the agent's sessions.
-	agentModel := dominantModelByAgent(agg)
+	// Price each agent by summing each of its sessions at that session's own
+	// model, instead of pricing the whole agent bucket at one "dominant"
+	// model (hivecommons/hive#10025). Once an agent's sessions span more than
+	// one model, a single dominant-model rate disagrees with TotalUSD, which
+	// prices every model at its own rate — this keeps sum(by_agent) additive
+	// with total_usd.
+	agentUSD := make(map[string]float64, len(agg.ByAgentDetail))
+	agentExact := make(map[string]bool, len(agg.ByAgentDetail))
+	for agent := range agg.ByAgentDetail {
+		agentExact[agent] = true
+	}
+	for _, s := range agg.Sessions {
+		if _, ok := agg.ByAgentDetail[s.Agent]; !ok {
+			continue
+		}
+		usd, exact := EstimateCostUSD(s.Model, s.InputTokens, s.OutputTokens, s.CacheRead, s.CacheCreate)
+		agentUSD[s.Agent] += usd
+		if !exact {
+			agentExact[s.Agent] = false
+		}
+	}
 
 	for agent, b := range agg.ByAgentDetail {
 		if b == nil {
 			continue
 		}
-		model := agentModel[agent]
-		usd, exact := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
 		out.ByAgent[agent] = ModelCost{
-			USD:         usd,
-			Priced:      exact,
+			USD:         agentUSD[agent],
+			Priced:      agentExact[agent],
 			Input:       b.Input,
 			Output:      b.Output,
 			CacheRead:   b.CacheRead,
@@ -432,35 +446,5 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 		}
 	}
 
-	return out
-}
-
-// dominantModelByAgent returns, per agent, the model id that accounts for the
-// most total tokens across that agent's sessions. Agents with no attributable
-// session model map to "".
-func dominantModelByAgent(agg *AggregateSummary) map[string]string {
-	// agent -> model -> total tokens
-	tally := make(map[string]map[string]int64)
-	for _, s := range agg.Sessions {
-		if s.Agent == "" || s.Model == "" {
-			continue
-		}
-		if tally[s.Agent] == nil {
-			tally[s.Agent] = make(map[string]int64)
-		}
-		tally[s.Agent][s.Model] += s.TotalTokens
-	}
-	out := make(map[string]string, len(tally))
-	for agent, models := range tally {
-		var best string
-		var bestTok int64
-		for model, tok := range models {
-			if tok > bestTok {
-				bestTok = tok
-				best = model
-			}
-		}
-		out[agent] = best
-	}
 	return out
 }

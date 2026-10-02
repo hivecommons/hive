@@ -140,7 +140,7 @@ func TestEstimateFromSummary(t *testing.T) {
 			"scanner": {Input: 1_000_000, Output: 0},
 		},
 		Sessions: []SessionSummary{
-			{Agent: "scanner", Model: "claude-opus-4-8", TotalTokens: 2_000_000},
+			{Agent: "scanner", Model: "claude-opus-4-8", InputTokens: 1_000_000, TotalTokens: 1_000_000},
 		},
 	}
 
@@ -179,6 +179,43 @@ func TestEstimateFromSummary(t *testing.T) {
 
 	if est.PriceTableDate != PriceTableDate() {
 		t.Fatalf("price table date mismatch: %q vs %q", est.PriceTableDate, PriceTableDate())
+	}
+}
+
+// TestEstimateFromSummary_ByAgentAdditiveAcrossModels guards
+// hivecommons/hive#10025: an agent whose sessions span more than one model
+// must be priced per-session at each session's own model, so sum(by_agent)
+// stays additive with total_usd instead of pricing the whole agent bucket at
+// one "dominant" model (which previously inflated the figure).
+func TestEstimateFromSummary_ByAgentAdditiveAcrossModels(t *testing.T) {
+	agg := &AggregateSummary{
+		ByModelDetail: map[string]*AgentModelBucket{
+			"claude-opus-4-8":  {Input: 1_000_000, Output: 0},
+			"claude-haiku-4-5": {Input: 1_000_000, Output: 0},
+		},
+		ByAgentDetail: map[string]*AgentModelBucket{
+			"scanner": {Input: 2_000_000, Output: 0},
+		},
+		Sessions: []SessionSummary{
+			{Agent: "scanner", Model: "claude-opus-4-8", InputTokens: 1_000_000, TotalTokens: 1_000_000},
+			{Agent: "scanner", Model: "claude-haiku-4-5", InputTokens: 1_000_000, TotalTokens: 1_000_000},
+		},
+	}
+
+	est := EstimateFromSummary(agg)
+
+	if !approxEqual(est.ByAgent["scanner"].USD, est.TotalUSD) {
+		t.Fatalf("by_agent[scanner].usd (%.6f) must equal total_usd (%.6f) — single agent, so its cost is the whole total",
+			est.ByAgent["scanner"].USD, est.TotalUSD)
+	}
+
+	var sumByModel float64
+	for _, mc := range est.ByModel {
+		sumByModel += mc.USD
+	}
+	if !approxEqual(est.ByAgent["scanner"].USD, sumByModel) {
+		t.Fatalf("by_agent[scanner].usd (%.6f) must equal sum(by_model) (%.6f)",
+			est.ByAgent["scanner"].USD, sumByModel)
 	}
 }
 
