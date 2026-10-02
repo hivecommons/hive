@@ -810,7 +810,8 @@ const runPlanSource = "spektacular"
 // with AutoApprove false, so children stay gated until ApprovePlan and no
 // model is asked to redecompose an already-structured plan. The epic is found
 // by its run_key metadata (or created bound to the run key). Importing the
-// same plan again is a no-op (idempotent across ticks); a regenerated plan
+// same plan again is a no-op (idempotent across ticks) apart from retrying
+// the Wavefront fan-out of an approved plan that has none yet; a regenerated plan
 // replaces the previously imported one and returns the epic to draft. An epic
 // that already carries children from some other planner is left alone.
 func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
@@ -845,14 +846,15 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	digest := runPlanDigest(taskList)
 	imported := epic.Meta(runPlanDigestMeta)
 	if imported == digest {
-		return nil
+		// A fan-out that failed after the import is retried here, or the
+		// remaining waves are never created (hivecommons/hive#10089).
+		return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
 	}
 	previous := runPlanChildren(store, epic.ID)
 	if imported == "" && len(previous) > 0 {
 		return nil
 	}
-	result, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
-	if err != nil {
+	if _, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false}); err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
 	}
 	for _, child := range previous {
@@ -866,6 +868,13 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if err := store.SetMetadata(epic.ID, runPlanDigestMeta, digest); err != nil {
 		return fmt.Errorf("recording run plan digest: %w", err)
 	}
+	// The replaced plan's waves are not this plan's; it fans out afresh once
+	// approved.
+	if epic.Meta(planning.MetaRunWaveIDs) != "" {
+		if err := store.UnsetMetadata(epic.ID, planning.MetaRunWaveIDs); err != nil {
+			return fmt.Errorf("clearing superseded run wave ids: %w", err)
+		}
+	}
 	if updated, err := store.Get(epic.ID); err == nil {
 		epic = updated
 	}
@@ -876,10 +885,7 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 			return err
 		}
 	}
-	if err := s.fanOutImportedRunPlan(context.Background(), store, epic.ID, runKey, result.Children); err != nil {
-		return err
-	}
-	return nil
+	return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
 }
 
 // runPlanDigestMeta records which Spektacular task list a run epic's plan was
@@ -925,8 +931,26 @@ func (s *Server) resetRunPlanForReplan(runKey string) error {
 	return store.SetMetadata(epic.ID, runPlanDigestMeta, runPlanDigestReplan)
 }
 
-func (s *Server) fanOutImportedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string, children []*beads.Bead) error {
-	if s == nil || s.deps == nil || s.deps.RunFanout == nil || store == nil || len(children) == 0 {
+// fanOutApprovedRunPlan fans an approved, not yet fanned-out run plan out
+// into implementation leases. A draft plan is left alone: its implement
+// leases would outrank the plan lease parked at the checkpoint and mask it
+// from the owner (hivecommons/hive#10089). Recorded wave ids mark a plan
+// already fanned out.
+func (s *Server) fanOutApprovedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string) error {
+	if s == nil || s.deps == nil || s.deps.RunFanout == nil || store == nil || epicID == "" || strings.TrimSpace(runKey) == "" {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil || epic.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved || epic.Meta(planning.MetaRunWaveIDs) != "" {
+		return nil
+	}
+	var children []*beads.Bead
+	for _, child := range runPlanChildren(store, epicID) {
+		if child.Status != beads.StatusClosed && child.Status != beads.StatusDone {
+			children = append(children, child)
+		}
+	}
+	if len(children) == 0 {
 		return nil
 	}
 	repos := reposFromPlanChildren(store, children)
@@ -1174,6 +1198,9 @@ func (s *Server) autoApproveRunCheckpointWithGen(store *beads.Store, epic *beads
 		return fmt.Errorf("auto-approving %s checkpoint for %s: %w", stage, runKey, err)
 	}
 	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, gen, time.Now(), decision)
+	if err := s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey); err != nil {
+		s.logger.Warn("[runs] fanning out auto-approved run plan failed", "run", runKey, "epic", epic.ID, "error", err)
+	}
 	return nil
 }
 
