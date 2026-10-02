@@ -153,3 +153,27 @@ func TestTerminalClipboardScriptHandlesOsc52(t *testing.T) {
 		}
 	}
 }
+
+// OSC 52 is plain pane output, so any agent, tool or printed file can emit
+// it. The script must only act on it shortly after a real operator gesture in
+// the document, and must drop — not write, not remember — anything else, or
+// pane output can replace the operator's clipboard behind their back.
+func TestTerminalClipboardScriptGatesOsc52OnOperatorGesture(t *testing.T) {
+	for _, want := range []string{
+		"var GESTURE_WINDOW_MS = 2000;",
+		"['mousedown', 'mouseup', 'touchend', 'keydown'].forEach(function (name) {",
+		"document.addEventListener(name, noteGesture, true);",
+		"if (!operatorGestureRecent()) return true;",
+	} {
+		if !strings.Contains(terminalClipboardScript, want) {
+			t.Errorf("clipboard script is missing %q", want)
+		}
+	}
+	handler := terminalClipboardScript[strings.Index(terminalClipboardScript, "registerOscHandler(52,"):]
+	gate := strings.Index(handler, "if (!operatorGestureRecent()) return true;")
+	decode := strings.Index(handler, "decodeOsc52(data)")
+	remember := strings.Index(handler, "appCopiedText = text;")
+	if gate < 0 || decode < 0 || remember < 0 || gate > decode || gate > remember {
+		t.Fatal("the gesture gate must run before the OSC 52 payload is decoded, remembered or written")
+	}
+}

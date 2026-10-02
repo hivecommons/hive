@@ -36,6 +36,11 @@ import (
 // server.go) precisely because this server never holds ttyd's document bytes
 // to hash, and an inline element needs no second proxied request.
 //
+// OSC 52 is honoured only within a short window after an operator gesture in
+// the document (see the script): the escape is plain pane output, so without
+// that gate any agent, tool or printed file could set the operator's
+// clipboard — paste-jacking on the very flow this exists for.
+//
 // Plain Ctrl+C is deliberately NOT intercepted: it is SIGINT, and an operator
 // who cannot interrupt a runaway command in an agent's pane is worse off than
 // one who cannot copy. Only ⌘C and Ctrl+Shift+C — neither of which a terminal
@@ -111,6 +116,22 @@ const terminalClipboardScript = `<script id="` + terminalClipboardMarker + `">
      Ctrl+Shift+C with no xterm.js selection copies it from inside a gesture
      if the immediate write was refused. */
   var appCopiedText = '';
+  /* OSC 52 is just bytes in the pane: the agent CLI, any tool it runs, or
+     any file or issue body it prints can emit it, and the /terminal tab is
+     top-level, so a focused tab writes the clipboard with no activation at
+     all. Only honour the escape shortly after a real operator gesture in
+     this document — the mouseup that ends a drag-copy in the CLI is such a
+     gesture — and drop (neither write nor remember) anything else, so pane
+     output cannot swap the operator's clipboard behind their back. */
+  var GESTURE_WINDOW_MS = 2000;
+  var lastGestureAt = 0;
+  function noteGesture() { lastGestureAt = Date.now(); }
+  ['mousedown', 'mouseup', 'touchend', 'keydown'].forEach(function (name) {
+    document.addEventListener(name, noteGesture, true);
+  });
+  function operatorGestureRecent() {
+    return lastGestureAt > 0 && (Date.now() - lastGestureAt) <= GESTURE_WINDOW_MS;
+  }
   function decodeOsc52(data) {
     var semi = data.indexOf(';');
     if (semi < 0) return '';
@@ -134,6 +155,7 @@ const terminalClipboardScript = `<script id="` + terminalClipboardMarker + `">
     if (term.hiveOsc52Registered) return;
     term.hiveOsc52Registered = true;
     term.parser.registerOscHandler(52, function (data) {
+      if (!operatorGestureRecent()) return true;
       var text = decodeOsc52(data);
       if (text) {
         appCopiedText = text;
