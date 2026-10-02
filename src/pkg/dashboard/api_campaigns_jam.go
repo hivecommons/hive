@@ -521,16 +521,59 @@ func (s *Server) writeCampaignJamDisk(disk campaignJamDisk) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", errJamStore, err)
 	}
-	// Temp file + rename (#10083): this one file holds every campaign's Jam
-	// state, so a crash or ENOSPC during a truncating write left invalid JSON
-	// that failed every later Jam read and write for every campaign.
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, raw, 0o600); err != nil {
+	if err := writeCampaignJamFile(path, raw); err != nil {
 		return fmt.Errorf("%w: %v", errJamStore, err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("%w: %v", errJamStore, err)
+	return nil
+}
+
+// writeCampaignJamFile durably replaces the shared Jam store (#10083). This
+// one file holds every campaign's Jam state, so a truncating write that
+// crashed or hit ENOSPC left invalid JSON that failed every later Jam call.
+// A bare temp file + rename is not enough on its own: without an fsync the
+// rename can reach disk before the data, and a power loss then leaves a
+// zero-length store. Same sequence as writeStandbyOutcomesFile: unique temp
+// file, fsync, rename, fsync of the directory; the temp file is removed on
+// any failure so a failed write never leaves debris beside the store.
+var campaignJamRename = os.Rename
+
+func writeCampaignJamFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("temp creation: %w", err)
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		_ = tmp.Close()
+		if !keep {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := campaignJamRename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	keep = true
+	directory, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("directory open: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("directory sync: %w", err)
 	}
 	return nil
 }
