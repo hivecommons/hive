@@ -55,6 +55,20 @@ func TestLoadNousStateStatusConsistency(t *testing.T) {
 	if state.Status["baseline_target"] != dashboard.NousBaselineTarget {
 		t.Errorf("baseline_target = %v, want %d", state.Status["baseline_target"], dashboard.NousBaselineTarget)
 	}
+
+	// baseline_pct must be the shared, capped helper's output — never an
+	// unbounded raw percentage (hivecommons/hive#10026).
+	snapshotCount, ok := state.Status["snapshotCount"].(int)
+	if !ok {
+		t.Fatalf("snapshotCount = %v (%T), want int", state.Status["snapshotCount"], state.Status["snapshotCount"])
+	}
+	wantPct := dashboard.NousBaselinePct(snapshotCount)
+	if got, ok := state.Status["baseline_pct"].(float64); !ok || got != wantPct {
+		t.Errorf("baseline_pct = %v, want %v (dashboard.NousBaselinePct(%d))", state.Status["baseline_pct"], wantPct, snapshotCount)
+	}
+	if got := state.Status["baseline_pct"].(float64); got > 100 {
+		t.Errorf("baseline_pct = %v, must never exceed 100", got)
+	}
 }
 
 func TestLoadNousStateFromPathsLoadsHermeticArtifacts(t *testing.T) {
