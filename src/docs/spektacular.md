@@ -86,6 +86,14 @@ restores group write on whatever the CLI created. If the map has no UID for
 the identity (Spektacular enabled after boot; restart hive) or `su-exec` is
 missing, the stage is not launched.
 
+The launch command itself carries the same tool denylist the tmux launch path
+applies in every agent mode: `copilot --allow-all` is launched with the
+`--deny-tool='github-mcp-server(...)'` set and `claude
+--dangerously-skip-permissions` with the matching `--disallowed-tools
+'mcp__github__...'` plus the host-state denies, so a stage agent that runs
+with every permission pre-approved still cannot author issues or pull
+requests as the logged-in user through the GitHub MCP.
+
 ## Polling and timeouts
 
 The hub polls stages on a separate serial worker every 30 seconds. Slow polls

@@ -428,6 +428,11 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 			// so a stored bad id never reaches --model (#4262).
 			cmd += " --model " + shellQuote(CopilotLaunchModel(cfg.Model))
 		}
+		// Same denylist the tmux launch path applies (#10054): this launch
+		// pre-approves every tool, so the GitHub MCP write denies must come
+		// with it — an unattended CLI must author through the App-gated gh
+		// wrapper, never as the logged-in user via the MCP.
+		cmd += copilotGitHubWriteDenyFlags
 	case codexBackend:
 		// The interactive codex TUI refuses a non-terminal stdin; `exec` is
 		// its non-interactive mode and reads the prompt from stdin.
@@ -441,7 +446,11 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 			cmd += " --model " + shellQuote(cfg.Model)
 		}
 		if backend == "claude" || IsInferenceBackend(backend) {
-			cmd += " --dangerously-skip-permissions"
+			// The same denies backendLaunchCmd applies: permissions are
+			// skipped wholesale here, so the GitHub MCP write tools and the
+			// host-state commands stay denied (#10054). Denials still apply
+			// under --dangerously-skip-permissions.
+			cmd += " --dangerously-skip-permissions" + claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()
 		}
 	}
 	return []string{"sh", "-lc", cmd + " < " + shellQuote(promptRel)}, nil
