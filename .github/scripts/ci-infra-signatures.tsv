@@ -27,6 +27,12 @@ disk-full	step	No space left on device
 lint-no-go-files	step	context loading failed: no go files to analyze
 lint-timeout	step	level=error msg="Timeout exceeded
 runner-lost	annotation	The self-hosted runner lost communication with the server
+# Node-local tool cache clobbered by concurrent setup-go/setup-node on a fresh
+# node (#10234, 2026-10-02): "Found in cache" then an empty go path, a copyfile
+# ENOENT into the cache, or npm/node/go vanishing from PATH mid-job.
+toolcache-clobbered	step	^##\[error\]Command failed:\s+version$
+toolcache-clobbered	step	ENOENT: no such file or directory, copyfile .* -> '/mnt/toolcache/
+toolcache-clobbered	step	: (npm|node|go): command not found$
 runner-lost	annotation	The runner has received a shutdown signal
 test-list-empty	step	^##\[error\]go test -list produced no test functions
 test-list-empty	silent-step	\bgo test\b.*\s-list\b
