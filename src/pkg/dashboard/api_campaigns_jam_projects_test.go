@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -190,5 +191,42 @@ func TestCampaignJamProjectSyncDoesNotForwardGitHubTokenToCustomEndpoint(t *test
 	}
 	if got := <-authHeader; got != "" {
 		t.Fatalf("custom endpoint received Authorization %q, want none", got)
+	}
+}
+
+func TestPostGitHubProjectDraftsUsesProjectsV2Mutation(t *testing.T) {
+	var queries []string
+	var inputs []map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string `json:"query"`
+			Variables struct {
+				Input map[string]any `json:"input"`
+			} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		queries = append(queries, body.Query)
+		inputs = append(inputs, body.Variables.Input)
+		_, _ = w.Write([]byte(`{"data":{"addProjectV2DraftIssue":{"projectItem":{"id":"PVTI_1"}}}}`))
+	}))
+	t.Cleanup(api.Close)
+
+	payload := campaignProjectSyncPayload{ProjectID: "PVT_x", Items: []CampaignProjectItem{
+		{Type: "spec", Title: "Campaign spec c", Body: "body"},
+		{Type: "decision", Title: "Q?"},
+	}}
+	if err := postGitHubProjectDrafts(api.URL, "tok", payload); err != nil {
+		t.Fatalf("postGitHubProjectDrafts: %v", err)
+	}
+	if len(queries) != 2 || !strings.Contains(queries[0], "addProjectV2DraftIssue") || strings.Contains(queries[0], "hiveJamProjectSync") {
+		t.Fatalf("queries = %v, want two addProjectV2DraftIssue mutations", queries)
+	}
+	if inputs[0]["projectId"] != "PVT_x" || inputs[0]["title"] != "Campaign spec c" || inputs[0]["body"] != "body" {
+		t.Fatalf("input[0] = %v", inputs[0])
+	}
+	if err := postGitHubProjectDrafts(api.URL, "tok", campaignProjectSyncPayload{}); err == nil {
+		t.Fatal("missing project_id err = nil, want error")
 	}
 }
