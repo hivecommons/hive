@@ -969,8 +969,8 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 	if s.runPlanApproved("unknown-run") {
 		t.Fatal("unknown run reported approved")
 	}
-	if err := s.ImportRunPlan(spekRunKey, spekRepo, "not a task list"); err != nil {
-		t.Fatalf("re-import of a planned epic must be a no-op: %v", err)
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, "1. [T1] x [agent_suitable]"); err != nil {
+		t.Fatalf("re-import of the same plan must be a no-op: %v", err)
 	}
 
 	// Accessor without a hub errors on both methods.

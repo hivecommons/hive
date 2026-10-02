@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -783,8 +785,10 @@ const runPlanSource = "spektacular"
 // task-list text the runner rendered from Spektacular's export is decomposed
 // with AutoApprove false, so children stay gated until ApprovePlan and no
 // model is asked to redecompose an already-structured plan. The epic is found
-// by its run_key metadata (or created bound to the run key). A run whose epic
-// already carries a plan is left alone (idempotent across ticks).
+// by its run_key metadata (or created bound to the run key). Importing the
+// same plan again is a no-op (idempotent across ticks); a regenerated plan
+// replaces the previously imported one and returns the epic to draft. An epic
+// that already carries children from some other planner is left alone.
 func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if s == nil {
 		return errors.New("no server")
@@ -814,12 +818,29 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		}
 		epic, _ = store.Get(created.ID)
 	}
-	if epic.Meta(planning.MetaPlanStatus) != "" {
+	digest := runPlanDigest(taskList)
+	imported := epic.Meta(runPlanDigestMeta)
+	if imported == digest {
+		return nil
+	}
+	previous := runPlanChildren(store, epic.ID)
+	if imported == "" && len(previous) > 0 {
 		return nil
 	}
 	result, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
 	if err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
+	}
+	for _, child := range previous {
+		if child.Status == beads.StatusClosed || child.Status == beads.StatusDone {
+			continue
+		}
+		if err := planning.RemoveChild(store, epic.ID, child.ID); err != nil {
+			return fmt.Errorf("retiring superseded run plan: %w", err)
+		}
+	}
+	if err := store.SetMetadata(epic.ID, runPlanDigestMeta, digest); err != nil {
+		return fmt.Errorf("recording run plan digest: %w", err)
 	}
 	if updated, err := store.Get(epic.ID); err == nil {
 		epic = updated
@@ -835,6 +856,49 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		return err
 	}
 	return nil
+}
+
+// runPlanDigestMeta records which Spektacular task list a run epic's plan was
+// imported from, so a regenerated plan is re-imported and a repeat is not.
+const runPlanDigestMeta = "run_plan_digest"
+
+// runPlanDigestReplan marks an imported plan as superseded by an owner reset;
+// it never equals a real digest, so the next import replaces the plan.
+const runPlanDigestReplan = "replan"
+
+func runPlanDigest(taskList string) string {
+	sum := sha256.Sum256([]byte(taskList))
+	return hex.EncodeToString(sum[:])
+}
+
+func runPlanChildren(store *beads.Store, epicID string) []*beads.Bead {
+	var out []*beads.Bead
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Meta(planning.MetaParentEpic) == epicID {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// resetRunPlanForReplan runs when an owner resets a run back to the plan stage
+// (or earlier): the old plan goes back to draft so the re-run plan stage is
+// held for review again, and the import digest is invalidated so the
+// regenerated plan replaces the old one even when its text is unchanged.
+func (s *Server) resetRunPlanForReplan(runKey string) error {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil {
+		return nil
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		if err := planning.RejectPlan(store, epic.ID); err != nil {
+			return err
+		}
+	}
+	if epic.Meta(runPlanDigestMeta) == "" {
+		return nil
+	}
+	return store.SetMetadata(epic.ID, runPlanDigestMeta, runPlanDigestReplan)
 }
 
 func (s *Server) fanOutImportedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string, children []*beads.Bead) error {
