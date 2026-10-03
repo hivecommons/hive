@@ -1,0 +1,1 @@
+- Show effective external review-bot logins, per-thread attempt limits, and resolve-after-fix settings read-only in the dashboard Review card and governor settings bundle, including project-file fallback and load errors (partial #10481).
