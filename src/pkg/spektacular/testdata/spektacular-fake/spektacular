@@ -36,9 +36,16 @@
 #        artifact_not_found exactly as the real 0.22 store reports it, and
 #        the caller has to resolve the id through `file list` first.
 #   spektacular init <agent> --name <project>       (creates the store)
+#     -> <agent> must be one of bob|claude|codex; 0.22.0 rejects anything
+#        else with {"error":true,"code":"internal_error","message":"unknown
+#        agent \"<agent>\": must be one of bob, claude, codex"} and exit 1
 #   spektacular <spec|plan> new --data '{"name":"<slug>"}'
 #     -> creates the ID-prefixed artifact (`<timestamp>-<slug>`) and prints
-#        the same status envelope for it
+#        the real 0.22.0 `new` envelope, NOT the status envelope:
+#        {"error":false,"instruction":"<markdown>","<kind>_name":"<id>",
+#         "<kind>_path":"<abs path>","step":"new"}. `spec_name`/`spec_path`
+#        is what the pinned release prints (seen by the real-CLI smoke);
+#        `plan_name`/`plan_path` mirrors it for the plan verb.
 #   spektacular <spec|plan> file list
 #     -> {"error":false,"kind","files":["<id>.md"|"<id>/plan.md", ...]}
 #   spektacular <spec|plan> file read <path>
@@ -65,9 +72,11 @@ set -eu
 
 version="${SPEK_FAKE_VERSION:-0.22.0}"
 
-# Version probe (Probe runs `spektacular --version`); the pinned release.
+# Version probe (Probe runs `spektacular --version`). The real release
+# prints `spektacular version <ver> (<commit>)`; the fake mirrors that shape
+# so Probe consumers and the real-CLI smoke see the same thing.
 if [ "${1:-}" = "--version" ]; then
-  echo "spektacular ${version}"
+  echo "spektacular version ${version} (0000000000000000000000000000000000000000)"
   exit 0
 fi
 
@@ -106,6 +115,13 @@ store_dir() {
 
 # init creates the project store the other verbs read.
 if [ "$kind" = "init" ]; then
+  case "$verb" in
+    bob|claude|codex) ;;
+    *)
+      printf '{"error":true,"code":"internal_error","message":"unknown agent \\"%s\\": must be one of bob, claude, codex","next_action":""}\n' "$verb"
+      exit 1
+      ;;
+  esac
   if [ "$name" != "--name" ] || [ -z "$extra" ]; then
     usage_error "init requires --name"
   fi
@@ -140,7 +156,12 @@ if [ "$verb" = "new" ]; then
   else
     printf -- '---\ndocument_status: draft\n---\n\n# %s\n' "$id" > "$dir/$id.md"
   fi
-  printf '{"error":false,"kind":"%s","name":"%s","document_status":"draft","current_step":"interview","completed_steps":[]}\n' "$kind" "$id"
+  if [ "$kind" = "plan" ]; then
+    path="$PWD/$dir/$id/plan.md"
+  else
+    path="$PWD/$dir/$id.md"
+  fi
+  printf '{"error":false,"instruction":"---\\nstep: new\\nnext: interview\\n---\\n","%s_name":"%s","%s_path":"%s","step":"new"}\n' "$kind" "$id" "$kind" "$path"
   exit 0
 fi
 
