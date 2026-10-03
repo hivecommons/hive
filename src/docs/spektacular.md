@@ -86,6 +86,14 @@ restores group write on whatever the CLI created. If the map has no UID for
 the identity (Spektacular enabled after boot; restart hive) or `su-exec` is
 missing, the stage is not launched.
 
+The launch command itself carries the same tool denylist the tmux launch path
+applies in every agent mode: `copilot --allow-all` is launched with the
+`--deny-tool='github-mcp-server(...)'` set and `claude
+--dangerously-skip-permissions` with the matching `--disallowed-tools
+'mcp__github__...'` plus the host-state denies, so a stage agent that runs
+with every permission pre-approved still cannot author issues or pull
+requests as the logged-in user through the GitHub MCP.
+
 ## Polling and timeouts
 
 The hub polls stages on a separate serial worker every 30 seconds. Slow polls
@@ -709,8 +717,19 @@ the runner.
 `pkg/spektacular/testdata/spektacular-fake/spektacular` is a shell fake of the
 CLI. It encodes the per-artifact status contract exactly as
 jumppad-labs/spektacular#45 ships it, after the Spek maintainer's
-review of 2026-09-23 answered the questions Hive had left open. The original
-assumptions from the first cut of the runner (PR #8398) and their fate:
+review of 2026-09-23 answered the questions Hive had left open. Everything it
+answers is gated on `SPEK_FAKE_VERSION` (default `0.22.0`, the pinned
+release), so a test cannot pass against behaviour the pinned CLI does not
+have: 0.22 has no `plan export` (it swallows `export` as a positional
+argument and rejects `--format`), never reports `stale`, never emits
+`artifact_id`, and addresses `file read` paths with the document extension,
+while 0.23+ is the opposite on each count and identifies exported tasks by
+UUID `id`. The fake also implements `init`, `<kind> new --data`,
+`<kind> file list` and `<kind> file read`, backed by a real `.spektacular`
+store in the working directory, so the resolver, the plan-export fallback and
+the hub executor's `init` flow run against the CLI boundary rather than a Go
+stub. Artifact ids the store mints are timestamped, which makes a bare slug
+`artifact_not_found` exactly as the real store answers it. The originalassumptions from the first cut of the runner (PR #8398) and their fate:
 
 Confirmed:
 

@@ -5,6 +5,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -411,6 +413,120 @@ func TestSpekHubExecutorWorkspaceFailureBacksOffWithoutSpendingGeneration(t *tes
 	assertSpekLeaseGens(t, hub, 1)
 }
 
+// A missing backend credential is infrastructure, not the stage's fault: it
+// backs off and retries instead of launching the agent anyway (#10077).
+func TestSpekHubExecutorMissingCredentialBacksOffWithoutLaunching(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(runAdmissionIdentity, "admit")] = &taskLease{identity: runAdmissionIdentity, taskID: "admit", repo: spekRepo, number: 57, key: spekRepo + "!" + spekRunKey + ":" + StageSpec, stage: StageSpec, gen: 1, expiresAt: time.Now().Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	worktree := runStageWorktreePath(config.DefaultSpektacularHubExecutorIdentity, spekRunKey, StageSpec, 1)
+	if err := os.MkdirAll(filepath.Join(worktree, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// bob requires a configured API key; leaving Governor.Bob unset makes
+	// executorEnv's credential lookup fail every time.
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "bob", "", nil, nil)
+	launched := make(chan struct{}, 4)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, _ ...string) ([]byte, error) {
+		if name == "bob" {
+			launched <- struct{}{}
+		}
+		return nil, nil
+	}
+	t.Cleanup(e.Stop)
+	tickAndJoin := func(now time.Time) {
+		t.Helper()
+		e.Tick(context.Background(), now)
+		e.mu.Lock()
+		var worker <-chan struct{}
+		for _, run := range e.inFlight {
+			worker = run.done
+		}
+		e.mu.Unlock()
+		if worker != nil {
+			waitSpekSignal(t, worker, "worker exit")
+		}
+	}
+	now := time.Now()
+	tickAndJoin(now)
+	select {
+	case <-launched:
+		t.Fatal("agent launched despite missing credential")
+	default:
+	}
+	if e.Status().LastError == "" {
+		t.Fatal("missing credential not surfaced")
+	}
+	assertSpekLeaseGens(t, hub, 1)
+	hub.leaseMu.Lock()
+	for _, lease := range hub.leases {
+		if !lease.stageEscalatedAt.IsZero() {
+			hub.leaseMu.Unlock()
+			t.Fatal("missing credential escalated the stage")
+		}
+	}
+	hub.leaseMu.Unlock()
+	e.mu.Lock()
+	held := len(e.held)
+	e.mu.Unlock()
+	if held != 0 {
+		t.Fatal("missing credential held the generation")
+	}
+
+	tickAndJoin(now.Add(spekHubInfraBackoffBase + time.Minute))
+	assertSpekLeaseGens(t, hub, 1)
+}
+
+// A colliding run-worktree slug is permanent, not an infrastructure outage:
+// it must spend the generation instead of entering the retry/backoff loop.
+func TestSpekHubExecutorRunWorktreeSlugCollisionSpendsGeneration(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	first := "foo/bar-baz#1"
+	second := "foo-bar/baz#1"
+	if sanitizeRunPromptPath(first) != sanitizeRunPromptPath(second) {
+		t.Fatalf("test fixture no longer collides: %q vs %q", sanitizeRunPromptPath(first), sanitizeRunPromptPath(second))
+	}
+	worktree := spekHubRunWorktreePath(e.Identity, second)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, spekHubRunKeyMarkerFile), []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskID := e.stageTaskID(spekHubStage{runKey: second, stage: StageSpec, gen: 1})
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(e.Identity, taskID)] = &taskLease{identity: e.Identity, taskID: taskID, repo: spekRepo, number: 1, key: spekRepo + "!" + second + ":" + StageSpec, stage: StageSpec, gen: 1, expiresAt: time.Now().Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	st := spekHubStage{runKey: second, key: spekRepo + "!" + second + ":" + StageSpec, stage: StageSpec, identity: e.Identity, taskID: taskID, repo: spekRepo, number: 1, gen: 1}
+
+	e.runStage(context.Background(), st, e.executionKey(st))
+
+	if msg := e.Status().LastError; !strings.Contains(msg, "collision") {
+		t.Fatalf("last error = %q, want slug collision", msg)
+	}
+	e.mu.Lock()
+	_, held := e.held[e.executionKey(st)]
+	_, backedOff := e.backoff[e.executionKey(st)]
+	e.mu.Unlock()
+	if !held {
+		t.Fatal("slug collision did not hold/spend the generation")
+	}
+	if backedOff {
+		t.Fatal("slug collision was treated as retryable infrastructure")
+	}
+	hub.leaseMu.Lock()
+	lease := hub.leases[leaseKey(e.Identity, taskID)]
+	hub.leaseMu.Unlock()
+	if lease == nil || lease.stageEscalatedAt.IsZero() {
+		t.Fatalf("slug collision did not escalate the spent generation: %#v", lease)
+	}
+}
+
 // A settlement that fails to persist is retried instead of leaving the
 // generation held in memory only (#10108).
 func TestSpekHubExecutorRetriesFailedSettlement(t *testing.T) {
@@ -502,12 +618,17 @@ func TestSpekHubExecutorSweepRemovesFinishedRunLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	fence.Close()
-	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(runDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("finished run directory retained: %v", err)
-	}
+	var sweepErr, statErr error
+	testutil.EventuallyEveryFunc(t, 5*time.Second, 10*time.Millisecond, func() bool {
+		sweepErr = e.sweepStaleWorktrees(context.Background())
+		if sweepErr != nil {
+			return false
+		}
+		_, statErr = os.Stat(runDir)
+		return errors.Is(statErr, os.ErrNotExist)
+	}, func() string {
+		return fmt.Sprintf("finished run directory retained: stat=%v sweep=%v", statErr, sweepErr)
+	})
 
 	lock := filepath.Join(t.TempDir(), "run", ".executor.lock")
 	held, err := acquireSpekHubFence(lock)

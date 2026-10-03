@@ -351,6 +351,47 @@ func TestSandboxBackendBinary(t *testing.T) {
 	}
 }
 
+// TestSandboxCommand_DeniesGitHubWriteToolsAndHostState pins #10054: an
+// unattended launch pre-approves every tool (`--allow-all`,
+// `--dangerously-skip-permissions`), so it carries the same deny flags the
+// tmux launch path applies in every agent mode.
+func TestSandboxCommand_DeniesGitHubWriteToolsAndHostState(t *testing.T) {
+	copilotCmd, err := sandboxCommand(configSnapshot{Backend: "copilot", Model: "gpt-5"}, sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"create_pull_request", "merge_pull_request", "create_issue", "update_issue", "add_issue_comment"} {
+		if want := "--deny-tool='github-mcp-server(" + tool + ")'"; !strings.Contains(copilotCmd[2], want) {
+			t.Errorf("copilot headless command %q is missing %q", copilotCmd[2], want)
+		}
+	}
+	claudeCmd, err := HeadlessPromptCommand("claude", "opus", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"mcp__github__create_pull_request", "mcp__github__merge_pull_request", "mcp__github__create_issue"} {
+		if want := "--disallowed-tools '" + tool + "'"; !strings.Contains(claudeCmd[2], want) {
+			t.Errorf("claude headless command %q is missing %q", claudeCmd[2], want)
+		}
+	}
+	if !strings.Contains(claudeCmd[2], claudeHostStateDenyTools) {
+		t.Errorf("claude headless command %q is missing the host-state denies", claudeCmd[2])
+	}
+	// The documented opt-out drops the host-state denies only; the GitHub MCP
+	// write denies are not negotiable.
+	t.Setenv(hostStateBypassEnv, "1")
+	bypassed, err := HeadlessPromptCommand("claude", "opus", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(bypassed[2], claudeHostStateDenyTools) {
+		t.Errorf("host-state bypass ignored: %q", bypassed[2])
+	}
+	if !strings.Contains(bypassed[2], "--disallowed-tools 'mcp__github__create_issue'") {
+		t.Errorf("GitHub MCP write denies dropped with the host-state bypass: %q", bypassed[2])
+	}
+}
+
 func TestHeadlessPromptCommandRefusesInferenceBackends(t *testing.T) {
 	for _, backend := range config.InferenceBackends {
 		if _, err := HeadlessPromptCommand(backend, "", sandboxPromptRelPath); err == nil {
