@@ -5,6 +5,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -502,12 +504,17 @@ func TestSpekHubExecutorSweepRemovesFinishedRunLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	fence.Close()
-	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(runDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("finished run directory retained: %v", err)
-	}
+	var sweepErr, statErr error
+	testutil.EventuallyEveryFunc(t, 5*time.Second, 10*time.Millisecond, func() bool {
+		sweepErr = e.sweepStaleWorktrees(context.Background())
+		if sweepErr != nil {
+			return false
+		}
+		_, statErr = os.Stat(runDir)
+		return errors.Is(statErr, os.ErrNotExist)
+	}, func() string {
+		return fmt.Sprintf("finished run directory retained: stat=%v sweep=%v", statErr, sweepErr)
+	})
 
 	lock := filepath.Join(t.TempDir(), "run", ".executor.lock")
 	held, err := acquireSpekHubFence(lock)
