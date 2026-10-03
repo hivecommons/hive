@@ -20,6 +20,8 @@ const (
 	DefaultMaxStageRetries = 2
 	// DefaultRunsMaxWorktrees caps live per-stage git worktrees on one hive.
 	DefaultRunsMaxWorktrees = 8
+	// DefaultRunsEngine is the planning engine used when runs.engine is unset.
+	DefaultRunsEngine = "spektacular"
 	// DefaultSpektacularBinary is the executable the runner shells out to when
 	// runs.spektacular.binary is unset; it is resolved through PATH.
 	DefaultSpektacularBinary = "spektacular"
@@ -59,6 +61,9 @@ const (
 // The zero value keeps every existing behaviour: leases still advance only
 // through the API, and nothing shells out to Spektacular.
 type RunsConfig struct {
+	// Engine selects the planning engine (ADR-0021). Empty means
+	// DefaultRunsEngine; an unregistered name fails validation.
+	Engine string `yaml:"engine,omitempty" json:"engine,omitempty"`
 	// Checkpoints controls which run boundaries wait for owner approval.
 	Checkpoints RunCheckpointConfig `yaml:"checkpoints,omitempty" json:"checkpoints,omitempty"`
 	// WaitTimeoutSeconds is how long a checkpoint may wait before escalation.
@@ -175,6 +180,36 @@ type SpektacularHubExecutorConfig struct {
 	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 	Identity       string `yaml:"identity,omitempty" json:"identity,omitempty"`
 	MaxConcurrent  int    `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+}
+
+// RegisteredRunsEngines reports the planning engine names that are registered.
+// pkg/planengine installs it, since that package imports pkg/config and the
+// reverse import would be a cycle. While it is nil only DefaultRunsEngine is
+// known, so validation still fails closed.
+var RegisteredRunsEngines func() []string
+
+// EngineOrDefault returns the normalised engine name or the default.
+func (r RunsConfig) EngineOrDefault() string {
+	if e := strings.TrimSpace(strings.ToLower(r.Engine)); e != "" {
+		return e
+	}
+	return DefaultRunsEngine
+}
+
+// ValidateEngine rejects a runs.engine naming an unregistered engine. There is
+// no fallback to another engine.
+func (r RunsConfig) ValidateEngine() error {
+	name := r.EngineOrDefault()
+	known := []string{DefaultRunsEngine}
+	if RegisteredRunsEngines != nil {
+		known = RegisteredRunsEngines()
+	}
+	for _, k := range known {
+		if k == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("runs.engine: unknown engine %q (registered: %s)", r.Engine, strings.Join(known, ", "))
 }
 
 // MaxStageRetriesOrDefault returns the configured retry budget or the default.
