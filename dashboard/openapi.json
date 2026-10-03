@@ -25663,6 +25663,602 @@
           }
         }
       }
+    },
+    "/api/advisor/records": {
+        "get": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "GET advisor records",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/advisor/spend": {
+        "get": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "GET advisor spend",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/chat/messages": {
+        "get": {
+            "tags": [
+                "Agents"
+            ],
+            "summary": "GET chat messages",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/classifier/stats": {
+        "get": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "GET classifier stats",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/config/advisor": {
+        "get": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "GET config advisor",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "put": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "PUT config advisor",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/runs/{key}/detail": {
+        "get": {
+            "tags": [
+                "Plan"
+            ],
+            "summary": "GET runs run detail",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "parameters": [
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ]
+        }
+    },
+    "/api/runs/{key}/interview": {
+        "get": {
+            "tags": [
+                "Plan"
+            ],
+            "summary": "GET runs run interview",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "parameters": [
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ]
+        },
+        "post": {
+            "tags": [
+                "Plan"
+            ],
+            "summary": "POST runs run interview",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "parameters": [
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/runs/{key}/log": {
+        "get": {
+            "tags": [
+                "Plan"
+            ],
+            "summary": "GET runs run log",
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "parameters": [
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ]
+        }
+    },
+    "/api/admin/mcp": {
+        "post": {
+            "tags": [
+                "System"
+            ],
+            "summary": "POST admin mcp",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/contribute/actions/dispatch": {
+        "post": {
+            "tags": [
+                "Contribute"
+            ],
+            "summary": "POST contribute actions dispatch",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/contribute/mcp": {
+        "post": {
+            "tags": [
+                "Contribute"
+            ],
+            "summary": "POST contribute mcp",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/contribute/standby/clear": {
+        "post": {
+            "tags": [
+                "Contribute"
+            ],
+            "summary": "POST contribute standby clear",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/contribute/standby/dispatch": {
+        "post": {
+            "tags": [
+                "Contribute"
+            ],
+            "summary": "POST contribute standby dispatch",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/feedback/nps/issue": {
+        "post": {
+            "tags": [
+                "System"
+            ],
+            "summary": "POST feedback nps issue",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/github/mentions/webhook": {
+        "post": {
+            "tags": [
+                "System"
+            ],
+            "summary": "POST github mentions webhook",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/runs/spec": {
+        "post": {
+            "tags": [
+                "Plan"
+            ],
+            "summary": "POST runs spec",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/config/advisor/agent/{name}": {
+        "put": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "PUT config advisor agent agent",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "parameters": [
+                {
+                    "name": "name",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/config/advisor/roles": {
+        "put": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "PUT config advisor roles",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "/api/config/governor/classifier": {
+        "put": {
+            "tags": [
+                "Governor"
+            ],
+            "summary": "PUT config governor classifier",
+            "responses": {
+                "200": {
+                    "description": "Operation accepted",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "requestBody": {
+                "required": false,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        }
     }
   },
   "components": {

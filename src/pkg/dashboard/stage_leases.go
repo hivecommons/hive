@@ -837,9 +837,10 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...stri
 		}
 	}
 	store, epic := s.findRunEpic(runKey)
+	designPlanImport := epic != nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && epic.Meta(planning.MetaRunKey) == runKey
 	// Never take over a run epic owned by another planner, even when its
 	// plan-status marker is absent. Keep lookup shared with approval/reset.
-	if epic != nil && epic.Meta(planning.MetaSource) != "" && epic.Meta(planning.MetaSource) != source {
+	if epic != nil && epic.Meta(planning.MetaSource) != "" && epic.Meta(planning.MetaSource) != source && !designPlanImport {
 		return nil
 	}
 	if epic == nil {
@@ -874,7 +875,7 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...stri
 		return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
 	}
 	previous := runPlanChildren(store, epic.ID)
-	if imported == "" && len(previous) > 0 {
+	if imported == "" && len(previous) > 0 && !designPlanImport {
 		return nil
 	}
 	// Epics bound by external ref may predate run metadata. Record their
