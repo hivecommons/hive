@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.131.0)
+
+### Added
+
+- Add optional `classification.review_bots.min_priority` to route only findings at or above a Codex priority badge, preserve unknown formats, and report per-PR filtered counts while leaving lower-priority threads for humans ([#10479](https://github.com/hivecommons/hive/issues/10479)).
+
+### Changed
+
+- Clarify Reporter trust help text: commit-history associations can grant trust automatically when checked, while the default associations require org membership or repo access; explain Always-trusted logins and remove the obsolete rollout note and issue link ([#10487](https://github.com/hivecommons/hive/issues/10487)).
+
 ## 2026-10-03 (v5.130.2)
 
 ### Fixed
