@@ -1,1 +1,0 @@
-- Removed console-specific workflow stats from the topbar health dropdown so it only shows real spoke health checks.

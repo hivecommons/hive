@@ -424,6 +424,10 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	needsLogin := a.NeedsLogin
 	loginURL := a.LoginURL
 	quotaExhausted := a.QuotaExhausted
+	var subAgentModels []SubAgentModel
+	if effectiveBackend(a) == "copilot" && a.LastKick != nil && a.subAgentKick.Equal(*a.LastKick) {
+		subAgentModels = append(subAgentModels, a.SubAgentModels...)
+	}
 	lastPaneChange := a.LastPaneChange
 	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
 	copy(conds, a.WatchdogConditions)
@@ -485,6 +489,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		tmuxSocket:                a.tmuxSocket,
 		OutputBuffer:              a.OutputBuffer,
 		lastPaneCapture:           pane,
+		SubAgentModels:            subAgentModels,
 	}
 }
 

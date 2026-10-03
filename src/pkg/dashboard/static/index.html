@@ -6601,6 +6601,14 @@
       return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
     }
 
+    function subAgentModelsHtml(a) {
+      const rows = a.subAgentModels || [];
+      if (!rows.length) return '';
+      return `<div class="oc-subagent-models"><strong>Observed sub-agent models</strong><ul>${rows.map(row =>
+        `<li>${esc(row.agentType)} → <code>${esc(row.model)}</code>${row.olderGeneration ? ' <span class="text-warn" title="Older model generation than the parent launch model">⚠ older generation</span>' : ''}</li>`
+      ).join('')}</ul></div>`;
+    }
+
     // Volatile stat fields of the focused agent-detail panel, factored out so
     // the fast path can refresh them on every status payload. Everything shown
     // here (pause/interval state, last/next run, restarts, tokens, auth) goes
@@ -6708,7 +6716,7 @@
       // The fingerprint guards the fields only the full template renders
       // (method/model/pins): without it a CLI or model switch stayed stale
       // in the focused panel until a hard refresh.
-      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || ''].join('|');
+      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || '', JSON.stringify(a.subAgentModels || [])].join('|');
       if (existingSummary && detail.dataset.agent === a.name && detail.dataset.cfgSig === cfgSig) {
         if (a.detailSummary) {
           const newText = escBlock(a.detailSummary);
@@ -6893,6 +6901,7 @@
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
+        ${subAgentModelsHtml(a)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span class="text-muted">No activity summary</span>'}</div>

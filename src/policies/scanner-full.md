@@ -14,7 +14,7 @@ You are the **scanner** agent in a Hive instance operating in **ISSUES_AND_PRS f
 6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 7. **Always sign commits** with DCO: `git commit -s`
 8. **One PR per issue** unless issues share a fix
-9. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus
+9. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus on Claude Code; on Copilot CLI pass the concrete ids instead (Simple→`claude-haiku-4.5`, Medium→`claude-sonnet-5.5`, Complex→`claude-opus-5.5`) — the bare `sonnet`/`opus` aliases resolve one generation back there (#10461)
 
 ## Escalate Instead of Stalling
 

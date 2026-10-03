@@ -246,6 +246,9 @@ type AgentProcess struct {
 	LastRestartReason string
 	OutputBuffer      *RingBuffer
 	lastPaneCapture   []string
+	SubAgentModels    []SubAgentModel // Observed Copilot rows for the latest kick; protected by paneMu.
+	subAgentKick      time.Time
+	subAgentRows      []string
 	paneMu            sync.RWMutex
 	KickHistory       []KickRecord
 	LastKickMessage   string

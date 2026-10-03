@@ -1,0 +1,1 @@
+- `/metrics` label values are now escaped with the Prometheus text-format rules instead of Go `%q`, so an unusual model or agent name no longer makes the scraper reject the whole payload.

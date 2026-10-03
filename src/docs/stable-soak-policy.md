@@ -23,27 +23,26 @@ current `candidate` build is ever promoted.
 A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
-1. **Minimum candidate soak:** the current `candidate` build must have aged at
-   least 24 hours since the oldest build in its lineage (the oldest build
-   promoted to `stable` before this `candidate` arrived) was first seen on the
-   `candidate` channel. Frequent `v5` merges keep moving `candidate`, and each
-   new `candidate` build starts its own 24-hour soak timer from that lineage's
-   oldest build; a minutes-old build is not promoted merely because an older,
-   now-superseded build soaked after the current `stable` build. (The soak is
-   measured on the lineage age, not per-build age: if build B2 replaces B1 on
-   the `candidate` channel, and B1 is 25 hours old, then B2 is promotable after
-   24 hours from B1's first appearance, even if B2 itself is only seconds old.)
+1. **Minimum candidate soak:** the build being promoted must itself have aged at
+   least 24 hours, measured from the completion of the `docker.yml` run that
+   published it. Frequent `v5` merges keep moving `candidate`, and each new
+   `candidate` build starts its own 24-hour soak timer; a minutes-old build is
+   not promoted merely because an older, now-superseded build soaked after the
+   current `stable` build. (The soak is per build, not per lineage: if build B2
+   replaces B1 on the `candidate` channel while B1 is 25 hours old, B2 is not
+   promotable until B2 itself is 24 hours old, and B1 is no longer promotable at
+   all because it is no longer the current `candidate`.)
 2. **Current candidate only:** the build being promoted must be the current
    `candidate` both when the gate decides and immediately before any tag is
    moved. The race being guarded is between the promotion gate reading the
-   candidate digest (to measure the lineage soak age and check evidence) and the
+   candidate digest (to measure its soak age and check evidence) and the
    `docker.yml` workflow writing a newer candidate digest. The `candidate` tag
    is a moving release-channel tag written by `docker.yml`; it can change while
    `src/scripts/promote-stable.sh promote` is reading evidence or between the
    gate decision and the tag move. If the candidate digest changes before the
    tag move, the run always holds (never fails the workflow run) and leaves
    `stable` unchanged, so the next hourly run evaluates the newer `candidate`
-   and its own lineage-soak window. The gate detects this race in two places:
+   and its own 24-hour soak window. The gate detects this race in two places:
    first, the `hive`, `hive-contributor`, and `hive-hub` candidate digests must
    all resolve to the same revision and generation while evidence is collected;
    second, each image's `candidate` digest is re-read immediately before any tag
@@ -72,9 +71,10 @@ It:
 1. resolves the current `candidate` digest for `hive`, `hive-contributor`, and
    `hive-hub`;
 2. compares the candidate digest with the current `stable` digest;
-3. reads the current candidate's first-seen time from the successful `docker.yml`
-   run number recorded in the image metadata and requires that build to have
-   aged for the configured soak window;
+3. reads the completion time of the successful `docker.yml` run recorded in the
+   image metadata — the moment that build became a candidate, not when its run
+   was queued — and requires that build to have aged for the configured soak
+   window;
 4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
    candidate SHA;
 5. requires no open **issue** labelled `release-blocker` — `blocker_count` in
@@ -108,12 +108,12 @@ after it once the other conditions pass. It is omitted (unknown) while stable
 is paused, when `candidate` and
 `stable` are the same build, or when the channels have not resolved.
 
-The workflow writes the candidate digest, SHA, generation, candidate first-seen
-time and age, checks consulted, blocker count, smoke evidence, decision, and any
-exception note to the GitHub Actions step summary. If the gate fails, the
-workflow leaves `stable` unchanged with a human-readable reason such as
-`candidate age 3600s < required 86400s (24h)` or `newer candidate superseded
-this digest before the soak window completed`.
+The workflow writes the candidate digest, SHA, generation, candidate build
+completion time and age, checks consulted, blocker count, smoke evidence,
+decision, and any exception note to the GitHub Actions step summary. If the
+gate fails, the workflow leaves `stable` unchanged with a human-readable reason
+such as `candidate age 3600s < required 86400s (24h)` or `newer candidate
+superseded this digest before the soak window completed`.
 
 One hold is expected and benign: the candidate digest is pushed part-way
 through its `docker.yml` run, so an hourly promotion that lands in that window
@@ -126,7 +126,7 @@ sees a candidate whose publishing run has not completed yet. Since v4.24.4
 
 and the next hourly schedule re-evaluates once the run finishes — no action is
 needed. On builds **before v4.24.4** the same race instead killed the script
-with exit 1 and *no output at all* (the empty `workflow_run_created_at` lookup
+with exit 1 and *no output at all* (the empty `workflow_run_completed_at` lookup
 under `set -e`): a Promote Stable Channel run that failed with no step summary
 and nothing in the log is this condition, not a broken gate.
 

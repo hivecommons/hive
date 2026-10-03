@@ -11458,6 +11458,19 @@ test('#6664 a review cycle does not re-arm the next one off its own output', () 
   } finally { console.log = orig; teardown(relay); }
 });
 
+test('#10457 contributor review repairs fork base drift before review feedback', () => {
+  const relay = loadRelay({});
+  try {
+    const prompt = relay.buildReviewPrompt(['foo/bar'], ['foo/bar'], 'ct-bot');
+    assert.match(prompt, /--json number,url,headRefName,baseRefName,mergeStateStatus/);
+    assert.match(prompt, /Before review work, repair your own PRs/);
+    assert.match(prompt, /DIRTY or BEHIND, including fork PRs/);
+    assert.match(prompt, /Do not push new work onto a known-DIRTY head before repairing it/);
+    assert.match(prompt, /hive-base-moved note naming the base commit/);
+    assert.ok(prompt.indexOf('Before review work') < prompt.indexOf('For each PR with review comments'));
+  } finally { teardown(relay); }
+});
+
 test('#6908 the review prompt is scoped to authorized repos, not the account', () => {
   const relay = loadRelay({});
   try {

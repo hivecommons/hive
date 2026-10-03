@@ -113,6 +113,7 @@ pinned:
   # new PRs, so there is nothing there to order or refresh.
   pr-overlap.yml: [v6, -v4]
   pr-auto-update.yml: [v6, -v4]
+  pr-auto-update-test.yml: [v6, -v4]
   testutil-guard.yml: [v5, v6]
   v2-ci.yml: [v5, v6]
   v2-tests.yml: [v5, v6]

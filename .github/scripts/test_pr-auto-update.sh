@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic API/git stubs: never contact GitHub or modify a real branch.
 set -euo pipefail
+unset GITHUB_STEP_SUMMARY  # Capture summaries on stdout, including on GitHub runners.
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

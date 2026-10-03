@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -146,11 +145,5 @@ process.stdout.write(JSON.stringify(el));
 		if strings.Contains(got, old) {
 			t.Fatalf("navbar health output still contains workflow stat %q in %s", old, got)
 		}
-	}
-}
-
-func TestNavbarHealthChangelogFragment(t *testing.T) {
-	if _, err := os.Stat("../../../changelog.d/fixed-navbar-real-health-checks.md"); err != nil {
-		t.Fatalf("expected navbar health changelog fragment: %v", err)
 	}
 }

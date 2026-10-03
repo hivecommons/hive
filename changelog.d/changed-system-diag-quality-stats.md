@@ -1,1 +1,0 @@
-- Rename the system diagnostics quality stats changelog fragment to match the dashboard diagnostics test contract.

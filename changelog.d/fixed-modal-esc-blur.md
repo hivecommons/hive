@@ -1,1 +1,0 @@
-- Fixed dashboard dialogs to sit above the navbar with blurred backdrops, unified Escape dismissal, and a compact release channel strip.
