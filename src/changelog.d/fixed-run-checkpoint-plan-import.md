@@ -1,0 +1,1 @@
+- Runs: approving a held spec checkpoint no longer crashes the checkpoint endpoint, design-mode runs now import their Spektacular plan, and a regenerated plan (or an owner reset to plan) replaces the old one and returns it to draft for review.

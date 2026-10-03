@@ -15,10 +15,10 @@ repository touches it.
 | --- | --- |
 | Cluster | `hive-ci`, region `us-ord` (Chicago), Kubernetes 1.36, standard tier, **HA control plane** |
 | Pool `arc-system` | 3 × `g8-dedicated-8-4` (4 vCPU / 8 GB), label+taint `hive-role=system` |
-| Pool `runners` | 4 × `g8-dedicated-64-32` (initial) (32 vCPU / 64 GB / 655 GB NVMe), label `hive-ci-runner=true`, autoscaler 3–12 |
+| Pool `runners` | 4 × `g8-dedicated-64-32` (initial) (32 vCPU / 64 GB / 655 GB NVMe), label `hive-ci-runner=true` (set on the **pool**, not per node), autoscaler 4–12 |
 | ARC | `gha-runner-scale-set-controller` 0.14.2 in `arc-systems`; scale set `hive-runners-lke` in `arc-hive` |
 | Runner budget | `minRunners: 4`, `maxRunners: 100` (≈9 runners per node by request → 11–12 nodes at peak; 4 nodes ≈ 36) |
-| Cost | ≈ $3.5k/mo at 4 runner nodes, ≈ $2.8k/mo at the 3-node autoscaler floor, ≈ $9.6k/mo if pegged at 12 |
+| Cost | ≈ $3.5k/mo at 4 runner nodes, ≈ $9.6k/mo if pegged at 12 |
 
 ## Design
 
@@ -99,6 +99,46 @@ Cloud Manager → Firewalls → Create, use the **Kubernetes** inbound preset,
 outbound `DROP` with `53/UDP`, `80,443/TCP` to `0.0.0.0/0` and `::/0`, attach
 every `lke<id>-*` Linode. Re-attach when the autoscaler adds a node (Terraform
 does this on the next apply).
+
+## 3b. Autoscaler and node labels — what went wrong on 2026-10-02
+
+The live pools were created by hand, so the Terraform `autoscaler {}` block
+and pool `labels` were never applied: the runner pool sat at a fixed 4 nodes
+with `autoscaler.enabled=false`, and `hive-ci-runner=true` existed only on
+those 4 nodes because step 3 labelled them with `kubectl`. Under a burst ARC
+asked for ~100 runners, ~50 pods sat `Pending` (`Insufficient memory`), and
+when the autoscaler was switched on the new nodes still rejected runners
+(`didn't match Pod's node affinity/selector`) because they arrived unlabelled.
+
+Both are now set on the pool itself, which is what the Terraform declares:
+
+```sh
+# read
+curl -s -H "Authorization: Bearer $LINODE_TOKEN" \
+  https://api.linode.com/v4/lke/clusters/$CLUSTER_ID/pools/$RUN_POOL | jq '{count,labels,autoscaler}'
+# enforce (idempotent)
+curl -s -X PUT -H "Authorization: Bearer $LINODE_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"autoscaler":{"enabled":true,"min":4,"max":12},"labels":{"hive-ci-runner":"true"},"tags":["runners"]}' \
+  https://api.linode.com/v4/lke/clusters/$CLUSTER_ID/pools/$RUN_POOL
+```
+
+Rule: never `kubectl label` runner nodes by hand — autoscaled nodes will not
+inherit it. If the pool was created outside Terraform, `terraform import` it
+(section 2) so the next `apply` reconciles instead of fighting these settings.
+Symptom to watch for: `autoscalingrunnersets` shows `PENDING` ≫ 0 for more
+than ~5 minutes while `kubectl get nodes` stays flat.
+
+Fresh nodes also start with an empty node-local `/var/lib/hive-ci/toolcache`.
+Without coordination the first ~10 concurrent `actions/setup-go` /
+`setup-node` steps race to extract the same release into it and clobber each
+other (`ENOENT … copyfile '…/go/api/go1.10.txt'`, `Command failed:  version`,
+`npm: command not found` — hivecommons/hive#10234). The `warm-toolcache` init
+container in `hive-runners-lke-values.yaml` closes this: every runner pod
+takes a node-wide `flock`, the first one downloads Go `GO_VERSION` and Node
+`NODE_VERSION` into the cache layout setup-* expect (`<tool>/<ver>/x64` +
+`x64.complete`), and the rest skip. Bump those two env values when `src/go.mod`
+or the `node-version: '22'` resolution moves; a stale value only forfeits the
+protection for that tool.
 
 ## 4. ARC controller and system services
 

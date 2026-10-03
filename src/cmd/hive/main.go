@@ -1355,15 +1355,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.dashboardURLForFreshHeartbeat = func() string {
-		if b.cfg.Hub.DashboardURL != "" {
-			return b.cfg.Hub.DashboardURL
-		}
-		if b.cfg.HiveID != "" && b.cfg.Hub.URL != "" {
-			if u, err := url.Parse(b.cfg.Hub.URL); err == nil && u.Host != "" {
-				return fmt.Sprintf("https://%s.%s", b.cfg.HiveID, u.Host)
-			}
-		}
-		return fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+		return resolveSpokeDashboardURL(b.cfg, func() string { return spoke.SpokeServedHost(b.ctx) })
 	}
 
 	b.leaderboardForHeartbeat = func() []spoke.LeaderboardEntry {
@@ -1399,21 +1391,7 @@ func (b *boot) wireBootClosures() {
 	}
 
 	b.dashboardURLForHeartbeat = func() string {
-		if b.cfg.Hub.DashboardURL != "" {
-			return b.cfg.Hub.DashboardURL
-		}
-		// Prefer the host our OWN Route/Ingress actually serves. The synthesised
-		// "<hiveID>.<hub host>" below is only correct when this spoke is fronted by
-		// the hub's wildcard domain; pull-only clusters must report their live host.
-		if host := spoke.SpokeServedHost(b.ctx); host != "" {
-			return "https://" + host
-		}
-		if b.cfg.HiveID != "" && b.cfg.Hub.URL != "" {
-			if u, err := url.Parse(b.cfg.Hub.URL); err == nil && u.Host != "" {
-				return fmt.Sprintf("https://%s.%s", b.cfg.HiveID, u.Host)
-			}
-		}
-		return fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+		return resolveSpokeDashboardURL(b.cfg, func() string { return spoke.SpokeServedHost(b.ctx) })
 	}
 
 	b.dashboardDependencies = func() *dashboard.Dependencies {
@@ -2103,6 +2081,36 @@ func (b *boot) taskMCPURLForAgents() string {
 		return ""
 	}
 	return strings.TrimRight(b.dashboardURLForFreshHeartbeat(), "/") + taskmcp.EndpointPath
+}
+
+// resolveSpokeDashboardURL is the single resolver for the URL of THIS spoke's
+// dashboard, shared by both heartbeat paths and the task MCP URL handed to
+// hub-launched agents so they cannot drift (#10282). servedHost reports the
+// host the spoke's own Route/Ingress serves ("" when unknown).
+//
+// The synthesised "<hiveID>.<hub host>" is only correct when this spoke is
+// fronted by the hub's wildcard domain, so it is used only when the hub is
+// enabled and nothing more specific is known. A hub-disabled spoke (whose
+// hub.url still carries a default) falls back to the local dashboard port,
+// which co-located agents can always reach.
+func resolveSpokeDashboardURL(cfg *config.Config, servedHost func() string) string {
+	if cfg.Hub.Enabled && cfg.Hub.DashboardURL != "" {
+		return cfg.Hub.DashboardURL
+	}
+	if cfg.Dashboard.PublicURL != "" {
+		return cfg.Dashboard.PublicURL
+	}
+	if servedHost != nil {
+		if host := servedHost(); host != "" {
+			return "https://" + host
+		}
+	}
+	if cfg.Hub.Enabled && cfg.HiveID != "" && cfg.Hub.URL != "" {
+		if u, err := url.Parse(cfg.Hub.URL); err == nil && u.Host != "" {
+			return fmt.Sprintf("https://%s.%s", cfg.HiveID, u.Host)
+		}
+	}
+	return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 }
 
 // taskMCPLaunchTokenForAgents mints the lease-scoped bearer one launch
@@ -3006,6 +3014,9 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
 			b.lastActionable.Store(&cached)
+			if b.sched != nil {
+				b.sched.SetLastActionable(&cached)
+			}
 			b.gov.SeedQueueState(cached.Issues.Count, cached.PRs.Count, cached.Hold.Total, cached.Issues.SLAViolations)
 			b.refreshDashboard()
 			b.logger.Info("restored cached actionable data", "issues", cached.Issues.Count, "prs", cached.PRs.Count, "age", time.Since(cached.GeneratedAt).Round(time.Second))
@@ -4632,6 +4643,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 	hubTgt := resolveHubTarget(b.cfg.Hub, os.Getenv("HIVE_HUB_URL"), os.Getenv("HIVE_CLUSTER_ID"))
 	b.hubURL = hubTgt.url
 	b.cfg.Hub.Enabled, b.cfg.Hub.URL, b.cfg.Hub.ClusterID = hubTgt.enabled, hubTgt.url, hubTgt.clusterID
+	spoke.SetHeartbeatOmit(b.cfg.Hub.HeartbeatOmit)
 	if hubTgt.heartbeatsToHub() {
 		// Publish the collect-independent identity BEFORE the loop starts, so
 		// this spoke can report liveness even if its very first collects time
@@ -6676,7 +6688,9 @@ func runEvalCycle(
 	// If a non-default or additive work source is configured, overlay its
 	// issues onto the actionable result. PRs always come from GitHub.
 	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		var ws worksource.WorkSource
+		actionable.Issues, ws = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		reportWorkSourceDisplayStats(dashSrv, ws)
 	}
 	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
 		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)
@@ -6796,6 +6810,12 @@ func runEvalCycle(
 	// moves the tag to a merged fix PR only with retag_enabled (also opt-in).
 	runReleaseSentinel(ctx, cfg, ghClient, agentKicker{mgr: agentMgr},
 		agentAvailability(cfg, agentMgr), notifier, logger)
+
+	// Upstream watch (hivecommons/hive#9967), opt-in and default OFF: at most
+	// once per upstream_watch.interval, file a labelled fork issue for each
+	// upstream merged PR or release that still applies to the fork. Opens
+	// issues only, never PRs; the watermark and dedupe index live on the PVC.
+	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -8437,6 +8457,15 @@ func runWaitEscalationSweep(cfg *config.Config, runs runWaitObserver, logger *sl
 	sev, ok := escalate.ParseSeverity(cfg.Runs.EffectiveWaitSeverity())
 	if !ok {
 		sev = escalate.SeverityDecision
+	}
+	// With the default floors (push and chat at page) a decision-severity
+	// wait may reach no sink at all; latching the generation anyway would
+	// spend its only escalation on nothing (hivecommons/hive#10088).
+	if !d.Admits(sev) {
+		if logger != nil {
+			logger.Debug("run checkpoint wait escalation skipped: no escalation sink admits severity", "severity", sev)
+		}
+		return
 	}
 	timeout := time.Duration(cfg.Runs.EffectiveWaitTimeoutSeconds()) * time.Second
 	snapshots := runs.RunWaitSnapshot()

@@ -1,0 +1,1 @@
+- Runs: a retried stage generation now carries `attrs.retry = "true"` on its `stage_completed` timeline event and hook, and a failed design artifact comment no longer blocks the spec stage from advancing. (#10106, #10094)

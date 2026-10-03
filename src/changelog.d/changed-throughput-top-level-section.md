@@ -1,0 +1,1 @@
+- Promote the dashboard Change Throughput card to a top-level section with persisted layout and sidebar navigation.

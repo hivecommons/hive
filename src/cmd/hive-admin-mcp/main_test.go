@@ -467,3 +467,86 @@ func TestReadProviderIssuesByBandFiltersRowsButKeepsBands(t *testing.T) {
 		}
 	}
 }
+
+// TestReadProviderBandFilterMatchesLabelShapedRows pins #10018 on stdio: the
+// Overview export puts the band display label in each row, and the stdio
+// provider must still match band=<key> the way the dashboard provider does.
+func TestReadProviderBandFilterMatchesLabelShapedRows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"bands": []any{
+				map[string]any{"key": "ready", "label": "Unclaimed"},
+				map[string]any{"key": "done", "label": "Confirm & close"},
+			},
+			"rows": []any{
+				map[string]any{"number": 1, "band": "Unclaimed"},
+				map[string]any{"number": 2, "band": "Confirm & close"},
+			},
+		})
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	result, err := (readProvider{roster: r}).Read(context.Background(), adminmcp.ToolIssuesByBand, map[string]any{"band": "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, ok := result.(map[string]any)["rows"].([]any)
+	if !ok || len(rows) != 1 || rows[0].(map[string]any)["band"] != "done" {
+		t.Fatalf("rows = %#v, want the one Confirm & close row rekeyed to done", result)
+	}
+}
+
+func TestReadProviderReviewQueueMergesIssuesAndPRs(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/overview/issues.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"bands": []any{map[string]any{"key": "done", "label": "Confirm & close"}},
+				"rows":  []any{map[string]any{"repo": "o/a", "number": 1, "band": "Confirm & close", "updated_at": "2026-01-01T00:00:00Z"}},
+			})
+		case "/api/overview/prs.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"bands": []any{map[string]any{"key": "waiting", "label": "Needs human"}},
+				"rows":  []any{map[string]any{"repo": "o/a", "number": 2, "band": "Needs human", "held": true, "hold_reason": "hold", "updated_at": "2026-01-02T00:00:00Z"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	result, err := (readProvider{roster: r}).Read(context.Background(), adminmcp.ToolReviewQueue, map[string]any{"repo": "o/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != "/api/overview/issues.json?repo=o%2Fa" || paths[1] != "/api/overview/prs.json?repo=o%2Fa" {
+		t.Fatalf("paths = %#v", paths)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Rows []struct {
+			Kind       string `json:"kind"`
+			ReasonCode string `json:"reason_code"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Rows) != 2 || body.Rows[0].Kind != "pr" || body.Rows[0].ReasonCode != adminmcp.ReviewReasonHold || body.Rows[1].ReasonCode != adminmcp.ReviewReasonConfirmClose {
+		t.Fatalf("queue = %s, want the held PR before the confirm-and-close issue", encoded)
+	}
+}
+
+func TestReadPathGovernorSetup(t *testing.T) {
+	path, ok := readPath(adminmcp.ToolGovernorSetup, map[string]any{})
+	if !ok || path != "/api/config/governor" {
+		t.Fatalf("path = %q ok=%v", path, ok)
+	}
+}

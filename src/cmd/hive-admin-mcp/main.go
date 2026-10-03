@@ -189,6 +189,22 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		refusal, _ := adminmcp.RefusalFor(operation)
 		return refusal, nil
 	}
+	if tool == adminmcp.ToolReviewQueue {
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		issuesPath, prsPath := adminmcp.ReviewQueueReadPaths(args)
+		issues, err := getPath(ctx, client, issuesPath)
+		if err != nil {
+			return nil, err
+		}
+		prs, err := getPath(ctx, client, prsPath)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ReviewQueueResult(issues, prs, args)
+	}
 	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("unsupported admin MCP read tool %q", tool)
@@ -197,21 +213,29 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if err != nil {
 		return nil, err
 	}
-	// ReadPath carries the limit as a "?limit=" suffix; hivectl.Client takes the
-	// query separately and would percent-encode a "?" left in the path (#9160).
-	apiPath, rawQuery, _ := strings.Cut(path, "?")
-	query, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		return nil, err
-	}
-	data, err := client.Do(ctx, http.MethodGet, apiPath, query, nil)
+	data, err := getPath(ctx, client, path)
 	if err != nil {
 		return nil, err
 	}
 	if tool == adminmcp.ToolIssuesByBand || tool == adminmcp.ToolPrsByBand {
 		return adminmcp.BandReadResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolGovernorSetup {
+		return adminmcp.GovernorSetupProposal(data)
+	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
+}
+
+// getPath GETs a read path built by readPath or adminmcp. Those paths carry
+// their query as a "?..." suffix; hivectl.Client takes the query separately
+// and would percent-encode a "?" left in the path (#9160).
+func getPath(ctx context.Context, client *hivectl.Client, path string) (any, error) {
+	apiPath, rawQuery, _ := strings.Cut(path, "?")
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(ctx, http.MethodGet, apiPath, query, nil)
 }
 
 func (p readProvider) selectHive(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

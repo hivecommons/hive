@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,24 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
+
+// forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
+// (and the humans who hand-resolve their conflicts) use for line-to-line
+// forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
+// "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
+// line's ancestry and makes every later top-up re-conflict on the same
+// hunks (#9957, #9956).
+var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+`)
+
+// IsForwardMergePR reports whether pr is a forward-merge between release
+// lines, which must land as a merge commit rather than a squash.
+func IsForwardMergePR(pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	return forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) ||
+		strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge")
+}
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
 type CreatePRResult struct {
@@ -223,6 +242,16 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	}
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
+	}
+	// Forward-merges keep ancestry no matter which caller (sweep or the
+	// hive-merge relay) asked for the merge. A failed lookup falls through to
+	// the requested method.
+	if mergeMethod == "squash" {
+		if pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number); err == nil && IsForwardMergePR(pr) {
+			c.logger.Warn("MergePR: forcing merge commit for forward-merge PR",
+				slog.String("requested", mergeMethod), slog.Int("number", number))
+			mergeMethod = "merge"
+		}
 	}
 
 	opts := &gh.PullRequestOptions{MergeMethod: mergeMethod}

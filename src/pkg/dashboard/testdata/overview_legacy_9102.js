@@ -110,6 +110,7 @@
       const signals = [];
       if (labels.has('blocked')) signals.push({ glyph: '⛔', label: 'blocked' });
       if (labels.has('needs-decision') || labels.has('2-discussing')) signals.push({ glyph: '❓', label: 'needs decision' });
+      if (labels.has('needs-human')) signals.push({ glyph: '⚠', label: 'needs human review' });
       if (labels.has('epic')) signals.push({ glyph: '◆', label: 'epic' });
       if (matches.inProgress) signals.push({ glyph: '👤', label: 'assigned or claimed' });
       if (linked.open) signals.push({ glyph: '🔗', label: 'open PR references this issue' });
@@ -313,6 +314,7 @@
       const signals = [];
       if (role) signals.push({ role: role, label: 'agent-authored by ' + role });
       if (labels.has('needs-human')) signals.push({ glyph: '⚠', label: 'needs human review' });
+      if (labels.has('needs-decision') || labels.has('2-discussing')) signals.push({ glyph: '❓', label: 'needs decision' });
       if (held || holdLabels(Array.from(labels)).length > 0) signals.push({ glyph: '⏸', label: 'held' });
       if (matches.eligible) signals.push({ glyph: '✓', label: prQueued(pr) ? 'queued or merge-eligible' : 'merge-eligible' });
       if (matches.inReview) signals.push({ glyph: '◐', label: 'in review or outstanding' });

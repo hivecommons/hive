@@ -12,7 +12,7 @@ func TestAvatarMenuMarkupNodeGuard(t *testing.T) {
 const fs = require('fs');
 const html = fs.readFileSync(0, 'utf8');
 function fail(msg) { console.error(msg); process.exit(1); }
-const menu = html.match(/<div id="oc-gh-user-menu"[\s\S]*?<\/div>\s*<\/div>\s*<button class="hv-btn btn-primary gh-auth-btn/);
+const menu = html.match(/<div id="oc-gh-user-menu"[\s\S]*?<\/div>\s*<\/div>\s*<button class="[^"]*\bgh-auth-btn\b/);
 if (!menu) fail('avatar menu markup not found');
 const block = menu[0];
 for (const id of ['oc-gh-menu-profile','oc-gh-menu-widget','oc-gh-menu-download','oc-gh-menu-config-export','oc-gh-menu-backup']) {

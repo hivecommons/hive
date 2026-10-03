@@ -479,6 +479,17 @@ const DefaultContinuousBudgetPct = 80
 // detected turn end and the next continuous-mode kick. A non-positive setting
 // falls back to a safe one-minute cool-down so an agent that instantly reports
 // no work cannot tight-loop.
+// ContinuousInMode reports whether this agent should run in continuous mode
+// while the governor is in modeName. The legacy continuous bool remains a
+// shorthand for every non-QUIET mode; a per-mode cadence value of "continuous"
+// opts in exactly that mode.
+func (a AgentConfig) ContinuousInMode(modeName string, cadence Cadence) bool {
+	if cadence.IsContinuous() {
+		return true
+	}
+	return a.Continuous && !strings.EqualFold(strings.TrimSpace(modeName), "quiet")
+}
+
 func (a AgentConfig) EffectiveContinuousCooldown() time.Duration {
 	if a.ContinuousCooldown > 0 {
 		return a.ContinuousCooldown

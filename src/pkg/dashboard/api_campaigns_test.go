@@ -161,6 +161,46 @@ func TestCampaignsIncludeSpektacularRunsAndFilters(t *testing.T) {
 	}
 }
 
+// Resume on a Spektacular run is not gated on its stage-lease identity: a
+// freshly admitted run is held by hive-triage, which no operator is
+// (hivecommons/hive#10059).
+func TestCampaignResumeSpektacularRunHeldByStageIdentity(t *testing.T) {
+	s, _ := runsTestServer(t)
+	if err := s.contributeHub.recordLeaseForKeyStage(runAdmissionIdentity, "task-10059", "myorg/repo1", 10059, "myorg/repo1!stable-spec-10059:spec", "contributor", StageSpec, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	resume := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-10059/resume", "owner", map[string]string{"surface": "dashboard"})
+	if resume.Code != http.StatusOK {
+		t.Fatalf("owner resume of admitted run = %d body=%s", resume.Code, resume.Body.String())
+	}
+	if !strings.Contains(resume.Body.String(), "stable-spec-10059") {
+		t.Fatalf("resume body missing run: %s", resume.Body.String())
+	}
+}
+
+// Pending server-side stage leases are also run lifecycle state, not
+// dashboard campaign pickup leases, and must survive campaign release.
+func TestCampaignReleaseSpektacularRunHeldByStageIdentity(t *testing.T) {
+	s, _ := runsTestServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	key := "myorg/repo1!stable-spec-10060:spec"
+	if err := s.contributeHub.recordLeaseForKeyStage(runAdmissionIdentity, "task-10059b", "myorg/repo1", 10060, key, "contributor", StageSpec, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	before, ok := s.contributeHub.runLeaseHolder(key, time.Now())
+	if !ok {
+		t.Fatal("missing initial stage lease")
+	}
+	release := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-10060/release", "owner", map[string]string{})
+	if release.Code != http.StatusConflict {
+		t.Fatalf("owner release of admitted run = %d body=%s", release.Code, release.Body.String())
+	}
+	after, ok := s.contributeHub.runLeaseHolder(key, time.Now())
+	if !ok || after.identity != before.identity || after.taskID != before.taskID || after.stage != before.stage || after.gen != before.gen || !after.expiresAt.Equal(before.expiresAt) {
+		t.Fatalf("release changed pending stage lease: before=%+v after=%+v held=%v", before, after, ok)
+	}
+}
+
 func TestCampaignLeaseReleaseAndReviseFlows(t *testing.T) {
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
@@ -348,5 +388,27 @@ func TestCampaignFromCompletedRunUsesStableSpecID(t *testing.T) {
 	}
 	if !strings.Contains(spektacularResumeCommand(campaign), "stable-spec-8665") {
 		t.Fatalf("resume command = %q, want stable spec id", spektacularResumeCommand(campaign))
+	}
+}
+
+// Issue-numbered runs ("owner/repo#N") have no embedded artifact slug: the id
+// must be Spektacular's "owner-repo-n" artifact name, not the bare worksource
+// key, or the generated resume command addresses an artifact that does not
+// exist on disk (hivecommons/hive#10091).
+func TestCampaignFromIssueRunUsesSpektacularArtifactName(t *testing.T) {
+	campaign := campaignFromRun(Run{
+		Key:   "myorg/repo#42",
+		Repo:  "myorg/repo",
+		Stage: StagePlan,
+		State: "active",
+	})
+	if campaign.ID != "myorg-repo-42" {
+		t.Fatalf("campaign id = %q, want spektacular artifact name", campaign.ID)
+	}
+	if campaign.RunKey != "myorg/repo#42" {
+		t.Fatalf("campaign run key = %q, want worksource key preserved", campaign.RunKey)
+	}
+	if got := spektacularResumeCommand(campaign); got != "spektacular plan status myorg-repo-42" {
+		t.Fatalf("resume command = %q, want artifact name", got)
 	}
 }

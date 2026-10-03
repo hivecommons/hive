@@ -178,7 +178,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"project_observability": s.projectObservabilityResponse(cfg),
 		"replan":                replanSectionResponse(cfg),
 		"question_autoclose":    questionAutocloseSectionResponse(cfg),
-		"work_source":           workSourceSectionResponse(cfg),
+		"work_source":           s.workSourceSectionResponse(cfg),
 		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the
@@ -213,6 +213,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"auto_snapshot":            cfg.Hub.AutoSnapshot,
 			"snapshot_frame_ancestors": cfg.Dashboard.SnapshotFrameAncestors,
 			"auto_upgrade":             cfg.Hub.AutoUpgrade,
+			// heartbeat_omit is read-only display of the identifier classes
+			// withheld from hub telemetry; it is set in hive.yaml, not here.
+			"heartbeat_omit": heartbeatOmitForDisplay(cfg.Hub.HeartbeatOmit),
 			// auto_upgrade_mode is the configured SCHEDULE (instant/daily/weekly)
 			// surfaced read-only so the governor Settings overlay Hub tab can
 			// show the auto-update policy the reporter went looking for (#6962).

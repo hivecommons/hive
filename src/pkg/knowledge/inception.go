@@ -80,6 +80,7 @@ func (e *InceptionEngine) Start(rawIdea string) (*InceptionState, error) {
 	if len(slug) < 8 {
 		slug = slug + "-" + fmt.Sprintf("%d", time.Now().UnixMilli()%100000)
 	}
+	slug = e.uniqueCampaignSlugLocked(slug)
 
 	if e.api != nil {
 		ctx := context.Background()
@@ -149,6 +150,7 @@ func (e *InceptionEngine) StartBrownfield(repoURL string) (*InceptionState, erro
 	}
 
 	slug := slugify("scan-" + repoBaseName(repoURL))
+	slug = e.uniqueCampaignSlugLocked(slug)
 
 	e.clearWikiVault()
 
@@ -812,17 +814,42 @@ func (e *InceptionEngine) ProduceScaffold(ctx context.Context) (*ScaffoldResult,
 
 // AdvanceToComplete marks the inception as complete (scaffold approved).
 func (e *InceptionEngine) AdvanceToComplete() error {
+	return e.AdvanceToCompleteWithRun("")
+}
+
+// CanAdvanceToComplete reports, without changing state, whether
+// AdvanceToComplete would accept the current phase. Callers that perform side
+// effects before completing (such as admitting a run) check it first.
+func (e *InceptionEngine) CanAdvanceToComplete() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.checkCanCompleteLocked()
+}
 
+func (e *InceptionEngine) checkCanCompleteLocked() error {
 	if e.state == nil {
 		return fmt.Errorf("no inception in progress")
 	}
 	if e.state.Phase != PhaseScaffold && e.state.Phase != PhaseComplete {
 		return fmt.Errorf("cannot approve in phase %s — must be in scaffold phase", e.state.Phase)
 	}
+	return nil
+}
+
+// AdvanceToCompleteWithRun marks the inception as complete and records the
+// run admitted for it. An empty runKey keeps any previously recorded key.
+func (e *InceptionEngine) AdvanceToCompleteWithRun(runKey string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.checkCanCompleteLocked(); err != nil {
+		return err
+	}
 
 	e.state.Phase = PhaseComplete
+	if runKey = strings.TrimSpace(runKey); runKey != "" {
+		e.state.AdmittedRunKey = runKey
+	}
 	now := time.Now()
 	e.state.PhaseChangedAt = &now
 	e.state.ProposedFacts = nil
@@ -1285,6 +1312,21 @@ func (e *InceptionEngine) RestoreCampaignArchive(id string) (*InceptionState, er
 	cp := copyInceptionState(e.state)
 	e.logger.Info("inception campaign restored", "campaign", archive.ID, "phase", cp.Phase)
 	return cp, nil
+}
+
+// uniqueCampaignSlugLocked appends a numeric disambiguator when an archive
+// with the given slug already exists, so starting a new inception whose idea
+// text (or brownfield repo basename) collides with an earlier one does not
+// silently archive onto — and overwrite the state and wiki of — the earlier
+// campaign (hivecommons/hive#10084). Callers already hold e.mu.
+func (e *InceptionEngine) uniqueCampaignSlugLocked(slug string) string {
+	base := slug
+	for n := 2; ; n++ {
+		if _, err := e.readArchiveLocked(slug); err != nil {
+			return slug
+		}
+		slug = fmt.Sprintf("%s-%d", base, n)
+	}
 }
 
 func (e *InceptionEngine) archiveFromStateLocked(now time.Time) *InceptionCampaignArchive {

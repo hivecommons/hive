@@ -25,7 +25,7 @@ func TestOverviewPlacementAndNav(t *testing.T) {
 		`data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"`,
 		`if (item.getAttribute('data-section') === 'governor') hide(item);`,
 		`.overview-chart-legend { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; max-width: 22rem; }`,
-		`.overview-chart-legend-count { font-variant-numeric: tabular-nums; text-align: right; }`,
+		`.overview-chart-legend-count { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; text-align: right; }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

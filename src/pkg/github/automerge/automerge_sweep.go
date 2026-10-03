@@ -287,26 +287,13 @@ const (
 
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
 
-// forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
-// (and the humans who hand-resolve their conflicts) use for line-to-line
-// forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
-// "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
-// line's ancestry and makes every later top-up re-conflict on the same
-// hunks (#9957, #9956).
-var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+`)
-
 // mergeMethodFor returns the GitHub merge method the sweep should use for pr.
 // Forward-merge PRs between release lines must land as true merge commits so
 // the target line keeps the source line's ancestry; everything else keeps the
-// repository's squash convention.
+// repository's squash convention. The classification is shared with the
+// hive-merge relay via hgithub.IsForwardMergePR.
 func mergeMethodFor(pr *gh.PullRequest) string {
-	if pr == nil {
-		return "squash"
-	}
-	if forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) {
-		return "merge"
-	}
-	if strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge") {
+	if hgithub.IsForwardMergePR(pr) {
 		return "merge"
 	}
 	return "squash"

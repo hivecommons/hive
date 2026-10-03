@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -74,6 +75,7 @@ func newBootCollectorsBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
+	b.sched = scheduler.New(cfg, b.logger)
 	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	b.dashSrv = dashboard.NewServer(0, b.logger)
@@ -184,6 +186,16 @@ func TestBootCollectorsWithRestoresCachedActionable(t *testing.T) {
 	cached.Issues.Count = 7
 	cached.Issues.SLAViolations = 2
 	cached.PRs.Count = 3
+	cached.PRs.Attributed = []github.PullRequest{{
+		Repo:           "acme/widgets",
+		Number:         42,
+		HiveAttributed: true,
+		HiveAgent:      "governor",
+		HiveBackend:    "copilot",
+		HiveModel:      "gpt-5.4",
+		CreatedAt:      cached.GeneratedAt,
+		MergedAt:       cached.GeneratedAt.Add(time.Minute),
+	}}
 	cached.Hold.Total = 1
 	f.actionable, _ = json.Marshal(cached)
 	f.actionableErr = nil
@@ -193,6 +205,9 @@ func TestBootCollectorsWithRestoresCachedActionable(t *testing.T) {
 
 	if got := b.lastActionable.Load(); got == nil || got.Issues.Count != 7 {
 		t.Fatalf("lastActionable = %+v", got)
+	}
+	if got := b.sched.GetLastActionable(); got == nil || len(got.PRs.Attributed) != 1 || got.PRs.Attributed[0].HiveModel != "gpt-5.4" {
+		t.Fatalf("scheduler cache = %+v, want restored attributed PR", got)
 	}
 	st := b.gov.GetState()
 	if st.QueueIssues != 7 || st.QueuePRs != 3 {

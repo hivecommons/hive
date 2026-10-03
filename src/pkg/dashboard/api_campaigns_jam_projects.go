@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	inboundProjectItemTitle   = "Inbound project status"
 	jamProjectSyncEndpointEnv = "HIVE_JAM_PROJECT_SYNC_URL"
 	jamProjectSyncTokenEnv    = "HIVE_JAM_PROJECT_SYNC_TOKEN"
 	jamProjectSyncDefaultURL  = "https://api.github.com/graphql"
@@ -22,10 +23,12 @@ const (
 )
 
 // jamProjectSyncAuth resolves the sync endpoint and the bearer token it may
-// receive. GITHUB_TOKEN is only ever sent to api.github.com over https; a
-// custom endpoint gets HIVE_JAM_PROJECT_SYNC_TOKEN instead, and plain http is
-// allowed only for loopback hosts so no credential crosses the network in
-// cleartext (#8811).
+// receive. GITHUB_TOKEN is only ever sent to the canonical
+// https://api.github.com/graphql endpoint; any other endpoint — including a
+// look-alike that merely shares the api.github.com host on a different port,
+// path or with userinfo set — gets HIVE_JAM_PROJECT_SYNC_TOKEN instead, and
+// plain http is allowed only for loopback hosts so no credential crosses the
+// network in cleartext (#8811).
 func jamProjectSyncAuth(endpoint string) (string, string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
@@ -41,7 +44,7 @@ func jamProjectSyncAuth(endpoint string) (string, string, error) {
 	default:
 		return "", "", fmt.Errorf("%s must use https", jamProjectSyncEndpointEnv)
 	}
-	if u.Scheme == "https" && strings.EqualFold(host, jamProjectSyncGitHubHost) {
+	if jamProjectSyncIsCanonicalGitHub(u) {
 		token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 		if token == "" {
 			return "", "", errors.New("GITHUB_TOKEN required for GitHub Projects sync")
@@ -49,6 +52,34 @@ func jamProjectSyncAuth(endpoint string) (string, string, error) {
 		return u.String(), token, nil
 	}
 	return u.String(), strings.TrimSpace(os.Getenv(jamProjectSyncTokenEnv)), nil
+}
+
+// jamProjectSyncIsCanonicalGitHub reports whether u is exactly the
+// documented default endpoint (https://api.github.com/graphql, no userinfo,
+// no non-default port): the only shape GITHUB_TOKEN may be sent to. A URL
+// that merely resolves to the same host — a different port, a different
+// path, or one carrying userinfo — is treated as a distinct, non-GitHub
+// endpoint (hivecommons/hive#10113).
+func jamProjectSyncIsCanonicalGitHub(u *url.URL) bool {
+	return u.Scheme == "https" && u.User == nil && u.Port() == "" &&
+		strings.EqualFold(u.Hostname(), jamProjectSyncGitHubHost) && u.Path == "/graphql"
+}
+
+// jamProjectSyncUsesProjectsV2 reports whether the endpoint is a GitHub
+// GraphQL API and must therefore receive the real Projects v2 mutation rather
+// than the hive's own hiveJamProjectSync mutation (#10086). That is the
+// canonical api.github.com/graphql endpoint and, for GitHub Enterprise
+// Server, the fixed https://<host>/api/graphql path an override points at:
+// GHES speaks the same Projects v2 schema and has no hiveJamProjectSync
+// field, so sending it the custom mutation failed the documented publish in
+// exactly the way the canonical endpoint used to. Token binding is decided
+// separately by jamProjectSyncAuth and is unchanged: a GHES override still
+// never receives GITHUB_TOKEN.
+func jamProjectSyncUsesProjectsV2(u *url.URL) bool {
+	if jamProjectSyncIsCanonicalGitHub(u) {
+		return true
+	}
+	return u.Scheme == "https" && u.User == nil && u.Path == "/api/graphql"
 }
 
 func jamProjectSyncLoopback(host string) bool {
@@ -80,7 +111,7 @@ type campaignProjectSyncPayload struct {
 func (s *Server) handleCampaignJamProjectSyncGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "project_sync": state.ProjectSync})
@@ -103,7 +134,7 @@ func (s *Server) handleCampaignJamProjectSyncPost(w http.ResponseWriter, r *http
 			return updateCampaignProjectSync(state, req, action)
 		})
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
+			jsonError(w, err.Error(), campaignJamStatus(err))
 			return
 		}
 		jsonResponse(w, map[string]any{"ok": true, "jam": state, "project_sync": state.ProjectSync})
@@ -146,7 +177,7 @@ func updateCampaignProjectSync(state *CampaignJamState, req campaignProjectSyncR
 		state.ProjectSync.LastError = ""
 		state.ProjectSync.RetryAdvice = ""
 		state.ProjectSync.PublishedItems = append(state.ProjectSync.PublishedItems, CampaignProjectItem{
-			Type: itemType, Title: "Inbound project status", Status: status, ExternalID: externalID, UpdatedAt: now,
+			Type: itemType, Title: inboundProjectItemTitle, Status: status, ExternalID: externalID, UpdatedAt: now,
 		})
 	}
 	return nil
@@ -155,7 +186,7 @@ func updateCampaignProjectSync(state *CampaignJamState, req campaignProjectSyncR
 func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, id string) {
 	state, err := s.loadCampaignJam(id)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	if state.ProjectSync == nil || !state.ProjectSync.Enabled {
@@ -181,11 +212,17 @@ func (s *Server) syncCampaignJamProject(w http.ResponseWriter, r *http.Request, 
 		state.ProjectSync.LastSyncAt = jamNow()
 		state.ProjectSync.LastError = ""
 		state.ProjectSync.RetryAdvice = ""
-		state.ProjectSync.PublishedItems = payload.Items
+		kept := make([]CampaignProjectItem, 0, len(payload.Items))
+		for _, item := range state.ProjectSync.PublishedItems {
+			if item.Title == inboundProjectItemTitle {
+				kept = append(kept, item)
+			}
+		}
+		state.ProjectSync.PublishedItems = append(kept, payload.Items...)
 		return nil
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_project_sync", auditDetail("campaign", id), "")
@@ -247,11 +284,52 @@ func postCampaignProjectSync(payload campaignProjectSyncPayload) error {
 	if err != nil {
 		return err
 	}
-	body := map[string]any{
-		"query":     "mutation HiveJamProjectSync($input: JSON!) { hiveJamProjectSync(input: $input) { ok } }",
-		"variables": map[string]any{"input": payload},
+	if u, perr := url.Parse(endpoint); perr == nil && jamProjectSyncUsesProjectsV2(u) {
+		return postGitHubProjectDrafts(endpoint, token, payload)
 	}
-	raw, err := json.Marshal(body)
+	return jamProjectSyncGraphQL(endpoint, token,
+		"mutation HiveJamProjectSync($input: JSON!) { hiveJamProjectSync(input: $input) { ok } }",
+		map[string]any{"input": payload})
+}
+
+// postGitHubProjectDrafts publishes each item as a draft issue through
+// GitHub's real Projects v2 API (addProjectV2DraftIssue). It needs the
+// project's GraphQL node id (PVT_…); a project URL alone cannot be resolved
+// to one without extra scopes, so it is rejected with an actionable message.
+func postGitHubProjectDrafts(endpoint, token string, payload campaignProjectSyncPayload) error {
+	projectID := strings.TrimSpace(payload.ProjectID)
+	if projectID == "" {
+		return errors.New("project_id (GitHub Projects v2 node id, PVT_…) required to sync to GitHub Projects")
+	}
+	// Every GitHub Projects v2 node id is prefixed "PVT_"; a classic project
+	// number or a project URL copied into project_id by mistake is never
+	// valid here. Catching that locally gives a clear, actionable error
+	// instead of letting the real API return an opaque GraphQL error for it —
+	// the same confusing-failure symptom the non-GitHub hiveJamProjectSync
+	// mutation produced before this endpoint called the real API at all
+	// (hivecommons/hive#10086).
+	if !strings.HasPrefix(projectID, "PVT_") {
+		return fmt.Errorf("project_id %q is not a GitHub Projects v2 node id (expected a PVT_… id, not a project number or URL)", projectID)
+	}
+	const mutation = "mutation($input: AddProjectV2DraftIssueInput!) { addProjectV2DraftIssue(input: $input) { projectItem { id } } }"
+	for _, item := range payload.Items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = item.Type
+		}
+		input := map[string]any{"projectId": projectID, "title": title}
+		if item.Body != "" {
+			input["body"] = item.Body
+		}
+		if err := jamProjectSyncGraphQL(endpoint, token, mutation, map[string]any{"input": input}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func jamProjectSyncGraphQL(endpoint, token, query string, variables map[string]any) error {
+	raw, err := json.Marshal(map[string]any{"query": query, "variables": variables})
 	if err != nil {
 		return err
 	}

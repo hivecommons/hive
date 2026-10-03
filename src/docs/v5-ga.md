@@ -57,7 +57,7 @@ cannot be counted as complete.
 - **Duration:** require 7 consecutive days of green required checks on the
   protected `v5` branch before cutting the GA candidate. This deliberately
   extends the 24-hour candidate precedent in the
-  [v4 stable soak policy](stable-soak-policy.md#proposed-promotion-rule)
+  [v4 stable soak policy](stable-soak-policy.md#promotion-rule)
   because GA promotes a whole release line, not one already-supported v4
   candidate digest.
 - **Required-check set:** as of this update, branch protection reports the

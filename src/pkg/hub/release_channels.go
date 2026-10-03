@@ -328,6 +328,19 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 	return append([]ChannelTarget(nil), fresh...)
 }
 
+// peekChannelTargets returns the last resolved channel→image association
+// without refreshing it, or nil before the first successful resolve. For the
+// heartbeat path, which must never wait on a GHCR round-trip; the dashboard
+// and SHA poller keep the cache warm through getChannelTargets.
+func peekChannelTargets() []ChannelTarget {
+	channelTargetMu.RLock()
+	defer channelTargetMu.RUnlock()
+	if channelTargetCache == nil {
+		return nil
+	}
+	return append([]ChannelTarget(nil), channelTargetCache...)
+}
+
 // commitMessageForSHA returns the first line of sha's commit message, serving
 // the SHA-poll cache when it has it and otherwise fetching once and caching.
 // Looked up via the channelCommitMessage hook so tests stay off the network.

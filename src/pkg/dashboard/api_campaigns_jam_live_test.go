@@ -149,3 +149,59 @@ func TestCampaignJamLiveConflictingEdits(t *testing.T) {
 		t.Fatalf("stale edit overwrote state: %+v", jam)
 	}
 }
+
+func TestCampaignJamLiveEnforcesReadLimit(t *testing.T) {
+	s := jamTestServer(t)
+	httpSrv := httptest.NewServer(s.mux)
+	t.Cleanup(httpSrv.Close)
+
+	// A read role is enough to open this socket, so the limit is what stops a
+	// reader from making the server decode an unbounded frame.
+	reader := jamLiveDial(t, httpSrv, "reader", "read")
+	_ = readJamLiveUntil(t, reader, jamLiveSnapshot, nil)
+
+	oversized := jamLiveMessage{Type: jamLiveFocus, Section: strings.Repeat("x", wsMaxMessageSize)}
+	// A write error is an outcome here, not a failure: the server closes as
+	// soon as it has read past the limit, possibly before the last byte lands.
+	_ = reader.WriteJSON(oversized)
+	if err := reader.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	for {
+		var msg jamLiveMessage
+		err := reader.ReadJSON(&msg)
+		if err != nil {
+			break
+		}
+		if msg.Type == jamLivePresence || msg.Type == jamLiveSnapshot {
+			continue
+		}
+		t.Fatalf("oversized frame produced %+v, want the connection to end", msg)
+	}
+}
+
+func TestCampaignJamLiveRejectsEmptyEdit(t *testing.T) {
+	s := jamTestServer(t)
+	httpSrv := httptest.NewServer(s.mux)
+	t.Cleanup(httpSrv.Close)
+
+	alice := jamLiveDial(t, httpSrv, "alice", "read-write")
+	_ = readJamLiveUntil(t, alice, jamLiveSnapshot, nil)
+	if err := alice.WriteJSON(jamLiveMessage{Type: jamLiveEdit, BaseRevisionID: "", Content: "## Goals\nAlice"}); err != nil {
+		t.Fatalf("write alice edit: %v", err)
+	}
+	applied := readJamLiveUntil(t, alice, jamLiveEditApplied, nil)
+
+	if err := alice.WriteJSON(jamLiveMessage{Type: jamLiveEdit, BaseRevisionID: applied.RevisionID, Content: "   "}); err != nil {
+		t.Fatalf("write blank edit: %v", err)
+	}
+	blank := readJamLiveUntil(t, alice, jamLiveError, nil)
+	if blank.Error != "content required" {
+		t.Fatalf("blank live edit error = %q, want content required", blank.Error)
+	}
+
+	jam := decodeJam(t, doOwnerGet(s, "/api/campaigns/spec-live/jam"))
+	if jam.SpecContent != "## Goals\nAlice" || len(jam.Revisions) != 1 {
+		t.Fatalf("blank live edit blanked the spec: %+v", jam)
+	}
+}

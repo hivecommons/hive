@@ -447,3 +447,31 @@ func TestDispatcherStopCapsRetryWaitAtDrainDeadline(t *testing.T) {
 		})
 	}
 }
+
+// Admits tells a latching producer whether any sink's floor takes the event
+// before it spends its latch (hivecommons/hive#10088).
+func TestDispatcherAdmitsReportsSinkFloors(t *testing.T) {
+	var nilDispatcher *Dispatcher
+	if nilDispatcher.Admits(SeverityPage) {
+		t.Fatal("nil dispatcher admits page")
+	}
+	d := NewDispatcher(context.Background(), nil, nil)
+	if d.Admits(SeverityPage) {
+		t.Fatal("dispatcher with no sinks admits page")
+	}
+	d.Register(&fakeSink{name: "push"}, SeverityPage, 1)
+	if d.Admits(SeverityDecision) {
+		t.Fatal("page-floor sink admits decision")
+	}
+	if !d.Admits(SeverityPage) {
+		t.Fatal("page-floor sink refuses page")
+	}
+	d.Register(&fakeSink{name: "email"}, SeverityInfo, 1)
+	if !d.Admits(SeverityDecision) {
+		t.Fatal("info-floor sink refuses decision")
+	}
+	d.Stop()
+	if d.Admits(SeverityPage) {
+		t.Fatal("stopped dispatcher admits page")
+	}
+}

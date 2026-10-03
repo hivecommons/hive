@@ -66,7 +66,11 @@ func rescanRepos(
 	}
 
 	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		// A manual rescan does not update the dashboard's external-source
+		// stats: it is the read-only "what's new right now" button, not the
+		// governor's eval cycle, and the counter already reflects the last
+		// eval tick's reading (reportWorkSourceDisplayStats in main.go).
+		actionable.Issues, _ = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)

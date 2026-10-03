@@ -206,7 +206,7 @@ func featureDisclosure(args map[string]any) string {
 			warnings = append(warnings, key+" disables a protection or coordination gate")
 		}
 	}
-	for _, key := range []string{"autonomyAutoPromote", "runStages", "triageEnabled", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "mintEnabled", "formalEnabled"} {
+	for _, key := range []string{"autonomyAutoPromote", "spektacularEnabled", "spektacularHubExecutor", "runStages", "triageEnabled", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "mintEnabled", "formalEnabled"} {
 		if v, ok := args[key].(bool); ok && v {
 			warnings = append(warnings, key+" enables additional fleet behavior")
 		}
@@ -276,13 +276,13 @@ func featureFieldSet(schema map[string]any) map[string]bool {
 }
 
 func boolFeatureFields() []string {
-	return []string{"ioscanEnabled", "tracingEnabled", "otelEnabled", "retroEnabled", "mintEnabled", "planFromLabel", "formalEnabled", "personaLearningEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "planMatchEnabled", "spektacularEnabled", "runStages", "triageEnabled", "triageClarifyComment", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "wavefrontEnabled", "claimsEnabled", "autonomyAutoPromote", "autonomyAutoDemote", "rotationEnabled", "otelInsecure"}
+	return []string{"ioscanEnabled", "tracingEnabled", "otelEnabled", "retroEnabled", "mintEnabled", "planFromLabel", "formalEnabled", "personaLearningEnabled", "checkpointSpecEnabled", "checkpointPlanEnabled", "checkpointImplementEnabled", "planMatchEnabled", "spektacularEnabled", "spektacularHubExecutor", "runStages", "triageEnabled", "triageClarifyComment", "publicationEnabled", "extFlueEnabled", "extOmpEnabled", "wavefrontEnabled", "claimsEnabled", "autonomyAutoPromote", "autonomyAutoDemote", "rotationEnabled", "otelInsecure"}
 }
 
 func intFeatureFields() []string {
-	return []string{"runWaitTimeoutSeconds", "spektacularPollS", "maxStageRetries", "triageMinBodyChars", "claimsTtlS", "autonomyPromoteAfter", "autonomyMaxLevel", "autonomyCooldownDays", "rotationThresholdPct", "rotationHighVolumeCadenceS"}
+	return []string{"runWaitTimeoutSeconds", "spektacularPollS", "spektacularHubExecutorTimeoutS", "spektacularHubExecutorMaxConcurrent", "maxStageRetries", "triageMinBodyChars", "claimsTtlS", "autonomyPromoteAfter", "autonomyMaxLevel", "autonomyCooldownDays", "rotationThresholdPct", "rotationHighVolumeCadenceS"}
 }
 
 func stringFeatureFields() []string {
-	return []string{"tracingEndpoint", "otelEndpoint", "otelServiceName", "retroAnalysisModel", "mintIssuer", "runWaitSeverity", "spektacularBinary", "publicationPrivateChannel", "publicationOwner", "extFlueMode", "extFlueEndpoint", "extFlueWorkflowVersion", "extOmpMode", "wavefrontPath", "wavefrontUrl", "wavefrontRepo", "wavefrontReceiptsDir", "autonomyDemoteOn"}
+	return []string{"tracingEndpoint", "otelEndpoint", "otelServiceName", "retroAnalysisModel", "mintIssuer", "runWaitSeverity", "spektacularBinary", "spektacularHubExecutorBackend", "spektacularHubExecutorModel", "spektacularInterview", "publicationPrivateChannel", "publicationOwner", "extFlueMode", "extFlueEndpoint", "extFlueWorkflowVersion", "extOmpMode", "wavefrontPath", "wavefrontUrl", "wavefrontRepo", "wavefrontReceiptsDir", "autonomyDemoteOn"}
 }

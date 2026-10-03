@@ -105,7 +105,13 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
    either `issue_url` or `repo`/`issue_number` in the approve body to admit
    the linked issue as the first `spec` stage. Inception does not create or
    guess an issue number on its own; if the approve request does not name one,
-   completion remains a no-op for run admission.
+   completion remains a no-op for run admission. Supplying only one of `repo`
+   and `issue_number` is rejected with 400. The run is admitted before the
+   inception is marked complete, so an admission failure leaves the phase at
+   `scaffold` and the approve can be retried. The response is
+   `{"ok": true, "admitted": <bool>, "run_key": "<owner/repo#N>"}` (`run_key`
+   only when a run was admitted), and the key is recorded on the inception
+   state as `admitted_run_key`.
 8. If anything goes wrong, `POST /api/inception/reset` first archives the
    current state and wiki files as an Inception campaign, then clears the
    active state and state file. The Campaigns list can restore that archived
@@ -207,9 +213,12 @@ unit of work keyed by its stable session/spec id:
 - The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
   filters and keeps shipped/completed work visible instead of replacing it
   with a blank New Inception screen.
-- **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
-  campaign linked with `revision_of`/`revision`, so changed requirements branch
-  from the shipped campaign instead of erasing its trail.
+- **Revise** calls `POST /api/campaigns/{id}/revise` and revises the
+  campaign in place: an Inception campaign bumps its `revision` and pushes the
+  previous state into its `history`, so changed requirements keep the trail of
+  earlier revisions. No second campaign is created and `revision_of` stays
+  empty. Revising a Spektacular run updates the archive keyed by the slugified
+  run id, or creates one at revision 1 without history.
 
 ## Configuring the brainstorm agent
 

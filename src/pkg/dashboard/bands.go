@@ -130,6 +130,9 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if labels["needs-decision"] || labels["2-discussing"] {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
+	if labels["needs-human"] {
+		signals = append(signals, Signal{Glyph: "⚠", Label: "needs human review"})
+	}
 	if labels["epic"] {
 		signals = append(signals, Signal{Glyph: "◆", Label: "epic"})
 	}
@@ -198,6 +201,9 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	}
 	if labels["needs-human"] {
 		signals = append(signals, Signal{Glyph: "⚠", Label: "needs human review"})
+	}
+	if labels["needs-decision"] || labels["2-discussing"] {
+		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
 	if held || len(holdLabels(pr.Labels, hiveID)) > 0 {
 		signals = append(signals, Signal{Glyph: "⏸", Label: "held"})

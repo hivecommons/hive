@@ -1,0 +1,1 @@
+- fix(spektacular): headless and hub-launched agent CLIs now carry the same GitHub MCP write and host-state deny flags as the tmux launch path, so a launch with permissions pre-approved cannot author through the MCP ([#10054](https://github.com/hivecommons/hive/issues/10054))

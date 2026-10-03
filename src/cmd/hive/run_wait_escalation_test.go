@@ -77,6 +77,58 @@ func TestRunWaitEscalationDispatchesOneEventPerGeneration(t *testing.T) {
 	assertOneEvent(t, ch, "next generation")
 }
 
+// A wait no registered sink admits (decision against push/chat floors at
+// page) must not spend the generation's latch: once a sink that takes it is
+// configured, the same generation still escalates (hivecommons/hive#10088).
+func TestRunWaitEscalationKeepsLatchWhenNoSinkAdmitsSeverity(t *testing.T) {
+	oldStoreFunc := runWaitEscalationStore
+	oldDispatcher := currentEscalationDispatcher()
+	t.Cleanup(func() {
+		runWaitEscalationStore = oldStoreFunc
+		escalationRuntime.Lock()
+		if escalationRuntime.d != nil {
+			escalationRuntime.d.Stop()
+		}
+		escalationRuntime.d = oldDispatcher
+		escalationRuntime.Unlock()
+	})
+	store := escalation.Load("")
+	runWaitEscalationStore = func() *escalation.Store { return store }
+	now := time.Date(2026, 9, 22, 20, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return now })
+
+	pageOnly := make(chan escalate.Event, 2)
+	d := escalate.NewDispatcher(context.Background(), nil, nil)
+	d.Register(channelEscalationSink{ch: pageOnly}, escalate.SeverityPage, 4)
+	escalationRuntime.Lock()
+	escalationRuntime.d = d
+	escalationRuntime.Unlock()
+
+	cfg := &config.Config{}
+	observer := runWaitObserverFunc(func() []dashboard.RunWaitSnapshot {
+		return []dashboard.RunWaitSnapshot{{
+			Key:          "hivecommons/hive#10088",
+			Stage:        "plan",
+			Gen:          3,
+			WaitingOn:    "human",
+			WaitingSince: now.Add(-2 * time.Hour),
+		}}
+	})
+	runWaitEscalationSweep(cfg, observer, nil)
+	assertNoEvent(t, pageOnly, "decision wait with only a page-floor sink")
+
+	admitting := make(chan escalate.Event, 2)
+	next := escalate.NewDispatcher(context.Background(), nil, nil)
+	next.Register(channelEscalationSink{ch: admitting}, escalate.SeverityDecision, 4)
+	escalationRuntime.Lock()
+	escalationRuntime.d.Stop()
+	escalationRuntime.d = next
+	escalationRuntime.Unlock()
+
+	runWaitEscalationSweep(cfg, observer, nil)
+	assertOneEvent(t, admitting, "same generation once a sink admits decision")
+}
+
 func assertOneEvent(t *testing.T, ch <-chan escalate.Event, label string) {
 	t.Helper()
 	select {

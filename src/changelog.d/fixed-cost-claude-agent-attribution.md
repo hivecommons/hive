@@ -1,0 +1,1 @@
+- Fix `/api/cost` attributing every Claude session to agent `unknown`: attribution now prefers the working directory Claude Code records on each session entry over guessing it from the `~/.claude/projects` directory name, which uses an encoding hive doesn't control (#10142).

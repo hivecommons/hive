@@ -49,6 +49,16 @@ func TestDetectDeploymentExplicitRuntimes(t *testing.T) {
 	}
 }
 
+func TestDetectDeploymentPodmanMissingHelperNamesHostCommand(t *testing.T) {
+	clearDeploymentEnv(t)
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: &config.Config{Deployment: config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootless", UpgradeHelper: filepath.Join(t.TempDir(), "missing")}}, Logger: slog.Default()}
+	got := srv.detectDeployment()
+	if got.UpgradeSupported || !strings.Contains(got.Reason, "systemctl --user start podman-auto-update.service") {
+		t.Fatalf("detectDeployment() = %+v, want unsupported with host command in reason", got)
+	}
+}
+
 func TestDetectDeploymentFallsBackToKubernetesOnlyWithServiceAccountEvidence(t *testing.T) {
 	clearDeploymentEnv(t)
 	orig := kubernetesServiceAccountNamespacePath
