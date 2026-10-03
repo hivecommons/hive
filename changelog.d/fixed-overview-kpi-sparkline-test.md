@@ -1,0 +1,1 @@
+- Fixed the overview KPI sparkline regression test fixture so the node-backed check exercises server history (it was latent-failing once runners gained Node, breaking the hourly coverage gate).

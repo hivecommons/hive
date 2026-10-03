@@ -112,7 +112,7 @@ function overviewItemAgeMinutes(){ return NaN; }
 	source.WriteString(`
 const issueSlices = [{key: 'ready', count: 58, items: []}];
 const prSlices = [{key: 'ready', count: 12, items: []}, {key: 'blocked', count: 3, items: []}];
-const markup = renderOverviewKPIs([{heldIssues: [1,2], heldPrs: [3,4,5,6]}], issueSlices, prSlices, {showKPIs: true, timeBasis: 'updated'});
+const markup = renderOverviewKPIs([{name: 'hive', heldIssues: [1,2], heldPrs: [3,4,5,6]}], issueSlices, prSlices, {showKPIs: true, timeBasis: 'updated'});
 assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
 assert.equal((markup.match(/<svg/g) || []).length, 6);
 for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','median-age']) {
