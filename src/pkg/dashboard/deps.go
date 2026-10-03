@@ -280,10 +280,12 @@ type NousPrinciple struct {
 const NousBaselineTarget = 672
 
 // NousBaselinePct reports baseline-collection progress as a percentage,
-// capped at 100 once count reaches NousBaselineTarget. count keeps growing
-// after that (snapshots are never pruned), but "percent complete" should not
-// (hivecommons/hive#10026).
+// bounded to 0..100. count keeps growing after that (snapshots are never
+// pruned), but "percent complete" should not (hivecommons/hive#10026).
 func NousBaselinePct(count int) float64 {
+	if count <= 0 {
+		return 0
+	}
 	pct := float64(count) * 100 / NousBaselineTarget
 	if pct > 100 {
 		return 100
