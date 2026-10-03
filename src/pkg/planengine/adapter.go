@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -138,7 +139,7 @@ func receiptEngineName(receipt outputschema.StageReceipt) string {
 	if receipt.Engine != nil && receipt.Engine.Name != "" {
 		return receipt.Engine.Name
 	}
-	return EngineName
+	return config.DefaultRunsEngine
 }
 
 func (a *leaseAdapter) Refuse(st Stage, reason string, status *ArtifactStatus) {
