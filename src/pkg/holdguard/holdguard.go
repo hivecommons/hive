@@ -22,6 +22,15 @@
 //     EVERY merge lane re-gates, and the snapshot re-arms at the drifted head.
 //     A human lifting the re-applied hold after reading the evidence IS the
 //     fresh approval — that lift compares clean and the PR proceeds.
+//
+// Held-gated PRs must also stay mergeable, not just frozen (#10437): while a
+// PR is held, the hive may merge its base in with its own identity to clear a
+// "behind"/"dirty" mergeable state. That is hygiene, not reviewable content,
+// so AdvanceHygiene moves the ledger's baseline to the resulting head instead
+// of letting step 2/3 read it as drift on the next lift. When the hive cannot
+// resolve a real conflict this way, a one-time comment (ConflictCommentBody)
+// tells the human before they open the review, instead of letting them
+// discover a stale, unmergeable PR mid-review.
 package holdguard
 
 import (
@@ -87,6 +96,12 @@ type Entry struct {
 	// episode, so a retried label write never re-comments. ReArm resets it —
 	// a later, separate drift is a new episode and earns fresh evidence.
 	Commented bool `json:"commented,omitempty"`
+	// ConflictNoted is set once the "can't keep this mergeable" comment
+	// posted for the CURRENT conflict episode (#10437), mirroring Commented's
+	// dedup role for drift. AdvanceHygiene resets it the moment a
+	// merge-from-base succeeds — the conflict that earned the notice is
+	// gone, so a stale "can't merge" comment must not linger unexplained.
+	ConflictNoted bool `json:"conflict_noted,omitempty"`
 	// HeldAt is when the snapshot was first recorded.
 	HeldAt    time.Time `json:"held_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -234,6 +249,46 @@ func (s *Store) ReArm(repo string, number int, headSHA string, commits []Commit)
 	e.Commented = false
 	e.UpdatedAt = now
 	s.saveLocked()
+}
+
+// AdvanceHygiene moves a held PR's baseline forward to a head the hive itself
+// produced by merging the base into the held branch to keep it mergeable
+// (#10437). Unlike ReArm, this is NOT a response to drift: the hive's own
+// merge-from-base is hygiene, not reviewable content, so the moved head must
+// never register as drift on the PR's next lift check — advancing the
+// baseline here is what keeps Diff from flagging it later. No-op for a PR the
+// guard never snapshotted (nothing to advance) or an empty headSHA (nothing
+// to advance to). ConflictNoted resets: the branch merges cleanly again, so a
+// stale "can't keep this mergeable" comment would no longer be true.
+func (s *Store) AdvanceHygiene(repo string, number int, headSHA string, commits []Commit) {
+	if headSHA == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := Key(repo, number)
+	e := s.entries[key]
+	if e == nil {
+		return
+	}
+	e.HeadSHA = headSHA
+	e.CommitSHAs, e.Authors = commitSets(commits)
+	e.ConflictNoted = false
+	e.UpdatedAt = s.now()
+	s.saveLocked()
+}
+
+// MarkConflictNoted records that the "can't keep this mergeable" comment
+// posted for the CURRENT conflict episode, so a retried attempt never
+// duplicates the notice. AdvanceHygiene clears it once the conflict resolves.
+func (s *Store) MarkConflictNoted(repo string, number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.entries[Key(repo, number)]; e != nil {
+		e.ConflictNoted = true
+		e.UpdatedAt = s.now()
+		s.saveLocked()
+	}
 }
 
 // Prune drops entries not observed within retention. See Retention for why
@@ -398,5 +453,19 @@ func CommentBody(d Drift) string {
 
 	b.WriteString("A human should review the FULL diff at the current head — a rebase or force-push renames every commit, so everything above needs eyes even if it looks familiar. ")
 	b.WriteString("Removing the hold label after that review is the fresh approval: the guard has re-pinned its snapshot to the current head, so a clean lift re-opens the merge lanes.\n")
+	return b.String()
+}
+
+// ConflictCommentBody renders the one-time notice posted when a held PR falls
+// behind its base with a real conflict the hive cannot resolve by merging the
+// base in (#10437). Held PRs otherwise stay quietly out of date while waiting
+// on a human — this tells the human up front that the review they are about
+// to do is of a PR that cannot merge as-is, instead of letting them discover
+// a DIRTY PR mid-review.
+func ConflictCommentBody() string {
+	var b strings.Builder
+	b.WriteString("## ⚠️ Hold-gate mergeability: this PR has a real conflict with its base\n\n")
+	b.WriteString("This PR is hold-gated and has fallen behind its base branch. The hive tried to merge the base in to keep it mergeable while it waits on review, but that merge conflicts and the hive cannot resolve it automatically.\n\n")
+	b.WriteString("It will stay held and will NOT merge on its own even once reviewed — removing `" + ReHoldLabel + "` alone will not be enough. Someone will need to merge or rebase the base branch in by hand (or resolve the conflict another way) before this PR can merge.\n")
 	return b.String()
 }

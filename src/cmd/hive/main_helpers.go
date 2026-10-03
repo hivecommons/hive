@@ -122,6 +122,12 @@ func enforceHoldGuard(
 		}
 	}
 
+	// (1.5) Keep already-tracked held PRs mergeable (#10437): "held" must gate
+	// the MERGE, not the branch. Runs after the snapshot step above so a PR
+	// held for the first time this tick is pinned before this ever touches
+	// its branch.
+	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, actionable.PRs.Held, fetchCommits, logger)
+
 	// (2) Check every open PR that WAS hold-gated (has a snapshot) and no
 	// longer is (it enumerated as actionable): the hold lifted this window.
 	for _, pr := range actionable.PRs.Items {
@@ -194,6 +200,88 @@ func enforceHoldGuard(
 	// held). See holdguard.Retention for why absence-pruning would be unsafe.
 	store.Prune(holdguard.Retention)
 	return reReview
+}
+
+// maintainHeldPRMergeability closes the second half of #10437: a hold-gated
+// PR must stay mergeable while it waits on a human, not merely frozen. GitHub
+// still computes mergeable_state for a held PR, so a held PR can silently go
+// "behind" (a sibling PR merged first) or "dirty" (that sibling's merge now
+// conflicts) and sit that way for the entire review wait.
+//
+// For each PR the guard is already tracking, a "behind" or "dirty" state gets
+// one merge-from-base attempt via UpdateBranch, using the hive's own
+// identity. On success the result is hygiene, not reviewable content, so the
+// guard's baseline is advanced to the new head (holdguard.AdvanceHygiene) —
+// this is what keeps the next lift check from reading the hive's own upkeep
+// push as drift. On failure (a real conflict the hive cannot resolve), a
+// one-time comment tells the human before they open the review, deduplicated
+// through the ledger's ConflictNoted bit exactly like the drift comment
+// dedupes through Commented.
+//
+// PRs the guard has not snapshotted yet are skipped — the snapshot step (1)
+// runs first every tick, so this only ever sees a PR after its baseline is
+// pinned, and advancing a baseline that was never pinned would plant a wrong
+// one.
+func maintainHeldPRMergeability(
+	ctx context.Context,
+	ghClient *github.Client,
+	writer forge.IssueWriter,
+	store *holdguard.Store,
+	org string,
+	held []github.PullRequest,
+	fetchCommits func(repo string, number int) []holdguard.Commit,
+	logger *slog.Logger,
+) {
+	if ghClient == nil || store == nil {
+		return
+	}
+	for _, pr := range held {
+		repo := fullRepoName(pr.Repo, org)
+		rec, ok := store.Recorded(repo, pr.Number)
+		if !ok {
+			continue
+		}
+		state := strings.ToLower(pr.MergeableState)
+		if state != "behind" && state != "dirty" {
+			continue
+		}
+		if err := ghClient.UpdateBranch(ctx, pr.Repo, pr.Number); err != nil {
+			if state != "dirty" {
+				// "behind" is expected to be a trivial fast-forward; a
+				// failure here is an anomaly (race, API hiccup), not the
+				// known-unresolvable conflict the comment below is for.
+				logger.Warn("hold guard: keeping held PR mergeable failed",
+					"repo", repo, "pr", pr.Number, "mergeable_state", state, "error", err)
+				continue
+			}
+			if rec.ConflictNoted || writer == nil {
+				continue
+			}
+			if cerr := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.ConflictCommentBody()); cerr != nil {
+				logger.Warn("hold guard: posting held-PR conflict notice failed; will retry next pass",
+					"repo", repo, "pr", pr.Number, "error", cerr)
+				continue
+			}
+			store.MarkConflictNoted(repo, pr.Number)
+			continue
+		}
+		commits := fetchCommits(pr.Repo, pr.Number)
+		newHead := ""
+		if len(commits) > 0 {
+			newHead = commits[len(commits)-1].SHA
+		}
+		if newHead == "" || newHead == pr.HeadSHA {
+			// UpdateBranch always moves the head; failing to confirm the new
+			// SHA means the commit list refresh failed — leave the baseline
+			// alone rather than advance it on stale information.
+			logger.Warn("hold guard: could not confirm new head after keeping held PR mergeable",
+				"repo", repo, "pr", pr.Number)
+			continue
+		}
+		store.AdvanceHygiene(repo, pr.Number, newHead, commits)
+		logger.Info("hold guard: merged base into held PR to keep it mergeable",
+			"repo", repo, "pr", pr.Number, "mergeable_state", state, "new_head", newHead)
+	}
 }
 
 // intentConfigFromCfg maps config.IntentConfig onto the intent package's
