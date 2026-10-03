@@ -122,7 +122,7 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	}
 	for _, want := range []string{
 		".feedback-modal { max-width: 720px",
-		"max-height: 90vh",
+		"max-height: calc(100vh - var(--modal-gap) - var(--modal-gap))",
 		".feedback-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:var(--sp-8);",
 		".feedback-footer { position: sticky; bottom:0;",
 		"class=\"feedback-footer\"",
@@ -142,9 +142,9 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	if !strings.Contains(open, "overlay.addEventListener('click', function(e) { if (e.target === overlay) closeFeedbackModal(); });") {
 		t.Fatal("feedback modal does not close on backdrop click")
 	}
-	escapeHandler := regexp.MustCompile(`(?s)document\.addEventListener\('keydown', \(e\) => \{.*?if \(e\.key !== 'Escape'\) return;.*?const feedbackOverlay = document\.getElementById\('feedback-overlay'\);.*?if \(feedbackOverlay\) \{ closeFeedbackModal\(\); return; \}`).FindString(html)
+	escapeHandler := regexp.MustCompile(`(?s)function hiveDismissTopOverlay\(\) \{.*?document\.getElementById\('feedback-overlay'\).*?closeFeedbackModal`).FindString(html)
 	if escapeHandler == "" {
-		t.Fatal("Escape keydown handler is not wired to closeFeedbackModal")
+		t.Fatal("global Escape dismissal path is not wired to closeFeedbackModal")
 	}
 	submit := jsFunctionBody(t, html, "async function submitFeedbackReport()")
 	if !strings.Contains(submit, "fetch('/api/feedback/report'") {

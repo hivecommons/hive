@@ -156,6 +156,15 @@ case "${1:-}" in
       *)                printf '%s@%s\n' "${FAKE_TAG_REF%:*}" "${FAKE_TAG_ARCH_DIGEST}" ;;
     esac
     ;;
+  # podman-auto-update.timer's own trigger (#4411), and now also `upgrade`'s
+  # registry-tracked path (#10421). FAKE_AUTO_UPDATE_UPDATED models the
+  # UPDATED column podman reports for OUR unit: true, false, or "rolled back".
+  auto-update)
+    printf 'hive.service|hive|%s@%s|registry|%s\n' \
+      "${FAKE_TAG_REF%:*}" "${FAKE_TAG_LIST_DIGEST}" \
+      "${FAKE_AUTO_UPDATE_UPDATED:-true}"
+    exit "${FAKE_AUTO_UPDATE_RC:-0}"
+    ;;
   exec) printf 'hive 3.0.0 (commit deadbee, branch v4)\n' ;;
   *) exit 0 ;;
 esac
@@ -241,6 +250,8 @@ reset_env() {
   export FAKE_TIMER_STATE=disabled
   export FAKE_TIMER_RC=0
   export FAKE_AUTOUPDATE_LABEL=""
+  export FAKE_AUTO_UPDATE_UPDATED="true"
+  export FAKE_AUTO_UPDATE_RC=0
   # The gateway (#4493): known, startable, and answering by default; each case
   # breaks exactly the link it is about. Retries are collapsed so a dead
   # gateway costs the suite nothing.
@@ -647,6 +658,74 @@ check "autoupdate status pulls nothing" '! grep -q "^podman pull" "$PODMAN_CALL_
 reset_env
 FAKE_AUTOUPDATE_LABEL=registry FAKE_TIMER_STATE=enabled \
   case_expect "status reports the label the RUNNING container carries" 0 "registry" autoupdate status
+
+echo
+echo "== upgrade: the tracking-aware entry point (#10344 gap 3) =="
+
+# With tracking OFF, `upgrade` must be indistinguishable from `pin`: same
+# drop-in, same restart, same report.
+reset_env
+case_expect "tracking OFF: upgrade behaves exactly like pin" 0 "updated to $DIGEST_NEW" upgrade "${REPO}:stable"
+reset_env
+run_update upgrade "${REPO}:stable" >/dev/null
+check "tracking OFF: upgrade writes the same digest drop-in pin would" \
+  'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
+
+# With tracking ON and the SAME tag the unit already names, `upgrade` must run
+# podman auto-update instead -- and must NOT write a pin, which is the one
+# thing that would shadow the timer.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "tracking ON + tracked tag: upgrade runs podman auto-update" 0 \
+  "registry-tracked upgrade completed" upgrade "${REPO}:stable"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}:stable" >/dev/null
+check "tracking ON + tracked tag: upgrade actually calls podman auto-update" \
+  'grep -q "podman auto-update --rollback=true" "$PODMAN_CALL_LOG"'
+check "tracking ON + tracked tag: upgrade writes NO digest pin" '[ ! -f "$(dropin)" ]'
+check "tracking ON + tracked tag: the timer drop-in is untouched" '[ -f "$(au_dropin)" ]'
+
+# A ref that is not the tracked tag -- a digest, or a different tag -- cannot
+# be served by auto-update (it polls one tag) and must be REFUSED, not
+# silently pinned over the top of a tracked host.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "tracking ON + a digest ref: upgrade refuses rather than pinning silently" 78 \
+  "refusing to pin" upgrade "${REPO}@${DIGEST_NEW}"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "the refusal names the override" 78 "--force-pin" upgrade "${REPO}@${DIGEST_NEW}"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}@${DIGEST_NEW}" >/dev/null
+check "the refusal changes nothing -- no pin, no podman auto-update call" \
+  '[ ! -f "$(dropin)" ] && ! grep -q "auto-update" "$PODMAN_CALL_LOG"'
+
+# `--force-pin` is the explicit override: it accepts the trade-off and pins
+# anyway, leaving the timer's drop-in in place but with nothing left to poll.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "--force-pin pins over tracking, as asked" 0 "updated to $DIGEST_NEW" \
+  upgrade "${REPO}@${DIGEST_NEW}" --force-pin
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}@${DIGEST_NEW}" --force-pin >/dev/null
+check "--force-pin writes the digest pin" 'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
+
+# podman's own rollback signal (the UPDATED column reading "rolled back", per
+# src/docs/podman-auto-update.md) must surface as a FAILED upgrade here too,
+# not a silent success.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+export FAKE_AUTO_UPDATE_UPDATED="rolled back"
+case_expect "podman rolling the image back is reported as a failed upgrade" 78 \
+  "rolled back" upgrade "${REPO}:stable"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+export FAKE_GATEWAY_CURL_RC=7
+case_expect "a registry-tracked upgrade whose gateway never answers exits 78" 78 \
+  "DEPLOYMENT is not serving" upgrade "${REPO}:stable"
 
 echo
 echo "== reconcile: the files this host RUNS FROM, not the image (#6078) =="

@@ -18,6 +18,7 @@ import (
 func TestDetectDeploymentExplicitRuntimes(t *testing.T) {
 	clearDeploymentEnv(t)
 	helper := fakeUpgradeHelper(t)
+	requestDir := t.TempDir()
 	tests := []struct {
 		name      string
 		cfg       config.DeploymentConfig
@@ -28,8 +29,9 @@ func TestDetectDeploymentExplicitRuntimes(t *testing.T) {
 	}{
 		{"kubernetes", config.DeploymentConfig{Runtime: "kubernetes"}, deploymentRuntimeKubernetes, "", true, "hub"},
 		{"compose", config.DeploymentConfig{Runtime: "docker-compose", UpgradeHelper: helper}, deploymentRuntimeDockerCompose, "", true, "docker-compose"},
-		{"podman rootless", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootless", UpgradeHelper: helper}, deploymentRuntimePodmanQuadlet, podmanModeRootless, true, "podman-quadlet"},
-		{"podman rootful", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootful", UpgradeHelper: helper}, deploymentRuntimePodmanQuadlet, podmanModeRootful, true, "podman-quadlet"},
+		{"podman rootless", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootless", UpgradeRequestDir: requestDir}, deploymentRuntimePodmanQuadlet, podmanModeRootless, true, "podman-quadlet-request"},
+		{"podman rootful", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootful", UpgradeRequestDir: requestDir}, deploymentRuntimePodmanQuadlet, podmanModeRootful, true, "podman-quadlet-request"},
+		{"podman helper alone", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootless", UpgradeHelper: helper}, deploymentRuntimePodmanQuadlet, podmanModeRootless, false, ""},
 		{"podman uncertain mode", config.DeploymentConfig{Runtime: "podman-quadlet", UpgradeHelper: helper}, deploymentRuntimePodmanQuadlet, podmanModeUnknown, false, ""},
 		{"compose missing helper", config.DeploymentConfig{Runtime: "docker-compose"}, deploymentRuntimeDockerCompose, "", false, ""},
 		{"invalid", config.DeploymentConfig{Runtime: "lxd"}, deploymentRuntimeUnknown, "", false, ""},
@@ -87,10 +89,10 @@ func TestDetectDeploymentFallsBackToKubernetesOnlyWithServiceAccountEvidence(t *
 
 func TestHandleVersionExposesDeploymentRuntime(t *testing.T) {
 	clearDeploymentEnv(t)
-	helper := fakeUpgradeHelper(t)
+	requestDir := t.TempDir()
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: &config.Config{
-		Deployment: config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootful", UpgradeHelper: helper},
+		Deployment: config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootful", UpgradeRequestDir: requestDir},
 	}, Logger: slog.Default()}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
@@ -118,8 +120,6 @@ func TestStandaloneSelfUpgradeDispatchesToHelperByRuntime(t *testing.T) {
 		want string
 	}{
 		{"compose", config.DeploymentConfig{Runtime: "docker-compose"}, "upgrade --runtime docker-compose --ref ghcr.io/hivecommons/hive:abcdef1"},
-		{"podman rootless", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootless"}, "upgrade --runtime podman-quadlet --ref ghcr.io/hivecommons/hive:abcdef1 --podman-mode rootless"},
-		{"podman rootful", config.DeploymentConfig{Runtime: "podman-quadlet", PodmanMode: "rootful"}, "upgrade --runtime podman-quadlet --ref ghcr.io/hivecommons/hive:abcdef1 --podman-mode rootful"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			argsPath := filepath.Join(t.TempDir(), "args")
@@ -327,11 +327,190 @@ func fakeUpgradeHelper(t *testing.T) string {
 	return fakeUpgradeHelperRecording(t, filepath.Join(t.TempDir(), "args"))
 }
 
+func TestPodmanUpgradeRequestDirectoryDetection(t *testing.T) {
+	clearDeploymentEnv(t)
+	writable := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "missing")
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{podmanModeRootless, podmanModeRootful} {
+		for _, dir := range []string{"", missing, file, writable} {
+			srv := NewServer(0, slog.Default())
+			srv.deps = &Dependencies{Config: &config.Config{Deployment: config.DeploymentConfig{
+				Runtime: deploymentRuntimePodmanQuadlet, PodmanMode: mode, UpgradeRequestDir: dir,
+			}}}
+			got := srv.detectDeployment()
+			if dir == writable {
+				if !got.UpgradeSupported || got.UpgradeAction != "podman-quadlet-request" || got.Reason != "" {
+					t.Fatalf("writable directory: %+v", got)
+				}
+			} else {
+				want := "standalone upgrade helper is not available inside the container; upgrade from the host with `" + podmanHostUpgradeCommand(mode) + "` (as the hive user when rootless)"
+				if got.UpgradeSupported || got.Reason != want {
+					t.Fatalf("directory %q: %+v, want reason %q", dir, got, want)
+				}
+			}
+		}
+	}
+	entries, err := os.ReadDir(writable)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("probe left files: %v, %v", entries, err)
+	}
+	t.Setenv("HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR", writable)
+	if got := upgradeRequestDir(&config.Config{Deployment: config.DeploymentConfig{UpgradeRequestDir: missing}}); got != writable {
+		t.Fatalf("env precedence: %q", got)
+	}
+	t.Run("unwritable", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permission bits")
+		}
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		t.Setenv("HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR", dir)
+		srv := NewServer(0, slog.Default())
+		srv.deps = &Dependencies{Config: &config.Config{Deployment: config.DeploymentConfig{
+			Runtime: deploymentRuntimePodmanQuadlet, PodmanMode: podmanModeRootless,
+		}}}
+		if got := srv.detectDeployment(); got.UpgradeSupported || !strings.Contains(got.Reason, podmanHostUpgradeCommand(podmanModeRootless)) {
+			t.Fatalf("unwritable directory: %+v", got)
+		}
+	})
+}
+
+func TestPodmanSelfUpgradeWritesRequestWithoutExecutingHelper(t *testing.T) {
+	clearDeploymentEnv(t)
+	for _, mode := range []string{podmanModeRootless, podmanModeRootful} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			argsPath := filepath.Join(t.TempDir(), "args")
+			srv := NewServer(0, slog.Default())
+			srv.deps = &Dependencies{Config: &config.Config{Deployment: config.DeploymentConfig{
+				Runtime: deploymentRuntimePodmanQuadlet, PodmanMode: mode,
+				UpgradeRequestDir: dir, UpgradeHelper: fakeUpgradeHelperRecording(t, argsPath),
+			}}, Logger: slog.Default()}
+			for _, target := range []string{"abcdef1;reboot", "abcdef1234567890"} {
+				req := httptest.NewRequest(http.MethodPost, "/api/self-upgrade", strings.NewReader(`{"target":"`+target+`"}`))
+				markOwnerRequest(req)
+				req.Header.Set("X-Hive-User", "owner-test")
+				w := httptest.NewRecorder()
+				srv.handleSelfUpgrade(w, req)
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if target == "abcdef1;reboot" {
+					if w.Code != http.StatusBadRequest || len(entries) != 0 {
+						t.Fatalf("invalid target: status=%d files=%v", w.Code, entries)
+					}
+					continue
+				}
+				if w.Code != http.StatusOK || len(entries) != 1 {
+					t.Fatalf("valid target: status=%d files=%v body=%s", w.Code, entries, w.Body.String())
+				}
+				var response map[string]string
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response["status"] != "accepted" || !strings.Contains(response["message"], "not completed") {
+					t.Fatalf("response claims completion: %v", response)
+				}
+				path := filepath.Join(dir, entries[0].Name())
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload upgradeRequest
+				if err := json.Unmarshal(data, &payload); err != nil {
+					t.Fatal(err)
+				}
+				when, err := time.Parse(time.RFC3339, payload.RequestedAt)
+				if err != nil || time.Since(when) > time.Minute || payload.TargetRef != "ghcr.io/hivecommons/hive:abcdef1" || payload.Requester != "owner-test" {
+					t.Fatalf("request = %+v, timestamp error=%v", payload, err)
+				}
+				st, err := os.Stat(path)
+				if err != nil || st.Mode().Perm() != 0o600 || !strings.HasSuffix(path, ".json") {
+					t.Fatalf("published request permissions/name: %v, %v", st, err)
+				}
+			}
+			if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+				t.Fatalf("Podman executed helper: %v", err)
+			}
+			// Even a stale caller using the old action must never invoke a helper.
+			req := httptest.NewRequest(http.MethodPost, "/?target=abcdef1", nil)
+			if err := srv.runStandaloneUpgrade(req, deploymentInfo{Runtime: deploymentRuntimePodmanQuadlet, UpgradeAction: "podman-quadlet"}); err == nil {
+				t.Fatal("old Podman helper action accepted")
+			}
+			if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+				t.Fatalf("stale action executed helper: %v", err)
+			}
+		})
+	}
+}
+
+func TestUpgradeRequestsPublishedAtomically(t *testing.T) {
+	dir := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 100; i++ {
+			if err := writeUpgradeRequest(dir, "ghcr.io/hivecommons/hive:abcdef1", strings.Repeat("owner", 1024)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	// Always join the writer, including on a reader assertion failure.
+	joined := false
+	defer func() {
+		if !joined {
+			<-done
+		}
+	}()
+	checkPublished := func() {
+		t.Helper()
+		paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil || !json.Valid(data) {
+				t.Fatalf("partial published request %s: %q, %v", path, data, err)
+			}
+		}
+	}
+	for !joined {
+		checkPublished()
+		select {
+		case err := <-done:
+			joined = true
+			if err != nil {
+				t.Fatal(err)
+			}
+		default:
+		}
+	}
+	checkPublished()
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 100 {
+		t.Fatalf("requests lost or temp files left: count=%d, %v", len(entries), err)
+	}
+	if err := writeUpgradeRequest(filepath.Join(dir, "missing"), "ghcr.io/hivecommons/hive:abcdef1", "owner"); err == nil {
+		t.Fatal("missing directory accepted")
+	}
+}
+
 func clearDeploymentEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("HIVE_DEPLOYMENT_RUNTIME", "")
 	t.Setenv("HIVE_DEPLOYMENT_PODMAN_MODE", "")
 	t.Setenv("HIVE_DASHBOARD_UPGRADE_HELPER", "")
+	t.Setenv("HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR", "")
 }
 
 func fakeUpgradeHelperRecording(t *testing.T, argsPath string) string {

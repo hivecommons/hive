@@ -11,6 +11,90 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.130.0)
+
+### Added
+
+- The dashboard agent detail shows observed Copilot sub-agent types and effective models for the latest kick, flagging older Claude generations than the parent launch model ([#10469](https://github.com/hivecommons/hive/issues/10469)).
+
+### Fixed
+
+- Keep contributor-card message drafts open across fleet polls, refreshing the cards after the last message form closes ([#10473](https://github.com/hivecommons/hive/issues/10473)).
+
+## 2026-10-03 (v5.129.4)
+
+### Fixed
+
+- fix(dashboard): escape /metrics label values per Prometheus text format (#10471)
+
+## 2026-10-03 (v5.129.3)
+
+### Fixed
+
+- Scanner policies now name the concrete Copilot CLI model ids for sub-agent complexity tiers (`claude-haiku-4.5` light, `claude-sonnet-5.5` mid, `claude-opus-5.5` heavy) on the copilot backend ([#10461](https://github.com/hivecommons/hive/issues/10461)). Previously they passed the bare `sonnet`/`opus` aliases, which Copilot CLI 1.0.88 resolves to Sonnet 5 / Opus 5 even when 5.5 is available, so "heavy" sub-agents silently ran a generation back. Claude Code keeps the aliases, which resolve correctly there.
+
+## 2026-10-03 (v5.129.2)
+
+### Fixed
+
+- The stable promotion gate now measures a candidate's 24-hour soak from the completion of the `docker.yml` run that published it instead of when that run was queued, so a build can no longer reach the `stable` channel short of a full soak window ([#10042](https://github.com/hivecommons/hive/issues/10042)).
+
+## 2026-10-03 (v5.129.1)
+
+### Fixed
+
+- PR follow-ups now prioritize known base conflicts or behind states over review feedback, including owned fork pointers; contributor review cycles check fork base drift before pushing review fixes ([#10457](https://github.com/hivecommons/hive/issues/10457)).
+
+## 2026-10-03 (v5.129.0)
+
+### Added
+
+- Podman/Quadlet hives now have a host-side upgrade request bridge, so the dashboard Upgrade button can finally do something on a rootless install ([#10344](https://github.com/hivecommons/hive/issues/10344)). Hive runs in its own mount, PID and user namespace, so the old design — exec a host-side upgrade helper from inside the container — could never work there: the helper is not in the image, and `systemctl`, `podman` and the Quadlet drop-ins are not reachable from a container that deliberately mounts no Podman, Docker or systemd socket. Instead of mounting one, Hive writes a small JSON request into a single bind-mounted directory and a new host-side `hive-upgrade.path` unit starts `hive-upgrade.service`, which runs `bin/hive-upgrade-request.sh` outside every container namespace and delegates to the existing `bin/hive-podman-update.sh`. The container's whole capability across that boundary is "cause that script to run": the image reference is re-validated against the closed `ghcr.io/hivecommons/hive` allow-list, passed as argv and never as shell text, the root mode is taken from the host's own systemd manager rather than from the request, stale requests are archived unapplied, and handled requests are moved out of the watched directory so no upgrade can be replayed. `bin/hive-podman-setup.sh` installs and enables the bridge on new installs; existing installs keep today's honest "upgrade from the host" reason until they reconcile.
+- Diagnostics collapsed row: per-source quota gauge replaces dot/sparkline (#10428)
+- Agents collapsed row: per-agent tiles ordered by next kick (#10430)
+- A PR deferred to a shared repository CI incident now carries a durable, greppable marker ([#10441](https://github.com/hivecommons/hive/issues/10441)). When `bin/hive-baseline-check.sh` returns `DEFER_TO_INCIDENT`, the fix lanes already leave one comment pointing at the single `[shared-ci]` incident issue, but that note was free text: nothing recorded *which* PRs an incident broke, so when the incident was fixed there was no list to re-run. The `scanner*`, `ci-maintainer*` and `quality*` policy variants that own PR repair now require that comment to end with `<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number — the same hidden `<!-- hive-* -->` convention as `<!-- hive-finding: HASH -->` and `<!-- hive-pr-overlap -->`. Exactly one marker is stamped per PR per incident, only for a `DEFER_TO_INCIDENT` verdict, and it is never edited or removed while the incident is open. The marker is documented alongside the other non-label control signals, and a policy test pins the format in both the embedded and source copies of every affected variant.
+- Contributors can enable/disable saved hives with `hivectl hives enable|disable <name>` or `e` in `just contribute-tui`, retaining credentials while the running relay skips disabled hives under every routing strategy and lets in-flight work finish ([#10186](https://github.com/hivecommons/hive/issues/10186)).
+- Show disabled/powered-off agents in the dashboard Agents card grid with the same enable affordance as the sidebar.
+- Add `needs-direction` un-park handling, on-demand `/hive help` replies on any open issue or pull request for triage-and-above users, and maintainer command documentation.
+
+### Changed
+
+- Clarify Overview KPI labels (total open / actionable issues and PRs) (#10436)
+- Changed the dashboard default section order to match the sidebar navigation.
+- Remove the Beads card and sidebar link from the dashboard UI while keeping the underlying bead ledger APIs and agent workflows intact.
+- Rename the system diagnostics quality stats changelog fragment to match the dashboard diagnostics test contract.
+
+### Fixed
+
+- Docs: the stable promotion rule now describes the per-build candidate soak the gate actually enforces (a freshly cut build cannot ride an older build's soak), and the candidate race paragraph names the two events it compares ([#10042](https://github.com/hivecommons/hive/issues/10042)).
+- Campaign Release now returns an explicit conflict for run-backed Spektacular campaigns instead of revoking the contributor's stage lease and making the run disappear; Inception campaign leases can still be released.
+- dashboard: standalone Podman/Quadlet upgrades triggered via the upgrade bridge or the host helper now use `podman-auto-update` semantics (leaving `podman-auto-update.timer` and the `AutoUpdate=registry` drop-in in place) on a host tracking the registry, instead of silently converting it to a digest pin; a ref the tracked tag cannot serve is refused rather than pinned unless `--force-pin` is given explicitly (#10344 gap 3, #10421)
+- Podman/Quadlet dashboard upgrades now atomically submit requests to a configured writable host bridge directory instead of executing an in-container helper; acceptance does not claim rollout completion.
+- Hold-gated PRs no longer get a misleading "sweep will merge when green" note, and the hold now gates only the merge, not the branch: the hive keeps a held PR mergeable by merging its base in (without re-triggering the hold guard's drift check) and comments once if a real conflict blocks that automatically ([#10427](https://github.com/hivecommons/hive/issues/10427), [#10437](https://github.com/hivecommons/hive/issues/10437)).
+- Removed a dashboard test that asserted its own changelog fragment existed; the release workflow consumes fragments, which turned every post-release v5 build red.
+- Fixed dashboard dialogs to sit above the navbar with blurred backdrops, unified Escape dismissal, and a compact release channel strip.
+- Removed console-specific workflow stats from the topbar health dropdown so it only shows real spoke health checks.
+- Fix Change Throughput actor attribution and render the Hive vs human trend as a stacked share area.
+
+## 2026-10-03 (v5.128.0)
+
+### Added
+
+- dashboard: diagnostics summary and throughput timeframe pill in collapsed headers (#10411)
+- Show the self-upgrade bee-and-hex progress indicator directly in the dashboard version navbar pill while an upgrade is in progress.
+
+### Changed
+
+- dashboard: drop console-specific Health Checks card (#10407)
+- Move the ACMM level picker to the top navbar pill, remove the sidebar pill and level-card Preview actions, and refresh ACMM level copy from the current pack policy.
+- Removed the floating dashboard Feedback button while keeping the remaining feedback entry points.
+- Drove the System Diagnostics quality stats card from the quality agent's configured Stats instead of console-specific workflow checks.
+
+### Fixed
+
+- Install Node 22 in the rest and dashboard shuffle CI jobs so JavaScript-backed dashboard tests no longer skip on self-hosted runners without Node (#10398).
+- Fix Overview KPI tiles so all six render sparklines from persisted or local history, including zero-value and first-sample cases.
+
 ## 2026-10-03 (v5.127.0)
 
 ### Added

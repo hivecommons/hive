@@ -1,1 +1,0 @@
-- Removed the floating dashboard Feedback button while keeping the remaining feedback entry points.

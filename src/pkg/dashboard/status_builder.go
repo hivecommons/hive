@@ -677,14 +677,15 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agentCfg.Enabled {
-				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonDisabled})
-				seen[name] = true
-				continue
-			}
 			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
+				continue
+			}
+			if packAllowed != nil && !packAllowed[name] && !activeOutsidePack(cfg, name, nil) && !agentCfg.Enabled {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+				slog.Debug("agent card omitted: config-only disabled agent outside ACMM pack", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
 				continue
 			}
@@ -909,6 +910,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			GovCostWeight:          0,
 			LiveSummary:            liveSummary,
 			DetailSummary:          detailSummary,
+			SubAgentModels:         proc.SubAgentModels,
 			StatsConfig:            resolveStatsSources(loadStatsConfig(name), cfg),
 			LastError:              proc.LastError,
 			LoginURL:               proc.LoginURL,
@@ -1069,7 +1071,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		cadenceValue = lookupCadenceValue(name, cfg)
 	}
 	onDemand := agentCfg.OnDemand || onDemandSet[name]
-	noCadence := !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
+	noCadence := agentCfg.Enabled && !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
 	unscheduledInMode, cadenceModes := agentUnscheduledInMode(cfg, name, currentMode, agentCfg.Enabled, onDemand, agentCfg.UsesGovernorKick())
 
 	acmmLevel := 0
@@ -1093,9 +1095,12 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			model = gw.DefaultModel
 		}
 	}
-	evidence := fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
-	if err := cfg.Governor.ValidateBackend(cli); err != nil {
-		evidence = err.Error()
+	evidence := ""
+	if agentCfg.Enabled {
+		evidence = fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
+		if err := cfg.Governor.ValidateBackend(cli); err != nil {
+			evidence = err.Error()
+		}
 	}
 
 	return FrontendAgent{
@@ -1134,17 +1139,22 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			}(),
 			ContinuousModes: cfg.ContinuousModes(name),
 		},
-		GovBackend:       cli,
-		GovModel:         model,
-		StatsConfig:      resolveStatsSources(loadStatsConfig(name), cfg),
-		Mode:             mode.String(),
-		ModeEmoji:        mode.Emoji(),
-		DefaultMode:      defaultMode.String(),
-		IsCustomMode:     mode != defaultMode,
-		StructuredStatus: "BLOCKED",
-		StatusEvidence:   evidence,
-		LastError:        evidence,
-		Enabled:          true,
+		GovBackend:   cli,
+		GovModel:     model,
+		StatsConfig:  resolveStatsSources(loadStatsConfig(name), cfg),
+		Mode:         mode.String(),
+		ModeEmoji:    mode.Emoji(),
+		DefaultMode:  defaultMode.String(),
+		IsCustomMode: mode != defaultMode,
+		StructuredStatus: func() string {
+			if evidence == "" {
+				return ""
+			}
+			return "BLOCKED"
+		}(),
+		StatusEvidence: evidence,
+		LastError:      evidence,
+		Enabled:        agentCfg.Enabled,
 
 		UnscheduledInMode: unscheduledInMode,
 		CadenceModes:      cadenceModes,
@@ -2127,33 +2137,28 @@ func copyHealthMap(m map[string]any) map[string]any {
 }
 
 func buildHealth(ghClient *github.Client, ctx context.Context) map[string]any {
-	if ghClient == nil || ctx == nil {
-		cachedHealthMu.RLock()
-		defer cachedHealthMu.RUnlock()
-		if cachedHealth != nil {
-			return copyHealthMap(cachedHealth)
-		}
-		return map[string]any{"ci": 100}
-	}
+	// The legacy repo-workflow health map was a KubeStellar-console-specific
+	// convenience (Brew, Helm, Nightly, deploy jobs, etc.). Those checks are not
+	// real hive health and should not feed the navbar health dropdown or System
+	// Diagnostics. Keep this payload empty; the real spoke health lives in
+	// DeepHealth, and the quality diagnostics card renders from the quality
+	// agent's configured stats.
+	health := map[string]any{}
 
-	health := ghClient.FetchWorkflowHealth(ctx)
+	if ghClient != nil && ctx != nil {
+		// Keep the ACMM green-CI streak refresh here because it is consumed by the
+		// advisor independently of the removed dashboard workflow-health payload.
+		if streak, measured := ghClient.GreenCIStreak(ctx); measured {
+			cachedGreenStreakMu.Lock()
+			cachedGreenStreak = streak
+			cachedGreenStreakOK = true
+			cachedGreenStreakMu.Unlock()
+		}
+	}
 
 	cachedHealthMu.Lock()
 	cachedHealth = health
 	cachedHealthMu.Unlock()
-
-	// Refresh the green-CI streak on the same pass that already talks to
-	// GitHub for workflow health (#5226). A failed or unmeasurable read leaves
-	// the previous cached value untouched rather than clobbering a real streak
-	// with an unknown — a transient API error must not make the advisor
-	// suddenly withdraw a recommendation it had legitimately earned.
-	if streak, measured := ghClient.GreenCIStreak(ctx); measured {
-		cachedGreenStreakMu.Lock()
-		cachedGreenStreak = streak
-		cachedGreenStreakOK = true
-		cachedGreenStreakMu.Unlock()
-	}
-
 	return copyHealthMap(health)
 }
 

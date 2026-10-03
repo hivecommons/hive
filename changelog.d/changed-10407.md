@@ -1,1 +1,0 @@
-- dashboard: drop console-specific Health Checks card (#10407)

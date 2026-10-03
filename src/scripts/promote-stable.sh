@@ -290,11 +290,16 @@ workflow_success() {
   return 1
 }
 
-workflow_run_created_at() {
+# workflow_run_completed_at is when the candidate's docker.yml run FINISHED,
+# which is when that build became a soakable candidate. The run's createdAt is
+# when it was queued: a multi-arch build takes tens of minutes, so measuring the
+# soak from createdAt credits the candidate with time before its digest existed
+# and promotes it short of the full window (#10042).
+workflow_run_completed_at() {
   local repo=$1 run_number=$2 result
   result=$(unset GITHUB_TOKEN && gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
-    --branch "${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}" --json number,createdAt,status,conclusion --limit 100 \
-    --jq ".[] | select(.number == ${run_number}) | select(.status == \"completed\") | .createdAt" | head -n 1)
+    --branch "${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}" --json number,createdAt,updatedAt,status,conclusion --limit 100 \
+    --jq ".[] | select(.number == ${run_number}) | select(.status == \"completed\") | if (.updatedAt // \"\") == \"\" then .createdAt else .updatedAt end" | head -n 1)
   [[ -n $result ]] || return 1
   echo "$result"
 }
@@ -429,7 +434,7 @@ promote() {
   local candidate_channel=${CANDIDATE_CHANNEL:-$CANDIDATE_CHANNEL_DEFAULT}
   local stable_channel=${STABLE_CHANNEL:-$STABLE_CHANNEL_DEFAULT}
   local images=( ${IMAGE_NAMES:-$IMAGE_NAMES_DEFAULT} )
-  local candidate_digest stable_digest candidate_generation stable_generation revision run_created run_epoch age now
+  local candidate_digest stable_digest candidate_generation stable_generation revision run_completed run_epoch age now
   local first_digest= first_revision= first_generation= evidence_text green=true blockers smoke decision reason image image_stable_digest
   local max_stable_generation=0 min_stable_generation= stable_all_candidate=true newer_stable=false
   declare -A candidate_digests
@@ -483,11 +488,11 @@ promote() {
   # not completed yet. That is not an error, it is the youngest possible
   # candidate: report a hold with the reason instead of dying on the empty
   # lookup, which surfaced as a silent "exit code 1" with no log line.
-  if ! run_created=$(workflow_run_created_at "$repo" "$first_generation"); then
+  if ! run_completed=$(workflow_run_completed_at "$repo" "$first_generation"); then
     hold_with_reason "candidate ${first_digest} comes from docker.yml run ${first_generation}, which has not completed yet; re-evaluate on the next schedule"
     return 0
   fi
-  run_epoch=$(iso_to_epoch "$run_created")
+  run_epoch=$(iso_to_epoch "$run_completed")
   now=$(now_epoch)
   age=$((now - run_epoch))
   (( age >= 0 )) || age=0
@@ -561,7 +566,7 @@ promote() {
     echo "- Candidate digest: ${first_digest}"
     echo "- Candidate SHA: ${first_revision}"
     echo "- Candidate generation: ${first_generation}"
-    echo "- Candidate first seen: ${run_created}"
+    echo "- Candidate build completed: ${run_completed}"
     echo "- Candidate age: ${age}s"
     echo "- Required soak: ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h"
     echo "- Stable digest: ${stable_digest:-missing}"

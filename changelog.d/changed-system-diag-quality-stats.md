@@ -1,1 +1,0 @@
-- Drove the System Diagnostics quality stats card from the quality agent's configured Stats instead of console-specific workflow checks.

@@ -748,14 +748,15 @@ func TestBuildBudget_NoBudget(t *testing.T) {
 	}
 }
 
-func TestBuildHealth_WithCachedHealth(t *testing.T) {
-	// Seed cached health and then call with nil client; the shared hook
-	// restores the pre-test cache state in t.Cleanup (#5570).
+func TestBuildHealth_IgnoresCachedWorkflowHealth(t *testing.T) {
+	// Legacy workflow-health cache entries must not leak into the dashboard
+	// health payload now that the navbar and diagnostics use real spoke health
+	// plus quality-agent stats instead.
 	setCachedHealth(t, map[string]any{"ci": 95, "tests": 100})
 
 	health := buildHealth(nil, nil)
-	if health["ci"] != 95 {
-		t.Errorf("ci = %v, want 95", health["ci"])
+	if len(health) != 0 {
+		t.Errorf("health = %v, want empty workflow-health payload", health)
 	}
 }
 
@@ -1100,8 +1101,8 @@ func TestBuildHealth_NilClient_NoCached(t *testing.T) {
 	setCachedHealth(t, nil)
 
 	health := buildHealth(nil, nil)
-	if health["ci"] != 100 {
-		t.Errorf("ci = %v, want 100 (default fallback)", health["ci"])
+	if len(health) != 0 {
+		t.Errorf("health = %v, want empty workflow-health payload", health)
 	}
 }
 
