@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -107,4 +109,50 @@ func TestExternalWorkSourceAdmissionGatesStillApply(t *testing.T) {
 	if len(got.Items) != 1 || got.Items[0].Title != "admitted" {
 		t.Fatalf("items = %+v, want only the admitted item", got.Items)
 	}
+}
+
+// TestWorkSourceIssuesForConfiguredCycleReturnsExternalDisplaySource is the
+// #10174 wiring guard: for a type=external primary, the ws
+// workSourceIssuesForConfiguredCycle returns must implement
+// worksource.DisplaySource (DisplayName/DroppedItems), so
+// reportWorkSourceDisplayStats has something to read every eval cycle.
+func TestWorkSourceIssuesForConfiguredCycleReturnsExternalDisplaySource(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"contract": worksource.ExternalContract, "source_type": "acme",
+			"items": []map[string]any{}, "next_cursor": "",
+		})
+	}))
+	defer provider.Close()
+
+	t.Setenv("EXTERNAL_SEAM_TEST_TOKEN", "provider-token")
+	cfg := &config.Config{}
+	cfg.Governor.WorkSource = config.WorkSourceConfig{
+		Type: "external",
+		External: config.ExternalSourceConfig{
+			Name:        "acme",
+			DisplayName: "Acme Tracker",
+			BaseURL:     provider.URL,
+			AuthToken:   "$EXTERNAL_SEAM_TEST_TOKEN",
+			Repos:       []string{"acme/app"},
+		},
+	}
+
+	_, ws := workSourceIssuesForConfiguredCycle(context.Background(), cfg, nil, github.IssueResult{}, testLogger())
+	stats, ok := ws.(worksource.DisplaySource)
+	if !ok {
+		t.Fatalf("ws = %T, want it to implement worksource.DisplaySource", ws)
+	}
+	if got := stats.DisplayName(); got != "Acme Tracker" {
+		t.Errorf("DisplayName() = %q, want %q", got, "Acme Tracker")
+	}
+
+	// reportWorkSourceDisplayStats must push that reading onto the dashboard
+	// server without panicking, and clear it back out on a run where the
+	// primary source is GitHub (an unexported ws never implements
+	// DisplaySource, so the type assertion there is always false).
+	dashSrv := dashboard.NewServer(0, testLogger())
+	reportWorkSourceDisplayStats(dashSrv, ws)
+	reportWorkSourceDisplayStats(dashSrv, emptyWorkSource{sourceType: "github"})
 }

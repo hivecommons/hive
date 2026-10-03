@@ -397,6 +397,16 @@ type Server struct {
 	hubBannerMu sync.RWMutex
 	hubBanner   *HubBannerState
 
+	// workSourceExternalStatsMu guards the last eval cycle's reading of the
+	// configured work_source.external adapter's worksource.DisplaySource
+	// (ADR-0020, "Dashboard terminology", #10174). nil when the configured
+	// primary source does not implement DisplaySource (every built-in source
+	// today), so the Settings → Work Source badge and dropped-item counter
+	// fall back to the configured name/zero rather than showing a stale
+	// external reading.
+	workSourceExternalStatsMu sync.RWMutex
+	workSourceExternalStats   *workSourceExternalStats
+
 	hiveAdviceMu     sync.RWMutex
 	hiveAdviceEpoch  *hiveadvisor.Epoch
 	hiveAdviceLast   *hiveadvisor.Result
@@ -2391,6 +2401,53 @@ func (s *Server) ClearHubBanner() {
 	s.hubBannerMu.Lock()
 	defer s.hubBannerMu.Unlock()
 	s.hubBanner = nil
+}
+
+// workSourceExternalStats is one eval cycle's worksource.DisplaySource
+// reading of the configured external work source (ADR-0020, "Dashboard
+// terminology", #10174).
+type workSourceExternalStats struct {
+	DisplayName  string
+	DroppedItems int64
+}
+
+// SetWorkSourceExternalStats records this eval cycle's display_name and
+// dropped-item tally for the configured work_source.external adapter, read by
+// workSourceSectionResponse for the Settings → Work Source badge and counter.
+func (s *Server) SetWorkSourceExternalStats(displayName string, dropped int64) {
+	if s == nil {
+		return
+	}
+	s.workSourceExternalStatsMu.Lock()
+	defer s.workSourceExternalStatsMu.Unlock()
+	s.workSourceExternalStats = &workSourceExternalStats{DisplayName: displayName, DroppedItems: dropped}
+}
+
+// ClearWorkSourceExternalStats drops the last reading. Called whenever the
+// configured primary work source is not an external adapter, so switching
+// back to GitHub/Linear/Jira/etc. never leaves a stale external counter
+// showing.
+func (s *Server) ClearWorkSourceExternalStats() {
+	if s == nil {
+		return
+	}
+	s.workSourceExternalStatsMu.Lock()
+	defer s.workSourceExternalStatsMu.Unlock()
+	s.workSourceExternalStats = nil
+}
+
+// workSourceExternalStatsSnapshot reads the last recorded external work-source
+// stats, if any.
+func (s *Server) workSourceExternalStatsSnapshot() (displayName string, dropped int64, ok bool) {
+	if s == nil {
+		return "", 0, false
+	}
+	s.workSourceExternalStatsMu.RLock()
+	defer s.workSourceExternalStatsMu.RUnlock()
+	if s.workSourceExternalStats == nil {
+		return "", 0, false
+	}
+	return s.workSourceExternalStats.DisplayName, s.workSourceExternalStats.DroppedItems, true
 }
 
 // handleBannerDismissed records that an authenticated user dismissed the hub

@@ -6688,7 +6688,9 @@ func runEvalCycle(
 	// If a non-default or additive work source is configured, overlay its
 	// issues onto the actionable result. PRs always come from GitHub.
 	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		var ws worksource.WorkSource
+		actionable.Issues, ws = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		reportWorkSourceDisplayStats(dashSrv, ws)
 	}
 	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
 		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)

@@ -166,3 +166,34 @@ func TestGovWorkSource_ExternalIsAnAcceptedType(t *testing.T) {
 		t.Errorf("unknown type = %d, want 400", rec.Code)
 	}
 }
+
+// TestGovWorkSource_ExternalDroppedItemsCounter is the ADR-0020 "Dashboard
+// terminology" dropped-item counter (#10174): it reads 0 until
+// SetWorkSourceExternalStats has recorded an eval cycle's reading, reports
+// what was last recorded, and goes back to 0 once ClearWorkSourceExternalStats
+// runs (the primary source is no longer external) — never a stale count.
+func TestGovWorkSource_ExternalDroppedItemsCounter(t *testing.T) {
+	s := govServer(t)
+	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
+		"type":     "external",
+		"external": externalWorkSourceBody(),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put external work-source: %d — %s", rec.Code, rec.Body.String())
+	}
+
+	if got := externalWorkSourceSection(t, s); got["dropped_items"] != float64(0) {
+		t.Errorf("dropped_items before any cycle = %v, want 0", got["dropped_items"])
+	}
+
+	s.SetWorkSourceExternalStats("Acme Tracker", 7)
+	got := externalWorkSourceSection(t, s)
+	if got["dropped_items"] != float64(7) {
+		t.Errorf("dropped_items = %v, want 7", got["dropped_items"])
+	}
+
+	s.ClearWorkSourceExternalStats()
+	if got := externalWorkSourceSection(t, s); got["dropped_items"] != float64(0) {
+		t.Errorf("dropped_items after clear = %v, want 0", got["dropped_items"])
+	}
+}
