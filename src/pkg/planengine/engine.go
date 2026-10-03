@@ -6,6 +6,13 @@ package planengine
 
 import "context"
 
+// Artifact kinds a stage's document can have. They are the neutral kind the
+// observer asks an engine about, not a CLI spelling.
+const (
+	KindSpec = "spec"
+	KindPlan = "plan"
+)
+
 // Engine observes planning documents. It never sees lease identity, task IDs,
 // or generations, and it has no method that changes Hive state.
 type Engine interface {
@@ -33,4 +40,35 @@ type ProbeResult struct {
 	Present bool
 	Version string
 	Binary  string
+}
+
+// ArtifactNamer is implemented by an engine whose artifacts are not named by
+// the run key itself. The observer polls the run key verbatim otherwise.
+type ArtifactNamer interface {
+	ArtifactName(runKey string) string
+}
+
+// VersionedEngine is implemented by an engine that reports the version
+// stamped on the receipt's Engine.Version. Without it the receipt records the
+// engine name.
+type VersionedEngine interface {
+	EngineVersion() string
+}
+
+// artifactName is the name the observer polls runKey under.
+func artifactName(engine Engine, runKey string) string {
+	if namer, ok := engine.(ArtifactNamer); ok && namer != nil {
+		return namer.ArtifactName(runKey)
+	}
+	return runKey
+}
+
+// engineVersion is the version the receipt stamps for engine.
+func engineVersion(engine Engine) string {
+	if versioned, ok := engine.(VersionedEngine); ok && versioned != nil {
+		if v := versioned.EngineVersion(); v != "" {
+			return v
+		}
+	}
+	return engine.Name()
 }

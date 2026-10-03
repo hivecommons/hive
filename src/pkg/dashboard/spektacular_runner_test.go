@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/spektacular"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -124,17 +125,18 @@ func disableSpekHubExecutorForRelayTests(s *Server) {
 	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &off
 }
 
-func spekRunner(hub *ContributeWSHub, ex *spekExec) *spektacular.Runner {
-	return &spektacular.Runner{
-		Exec:     ex.exec,
+func spekRunner(hub *ContributeWSHub, ex *spekExec) *planengine.Runner {
+	engine := spektacular.NewEngine("spektacular", ex.exec)
+	return &planengine.Runner{
+		Engine:   engine,
 		Poll:     spekPoll,
-		Registry: spektacular.NewLeaseRegistryAdapter(hub.server),
+		Registry: planengine.NewLeaseRegistryAdapter(hub.server, engine),
 		Logger:   hub.logger,
 	}
 }
 
-// spekStageRunner installs a *spektacular.Runner as the Server's StageRunner.
-type spekStageRunner struct{ r *spektacular.Runner }
+// spekStageRunner installs the stage observer as the Server's StageRunner.
+type spekStageRunner struct{ r *planengine.Runner }
 
 func (s spekStageRunner) Tick(ctx context.Context, now time.Time) { s.r.Tick(ctx, now) }
 
