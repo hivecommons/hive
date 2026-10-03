@@ -6,16 +6,16 @@ name: Spektacular real-CLI smoke
 # (testdata/spektacular-fake/spektacular) or a scripted Exec stub, so a
 # mismatch between those stand-ins and the real 0.22.0 release could pass
 # `go test ./pkg/spektacular/...` indefinitely. This workflow runs
-# TestRealSpektacularCLISmoke (build tag `integration`) against the pinned
-# binary the contributor image ships (src/Dockerfile.contributor,
-# `ARG SPEKTACULAR_VERSION`), the same image backend-smoke.yml's pinned lane
-# uses, so no separate download/checksum step is needed here.
+# TestRealSpektacularCLISmoke (build tag `integration`) against the release
+# pinned by `ARG SPEKTACULAR_VERSION` in src/Dockerfile.contributor, downloaded
+# and checksum-verified straight from the spektacular release page so the job
+# always exercises the pin in the checked-out tree.
 #
 # It also runs on pull requests that touch the Spektacular contract surface
 # (the package, its fake, the pinned version in the contributor Dockerfile,
 # or this workflow), so a change that only the fake agrees with cannot merge
 # green on fake-backed tests alone; the nightly schedule still catches a
-# drift from a re-published contributor image.
+# re-published release asset drifting from what the fake encodes.
 #
 # This is a read-only smoke against a throwaway `.spektacular` store the test
 # creates under its own temp dir; it needs no secrets and nothing it does
@@ -46,43 +46,42 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Require a container engine
-        run: |
-          if command -v podman >/dev/null 2>&1; then
-            podman --version
-            exit 0
-          fi
-          echo "::error::spektacular-real-cli-smoke needs podman to run inside ghcr.io/hivecommons/hive-contributor:latest"
-          exit 1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
 
-      - name: Pull the contributor image
-        # Owner-derived, same convention docker.yml/backend-smoke.yml use for
-        # their image targets: a fork publishes its own
-        # ghcr.io/<fork-org>/hive-contributor, so that is the pinned binary
-        # its smoke should exercise, falling back (loudly) to the upstream
-        # image when the owner-scoped one has not been published yet.
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
+      - name: Download the pinned spektacular release
+        # The pin is read from the checked-out src/Dockerfile.contributor
+        # (`ARG SPEKTACULAR_VERSION`), so a PR that bumps it is smoked
+        # against the binary it pins rather than whatever a previously
+        # published contributor image happens to ship. Same asset naming and
+        # checksums.txt verification as the Dockerfile.
         run: |
-          OWNER="$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
-          OWNER_IMAGE="ghcr.io/${OWNER}/hive-contributor:latest"
-          UPSTREAM_IMAGE="ghcr.io/hivecommons/hive-contributor:latest"
-          if podman pull "$OWNER_IMAGE"; then
-            IMAGE="$OWNER_IMAGE"
-          else
-            echo "::warning::${OWNER_IMAGE} is not pullable — falling back to ${UPSTREAM_IMAGE}. This smoke is exercising UPSTREAM's pinned spektacular binary, not this repository's own contributor image."
-            podman pull "$UPSTREAM_IMAGE"
-            IMAGE="$UPSTREAM_IMAGE"
+          VERSION="$(sed -n 's/^ARG SPEKTACULAR_VERSION=//p' src/Dockerfile.contributor | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read ARG SPEKTACULAR_VERSION from src/Dockerfile.contributor"
+            exit 1
           fi
-          echo "spektacular-real-cli-smoke image: $IMAGE"
-          echo "CONTRIBUTOR_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          ASSET="spektacular_${VERSION}_linux_x86_64.tar.gz"
+          BASE="https://github.com/hivecommons/spektacular/releases/download/${VERSION}"
+          BIN_DIR="${RUNNER_TEMP}/spektacular-${VERSION}"
+          mkdir -p "$BIN_DIR"
+          cd "$BIN_DIR"
+          curl -fsSL --retry 5 --retry-delay 5 -o "$ASSET" "${BASE}/${ASSET}"
+          curl -fsSL --retry 5 --retry-delay 5 -o checksums.txt "${BASE}/checksums.txt"
+          grep "  ${ASSET}$" checksums.txt | sha256sum -c -
+          tar -xzf "$ASSET" spektacular
+          chmod 0755 spektacular
+          ./spektacular --version
+          echo "SPEKTACULAR_REAL_CLI_BIN=${BIN_DIR}/spektacular" >> "$GITHUB_ENV"
+          echo "SPEKTACULAR_EXPECTED_VERSION=${VERSION}" >> "$GITHUB_ENV"
 
-      - name: Real-CLI smoke (in-container)
+      - name: Real-CLI smoke
+        working-directory: src
         run: |
-          podman run --rm --entrypoint /bin/bash \
-            -v "${GITHUB_WORKSPACE}:/opt/hive-src:ro,Z" \
-            "${CONTRIBUTOR_IMAGE}" \
-            -lc 'git config --global --add safe.directory /opt/hive-src && cd /opt/hive-src/src && go test -tags integration ./pkg/spektacular -run TestRealSpektacularCLISmoke -v -count=1' |& tee smoke.log
+          set -o pipefail
+          go test -tags integration ./pkg/spektacular -run TestRealSpektacularCLISmoke -v -count=1 |& tee ../smoke.log
 
       - name: Upload evidence
         if: always()
