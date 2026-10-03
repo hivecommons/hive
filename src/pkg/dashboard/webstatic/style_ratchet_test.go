@@ -29,7 +29,7 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 		inlineStyles:   1588,
 		rawColors:      143,
 		rawFontSizes:   667,
-		rawPadding:     232,
+		rawPadding:     229,
 		rawBorderRadii: 176},
 	"contributor landing": {
 		inlineStyles:   95,

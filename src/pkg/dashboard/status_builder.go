@@ -910,6 +910,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			GovCostWeight:          0,
 			LiveSummary:            liveSummary,
 			DetailSummary:          detailSummary,
+			SubAgentModels:         proc.SubAgentModels,
 			StatsConfig:            resolveStatsSources(loadStatsConfig(name), cfg),
 			LastError:              proc.LastError,
 			LoginURL:               proc.LoginURL,

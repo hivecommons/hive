@@ -1,0 +1,1 @@
+- The dashboard agent detail shows observed Copilot sub-agent types and effective models for the latest kick, flagging older Claude generations than the parent launch model ([#10469](https://github.com/hivecommons/hive/issues/10469)).
