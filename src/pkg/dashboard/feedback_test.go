@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -288,5 +290,73 @@ func TestFeedbackUnreadCount(t *testing.T) {
 	})
 	if got != 1 {
 		t.Fatalf("unread = %s, want 1", strconv.Itoa(got))
+	}
+}
+
+func TestFeedbackScreenshotsMustBeRealImages(t *testing.T) {
+	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 24)...)
+	if _, ext, err := decodeFeedbackDataURI("data:image/png;base64," + base64.StdEncoding.EncodeToString(png)); err != nil || ext != "png" {
+		t.Fatalf("real png rejected: ext=%q err=%v", ext, err)
+	}
+	for name, payload := range map[string][]byte{
+		"shell": []byte("#!/bin/sh\necho hello\n"),
+		"html":  []byte("<html><script>alert(1)</script></html>"),
+		"svg":   []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>`),
+	} {
+		uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload)
+		if _, _, err := decodeFeedbackDataURI(uri); err == nil {
+			t.Fatalf("%s payload accepted as image", name)
+		}
+		req := &feedbackReportRequest{Title: "A useful bug report", Description: "Something went wrong", RequestType: feedbackTypeBug, Screenshots: []string{uri}}
+		if err := validateFeedbackRequest(req); err == nil {
+			t.Fatalf("%s payload passed request validation", name)
+		}
+	}
+}
+
+func TestFeedbackScreenshotsCommitToDedicatedBranch(t *testing.T) {
+	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 24)...)
+	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	var branches, paths []string
+	refCreated := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/docs/contents/"):
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			branches = append(branches, payload["branch"])
+			paths = append(paths, strings.TrimPrefix(r.URL.Path, "/repos/hivecommons/docs/contents/"))
+			if !refCreated {
+				http.Error(w, `{"message":"Branch not found"}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]string{"download_url": "https://example.invalid/x.png"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/docs":
+			_ = json.NewEncoder(w).Encode(map[string]string{"default_branch": "main"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/docs/git/ref/heads/main":
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"sha": "abc123"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/docs/git/refs":
+			refCreated = true
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	uploadFeedbackScreenshots(context.Background(), srv.Client(), srv.URL, "tok", "hivecommons", "docs", 3, []string{uri})
+
+	if !refCreated || len(branches) != 2 {
+		t.Fatalf("refCreated=%v branches=%v", refCreated, branches)
+	}
+	for i, b := range branches {
+		if b != feedbackScreenshotBranch {
+			t.Fatalf("put %d targeted branch %q", i, b)
+		}
+		if strings.HasPrefix(paths[i], ".github") || !strings.HasPrefix(paths[i], feedbackScreenshotDir+"/3/screenshot-1.png") {
+			t.Fatalf("unexpected content path %s", paths[i])
+		}
 	}
 }

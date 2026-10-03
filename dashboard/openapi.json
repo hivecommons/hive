@@ -18850,7 +18850,7 @@
           "System"
         ],
         "summary": "Submit dashboard bug or feature feedback",
-        "description": "Creates a GitHub issue for Hive or documentation feedback. Hub-linked spokes relay the sanitized payload to the hub over the per-hive heartbeat bearer; standalone spokes use GitHub user auth when available or return a prefilled fallback_url. Diagnostics are optional and redacted; screenshots are data URI images capped at five files of 2 MiB decoded each.",
+        "description": "Creates a GitHub issue for Hive or documentation feedback. Hub-linked spokes relay the sanitized payload to the hub over the per-hive heartbeat bearer; standalone spokes use GitHub user auth when available or return a prefilled fallback_url. Diagnostics are optional and redacted; screenshots are data URI images capped at five files of 2 MiB decoded each, must sniff as PNG or JPEG, and are committed to the target repository's dedicated feedback-screenshots branch (never its default branch).",
         "requestBody": {
           "required": true,
           "content": {
