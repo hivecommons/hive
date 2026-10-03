@@ -1,9 +1,10 @@
 level: 2
 name: Advisory
 description: >
-  One-way feedback (formerly "Instructed"). Five agents produce advisory beads — findings visible on the dashboard and in a tracking
-  issue. No GitHub issues or PRs created. Agents observe and report; humans
-  decide what to act on.
+  One-way advisory feedback. Supervisor, guide, scanner, quality, and
+  brainstorm observe the hive and publish advisory beads or tracking summaries.
+  No agent creates GitHub issues, opens PRs, or merges; humans decide what to
+  act on.
 governor:
   modes: SURGE, BUSY, QUIET, IDLE
   merge_policy: manual

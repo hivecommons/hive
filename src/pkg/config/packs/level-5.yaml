@@ -1,9 +1,6 @@
 level: 5
 name: Semi-Autonomous
-description: 'Multi-loop feedback (formerly ''Semi-Automated''). Agents open issues AND pull requests. All agent
-  PRs get a ''hold'' label automatically — humans batch-review and approve. Adds architect
-  (+architect) for RFCs and strategist (+strategist) for cross-agent coordination.
-  Twelve agents total, including opt-in telemetry and operations. The system proposes; it does not merge autonomously.
+description: 'Semi-autonomous feedback. Thirteen agents can propose issues and pull requests, with level-applied hold labels requiring human review before merge. Architect and strategist coordinate RFC and cross-agent work; reviewer and adjudicator work the hold-gated queue; telemetry and operations are present but opt-in/paused. The system proposes and repairs, but does not merge autonomously.
 
   '
 governor:
@@ -11,7 +8,7 @@ governor:
   # Gate 2 stays on at L5: a human approves the task list before it enters
   # the pool. L6 ("runs itself") keeps auto-approve (RFC hivecommons/hive#7993 §4).
   plan_auto_approve: false
-  # Agents can merge at this level, so ioscan fails CLOSED by default: a Critical
+  # Agents can create PRs at this high-trust level, so ioscan fails CLOSED by default: a Critical
   # injection finding blocks the kick instead of being redacted. Tradeoff — a
   # Critical false-positive stalls that queue item until an operator clears it.
   # Override per hive with ioscan.fail_mode: open.

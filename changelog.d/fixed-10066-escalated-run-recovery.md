@@ -1,0 +1,1 @@
+- Owners can restart an escalated run's current stage or terminally abandon a run; persisted retirement prevents automatic design and run triage from recreating it after a restart, and `triage_fix` retirement now also suppresses automatic design admission.

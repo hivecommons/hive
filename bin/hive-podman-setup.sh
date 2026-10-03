@@ -131,6 +131,13 @@ UNITS=(hive.network hive-data.volume hive.container hive-gateway.container)
 # any real unit — it is the only Hive unit wanted by default.target.
 BOOT_UNITS=(hive-boot.target hive-boot-gate.service)
 
+# The upgrade request bridge (#10344), also plain systemd units rather than
+# Quadlet ones: a .path unit watching ${CONF_DIR}/upgrade-requests and the
+# oneshot it activates, which runs bin/hive-upgrade-request.sh on the HOST.
+# Only the .path unit is enabled — enabling the service would run an upgrade at
+# boot.
+BRIDGE_UNITS=(hive-upgrade.service hive-upgrade.path)
+
 # Health confirmation budget. The gateway answering is an END-TO-END check —
 # nginx up, DNS resolving `hive`, Hive serving — so it can legitimately trail
 # `systemctl start` returning by a moment.
@@ -255,6 +262,10 @@ else
 fi
 
 SECRETS_DIR="${CONF_DIR}/secrets"
+# The host side of the upgrade request bridge (#10344). The container side of
+# the same directory is read out of hive.container by
+# unit_upgrade_request_path.
+REQUEST_DIR="${CONF_DIR}/upgrade-requests"
 
 # --- reading the units, rather than repeating them --------------------------
 #
@@ -337,6 +348,15 @@ set_hive_env_var() {
 # constant that can drift from VolumeName= (#4485).
 unit_volume_name() {
   sed -n 's|^VolumeName=\(.*\)$|\1|p' "$1" | head -n1
+}
+
+# The CONTAINER-side path of the upgrade request bridge mount (#10344), read
+# out of hive.container rather than repeated here. The host side is
+# ${CONF_DIR}/upgrade-requests — the unit spells it `%E/hive/upgrade-requests`,
+# and %E is exactly what CONF_DIR already is in both root modes. Hive is told
+# the container-side spelling, because that is the only one it can see.
+unit_upgrade_request_path() {
+  sed -n 's|^Volume=%E/hive/upgrade-requests:\([^:]*\):.*|\1|p' "$1" | head -n1
 }
 
 # hive.yaml's dashboard.port, read only from inside the `dashboard:` block. A
@@ -485,6 +505,7 @@ step "3/9  Configuration in ${CONF_DIR}"
 
 as_owner mkdir -p "$CONF_DIR" || die "$EX_CONFIG" "could not create ${CONF_DIR}"
 as_owner mkdir -p "$SECRETS_DIR" || die "$EX_CONFIG" "could not create ${SECRETS_DIR}"
+as_owner mkdir -p "$REQUEST_DIR" || die "$EX_CONFIG" "could not create ${REQUEST_DIR}"
 
 # Copy an example into place unless the operator already has one. `keep` is the
 # idempotent path and is reported, not silent: an operator re-running this
@@ -545,6 +566,20 @@ set_hive_env_var "${CONF_DIR}/hive.env" HIVE_SELF_IMAGE_TRACKING "$HIVE_SELF_IMA
   || die "$EX_CONFIG" "could not write HIVE_SELF_IMAGE_TRACKING to ${CONF_DIR}/hive.env"
 ok "wrote   self image metadata to hive.env"
 
+# The upgrade request bridge (#10344). Hive is told the CONTAINER-side path,
+# because that is the only spelling it can see; it is read out of
+# hive.container so this cannot drift from the mount that has to back it. With
+# it set and writable the dashboard Upgrade button works on a rootless host for
+# the first time; without it the button stays disabled with the honest "upgrade
+# from the host" reason, which is what every pre-existing install still gets
+# until it reconciles.
+REQUEST_MOUNT_PATH="$(unit_upgrade_request_path "${QUADLET_SRC}/hive.container")"
+[ -n "$REQUEST_MOUNT_PATH" ] \
+  || die "$EX_SOFTWARE" "could not read the upgrade-requests Volume= from hive.container"
+set_hive_env_var "${CONF_DIR}/hive.env" HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR "$REQUEST_MOUNT_PATH" \
+  || die "$EX_CONFIG" "could not write HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR to ${CONF_DIR}/hive.env"
+ok "wrote   upgrade request dir: ${REQUEST_MOUNT_PATH} (host: ${REQUEST_DIR})"
+
 # --- step 4: the #4367 coupling, enforced -----------------------------------
 step "4/9  dashboard.port must equal the unit's HealthCmd port (#4367)"
 
@@ -594,6 +629,22 @@ else
   ok "container 0:${LAUNCH_GID} via podman unshare chown — rootless does not map identity"
 fi
 info "Nothing under secrets/ is created or overwritten here; put your GitHub App key in it yourself."
+
+# THE ONE DIRECTORY THE CONTAINER MAY WRITE TO (#10344). Same ownership
+# reasoning as secrets/ immediately above — rootful maps identity so chgrp is
+# right, rootless does not and needs `podman unshare` — but mode 770 rather
+# than 750, because a request that cannot be written is a button that silently
+# does nothing. Group, not world: only the hive-launch group inside the
+# container needs it.
+as_owner chmod 770 "$REQUEST_DIR" || die "$EX_CONFIG" "could not chmod 770 ${REQUEST_DIR}"
+if [ "$ROOTFUL" -eq 1 ]; then
+  as_owner chgrp -R "$LAUNCH_GID" "$REQUEST_DIR" \
+    || die "$EX_CONFIG" "could not chgrp -R ${LAUNCH_GID} ${REQUEST_DIR}"
+else
+  pod unshare chown -R "0:${LAUNCH_GID}" "$REQUEST_DIR" \
+    || die "$EX_CONFIG" "could not podman unshare chown -R 0:${LAUNCH_GID} ${REQUEST_DIR}"
+fi
+ok "mode 770, group ${LAUNCH_GID} on ${REQUEST_DIR} — the upgrade request bridge (#10344)"
 
 # --- step 6: the post-write preflight, then the units -----------------------
 step "6/9  Host preflight over what was just written, then install the units"
@@ -647,6 +698,19 @@ for unit in "${BOOT_UNITS[@]}"; do
   ok "installed ${unit}"
 done
 
+# The host half of the upgrade request bridge (#10344). The script goes beside
+# hivectl in BIN_DIR because that is where hive-upgrade.service looks for it,
+# and it must be there before the units are reloaded and the watch is enabled.
+as_owner mkdir -p "$BIN_DIR" || die "$EX_CONFIG" "could not create ${BIN_DIR}"
+as_owner install -Dm755 "${ROOT}/bin/hive-upgrade-request.sh" "${BIN_DIR}/hive-upgrade-request.sh" \
+  || die "$EX_CONFIG" "could not install hive-upgrade-request.sh into ${BIN_DIR}"
+ok "installed hive-upgrade-request.sh into ${BIN_DIR}"
+for unit in "${BRIDGE_UNITS[@]}"; do
+  as_owner install -Dm644 "${SYSTEMD_SRC}/${unit}" "${SYSTEMD_UNIT_DIR}/${unit}" \
+    || die "$EX_CONFIG" "could not install ${unit} into ${SYSTEMD_UNIT_DIR}"
+  ok "installed ${unit}"
+done
+
 sctl daemon-reload || die "$EX_CONFIG" "systemctl daemon-reload failed"
 ok "daemon-reload — the Quadlet generator has run"
 
@@ -654,6 +718,20 @@ ok "daemon-reload — the Quadlet generator has run"
 # works and is what wires the whole deployment to boot.
 sctl enable hive-boot-gate.service || die "$EX_CONFIG" "systemctl enable hive-boot-gate.service failed"
 ok "hive-boot-gate.service enabled — Hive starts at boot without holding the boot (#4478)"
+
+# The .path unit, and NOT hive-upgrade.service: enabling the service would make
+# systemd run an upgrade at every boot. `enable --now` so the watch is live for
+# this boot too, without waiting for a reboot to make the button work.
+#
+# A failure here is a WARNING rather than a death: the deployment is complete
+# and serving without the bridge, it just means the dashboard Upgrade button
+# stays disabled with the "upgrade from the host" reason it had before #10344.
+if sctl enable --now hive-upgrade.path; then
+  ok "hive-upgrade.path enabled — the dashboard Upgrade button reaches the host (#10344)"
+else
+  warn "could not enable hive-upgrade.path; the dashboard Upgrade button will stay disabled"
+  info "Hive is otherwise fully installed. Retry with: ${SCTL_LABEL} enable --now hive-upgrade.path"
+fi
 
 # --- step 7: started is not the same as healthy -----------------------------
 step "7/9  Start, and confirm HEALTHY rather than started"
@@ -895,6 +973,7 @@ else
 fi
 say ""
 say "  Update or roll back:  bin/hive-podman-update.sh status${MODE_FLAG}"
+say "  Upgrade requests:     ${BIN_DIR}/hive-upgrade-request.sh status  (what the dashboard button queued)"
 say "  Remove:               bin/hive-podman-teardown.sh plan"
 say "  Guide:                src/docs/podman-standalone-quadlet.md"
 say ""

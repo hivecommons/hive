@@ -40,6 +40,7 @@ export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — ru
 # Export the commons routing strategy so a relay started here (not just one
 # reloaded via SIGUSR1) honors HIVE_COMMONS_STRATEGY / HIVE_CONTRIBUTOR_STRATEGY
 # from contributor.env from its first solicitation.
+export HIVE_HUB_DISABLED="${HIVE_HUB_DISABLED:-}"
 [[ -n "${HIVE_COMMONS_STRATEGY:-}" ]] && export HIVE_COMMONS_STRATEGY || true
 [[ -n "${HIVE_CONTRIBUTOR_STRATEGY:-}" ]] && export HIVE_CONTRIBUTOR_STRATEGY || true
 export AGENT_BACKEND="${_DOCKER_BACKEND:-${AGENT_BACKEND:-claude}}"

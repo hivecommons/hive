@@ -10,5 +10,5 @@
 ┃                                                                                                ┃
 ┃                                                                                                ┃
 ┃ 1 of 3   * = active: the hub the relay solicits from first.                                    ┃
-┃ j/k cursor  [/ ] rank  s strategy  enter use  a add  d remove  r rename  esc close             ┃
+┃ j/k move  [/] rank  s strategy  e toggle  enter use  a add  d remove  r rename  esc close      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

@@ -2,10 +2,38 @@ package github
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestPRTerminalMergeAttributionBuckets(t *testing.T) {
+	identity := HiveIdentity{AIAuthor: "hive-ai", AppLogin: "hive-app[bot]"}
+	tests := []struct {
+		name        string
+		actor       string
+		appBotLogin string
+		want        string
+	}{
+		{name: "blank actor is unknown", actor: "", want: "unknown"},
+		{name: "admin merge by maintainer is human", actor: "clubanderson", want: "human"},
+		{name: "hive ai identity without audit is hive", actor: "hive-ai", want: "hive"},
+		{name: "hive app identity without audit is hive", actor: "hive-app[bot]", want: "hive"},
+		{name: "configured app bot login without identity is hive", actor: "hive-installation[bot]", appBotLogin: "hive-installation[bot]", want: "hive"},
+		{name: "non hive bot is other automation", actor: "dependabot[bot]", want: "other_automation"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prTerminalMergeAttribution(tt.actor, identity, tt.appBotLogin); got != tt.want {
+				t.Fatalf("prTerminalMergeAttribution(%q) = %q, want %q", tt.actor, got, tt.want)
+			}
+		})
+	}
+}
 
 // ── #7995: the churn guard ────────────────────────────────────────────────────
 //
@@ -274,6 +302,53 @@ func TestFetchClaimScanRecordsClosedAndMergedPRs(t *testing.T) {
 	}
 	if !churn.NeedsHumanTriage() {
 		t.Error("two abandoned PRs on one issue must route to a human")
+	}
+}
+
+func TestFetchClaimScanLooksUpMergedByWhenListOmitsActor(t *testing.T) {
+	now := time.Now().UTC()
+	recent := now.Add(-time.Hour)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("state") == "closed" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{
+					"number":     77,
+					"title":      "operator merge",
+					"body":       "Fixes #700",
+					"state":      "closed",
+					"head":       map[string]any{"ref": "operator-merge", "sha": "head-77"},
+					"user":       map[string]any{"login": "hive-app[bot]"},
+					"html_url":   "https://github.com/torch-spyre/spyre-inference/pull/77",
+					"updated_at": recent.Format(time.RFC3339),
+					"merged_at":  recent.Format(time.RFC3339),
+				},
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/pulls/77") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":    77,
+				"state":     "closed",
+				"merged_at": recent.Format(time.RFC3339),
+				"merged_by": map[string]any{"login": "clubanderson"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "torch-spyre", []string{"spyre-inference"}, testLogger())
+	var got []PRTerminalObservation
+	c.SetPRTerminalObservedHook(func(obs PRTerminalObservation) { got = append(got, obs) })
+	if _, err := c.FetchClaimScan(context.Background(), HiveIdentity{AppLogin: "hive-app[bot]"}); err != nil {
+		t.Fatalf("FetchClaimScan: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("terminal observations = %+v, want one", got)
+	}
+	if got[0].Actor != "clubanderson" || got[0].Attribution != "human" {
+		t.Fatalf("terminal observation = %+v, want clubanderson/human", got[0])
 	}
 }
 

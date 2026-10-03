@@ -5753,28 +5753,32 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 			}))
 
-		deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
-			reg, active := b.dashSrv.ContributorSummary()
-			lb := b.dashSrv.LeaderboardForHub()
-			out := make([]spoke.LeaderboardEntry, len(lb))
-			for i, e := range lb {
-				out[i] = spoke.LeaderboardEntry{
-					GitHubUsername:  e.GitHubUsername,
-					AvatarURL:       e.AvatarURL,
-					TrustTier:       e.TrustTier,
-					TasksCompleted:  e.TasksCompleted,
-					TasksFailed:     e.TasksFailed,
-					Active:          e.Active,
-					CurrentTask:     e.CurrentTask,
-					StagesCompleted: e.StagesCompleted,
+		if b.cfg.Hub.TaskStatusPushEnabled() {
+			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
+				reg, active := b.dashSrv.ContributorSummary()
+				lb := b.dashSrv.LeaderboardForHub()
+				out := make([]spoke.LeaderboardEntry, len(lb))
+				for i, e := range lb {
+					out[i] = spoke.LeaderboardEntry{
+						GitHubUsername:  e.GitHubUsername,
+						AvatarURL:       e.AvatarURL,
+						TrustTier:       e.TrustTier,
+						TasksCompleted:  e.TasksCompleted,
+						TasksFailed:     e.TasksFailed,
+						Active:          e.Active,
+						CurrentTask:     e.CurrentTask,
+						StagesCompleted: e.StagesCompleted,
+					}
 				}
-			}
-			return &spoke.TaskStatusPayload{
-				HiveID:       b.cfg.HiveID,
-				Leaderboard:  out,
-				Contributors: spoke.ContributorSummary{Registered: reg, Active: active},
-			}
-		}, b.logger)
+				return &spoke.TaskStatusPayload{
+					HiveID:       b.cfg.HiveID,
+					Leaderboard:  out,
+					Contributors: spoke.ContributorSummary{Registered: reg, Active: active},
+				}
+			}, b.logger)
+		} else {
+			b.logger.Info("hub task-status push disabled by operator")
+		}
 	}
 }
 
@@ -6232,7 +6236,7 @@ func planFromLabeledIssues(
 				if epic, runKey, err := dashSrv.StartDesignSpektacularFromIssue(context.Background(), store, issue); err != nil {
 					logger.Warn("design-mode-spektacular: admit failed", "issue", planning.IssueRef(issue), "error", err)
 					filtered = append(filtered, issue)
-				} else {
+				} else if epic != nil {
 					dashSrv.AuditLog("planning", "design_requested_spektacular", "epic="+epic.ID+" ref="+epic.ExternalRef+" run="+runKey, planning.ArchitectAgentName)
 					logger.Info("audit: design requested via Spektacular", "epic", epic.ID, "ref", epic.ExternalRef, "run", runKey)
 				}

@@ -94,6 +94,7 @@ type HivesOverlay struct {
 // one refactor away from printing it. The app projects the fields this frame
 // shows and leaves the secret in the store.
 type HiveRow struct {
+	Disabled      bool
 	Name          string
 	Hub           string
 	ContributorID string
@@ -137,6 +138,8 @@ const (
 	HivesActionMoveUp
 	HivesActionMoveDown
 	HivesActionStrategy
+	HivesActionEnable
+	HivesActionDisable
 )
 
 // HivesAction is the mutation Submit accepted, addressed by NAME rather than by
@@ -241,6 +244,22 @@ func (o HivesOverlay) MoveSelectedRank(delta int) (HivesOverlay, HivesAction, bo
 		return o.start("Moving " + row.Name + " up"), HivesAction{Kind: HivesActionMoveUp, Name: row.Name}, true
 	}
 	return o.start("Moving " + row.Name + " down"), HivesAction{Kind: HivesActionMoveDown, Name: row.Name}, true
+}
+
+// ToggleEnabled pauses or resumes the selected hive without removing it.
+func (o HivesOverlay) ToggleEnabled() (HivesOverlay, HivesAction, bool) {
+	if o.pending || o.mode != hivesModeList {
+		return o, HivesAction{}, false
+	}
+	row, ok := o.Selected()
+	if !ok {
+		return o, HivesAction{}, false
+	}
+	kind, verb := HivesActionDisable, "Disabling "
+	if row.Disabled {
+		kind, verb = HivesActionEnable, "Enabling "
+	}
+	return o.start(verb + row.Name), HivesAction{Kind: kind, Name: row.Name}, true
 }
 
 // CycleStrategy advances The Commons routing preset.
@@ -662,6 +681,13 @@ func (o HivesOverlay) listBody(contentWidth int) string {
 		out.WriteString(o.hiveRow(i, cols, contentWidth))
 		out.WriteString("\n")
 	}
+	allDisabled := true
+	for _, row := range o.rows {
+		allDisabled = allDisabled && row.Disabled
+	}
+	if allDisabled {
+		out.WriteString("\nAll hives disabled: relay idle after in-flight work; e to enable.")
+	}
 	if o.actionErr != "" {
 		out.WriteString("\n" + hivesErrorStyle.Render(o.actionErr))
 	}
@@ -689,7 +715,7 @@ func (o HivesOverlay) hiveColumns(contentWidth int) hiveColumns {
 	nameNeed := lipgloss.Width("NAME")
 	hubNeed := lipgloss.Width("HUB")
 	for _, row := range o.rows {
-		nameNeed = max(nameNeed, lipgloss.Width(row.Name))
+		nameNeed = max(nameNeed, lipgloss.Width(hiveDisplayName(row)))
 		hubNeed = max(hubNeed, lipgloss.Width(row.Hub))
 	}
 	remaining := max(0, contentWidth-hiveRowChromeWidth-hiveContribWidth-hiveSessionWidth-hiveReachableWidth)
@@ -733,13 +759,20 @@ func (o HivesOverlay) hiveRow(i int, cols hiveColumns, contentWidth int) string 
 	space := hivesCellStyle(lipgloss.NewStyle(), selected).Render(" ")
 	line := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s",
 		cursor, marker,
-		hiveColumn(row.Name, cols.name, selected), space,
+		hiveColumn(hiveDisplayName(row), cols.name, selected), space,
 		hiveHubColumn(row.Hub, cols.hub, selected), space,
 		hiveColumn(hiveDash(row.ContributorID), hiveContribWidth, selected), space,
 		hiveColumn(hiveDash(row.Session), hiveSessionWidth, selected), space,
 		hiveReachableColumn(row.Reachable, hiveReachableWidth, selected),
 	)
 	return padCells(line, contentWidth, selected)
+}
+
+func hiveDisplayName(row HiveRow) string {
+	if row.Disabled {
+		return "[disabled] " + row.Name
+	}
+	return row.Name
 }
 
 func padCells(s string, width int, selected bool) string {
@@ -938,7 +971,7 @@ func (o HivesOverlay) footer() string {
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		keys = "j/k cursor  [/ ] rank  s strategy  enter use  a add  d remove  r rename  " + closeHint
+		keys = "j/k move  [/] rank  s strategy  e toggle  enter use  a add  d remove  r rename  " + closeHint
 	default:
 		keys = "a add  " + closeHint
 	}

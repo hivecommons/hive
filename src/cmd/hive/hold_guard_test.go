@@ -56,6 +56,11 @@ type holdGuardServer struct {
 	failComments bool
 	failLabels   bool
 	failCommits  bool
+
+	// updateBranchCalls counts PUT .../update-branch requests per PR number
+	// (#10437: keeping a held PR mergeable).
+	updateBranchCalls map[int]int
+	failUpdateBranch  bool
 }
 
 func (s *holdGuardServer) handler(t *testing.T) http.Handler {
@@ -90,6 +95,18 @@ func (s *holdGuardServer) handler(t *testing.T) http.Handler {
 			s.comments = append(s.comments, payload.Body)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":1}`))
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
+			number := pathPRNumber(t, r.URL.Path)
+			if s.updateBranchCalls == nil {
+				s.updateBranchCalls = map[int]int{}
+			}
+			s.updateBranchCalls[number]++
+			if s.failUpdateBranch {
+				http.Error(w, `{"message":"Merge conflict"}`, http.StatusUnprocessableEntity)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
 			if s.failLabels {
 				http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)

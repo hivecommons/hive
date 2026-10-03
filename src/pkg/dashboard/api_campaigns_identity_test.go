@@ -78,10 +78,11 @@ func TestCampaignReviseIssueRunsPreservesIdentityAndStageLease(t *testing.T) {
 		if err != nil || archive.Lease != nil {
 			t.Fatalf("revise lease not released: %+v, err = %v", archive, err)
 		}
-		// Once the archive lease is cleared, another campaign release must not
-		// fall through to revoking the still-live stage lease.
+		// Once the archive lease is cleared, another campaign release reports
+		// "no active lease" (409, ErrCampaignNoLease) and must not fall through
+		// to revoking the still-live stage lease.
 		again := doOwnerPostAsUser(s, "/api/campaigns/"+url.PathEscape(campaign.ID)+"/release", "alice", map[string]string{})
-		if again.Code != http.StatusNotFound {
+		if again.Code != http.StatusConflict {
 			t.Fatalf("second release = %d: %s", again.Code, again.Body.String())
 		}
 		after, ok := s.contributeHub.runLeaseHolder(campaign.RunKey, time.Now())

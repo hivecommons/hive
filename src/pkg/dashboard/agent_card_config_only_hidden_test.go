@@ -18,7 +18,9 @@ import (
 // to drop agents with a bare `continue`, recording nothing. So a hive whose
 // agents were all gated out by that second pass rendered no cards AND reported
 // an empty hiddenAgents list, which is indistinguishable from the builder
-// never having seen the config at all. Every omission must name its reason.
+// never having seen the config at all. Every actual omission must name its
+// reason; disabled agents are no longer omissions because their card is the
+// power-on affordance.
 func TestBuildAgentsWithHidden_ConfigOnlyPassReportsEveryOmission(t *testing.T) {
 	level := 1 // pack level 1 allows only guide and brainstorm
 
@@ -28,12 +30,6 @@ func TestBuildAgentsWithHidden_ConfigOnlyPassReportsEveryOmission(t *testing.T) 
 		agentCfg   config.AgentConfig
 		wantReason string
 	}{
-		{
-			name:       "disabled in config",
-			agentName:  "quality",
-			agentCfg:   config.AgentConfig{Backend: "claude", Enabled: false},
-			wantReason: hiddenReasonDisabled,
-		},
 		{
 			// telemetry is gated by AgentAvailableAtACMMLevel, which at level 1
 			// is below the operability-agent minimum.
@@ -72,6 +68,29 @@ func TestBuildAgentsWithHidden_ConfigOnlyPassReportsEveryOmission(t *testing.T) 
 				t.Fatalf("hidden[0] = %+v, want {Name:%q Reason:%q}", hidden[0], tc.agentName, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestBuildAgentsWithHidden_ConfigOnlyDisabledAgentGetsCard(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"guide": {Backend: "claude", Enabled: false, DisplayName: "Guide"},
+		},
+	}
+
+	agents, hidden := buildAgentsWithHidden(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+
+	if len(hidden) != 0 {
+		t.Fatalf("hidden = %+v, want disabled config-only agent surfaced as a card", hidden)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("agents = %v, want one disabled card", agentNamesFromFrontend(agents))
+	}
+	if agents[0].Name != "guide" || agents[0].Enabled {
+		t.Fatalf("agent = %+v, want guide with Enabled=false", agents[0])
+	}
+	if agents[0].StructuredStatus != "" || agents[0].LastError != "" {
+		t.Fatalf("disabled agent should not look crash-blocked: %+v", agents[0])
 	}
 }
 

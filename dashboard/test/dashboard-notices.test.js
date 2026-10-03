@@ -59,8 +59,10 @@ test('dashboard layout migration ignores the pinned notices slot', () => {
   const normalized = context.exports.dashboardLayoutNormalize({ v: 1, main: ['faq-section', 'dash-notices', 'overview-section'] });
   assert.equal(normalized.main.includes('dash-notices'), false);
   assert.equal(normalized.main[0], 'faq-section');
-  // Sections missing from the saved layout slot in before their template
-  // successor (#10397): runs-section lands ahead of overview-section.
-  assert.equal(normalized.main[1], 'runs-section');
-  assert.equal(normalized.main[2], 'overview-section');
+  // Sections missing from the saved layout slot in next to their template
+  // neighbours (#10397): Overview remains the first default section, followed
+  // by Governor and the v6 Runs section.
+  assert.equal(normalized.main[1], 'overview-section');
+  assert.equal(normalized.main[2], 'governor');
+  assert.equal(normalized.main[3], 'runs-section');
 });

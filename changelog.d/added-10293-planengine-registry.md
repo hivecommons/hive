@@ -1,0 +1,1 @@
+- Added fake-engine conformance tests for the planning-engine boundary, covering the lease invariants an engine never sees, every row of the ADR-0021 failure-mapping table, and a second registered engine surfacing on the stage receipt and the run plan import ([#10358](https://github.com/hivecommons/hive/issues/10358)).

@@ -1,0 +1,1 @@
+- Overview KPI tiles now read "Total open issues", "Total open PRs" and "Actionable now (issues and PRs)" so the totals are not mistaken for the Governor's actionable-queue counts.
