@@ -564,7 +564,30 @@ promote() {
     EMERGENCY_EXCEPTION_REASON="${EMERGENCY_EXCEPTION_REASON:-}" EMERGENCY_FOLLOWUP_ISSUE="${EMERGENCY_FOLLOWUP_ISSUE:-}" normalized_decision)
   decision=$(awk -F= '/^decision=/{print $2}' <<<"$out")
   reason=$(awk -F= '/^reason=/{sub(/^reason=/,""); print}' <<<"$out")
-  echo "$out"
+
+  if [[ $decision == promote ]]; then
+    # Re-verify every image before publishing any of them: a candidate that is
+    # superseded between the initial read and the tag move must not leave
+    # stable partially promoted (run 34360559434 promoted hive and
+    # hive-contributor, then refused hive-hub). This race is the same kind as
+    # the in-flight-candidate race handled above with hold_with_reason, so it
+    # gets the same treatment: an explicit hold, not a failed run that pages
+    # someone about a benign, expected race. The next hourly run re-evaluates
+    # whichever build is candidate by then.
+    for image in "${images[@]}"; do
+      local recheck_digest
+      recheck_digest=$(manifest_digest "${image_prefix}/${image}:${candidate_channel}")
+      if [[ $recheck_digest != "${candidate_digests[$image]}" ]]; then
+        decision=hold
+        reason="candidate ${first_digest} was superseded by ${image_prefix}/${image}:${candidate_channel} before the tag move; re-evaluate on the next schedule"
+        write_output decision "$decision"
+        write_output reason "$reason"
+        break
+      fi
+    done
+  fi
+
+  printf 'decision=%s\nreason=%s\n' "$decision" "$reason"
   local promoted=false
   if [[ $decision == promote ]] && ! bool "$dry_run"; then
     promoted=true
@@ -600,16 +623,9 @@ promote() {
   } | append_summary
 
   if [[ $decision == promote ]]; then
-    # Re-verify every image before publishing any of them: a candidate that is
-    # superseded mid-loop must not leave stable partially promoted (run
-    # 34360559434 promoted hive and hive-contributor, then refused hive-hub).
-    for image in "${images[@]}"; do
-      candidate_digest=$(manifest_digest "${image_prefix}/${image}:${candidate_channel}")
-      if [[ $candidate_digest != "${candidate_digests[$image]}" ]]; then
-        echo "::error::${image_prefix}/${image}:${candidate_channel} changed during evaluation; refusing to promote a superseded candidate" >&2
-        exit 1
-      fi
-    done
+    # The re-verify loop above already confirmed every image's candidate
+    # digest still matches what was read at the top of promote(), so it is
+    # safe to publish all of them now.
     for image in "${images[@]}"; do
       publish_stable "${image_prefix}/${image}" "${candidate_digests[$image]}" "$dry_run"
     done

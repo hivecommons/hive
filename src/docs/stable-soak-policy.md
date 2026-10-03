@@ -32,19 +32,21 @@ conditions hold:
 2. **Current candidate only:** the build being promoted is whichever one is the
    current `candidate` when the gate decides, and it must still be the current
    `candidate` immediately before any tag is moved. This does not require
-   `candidate` to be quiet for 24 hours; a run that loses the race to a newer
-   build leaves `stable` unchanged and the next hourly run evaluates the new
-   `candidate`. There are two places this race can be lost, both in `promote`
-   in `src/scripts/promote-stable.sh`: the `hive`, `hive-contributor`, and
+   `candidate` to be quiet for 24 hours; a run that loses either race below to
+   a newer build always holds (never fails the workflow run) and leaves
+   `stable` unchanged, so the next hourly run evaluates the new `candidate`.
+   There are two places this race can be lost, both in `promote` in
+   `src/scripts/promote-stable.sh`: the `hive`, `hive-contributor`, and
    `hive-hub` candidate digests are read one image at a time, so a `docker.yml`
    run completing mid-loop can leave the images pointing at different
    generations — the gate treats that as `CURRENT_CANDIDATE=false` and holds
    with "newer candidate superseded this digest before the soak window
    completed"; and immediately before any tag moves, each image's `candidate`
    digest is re-read and compared with the digest the gate decided to promote
-   — a mismatch there refuses the whole promotion ("refusing to promote a
-   superseded candidate") rather than recording a hold, so `stable` is left
-   unchanged either way and the next hourly run re-evaluates whichever build is
+   — a mismatch there also downgrades the decision to a hold ("candidate
+   ... was superseded by ... before the tag move"), the same outcome as the
+   first race, rather than failing the run. Either way `stable` is left
+   unchanged and the next hourly run re-evaluates whichever build is
    `candidate` by then.
 3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy.
