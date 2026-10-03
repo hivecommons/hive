@@ -141,6 +141,14 @@ func resolvePlan(getenv func(string) string, defaultPoolDir func() string) plan 
 		p.reason = source + " already supplies readings; not competing with it"
 		return p
 	}
+	if backend == "pi" {
+		provider, _, _ := strings.Cut(strings.TrimSpace(getenv("AGENT_MODEL")), "/")
+		if provider == "" {
+			provider = "(unselected)"
+		}
+		p.reason = "pi provider " + provider + " has no Pi-compatible quota reader; set " + envReadingFile + " or " + envReadingJSON + " to supply provider readings (see src/docs/contributor-relay.md)"
+		return p
+	}
 	if _, ok := rotation.ContributorGuardBackendProvider(backend); !ok {
 		p.reason = "backend " + backend + " is not a supported subscription backend for the quota guard"
 		return p
