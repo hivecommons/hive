@@ -292,7 +292,12 @@ unchanged, so a revised spec is drafted. Approving moves the reviewed spec gener
 first, then marks the design approved and applies the approved label/status on
 the work item. A failed label or status write does not undo or fail the
 approval: it is logged, audited as `design_signal_failed`, and recorded on the
-run's timeline. The same checkpoint holds runs admitted without a design epic
+run's timeline. The design artifact comment posted when the Spec stage advances
+is best-effort in the same way: a forge write that fails does not block the
+advance, is retried on the next one, and is logged, audited as
+`design_artifact_failed`, and recorded on the run's timeline. An owner reset
+back to `spec` also forgets the artifact digest, so the re-run Spec stage posts
+its artifact again even when the text is unchanged. The same checkpoint holds runs admitted without a design epic
 (a triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous or
 inception): their parked Spec receipt surfaces the same `waiting_on=human`
 projection, approval advances the lease to Plan and records a `stage_approval`
