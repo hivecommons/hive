@@ -198,7 +198,7 @@ dashboardApplyLayout(dashboardLayoutNormalize({v:2, main:['faq-section','governo
 let first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,4).map(e => e.getAttribute('data-dashboard-section')).join(',');
 if (first !== 'faq-section,runs-section,overview-section,governor') throw new Error('page order '+first);
 let nav = navGroup.children.map(e => e.getAttribute('data-section')).join(',');
-if (nav !== 'faq-section,overview-section,governor,repos-section') throw new Error('sidebar order '+nav);
+if (nav !== 'faq-section,overview-section,governor,pr-throughput-section') throw new Error('sidebar order '+nav);
 if (oldGroup.hidden !== true) throw new Error('empty old nav group not hidden');
 if (helpGroup.hidden === true) throw new Error('non-section help group hidden');
 dashboardLayoutWrite();
