@@ -1,0 +1,1 @@
+- Operators can disable the separate hub task-status push loop with `hub.task_status_push: false` or `HIVE_HUB_TASK_STATUS_PUSH=false` (restart required), while preserving core heartbeats and hub-managed upgrade/config delivery; the default remains enabled.

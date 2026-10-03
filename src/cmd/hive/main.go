@@ -5421,27 +5421,31 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 			}))
 
-		deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
-			reg, active := b.dashSrv.ContributorSummary()
-			lb := b.dashSrv.LeaderboardForHub()
-			out := make([]spoke.LeaderboardEntry, len(lb))
-			for i, e := range lb {
-				out[i] = spoke.LeaderboardEntry{
-					GitHubUsername: e.GitHubUsername,
-					AvatarURL:      e.AvatarURL,
-					TrustTier:      e.TrustTier,
-					TasksCompleted: e.TasksCompleted,
-					TasksFailed:    e.TasksFailed,
-					Active:         e.Active,
-					CurrentTask:    e.CurrentTask,
+		if b.cfg.Hub.TaskStatusPushEnabled() {
+			deps.startTaskStatusPush(b.ctx, b.hubURL, func() *spoke.TaskStatusPayload {
+				reg, active := b.dashSrv.ContributorSummary()
+				lb := b.dashSrv.LeaderboardForHub()
+				out := make([]spoke.LeaderboardEntry, len(lb))
+				for i, e := range lb {
+					out[i] = spoke.LeaderboardEntry{
+						GitHubUsername: e.GitHubUsername,
+						AvatarURL:      e.AvatarURL,
+						TrustTier:      e.TrustTier,
+						TasksCompleted: e.TasksCompleted,
+						TasksFailed:    e.TasksFailed,
+						Active:         e.Active,
+						CurrentTask:    e.CurrentTask,
+					}
 				}
-			}
-			return &spoke.TaskStatusPayload{
-				HiveID:       b.cfg.HiveID,
-				Leaderboard:  out,
-				Contributors: spoke.ContributorSummary{Registered: reg, Active: active},
-			}
-		}, b.logger)
+				return &spoke.TaskStatusPayload{
+					HiveID:       b.cfg.HiveID,
+					Leaderboard:  out,
+					Contributors: spoke.ContributorSummary{Registered: reg, Active: active},
+				}
+			}, b.logger)
+		} else {
+			b.logger.Info("hub task-status push disabled by operator")
+		}
 	}
 }
 
