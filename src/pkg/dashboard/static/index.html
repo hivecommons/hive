@@ -4314,6 +4314,7 @@
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
       <a class="oc-nav-item" data-section="runs-section" data-action="ocNavigate" data-arg0="runs-section"><span class="oc-nav-emoji">🏃</span><span class="oc-nav-text">Runs</span><span id="runs-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
+      <a class="oc-nav-item" data-section="platform-section" data-action="ocNavigate" data-arg0="platform-section"><span class="oc-nav-emoji">🧩</span><span class="oc-nav-text">Platform</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
@@ -6069,7 +6070,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -11198,30 +11199,7 @@
       }).join('');
     }
 
-    function renderHealth(health, runs) {
-      const el = document.getElementById('health');
-      if (!health || Object.keys(health).length === 0) { setIfChanged(el, '<span style="color:var(--muted);font-size:0.8rem">Loading…</span>'); return; }
-      const items = [
-        { key: 'ci', label: 'CI Pass Rate', type: 'pct' },
-        { key: 'brew', label: 'Brew Formula' },
-        { key: 'helm', label: 'Helm Chart' },
-        { key: 'nightly', label: 'Nightly Tests' },
-        { key: 'nightlyRel', label: 'Nightly Release' },
-        { key: 'weekly', label: 'Weekly Tests' },
-        { key: 'weeklyRel', label: 'Weekly Rel' },
-        { key: 'vllm', label: 'vLLM-d Deploy' },
-        { key: 'pokprod', label: 'PokProd Deploy' },
-      ];
-      setIfChanged(el, items.map(it => {
-        const v = health[it.key];
-        if (it.type === 'pct') {
-          const cls = v >= 90 ? 'good' : v >= 70 ? 'warn' : 'bad';
-          return `<div class="health-item"><span class="health-ci ${cls}">${v}%</span><span class="health-label">${it.label}</span></div>`;
-        }
-        const dotCls = v === 1 ? 'ok' : v === 0 ? 'fail' : 'unknown';
-        return `<div class="health-item"><span class="health-dot ${dotCls}"></span><span class="health-label">${it.label}</span></div>`;
-      }).join('') + stalledRunHealthRows(runs));
-    }
+
 
     function formatFixTime(minutes) {
       if (!minutes || minutes <= 0) return '—';
@@ -22971,10 +22949,7 @@ function burnAreaChart() {
       return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${debugQuotaClass(pct)}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     const HEALTH_LABEL_DEFAULTS = {
-      ci: 'CI Pass Rate', brew: 'Homebrew', helm: 'Helm', nightly: 'Nightly',
-      nightlyCompliance: 'Compliance', nightlyDashboard: 'Dashboard', nightlyGhaw: 'GHAW',
-      nightlyPlaywright: 'Playwright', nightlyRel: 'Release', weekly: 'Weekly',
-      weeklyRel: 'Weekly Rel', hourly: 'Hourly', deploy_vllm_d: 'vLLM-d', deploy_pok_prod: 'POK'
+      ci: 'CI Pass Rate', helm: 'Helm'
     };
     function _buildHealthLabels(agents) {
       const labels = { ...HEALTH_LABEL_DEFAULTS };
@@ -22990,19 +22965,7 @@ function burnAreaChart() {
 
     const HEALTH_DESC_DEFAULTS = {
       ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)',
-      brew: 'Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)',
       helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
-      nightly: "Most recent 'Nightly Test Suite' workflow run did not fail",
-      nightlyCompliance: "Most recent 'Nightly Compliance & Perf' workflow run did not fail",
-      nightlyDashboard: "Most recent 'Nightly Dashboard Health' workflow run did not fail",
-      nightlyGhaw: "Most recent 'Nightly gh-aw Version Check' workflow run did not fail",
-      nightlyPlaywright: "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail",
-      nightlyRel: "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)",
-      weeklyRel: "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)",
-      weekly: "Most recent 'Weekly Coverage Review' workflow run did not fail",
-      hourly: 'Latest runs of the perf workflows (React commits per navigation, TTFI gate) did not fail',
-      deploy_vllm_d: "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail",
-      deploy_pok_prod: "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail",
     };
     function _buildHealthDescs(agents) {
       const descs = { ...HEALTH_DESC_DEFAULTS };
@@ -25820,16 +25783,18 @@ function burnAreaChart() {
     }
 
     function versionScheduleUpgradePoll(state) {
-      if (_versionUpgradePollTimer) {
-        clearTimeout(_versionUpgradePollTimer);
-        _versionUpgradePollTimer = null;
+      const root = typeof window !== 'undefined' ? window : globalThis;
+      if (root._versionUpgradePollTimer) {
+        (root.clearTimeout || clearTimeout)(root._versionUpgradePollTimer);
+        root._versionUpgradePollTimer = null;
       }
       if (!state) return;
+      if (typeof root.setTimeout !== 'function') return;
       let delay = VERSION_UPGRADE_POLL_MS;
       if (state !== true && state.completedAt) {
         delay = Math.max(500, VERSION_UPGRADE_DONE_MS - (versionNowMs() - Number(state.completedAt)) + 100);
       }
-      _versionUpgradePollTimer = setTimeout(function() { fetchGitVersion(); }, delay);
+      root._versionUpgradePollTimer = root.setTimeout(function() { fetchGitVersion(); }, delay);
     }
 
     function versionDeliveryLabel(v) {

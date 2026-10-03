@@ -9,9 +9,9 @@ import (
 )
 
 var dashboardLayoutIDs9062 = []string{
-	"runs-section",
 	"overview-section",
 	"governor",
+	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
 	"knowledge-section",
@@ -33,9 +33,9 @@ var dashboardLayoutIDs9062 = []string{
 }
 
 var dashboardDefaultNavOrder9062 = []string{
-	"runs-section",
 	"overview-section",
 	"governor",
+	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
 	"knowledge-section",
@@ -48,12 +48,13 @@ var dashboardDefaultNavOrder9062 = []string{
 	"acmm-eval-section",
 	"debug-section",
 	"audit-section",
+	"platform-section",
 	"faq-section",
 }
 
 var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder
@@ -144,7 +145,7 @@ func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 			t.Errorf("missing dashboard reorder wiring %q", want)
 		}
 	}
-	// v6 adds a Runs section above Overview; it must be part of the reorderable layout.
+	// v6 adds a Runs section near the top; it must be part of the reorderable layout.
 	if !strings.Contains(html, `data-dashboard-section="runs-section"`) {
 		t.Fatal("v6 dashboard layout must include runs-section as a reorderable top-level section")
 	}
@@ -210,7 +211,7 @@ func TestDashboardLayoutNormalizeDropsStrategyLabWhenFeatureHidden(t *testing.T)
 	script := strings.Replace(dashboardLayoutPreamble9062(), "strategy_lab:true", "strategy_lab:false", 1) + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:1, main:['nous-section','overview-section','unknown']}).main;
 if (got.includes('nous-section')) throw new Error('hidden Strategy Lab survived normalization: '+JSON.stringify(got));
-if (got[0] !== 'runs-section') throw new Error('unexpected first section: '+JSON.stringify(got));
+if (got[0] !== 'overview-section') throw new Error('unexpected first section: '+JSON.stringify(got));
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -271,7 +272,7 @@ const document = {
 (async function(){
 dashboardApplyLayout(dashboardLayoutNormalize({v:2, main:['faq-section','governor']}));
 let first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,4).map(e => e.getAttribute('data-dashboard-section')).join(',');
-if (first !== 'faq-section,runs-section,overview-section,governor') throw new Error('page order '+first);
+if (first !== 'faq-section,overview-section,governor,runs-section') throw new Error('page order '+first);
 let nav = navGroup.children.map(e => e.getAttribute('data-section')).join(',');
 if (nav !== 'faq-section,overview-section,governor,pr-throughput-section') throw new Error('sidebar order '+nav);
 if (oldGroup.hidden !== true) throw new Error('empty old nav group not hidden');
@@ -281,7 +282,7 @@ if (JSON.parse(localStorage.data[DASHBOARD_LAYOUT_KEY]).main[0] !== 'faq-section
 if (layoutStatus.textContent !== 'Layout: custom (unsaved)') throw new Error('layout status '+layoutStatus.textContent);
 await resetDashboardLayout();
 first = root.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR).slice(0,3).map(e => e.getAttribute('data-dashboard-section')).join(',');
-if (first !== 'runs-section,overview-section,governor') throw new Error('reset order '+first);
+if (first !== 'overview-section,governor,runs-section') throw new Error('reset order '+first);
 if (localStorage.data[DASHBOARD_LAYOUT_KEY] !== undefined) throw new Error('reset did not remove storage');
 if (layoutStatus.textContent !== 'Layout: default') throw new Error('reset status '+layoutStatus.textContent);
 })();
