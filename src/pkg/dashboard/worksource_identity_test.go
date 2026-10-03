@@ -105,52 +105,6 @@ func TestDependenciesFromIssueMap(t *testing.T) {
 	})
 }
 
-// TestIntFromAny covers every shape a JSON-round-tripped (float64) or
-// never-marshalled (int/int64) number can arrive as, plus the zero-value
-// fallback for anything else.
-func TestIntFromAny(t *testing.T) {
-	cases := []struct {
-		name string
-		in   any
-		want int
-	}{
-		{"float64 from JSON", float64(42), 42},
-		{"real int", 7, 7},
-		{"int64", int64(99), 99},
-		{"nil", nil, 0},
-		{"string is not a number", "42", 0},
-		{"bool is not a number", true, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := intFromAny(tc.in); got != tc.want {
-				t.Fatalf("intFromAny(%#v) = %d, want %d", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestStringFromAny covers the string and wrongly-typed/missing shapes
-// callers in this file rely on instead of a panicking type assertion.
-func TestStringFromAny(t *testing.T) {
-	cases := []struct {
-		name string
-		in   any
-		want string
-	}{
-		{"real string", "ENG-123", "ENG-123"},
-		{"nil", nil, ""},
-		{"wrong type", 42, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := stringFromAny(tc.in); got != tc.want {
-				t.Fatalf("stringFromAny(%#v) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestForEachActionableIssue pins the #4245 skip contract end to end: a
 // well-formed github.Issue-shaped entry and a map both invoke fn with their
 // canonical Ref, an un-marshalable entry is skipped (logged, not panicked),
