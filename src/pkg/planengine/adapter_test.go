@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -251,7 +252,7 @@ func TestLeaseAdapter_ActiveStagesSurfacesWorkDirError(t *testing.T) {
 }
 
 func TestLeaseAdapter_ImportsReceiptEngineName(t *testing.T) {
-	for _, name := range []string{EngineName, "second-planner", ""} {
+	for _, name := range []string{config.DefaultRunsEngine, "second-planner", ""} {
 		t.Run("engine="+name, func(t *testing.T) {
 			reg := &fakeLeaseRegistry{}
 			adapter := NewLeaseRegistryAdapter(reg, &scriptedEngine{})
@@ -259,12 +260,12 @@ func TestLeaseAdapter_ImportsReceiptEngineName(t *testing.T) {
 			if name != "" {
 				receipt.Engine = &outputschema.StageReceiptEngine{Name: name}
 			}
-			if err := adapter.Advance(context.Background(), Stage{RunKey: testRunKey, Repo: testRepo}, ArtifactStatus{RunKey: testRunKey, DocumentStatus: DocumentFinal}, receipt, testPlan(), t0); err != nil {
+			if err := adapter.Advance(context.Background(), Stage{RunKey: testRunKey, Repo: testRepo, Identity: testIdentity, TaskID: testTaskID}, ArtifactStatus{DocumentStatus: DocumentFinal}, receipt, testPlan(), t0); err != nil {
 				t.Fatal(err)
 			}
 			want := name
 			if want == "" {
-				want = EngineName
+				want = config.DefaultRunsEngine
 			}
 			if len(reg.planEngines) != 1 || reg.planEngines[0] != want {
 				t.Fatalf("import engine names = %q, want %q", reg.planEngines, want)

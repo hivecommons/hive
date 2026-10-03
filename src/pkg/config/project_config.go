@@ -166,6 +166,7 @@ type StatsDisplayEntry struct {
 	Source     string `yaml:"source" json:"source"`
 	Field      string `yaml:"field" json:"field"`
 	Style      string `yaml:"style" json:"style"`
+	Icon       string `yaml:"icon,omitempty" json:"icon,omitempty"`
 	TrendField string `yaml:"trend_field,omitempty" json:"trendField,omitempty"`
 	Target     int    `yaml:"target,omitempty" json:"target,omitempty"`
 	// Desc is a one-line explanation of what the stat verifies, rendered
