@@ -541,6 +541,9 @@ type StatusPayload struct {
 
 // FrontendSpektacular reports the configured stage-runner CLI detected at boot.
 type FrontendSpektacular struct {
+	// Engine is the selected planning engine's registry name (runs.engine,
+	// ADR-0021); "spektacular" for the baseline.
+	Engine      string                          `json:"engine,omitempty"`
 	Present     bool                            `json:"present"`
 	Version     string                          `json:"version,omitempty"`
 	Binary      string                          `json:"binary"`
