@@ -28528,6 +28528,23 @@ function burnAreaChart() {
       const mode = typeof arg0 === 'string' ? arg0 : arg1;
       const kind = typeof arg0 === 'string' ? arg1 : arg2;
       if (!_configState.data.cadences) _configState.data.cadences = {};
+      const legacyContinuous = ((_configState.data && _configState.data.general) || {}).continuous === true;
+      if (legacyContinuous && mode !== 'quiet' && (kind === 'interval' || kind === 'off')) {
+        if (!_configState.data.general) _configState.data.general = {};
+        for (const otherMode of ['surge', 'busy', 'idle']) {
+          if (otherMode === mode) continue;
+          const otherCurrent = Object.prototype.hasOwnProperty.call(_configState.data.cadences, otherMode)
+            ? _configState.data.cadences[otherMode]
+            : (otherMode === 'idle' ? undefined : _configState.data.cadences.idle);
+          const otherKind = cadenceModeValue(otherCurrent);
+          if (otherKind !== 'continuous' && otherKind !== 'off') {
+            _configState.data.cadences[otherMode] = 'continuous';
+            markDirty('cadences', otherMode, 'continuous');
+          }
+        }
+        _configState.data.general.continuous = false;
+        markDirty('general', 'continuous', false);
+      }
       const current = _configState.data.cadences[mode];
       const value = kind === 'continuous' ? 'continuous' : kind === 'interval' ? (cadenceModeValue(current) === 'interval' && typeof current !== 'object' ? current : SECONDS_PER_HOUR) : 0;
       _configState.data.cadences[mode] = value;
@@ -28576,7 +28593,7 @@ function burnAreaChart() {
       const cron = detailKind === 'cron' ? (value.cron || '') : '30 9 * * 1-5';
       const selectedDays = new Set(detailKind === 'times' ? (value.days || []) : []);
       const days = ['mon','tue','wed','thu','fri','sat','sun'].map(d => `<label class="cadence-day-label"><input type="checkbox" data-cadence-day="${mode}" value="${d}" ${selectedDays.size===0 || selectedDays.has(d) ? 'checked' : ''} data-change-action="cadenceChanged" data-arg0="${mode}">${d}</label>`).join('');
-      const storedNote = legacyActive ? `Legacy shorthand is making this active mode continuous; turning it off restores the stored ${cadenceSummary(value).toLowerCase()}.` : cadenceSummary(value);
+      const storedNote = legacyActive ? 'Legacy all-modes continuous is on; choosing Off or Interval here converts it to per-mode settings.' : cadenceSummary(value);
       const body = kind === 'interval'
         ? `<div class="cadence-mode-presets">
             <button class="hv-btn btn-secondary btn-sm" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="daily">Daily at…</button>
