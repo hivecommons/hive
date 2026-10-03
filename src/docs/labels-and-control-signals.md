@@ -159,6 +159,7 @@ The Governor dialog's Features tab has a "Question Auto-Close" section: a switch
 ## Non-label equivalents
 
 - **Human comments and assignees** can acknowledge hive-filed directions for #5117; assignees also affect ranking.
+- **Hidden comment markers** carry state that no label does. `<!-- hive-claim -->` records an issue claim, `<!-- hive-finding: HASH -->` dedupes a published finding, `<!-- hive-pr-overlap -->` marks an overlap notice, `<!-- hive-question-answer -->` starts the question auto-close clock, and `<!-- hive-shared-ci-<n> -->` is stamped on the single comment a fix lane leaves on a PR it defers to shared incident `#<n>` (`DEFER_TO_INCIDENT` from `bin/hive-baseline-check.sh`), so "every PR incident `#<n>` broke" stays greppable after the fix lands ([#10441](https://github.com/hivecommons/hive/issues/10441)). One marker per PR per incident; it is never edited or removed while the incident is open.
 - **Paused repos** (`project.paused_repos`) stop whole-repo write/merge/enumeration paths without labels.
 - **Contributor queue holds** such as active leases, cooldowns, dependencies, and quota guard holds suppress contributor offers without touching GitHub labels.
 - **Jira/Linear labels** map only where the work-source adapter supports them: Linear skips held work using substring hold labels; Jira skips exact configured hold labels; GitHub Projects currently imports labels but does not use a hold gate.

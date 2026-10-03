@@ -51,6 +51,17 @@ narrow exact-title lookup for this incident are the only exceptions to the
 work-list prohibition on listing PRs/issues; they must not be used to select new
 work.
 
+When you reference the incident on an affected PR, that one comment is also the
+durable record of which PRs the incident broke: end it with the hidden marker
+`<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number with no
+`#` (incident `#10397` is stamped `<!-- hive-shared-ci-10397 -->`). It follows the
+same `<!-- hive-* -->` comment-marker convention as `<!-- hive-finding: HASH -->`
+and `<!-- hive-pr-overlap -->`, and it is the only greppable handle later
+automation has for re-running those PRs once the incident is fixed. Stamp
+exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
+(never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
+remove it while the incident is open.
+
 ## Opening Issues
 
 **Scope each issue so a single PR can close it.** When a finding enumerates
