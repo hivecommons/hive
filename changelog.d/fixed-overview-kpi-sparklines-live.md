@@ -1,0 +1,1 @@
+- Fix Overview KPI tiles so all six render sparklines from persisted or local history, including zero-value and first-sample cases.

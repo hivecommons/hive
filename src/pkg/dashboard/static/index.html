@@ -7488,7 +7488,7 @@
     }
     function renderSparkline(el, series, opts) {
       opts = opts || {};
-      if (!Array.isArray(series) || series.length < 2) return '';
+      if (!Array.isArray(series) || series.length < 1) return '';
       const values = series.map(v => {
         const n = Number(v);
         return Number.isFinite(n) ? n : 0;
@@ -7501,11 +7501,16 @@
       const padY = opts.padY != null ? opts.padY : 1;
       const plotW = opts.plotW != null ? opts.plotW : (W - padX * 2);
       const plotH = opts.plotH != null ? opts.plotH : (H - padY * 2);
-      const points = opts.points || values.map((v, i) => {
-        const x = padX + (i / (values.length - 1)) * plotW;
-        const y = padY + plotH - ((v - min) / range) * plotH;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      });
+      const points = opts.points || (values.length === 1
+        ? (() => {
+            const y = padY + plotH - ((values[0] - min) / range) * plotH;
+            return [`${padX.toFixed(1)},${y.toFixed(1)}`, `${(padX + plotW).toFixed(1)},${y.toFixed(1)}`];
+          })()
+        : values.map((v, i) => {
+            const x = padX + (i / (values.length - 1)) * plotW;
+            const y = padY + plotH - ((v - min) / range) * plotH;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          }));
       const lastPt = String(opts.lastPoint || points[points.length - 1]).split(',');
       const latest = values[values.length - 1];
       const scaleText = `range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
@@ -12329,7 +12334,10 @@
     }
     function overviewKPICurrentSample(cards) {
       const sample = { t: Date.now() };
-      (cards || []).forEach(card => { sample[card.field] = Number(card.rawValue); });
+      (cards || []).forEach(card => {
+        const value = Number(card.rawValue);
+        if (Number.isFinite(value)) sample[card.field] = value;
+      });
       return sample;
     }
     function overviewKPISparkTitle(values, fmt) {
@@ -12343,7 +12351,7 @@
     function overviewKPISpark(card, useServer) {
       const entries = overviewKPIHistoryEntries(useServer);
       const values = entries.map(e => Number(e[card.field])).filter(Number.isFinite);
-      if (values.length < 2) return '';
+      if (!values.length) return '';
       const title = overviewKPISparkTitle(values, card.sparkFmt || fmtSparkVal);
       return `<span class="overview-kpi-spark">${renderSparkline(null, values, {
         width: 92, height: 24, color: card.color, title, ariaLabel: `${card.label}: ${title}`,
