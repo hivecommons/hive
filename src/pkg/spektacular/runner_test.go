@@ -90,18 +90,6 @@ func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byt
 	return []byte(entry), nil
 }
 
-func (s *scriptedExec) statusCalls() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, c := range s.calls {
-		if len(c) >= 2 && c[1] == verbStatus {
-			n++
-		}
-	}
-	return n
-}
-
 // statusJSON is the exact per-artifact status shape jumppad-labs/spektacular#45
 // prints: an `error:false` envelope, frontmatter dates as RFC3339 midnight
 // UTC with closed_at "" while open, and the (usually empty) spec / plan
