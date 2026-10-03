@@ -70,6 +70,7 @@ classification:                         # optional — deterministic classificat
     logins: []                          # e.g. ["chatgpt-codex-connector[bot]", "Copilot"]
     max_attempts_per_thread: 1          # hive replies per thread before a human takes over
     resolve_after_fix: true             # false: reply but leave the thread for a human
+    min_priority: ""                    # P0-P3: skip threads with a lower-priority badge; "" = route all
 
 dashboard:
   title: ""                             # auto-generated as "{project.name} Hive" if empty

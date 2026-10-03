@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -46,8 +47,9 @@ type ClassificationConfig struct {
 //     report and the watcher denies every resolve_thread request, so an
 //     agent can never resolve anything on a hive that has not opted in.
 //   - Logins are matched case-insensitively against the thread's first
-//     comment author, exactly as GitHub renders them ("Copilot",
-//     "chatgpt-codex-connector[bot]"). A human login listed here would let
+//     comment author, ignoring a trailing "[bot]" on either side: GraphQL
+//     reports an App as "chatgpt-codex-connector" while REST and the web UI
+//     render "chatgpt-codex-connector[bot]". A human login listed here would let
 //     agents resolve that human's threads; do not do that.
 //   - MaxAttemptsPerThread bounds how many times the hive replies in one
 //     thread before leaving it for a human. The counter IS the thread's
@@ -62,6 +64,62 @@ type ReviewBotsConfig struct {
 	// ResolveAfterFix is a *bool so "unset" (default true) is distinguishable
 	// from an explicit false.
 	ResolveAfterFix *bool `yaml:"resolve_after_fix,omitempty" json:"resolve_after_fix,omitempty"`
+	// MinPriority ("P0".."P3", hivecommons/hive#10479) routes only threads
+	// whose priority badge is at or above it; unset routes everything.
+	MinPriority string `yaml:"min_priority,omitempty" json:"min_priority,omitempty"`
+}
+
+var minPriorityRe = regexp.MustCompile(`(?i)^P([0-3])$`)
+
+var priorityBadgeRe = regexp.MustCompile(`!\[P([0-3]) Badge\]`)
+
+// ValidateMinPriority rejects a min_priority outside P0–P3 (empty is valid).
+func (r ReviewBotsConfig) ValidateMinPriority() error {
+	if strings.TrimSpace(r.MinPriority) == "" {
+		return nil
+	}
+	if !minPriorityRe.MatchString(strings.TrimSpace(r.MinPriority)) {
+		return fmt.Errorf("classification.review_bots.min_priority %q must be one of P0, P1, P2, P3", r.MinPriority)
+	}
+	return nil
+}
+
+// MinPriorityLevel returns the numeric min_priority threshold; ok is false
+// when it is unset or invalid, meaning no priority filtering.
+func (r ReviewBotsConfig) MinPriorityLevel() (level int, ok bool) {
+	m := minPriorityRe.FindStringSubmatch(strings.TrimSpace(r.MinPriority))
+	if m == nil {
+		return 0, false
+	}
+	return int(m[1][0] - '0'), true
+}
+
+// ThreadPriority parses the "![P2 Badge]" priority from a review comment
+// body. ok is false when there is no recognisable badge.
+func ThreadPriority(body string) (priority int, ok bool) {
+	m := priorityBadgeRe.FindStringSubmatch(body)
+	if m == nil {
+		return 0, false
+	}
+	return int(m[1][0] - '0'), true
+}
+
+// AtOrAbovePriority reports whether a thread with the given first-comment
+// body should be routed under min_priority. Unset threshold or a body with no
+// badge is always routed.
+func (r ReviewBotsConfig) AtOrAbovePriority(body string) bool {
+	limit, ok := r.MinPriorityLevel()
+	if !ok {
+		return true
+	}
+	p, ok := ThreadPriority(body)
+	return !ok || p <= limit
+}
+
+// normalizeBotLogin lower-cases, trims and strips a trailing "[bot]".
+func normalizeBotLogin(login string) string {
+	login = strings.ToLower(strings.TrimSpace(login))
+	return strings.TrimSpace(strings.TrimSuffix(login, "[bot]"))
 }
 
 // DefaultReviewBotMaxAttempts is the per-thread reply budget when
@@ -81,14 +139,15 @@ func (r ReviewBotsConfig) Enabled() bool {
 }
 
 // IsBot reports whether login is one of the configured review-bot logins
-// (case-insensitive, whitespace-trimmed). An empty login never matches.
+// (case-insensitive, whitespace-trimmed, a trailing "[bot]" ignored on both
+// sides). An empty login never matches.
 func (r ReviewBotsConfig) IsBot(login string) bool {
-	login = strings.TrimSpace(login)
+	login = normalizeBotLogin(login)
 	if login == "" {
 		return false
 	}
 	for _, l := range r.Logins {
-		if strings.EqualFold(strings.TrimSpace(l), login) {
+		if normalizeBotLogin(l) == login {
 			return true
 		}
 	}

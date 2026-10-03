@@ -1,0 +1,1 @@
+- Fixed review-bot login matching so Apps such as `chatgpt-codex-connector` match whether or not the login carries a `[bot]` suffix, letting their threads reach the review-thread reconciler.

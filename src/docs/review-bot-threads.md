@@ -64,6 +64,7 @@ classification:
       - "Copilot"
     max_attempts_per_thread: 1   # default 1
     resolve_after_fix: true      # default true
+    min_priority: P1             # optional; unset routes every thread
 ```
 
 The key lives in `hive-project.yaml` next to its sibling monitor's config
@@ -82,6 +83,13 @@ key the Go side reads from the project file
   before leaving it for a human. The counter is the thread itself — replies
   authored by the App bot — so there is no state file to drift.
 - `resolve_after_fix: false` makes the agent reply but leave the thread open.
+- `min_priority` (`P0`–`P3`) routes only threads whose priority badge is at or
+  above it; a lower-priority thread is left open for a human and is not
+  auto-resolved. The badge (`![P2 Badge]`, as chatgpt-codex-connector writes
+  it) is parsed from the thread's first comment; a thread with no recognisable
+  badge is always routed. Unset routes everything.
+- Logins are matched ignoring a trailing `[bot]`, so
+  `chatgpt-codex-connector[bot]` matches the suffix-less login GraphQL returns.
 
 `copilot_check` / `bin/copilot-comment-checker.sh` are untouched: they cover
 *merged* PRs; this covers *open* ones.

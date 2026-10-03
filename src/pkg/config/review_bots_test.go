@@ -39,12 +39,12 @@ func TestReviewBotsConfig_Defaults(t *testing.T) {
 // IsBot matches case-insensitively and trims, exactly as GitHub renders logins.
 func TestReviewBotsConfig_IsBot(t *testing.T) {
 	rb := ReviewBotsConfig{Logins: []string{" chatgpt-codex-connector[bot] ", "Copilot"}}
-	for _, login := range []string{"chatgpt-codex-connector[bot]", "COPILOT", " copilot "} {
+	for _, login := range []string{"chatgpt-codex-connector[bot]", "COPILOT", " copilot ", "chatgpt-codex-connector", "Copilot[bot]", "CHATGPT-CODEX-CONNECTOR[BOT]"} {
 		if !rb.IsBot(login) {
 			t.Errorf("IsBot(%q) = false, want true", login)
 		}
 	}
-	for _, login := range []string{"", "copilot-swe-agent[bot]", "alice", "chatgpt-codex-connector"} {
+	for _, login := range []string{"", "copilot-swe-agent[bot]", "alice", "[bot]", "chatgpt-codex-connector-2"} {
 		if rb.IsBot(login) {
 			t.Errorf("IsBot(%q) = true, want false", login)
 		}
@@ -160,5 +160,58 @@ classification:
 	}
 	if !cfg.Classification.ReviewBots.IsBot("Copilot") {
 		t.Errorf("classification.review_bots not loaded from hive.yaml: %+v", cfg.Classification)
+	}
+}
+
+func TestReviewBotsConfig_IsBot_SuffixlessConfig(t *testing.T) {
+	rb := ReviewBotsConfig{Logins: []string{"chatgpt-codex-connector"}}
+	for _, login := range []string{"chatgpt-codex-connector", "chatgpt-codex-connector[bot]"} {
+		if !rb.IsBot(login) {
+			t.Errorf("IsBot(%q) = false, want true", login)
+		}
+	}
+}
+
+func TestReviewBotsConfig_MinPriority(t *testing.T) {
+	badge := func(p string) string {
+		return "**<sub><sub>![" + p + " Badge](https://img.shields.io/badge/" + p + "-yellow)</sub></sub>** finding"
+	}
+	tests := []struct {
+		name string
+		min  string
+		body string
+		want bool
+	}{
+		{"unset routes P3", "", badge("P3"), true},
+		{"P1 routes P0", "P1", badge("P0"), true},
+		{"P1 routes P1", "P1", badge("P1"), true},
+		{"P1 excludes P2", "P1", badge("P2"), false},
+		{"P1 excludes P3", "P1", badge("P3"), false},
+		{"P0 excludes P1", "P0", badge("P1"), false},
+		{"P3 routes P3", "P3", badge("P3"), true},
+		{"no badge routes", "P0", "plain finding", true},
+		{"lowercase threshold", "p1", badge("P2"), false},
+		{"invalid threshold ignored", "P9", badge("P3"), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rb := ReviewBotsConfig{MinPriority: tc.min}
+			if got := rb.AtOrAbovePriority(tc.body); got != tc.want {
+				t.Errorf("AtOrAbovePriority = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReviewBotsConfig_ValidateMinPriority(t *testing.T) {
+	for _, v := range []string{"", "P0", "P1", "P2", "P3", " p1 "} {
+		if err := (ReviewBotsConfig{MinPriority: v}).ValidateMinPriority(); err != nil {
+			t.Errorf("%q: unexpected error %v", v, err)
+		}
+	}
+	for _, v := range []string{"P4", "1", "high", "P"} {
+		if err := (ReviewBotsConfig{MinPriority: v}).ValidateMinPriority(); err == nil {
+			t.Errorf("%q: expected error", v)
+		}
 	}
 }

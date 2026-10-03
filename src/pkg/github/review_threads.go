@@ -161,7 +161,7 @@ func (c *Client) isHiveLogin(login string) bool {
 // filterReviewThreads applies the #7360 thread filter to one PR's threads:
 // keep a thread only when it is unresolved, not outdated, its FIRST comment
 // is from a configured review bot, and it has fewer than maxAttempts replies
-// from the hive (isHive). Human-opened threads never pass — that is the
+// from the hive (isHive), and its priority badge is not below min_priority. Human-opened threads never pass — that is the
 // property the watcher's guard re-checks server-side, so an agent cannot be
 // prompted into a human's conversation even by a wrong kick.
 func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig, isHive func(string) bool) []ReviewThread {
@@ -176,6 +176,9 @@ func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig
 		}
 		first := t.Comments.Nodes[0]
 		if !bots.IsBot(first.Author.Login) {
+			continue
+		}
+		if !bots.AtOrAbovePriority(first.Body) {
 			continue
 		}
 		replies := 0
