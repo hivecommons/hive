@@ -1039,6 +1039,28 @@ fi
 export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
 mkdir -p "$HIVE_AGENT_CWD"
 
+# Start the contributor's own quota reading publisher (hivecommons/hive#10299).
+#
+# The relay's quota guard evaluates a reading; something has to produce it. In
+# server mode the `hive` process publishes it, but this container runs no hive
+# process, so the guard found no source, reported that it was not guarding
+# anything and admitted work — an unattended contributor had to maintain a
+# custom reader or run a full Hive server just to protect its own subscription
+# headroom. The publisher probes THIS contributor's backend with THIS
+# contributor's credentials and writes the reading where the relay already
+# reads it. It decides for itself whether to publish (opt-out, guard off,
+# explicitly configured external reading source, unsupported backend) and exits
+# 0 after saying why when it does not, so this launch is unconditional.
+#
+# Opt out with HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0.
+QUOTA_PUBLISHER_PID=""
+if command -v hive-quota-publisher >/dev/null 2>&1; then
+  hive-quota-publisher &
+  QUOTA_PUBLISHER_PID=$!
+else
+  echo "NOTE: hive-quota-publisher not found in this image — the quota guard has no reading source." >&2
+fi
+
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
 node "${SCRIPT_DIR}/contributor-relay.js" &
@@ -1146,6 +1168,9 @@ echo "Contributor agent is running."
 echo "  Mode:    $CONTRIBUTOR_MODE"
 echo "  CLI:     $CMD"
 echo "  ClankeR: PID $RELAY_PID"
+if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
+  echo "  Quota:   publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
+fi
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   echo "  Tmux:    $CONTAINER_RUNTIME exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
 else
@@ -1159,6 +1184,10 @@ echo ""
 cleanup() {
   echo "Shutting down..."
   kill "$RELAY_PID" 2>/dev/null || true
+  # The publisher starts and stops with the contributor (#10299): a survivor
+  # would keep refreshing this pool's presence marker and tell the next relay a
+  # reading is coming that nothing will write.
+  [[ -n "$QUOTA_PUBLISHER_PID" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
   exit 0
 }
