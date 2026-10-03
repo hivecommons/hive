@@ -1,0 +1,1 @@
+- The Spektacular CLI engine now registers itself as the `spektacular` planning engine in the engine-neutral `planengine` registry, so `planengine.Lookup("spektacular")` builds it from `runs.spektacular`; CLI argv, failure classes and export fallbacks are unchanged ([#10354](https://github.com/hivecommons/hive/issues/10354)).
