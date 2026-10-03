@@ -1,4 +1,4 @@
-package spektacular
+package planengine
 
 import (
 	"context"
@@ -12,6 +12,10 @@ import (
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
+// The log messages keep their "[spektacular]" prefix, like the error texts
+// in errors.go, so operator-visible output stays byte-identical while
+// Spektacular is the only engine.
+
 // Lease stage names the runner understands. They mirror the dashboard's
 // lease registry (StageSpec / StagePlan / StageImplement) without importing
 // it, so this package stays free of the dashboard.
@@ -23,11 +27,11 @@ const (
 
 // Stage is one active lease stage as the registry exposes it to the runner.
 type Stage struct {
-	// RunKey is the stable run identity: Spektacular's bare artifact name
-	// (the workflow's data.name), as the registry spells it.
+	// RunKey is the stable run identity: the engine's bare artifact name
+	// (Spektacular's workflow data.name), as the registry spells it.
 	RunKey string
-	// Artifact is the bare Spektacular artifact name to poll (ArtifactKey of
-	// the run key unless the registry knows a different binding).
+	// Artifact is the bare artifact name to poll (the engine's name for the
+	// run key unless the registry knows a different binding).
 	Artifact string
 	// Stage is the lease stage (spec, plan, implement).
 	Stage string
@@ -40,7 +44,7 @@ type Stage struct {
 	// Repo is the repository the run targets.
 	Repo string
 	// WorkDir is the repo checkout or per-stage worktree that owns the
-	// Spektacular project for this lease. The runner refuses to poll when it is
+	// engine's project for this lease. The runner refuses to poll when it is
 	// empty so the hub process cwd can never influence status.
 	WorkDir string
 	// Unclaimed marks the admission lease no relay has taken yet. There is
@@ -55,7 +59,7 @@ type Stage struct {
 	Gen uint64
 }
 
-// Registry is what the runner needs from the lease registry. The dashboard
+// Registry is what the observer needs from the lease registry. The dashboard
 // implements it over ContributeWSHub; tests use an in-memory fake.
 //
 // There is deliberately no Retry: the retry budget (runs.max_stage_retries) is
@@ -98,16 +102,18 @@ const (
 	RefuseMissingWorkDir = "missing_workdir"
 )
 
-// Runner polls Spektacular for every active stage lease and drives the lease
-// registry. All time comes from the caller (Tick's now), so tests never sleep.
+// Runner polls the planning engine for every active stage lease and drives
+// the lease registry. All time comes from the caller (Tick's now), so tests
+// never sleep.
 //
 // The runner advances on final and refuses stale, replaced or archived
 // documents and final plans whose task list cannot be imported. It
 // never retries or escalates a stage: a non-final generation is settled by the
 // hub executor against runs.max_stage_retries (#9143).
 type Runner struct {
-	// Exec is the only path to the outside world.
-	Exec ExecFunc
+	// Engine is the only path to the outside world: it answers questions
+	// about documents and never sees the lease.
+	Engine Engine
 	// Poll is the minimum interval between two status calls for one stage.
 	Poll time.Duration
 	// Registry is the lease registry the runner drives.
@@ -159,7 +165,7 @@ func (r *Runner) logger() *slog.Logger {
 func stageKey(st Stage) string { return st.RunKey + "\x1f" + st.Stage }
 
 // kindForStage maps a lease stage to the artifact kind whose status decides
-// it. The implement stage has no Spektacular document: its completion is the
+// it. The implement stage has no planning document: its completion is the
 // existing hold-gated PR flow, so the runner leaves it alone.
 func kindForStage(stage string) (string, bool) {
 	switch stage {
@@ -187,7 +193,7 @@ func nextStage(stage string) string {
 // time; Run does so on a ticker.
 func (r *Runner) Tick(ctx context.Context, now time.Time) TickResult {
 	var res TickResult
-	if r == nil || r.Registry == nil {
+	if r == nil || r.Registry == nil || r.Engine == nil {
 		return res
 	}
 	stages, err := r.Registry.ActiveStages(now)
@@ -298,7 +304,7 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	if artifact == "" {
 		artifact = st.Artifact
 	}
-	status, err := r.statusInDir(ctx, dir, kind, artifact)
+	status, err := r.Engine.Status(ctx, dir, kind, artifact)
 	if err == nil {
 		state.artifact = status.JoinKey()
 		r.observe(ctx, st, state, status, now, res)
@@ -306,14 +312,14 @@ func (r *Runner) tickStage(ctx context.Context, st Stage, state *stageState, now
 	}
 	var nf *NotFoundError
 	if errors.As(err, &nf) && state.lastStatus == "" {
-		resolved, resolveErr := r.ResolveArtifact(ctx, dir, kind, st.Artifact)
+		resolved, resolveErr := r.Engine.ResolveArtifact(ctx, dir, kind, st.Artifact)
 		var resolveNF *NotFoundError
 		if resolveErr != nil && !errors.As(resolveErr, &resolveNF) {
 			r.logger().Warn("[spektacular] resolving run artifact id failed",
 				"run", st.RunKey, "stage", st.Stage, "artifact", st.Artifact, "error", resolveErr)
 		}
 		if resolveErr == nil && resolved != "" && resolved != artifact {
-			status, err = r.statusInDir(ctx, dir, kind, resolved)
+			status, err = r.Engine.Status(ctx, dir, kind, resolved)
 			if err == nil {
 				state.artifact = status.JoinKey()
 				r.logger().Info("[spektacular] resolved run artifact id",
@@ -397,7 +403,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 	}
 	var plan *Plan
 	if st.Stage == StagePlan {
-		exported, err := r.exportPlanWithFallbackInDir(ctx, st.WorkDir, artifact)
+		exported, err := r.Engine.ExportPlan(ctx, st.WorkDir, artifact)
 		if err != nil {
 			r.refusePlanImport(st, state, status, res, &PlanImportError{RunKey: st.RunKey, Artifact: artifact, Err: err})
 			return
@@ -405,7 +411,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 		plan = &exported
 	}
 	if st.Stage == StageSpec {
-		body, err := r.readSpecInDir(ctx, st.WorkDir, artifact)
+		body, err := r.Engine.ReadSpec(ctx, st.WorkDir, artifact)
 		if err != nil {
 			r.logger().Warn("[spektacular] spec is final but artifact read failed; advancing without postback body",
 				"run", st.RunKey, "artifact", artifact, "error", err)
@@ -413,7 +419,7 @@ func (r *Runner) observe(ctx context.Context, st Stage, state *stageState, statu
 			status.Body = body
 		}
 	}
-	receipt := BuildReceipt(st, status, now)
+	receipt := BuildReceipt(r.Engine, st, status, now)
 	if err := r.Registry.Advance(ctx, st, status, receipt, plan, now); err != nil {
 		var importErr *PlanImportError
 		if errors.As(err, &importErr) {

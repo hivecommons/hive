@@ -6,7 +6,9 @@
 //
 // Contract boundary: Hive never opens a Spektacular file. Every fact about an
 // artifact arrives through Exec, which is the only seam to the outside world,
-// so tests drive the runner with a fake and production wires BinaryExec.
+// so tests drive the engine with a fake and production wires BinaryExec. The
+// Hive-owned stage observer that drives this engine lives in pkg/planengine
+// (ADR-0021).
 package spektacular
 
 import (
@@ -23,13 +25,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
-// Artifact kinds accepted by the status verb.
+// Artifact kinds accepted by the status verb. They are the neutral kinds the
+// stage observer asks about (ADR-0021).
 const (
-	KindSpec = "spec"
-	KindPlan = "plan"
+	KindSpec = planengine.KindSpec
+	KindPlan = planengine.KindPlan
 )
 
 // Verb names of the Spektacular CLI the runner invokes. The status verb is
@@ -274,6 +278,15 @@ func planTaskRepo(name, location string) string {
 // promises. dir may be empty for direct unit tests and probes; the stage
 // runner always supplies the repo checkout/worktree that owns the artifact.
 type ExecFunc func(ctx context.Context, dir string, args []string) ([]byte, error)
+
+// Runner is the CLI client behind the Spektacular Engine: it invokes the
+// verbs, classifies the JSON error envelopes and normalises artifact names.
+// It holds no lease state; the poll loop that does is the Hive-owned stage
+// observer in pkg/planengine (ADR-0021).
+type Runner struct {
+	// Exec is the only path to the outside world.
+	Exec ExecFunc
+}
 
 const binaryExecTimeout = 30 * time.Second
 const binaryExecWaitDelay = time.Second
@@ -851,35 +864,6 @@ func parenListValue(title *string, key string) []string {
 		}
 	}
 	return out
-}
-
-// RenderTaskList turns an exported plan into the ordered task-list text that
-// planning.DecomposeFromOutput parses, so Spektacular's structure is admitted
-// verbatim and no model is asked to redecompose it.
-func RenderTaskList(plan Plan) string {
-	var b strings.Builder
-	for i, task := range plan.Tasks {
-		ref := strings.TrimSpace(task.Ref)
-		if ref == "" {
-			ref = strings.TrimSpace(task.ID)
-		}
-		if ref == "" {
-			ref = fmt.Sprintf("T%d", i+1)
-		}
-		fmt.Fprintf(&b, "%d. [%s] %s", i+1, ref, strings.TrimSpace(task.Title))
-		if repo := strings.TrimSpace(task.Repo); repo != "" {
-			fmt.Fprintf(&b, " [repo:%s]", repo)
-		}
-		if len(task.DependsOn) > 0 {
-			fmt.Fprintf(&b, " (depends: %s)", strings.Join(task.DependsOn, ", "))
-		}
-		execution := strings.TrimSpace(task.Execution)
-		if execution == "" {
-			execution = "agent_suitable"
-		}
-		fmt.Fprintf(&b, " [%s]\n", execution)
-	}
-	return b.String()
 }
 
 func (r *Runner) execInDir(ctx context.Context, dir string, args []string) ([]byte, error) {
