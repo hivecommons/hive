@@ -555,6 +555,9 @@ func sanitizeFeedbackDiagnostics(d *feedbackDiagnostics) {
 		if !d.IncludeProjectRepos {
 			d.Agents[i].Repo = ""
 			d.Agents[i].Org = ""
+		} else {
+			d.Agents[i].Repo = truncateRunes(feedbackRedact(d.Agents[i].Repo), 160)
+			d.Agents[i].Org = truncateRunes(feedbackRedact(d.Agents[i].Org), 120)
 		}
 	}
 }
@@ -718,6 +721,7 @@ func buildFeedbackIssueBody(req feedbackReportRequest) string {
 		b.WriteString("Target: Hive\n")
 	}
 	if req.Diagnostics != nil {
+		writeFeedbackDiagnosticsIncluded(&b, req)
 		b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
 		writeFeedbackDiagnostics(&b, req.Diagnostics)
 		b.WriteString("\n</details>\n")
@@ -742,6 +746,50 @@ func buildFeedbackIssueBody(req feedbackReportRequest) string {
 	return truncateRunes(b.String(), 60000)
 }
 
+type feedbackDiagnosticDisclosureRow struct {
+	Field           string
+	Why             string
+	OptionalProject bool
+}
+
+func feedbackDiagnosticDisclosureRows() []feedbackDiagnosticDisclosureRow {
+	return []feedbackDiagnosticDisclosureRow{
+		{"Version", "so we can reproduce on the same dashboard release build", false},
+		{"Commit", "so we can inspect the exact code revision", false},
+		{"Release channel", "so we know which update stream you are running", false},
+		{"ACMM level", "so we can match the dashboard policy mode", false},
+		{"Hive ID", "so hub operators can correlate this report with this hive only", false},
+		{"Hosted flag", "so we know whether this is a hosted or self-managed dashboard", false},
+		{"Hub-linked flag", "so we can follow the same relay path", false},
+		{"Agent count", "so we can spot empty or unexpectedly large agent sets", false},
+		{"Agent names, backend, model, and state", "so we can reproduce the affected agent configuration", false},
+		{"Whether project org/repos were included", "so the report shows if the optional project context was shared", false},
+		{"Browser user-agent", "so we can reproduce browser-specific rendering bugs", false},
+		{"Browser platform", "so we know the operating system/browser platform family", false},
+		{"Browser language", "so we can reproduce locale-sensitive formatting", false},
+		{"Screen size", "so we can reproduce layout issues at the same display size", false},
+		{"Window size", "so we can reproduce the dashboard viewport", false},
+		{"Dashboard section/path", "so we know where you opened the form", false},
+		{"Project repo for each agent", "so we can identify the affected project when you opt in", true},
+		{"Project org for each agent", "so we can identify the affected organization when you opt in", true},
+		{"Recent browser console errors", "so we can see client-side failures that happened before submit", false},
+		{"Recent failed /api calls", "so we can see backend requests that failed before submit", false},
+	}
+}
+
+func writeFeedbackDiagnosticsIncluded(b *strings.Builder, req feedbackReportRequest) {
+	b.WriteString("\n## Diagnostics included\n\n")
+	b.WriteString("| Field | Included | Why |\n|---|---|---|\n")
+	includeProjects := req.Diagnostics != nil && req.Diagnostics.IncludeProjectRepos
+	for _, row := range feedbackDiagnosticDisclosureRows() {
+		included := "Yes"
+		if row.OptionalProject && !includeProjects {
+			included = "No (optional project context not selected)"
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s | %s |\n", row.Field, included, row.Why))
+	}
+}
+
 func writeFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics) {
 	b.WriteString("| Field | Value |\n|---|---|\n")
 	rows := [][2]string{{"Version", d.Version}, {"Commit", d.Commit}, {"Channel", d.Channel}, {"ACMM Level", d.ACMMLevel}, {"Hive ID", d.HiveID}, {"Hosted", fmt.Sprintf("%t", d.Hosted)}, {"Hub linked", fmt.Sprintf("%t", d.HubLinked)}, {"Agent count", fmt.Sprintf("%d", d.AgentCount)}, {"Browser UA", d.BrowserUA}, {"Browser platform", d.BrowserPlatform}, {"Browser language", d.BrowserLanguage}, {"Screen", d.ScreenSize}, {"Window", d.WindowSize}, {"Page", d.Page}}
@@ -753,7 +801,11 @@ func writeFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics) {
 	if len(d.Agents) > 0 {
 		b.WriteString("\nAgents:\n")
 		for _, a := range d.Agents {
-			b.WriteString(fmt.Sprintf("- %s: backend=%s model=%s state=%s\n", a.Name, a.Backend, a.Model, a.State))
+			if d.IncludeProjectRepos {
+				b.WriteString(fmt.Sprintf("- %s: backend=%s model=%s state=%s org=%s repo=%s\n", a.Name, a.Backend, a.Model, a.State, a.Org, a.Repo))
+			} else {
+				b.WriteString(fmt.Sprintf("- %s: backend=%s model=%s state=%s\n", a.Name, a.Backend, a.Model, a.State))
+			}
 		}
 	}
 }

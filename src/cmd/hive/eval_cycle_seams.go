@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -56,13 +57,18 @@ func workSourceIssuesForCycle(
 	return github.IssueResultFromItems(filtered)
 }
 
+// workSourceIssuesForConfiguredCycle also returns the primary work source it
+// built, so the caller can read its optional worksource.DisplaySource stats
+// (the dashboard's #10174 source badge and dropped-item counter) without a
+// second construction. It is nil on the GitHub-primary/additive path, where
+// there is no non-GitHub primary source to report on.
 func workSourceIssuesForConfiguredCycle(
 	ctx context.Context,
 	cfg *config.Config,
 	ghClient *github.Client,
 	base github.IssueResult,
 	logger *slog.Logger,
-) github.IssueResult {
+) (github.IssueResult, worksource.WorkSource) {
 	ghToken := cfg.GitHub.Token
 	if ghToken == "" {
 		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
@@ -72,14 +78,32 @@ func workSourceIssuesForConfiguredCycle(
 		extras := workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
 		items := append([]github.Issue{}, base.Items...)
 		items = append(items, extras.Items...)
-		return github.IssueResultFromItems(items)
+		return github.IssueResultFromItems(items), nil
 	}
 	ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
-	return workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger)
+	return workSourceIssuesForCycle(ctx, ws, wsErr, cfg.Governor.Labels.Exempt, cfg.Project.IssueFilter, logger), ws
 }
 
 func workSourceOverlayEnabled(cfg config.WorkSourceConfig) bool {
 	return (cfg.Type != "" && cfg.Type != "github") || cfg.RunStages || cfg.Wavefront.Enabled
+}
+
+// reportWorkSourceDisplayStats pushes this cycle's worksource.DisplaySource
+// reading (display_name and the dropped-item tally) onto the dashboard
+// server, for the Settings → Work Source badge and counter (ADR-0020,
+// "Dashboard terminology", #10174). A ws that is nil or does not implement
+// DisplaySource (every built-in source today) clears the stat instead, so a
+// stale external reading never survives a switch back to GitHub/Linear/Jira.
+func reportWorkSourceDisplayStats(dashSrv *dashboard.Server, ws worksource.WorkSource) {
+	if dashSrv == nil {
+		return
+	}
+	stats, ok := ws.(worksource.DisplaySource)
+	if !ok {
+		dashSrv.ClearWorkSourceExternalStats()
+		return
+	}
+	dashSrv.SetWorkSourceExternalStats(stats.DisplayName(), stats.DroppedItems())
 }
 
 func workSourcePrimaryIsGitHub(cfg config.WorkSourceConfig) bool {

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -140,10 +142,11 @@ type CampaignJamActor struct {
 }
 
 type campaignJamPostRequest struct {
-	SpecContent string `json:"spec_content"`
-	Reason      string `json:"reason"`
-	Model       string `json:"model"`
-	Agent       string `json:"agent"`
+	SpecContent    string `json:"spec_content"`
+	BaseRevisionID string `json:"base_revision_id"`
+	Reason         string `json:"reason"`
+	Model          string `json:"model"`
+	Agent          string `json:"agent"`
 }
 
 type campaignJamThreadRequest struct {
@@ -191,7 +194,7 @@ var campaignJamIDSeq uint64
 func (s *Server) handleCampaignJamGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -212,12 +215,25 @@ func (s *Server) handleCampaignJamPost(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "spec_content required", http.StatusBadRequest)
 		return
 	}
+	conflictRevisionID := ""
 	state, err := s.mutateCampaignJam(id, func(state *CampaignJamState) error {
+		// Same stale-edit rule the live socket applies (#10081): without it a
+		// REST client with a stale copy silently replaces concurrent live
+		// edits. The base revision may only be omitted while the campaign has
+		// no spec revision yet, so seeding the first revision still works.
+		if state.SpecRevisionID != "" && strings.TrimSpace(req.BaseRevisionID) != state.SpecRevisionID {
+			conflictRevisionID = state.SpecRevisionID
+			return errJamLiveConflict
+		}
 		recordJamRevision(state, req.SpecContent, strings.TrimSpace(req.Reason), jamActorFromRequest(r), nil)
 		return nil
 	})
+	if errors.Is(err, errJamLiveConflict) {
+		jsonError(w, "stale base_revision_id; current spec revision is "+conflictRevisionID, http.StatusConflict)
+		return
+	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "campaign_jam_revision", auditDetail("campaign", id), "")
@@ -227,7 +243,7 @@ func (s *Server) handleCampaignJamPost(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCampaignJamThreadsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "threads": state.Threads})
@@ -271,7 +287,7 @@ func (s *Server) handleCampaignJamThreadsPost(w http.ResponseWriter, r *http.Req
 		return nil
 	})
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -280,7 +296,7 @@ func (s *Server) handleCampaignJamThreadsPost(w http.ResponseWriter, r *http.Req
 func (s *Server) handleCampaignJamSuggestionsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "suggestions": state.Suggestions})
@@ -324,7 +340,7 @@ func (s *Server) handleCampaignJamSuggestionsPost(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -333,7 +349,7 @@ func (s *Server) handleCampaignJamSuggestionsPost(w http.ResponseWriter, r *http
 func (s *Server) handleCampaignJamPollsGet(w http.ResponseWriter, r *http.Request) {
 	state, err := s.loadCampaignJam(campaignIDFromRequest(r))
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "polls": state.Polls})
@@ -370,7 +386,7 @@ func (s *Server) handleCampaignJamPollsPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonError(w, err.Error(), campaignJamStatus(err))
 		return
 	}
 	jsonResponse(w, map[string]any{"ok": true, "jam": state})
@@ -409,9 +425,16 @@ func (s *Server) mutateCampaignJam(id string, fn func(*CampaignJamState) error) 
 	}
 	campaignJamStoreMu.Lock()
 	defer campaignJamStoreMu.Unlock()
+	unlock := s.lockCampaignJamStore()
+	defer unlock()
 	disk, err := s.readCampaignJamDisk()
 	if err != nil {
 		return nil, err
+	}
+	if disk.Campaigns[strings.TrimSpace(id)] == nil {
+		if err := s.requireKnownJamCampaign(id); err != nil {
+			return nil, err
+		}
 	}
 	state := ensureCampaignJamState(disk, id)
 	if err := fn(state); err != nil {
@@ -435,21 +458,99 @@ func ensureCampaignJamState(disk campaignJamDisk, id string) *CampaignJamState {
 	return state
 }
 
+// requireKnownJamCampaign refuses to create a Jam entry for a campaign id the
+// hive does not know (#10083): every entry lives in the one shared
+// campaign-jam.json, so accepting arbitrary ids let any read-write caller grow
+// it without bound. Entries that already exist stay writable even after their
+// campaign leaves the catalog. Without an Inception engine there is no
+// authoritative campaign catalog to check against, so the guard is skipped.
+func (s *Server) requireKnownJamCampaign(id string) error {
+	if s == nil || s.deps == nil || s.deps.Inception == nil {
+		return nil
+	}
+	id = strings.TrimSpace(id)
+	campaigns, err := s.allCampaigns(nil)
+	if err != nil {
+		return fmt.Errorf("%w: campaign lookup: %v", errJamStore, err)
+	}
+	for _, campaign := range campaigns {
+		if campaign.ID == id || campaign.RunKey == id {
+			return nil
+		}
+	}
+	return errJamCampaignNotFound
+}
+
+var errJamCampaignNotFound = errors.New("campaign not found")
+
+// campaignJamLockName is the advisory cross-process lock guarding the
+// read-modify-write cycle on the shared campaign-jam.json (#10083). It is a
+// separate file, not the store itself, because the store is replaced by
+// rename: locking the data file would leave the lock on the orphaned inode.
+const campaignJamLockName = "campaign-jam.lock"
+
+// lockCampaignJamStore serializes a Jam mutation against every other process
+// writing the same store (#10083). campaignJamStoreMu only covers goroutines
+// inside ONE process, but every campaign's threads, polls and decisions live
+// in one file that each mutation rewrites whole: a second hive (or a hive
+// restarted beside a still-running one) sharing the data directory reads its
+// own snapshot and writes it back, silently dropping everything the other
+// process recorded in between.
+//
+// Same discipline as the beads ledger: a blocking exclusive flock on a lock
+// file beside the store, taken before the store is read and released after it
+// has been written, so a mutation never persists a snapshot taken before
+// another process's write. Best-effort by design — if the lock file cannot be
+// created or the filesystem does not support flock, Jam degrades to the
+// previous single-process behavior rather than refusing the edit.
+func (s *Server) lockCampaignJamStore() func() {
+	noop := func() {}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		return noop
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return noop
+	}
+	f, err := os.OpenFile(filepath.Join(dir, campaignJamLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return noop
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close() // best-effort: degrade to unserialized behavior per the doc comment above
+		return noop
+	}
+	return func() {
+		// The flock is released implicitly by Close, and unconditionally by
+		// process exit, so a crashed holder can never wedge the store.
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
+
 func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 	disk := campaignJamDisk{Campaigns: map[string]*CampaignJamState{}}
-	path := s.campaignJamPath()
+	path, err := s.campaignJamPath()
+	if err != nil {
+		return disk, err
+	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return disk, nil
 	}
 	if err != nil {
-		return disk, err
+		return disk, fmt.Errorf("%w: %v", errJamStore, err)
 	}
+	// The store is only ever replaced via temp file + rename and always holds
+	// a JSON object, so a zero-length file is damage, not an empty store:
+	// treating it as empty made the next write silently drop every
+	// campaign's threads, polls and decisions (#10083).
 	if len(raw) == 0 {
-		return disk, nil
+		return campaignJamDisk{}, fmt.Errorf("%w: %s is empty", errJamStore, path)
 	}
 	if err := json.Unmarshal(raw, &disk); err != nil {
-		return campaignJamDisk{}, err
+		return campaignJamDisk{}, fmt.Errorf("%w: %s is not valid JSON: %v", errJamStore, path, err)
 	}
 	if disk.Campaigns == nil {
 		disk.Campaigns = map[string]*CampaignJamState{}
@@ -458,18 +559,93 @@ func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 }
 
 func (s *Server) writeCampaignJamDisk(disk campaignJamDisk) error {
-	path := s.campaignJamPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(disk, "", "  ")
+	path, err := s.campaignJamPath()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("%w: %v", errJamStore, err)
+	}
+	raw, err := json.MarshalIndent(disk, "", "  ")
+	if err != nil {
+		return fmt.Errorf("%w: %v", errJamStore, err)
+	}
+	if err := writeCampaignJamFile(path, raw); err != nil {
+		return fmt.Errorf("%w: %v", errJamStore, err)
+	}
+	return nil
 }
 
-func (s *Server) campaignJamPath() string {
+// writeCampaignJamFile durably replaces the shared Jam store (#10083). This
+// one file holds every campaign's Jam state, so a truncating write that
+// crashed or hit ENOSPC left invalid JSON that failed every later Jam call.
+// A bare temp file + rename is not enough on its own: without an fsync the
+// rename can reach disk before the data, and a power loss then leaves a
+// zero-length store. Same sequence as writeStandbyOutcomesFile: unique temp
+// file, fsync, rename, fsync of the directory; the temp file is removed on
+// any failure so a failed write never leaves debris beside the store.
+var campaignJamRename = os.Rename
+
+func writeCampaignJamFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("temp creation: %w", err)
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		_ = tmp.Close()
+		if !keep {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := campaignJamRename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	keep = true
+	directory, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("directory open: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("directory sync: %w", err)
+	}
+	return nil
+}
+
+// campaignJamStatus keeps request-shape errors a client error and reports
+// store failures (unreadable or corrupt campaign-jam.json) as 5xx, which is
+// what they are.
+func campaignJamStatus(err error) int {
+	if errors.Is(err, errJamCampaignNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, errJamStore) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusBadRequest
+}
+
+var errJamStore = errors.New("jam store unavailable")
+
+// campaignJamPath refuses to fall back to the process working directory when
+// no data directory is configured (#10083): that silently scattered every
+// campaign's Jam state into whatever directory the hive was started from.
+func (s *Server) campaignJamPath() (string, error) {
 	base := ""
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		base = strings.TrimSpace(s.deps.Config.Data.MetricsDir)
@@ -481,9 +657,9 @@ func (s *Server) campaignJamPath() string {
 		}
 	}
 	if base == "" {
-		base = "."
+		return "", fmt.Errorf("%w: no data directory configured (data.metrics_dir, data.logs_dir or data.agents_dir)", errJamStore)
 	}
-	return filepath.Join(base, "campaign-jam.json")
+	return filepath.Join(base, "campaign-jam.json"), nil
 }
 
 func recordJamRevision(state *CampaignJamState, content, reason string, actor CampaignJamActor, decisions []CampaignDecision) CampaignRevision {

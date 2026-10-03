@@ -67,6 +67,51 @@ func TestDisabledAgentSidebarEnableWiring(t *testing.T) {
 	}
 }
 
+func TestDisabledAgentCadenceMatrixWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`const agents = _sidebarAgents();`,
+		`const statusAgentSet = new Set(agents.map(a => a.name));`,
+		`agentDisabled ? '<span class="off-badge" data-status="neutral" title="Disabled in config — the governor does not schedule this agent">off</span>'`,
+		"return `<td class=\"${colCls} cadence-disabled-cell\"",
+		`<td class="power-col">${agentPowerSwitchHtml(agentData)}</td>`,
+		`.gov-matrix tr.agent-disabled td.name-col { color: var(--muted); }`,
+		`.gov-matrix td.cadence-disabled-cell, .gov-matrix td.continuous-cadence-note`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing disabled-agent cadence matrix wiring %q", snippet)
+		}
+	}
+}
+
+func TestContinuousAgentCadenceMatrixWiring(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`const isContinuous = val === 'continuous';`,
+		`<span class="on-demand-badge" data-status="info">∞ continuous</span>`,
+		`Re-kicks after Hive observes`,
+		`role="radiogroup" aria-label="${esc(mode)} cadence mode"`,
+		`∞ continuous`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing continuous cadence matrix wiring %q", snippet)
+		}
+	}
+	for _, removed := range []string{
+		`data-action="setAgentContinuous"`,
+		`gov-continuous-switch`,
+		`<th>Continuous</th>`,
+		`.continuous-col`,
+	} {
+		if strings.Contains(html, removed) {
+			t.Errorf("index.html still renders removed continuous table toggle %q", removed)
+		}
+	}
+	if !strings.Contains(html, `cadenceKindButton(mode, kind, 'continuous', '∞ Continuous')`) || !strings.Contains(html, `∞ Continuous`) {
+		t.Error("cadence editor must expose a segmented Continuous state")
+	}
+}
+
 // TestConfiguredAgentsCarryResolvedMode pins the field the sidebar needs to
 // show what a disabled agent WOULD do once enabled. A disabled agent has no
 // runtime entry, so if buildConfiguredAgents omits the mode the badge silently

@@ -87,6 +87,26 @@ func TestRenderCadenceMatrixFailsOpenWhenAgentsUnpopulated7112(t *testing.T) {
 	}
 }
 
+func TestRenderCadenceMatrixIncludesDisabledConfiguredAgent(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the disabled-agent cadence-matrix rule was NOT executed by this run")
+	}
+
+	html := indexHTML(t)
+	script := jsFunc(t, html, "renderCadenceMatrix") + "\n" + cadenceMatrixDisabledConfiguredAssertions
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cadence_matrix_disabled.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("disabled-agent cadence-matrix behaviour check failed:\n%s", strings.TrimSpace(string(out)))
+	}
+}
+
 // cadenceMatrixPackAssertions stubs renderCadenceMatrix's render-only helpers
 // (esc/cliChip/modelChip/_sortAgentsBySidebar) so the extracted function runs in
 // isolation, then drives it with the #7112 scenario:
@@ -106,7 +126,11 @@ const cadenceMatrixPackAssertions = `
 function esc(s) { return String(s == null ? '' : s); }
 function cliChip() { return ''; }
 function modelChip() { return ''; }
+function agentIsDisabled(a) { return a && a.enabled === false; }
+function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass) { return '<span class="pwr-switch ' + (extraClass || '') + '"' + (attrs || '') + '></span>'; }
+function agentPowerSwitchHtml(a) { return pwrSwitchHtml(!agentIsDisabled(a), ' data-agent="' + esc(a.name) + '"', esc(a.name) + ' enabled', '', 'agent-power-switch'); }
 function _sortAgentsBySidebar(agents) { return { sorted: agents.slice() }; }
+function _sidebarAgents() { return window._lastAgents || []; }
 
 global.window = {
   _lastAgents: [
@@ -147,7 +171,11 @@ const cadenceMatrixFailOpenAssertions = `
 function esc(s) { return String(s == null ? '' : s); }
 function cliChip() { return ''; }
 function modelChip() { return ''; }
+function agentIsDisabled(a) { return a && a.enabled === false; }
+function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass) { return '<span class="pwr-switch ' + (extraClass || '') + '"' + (attrs || '') + '></span>'; }
+function agentPowerSwitchHtml(a) { return pwrSwitchHtml(!agentIsDisabled(a), ' data-agent="' + esc(a.name) + '"', esc(a.name) + ' enabled', '', 'agent-power-switch'); }
 function _sortAgentsBySidebar(agents) { return { sorted: agents.slice() }; }
+function _sidebarAgents() { return window._lastAgents || []; }
 
 global.window = {
   _lastAgents: [],
@@ -172,6 +200,52 @@ function check(name, cond) {
 check('fail-open renders supervisor row when _lastAgents empty', out.indexOf('data-agent="supervisor"') !== -1);
 check('fail-open renders review row when _lastAgents empty', out.indexOf('data-agent="review"') !== -1);
 check('fail-open renders linter row when _lastAgents empty', out.indexOf('data-agent="linter"') !== -1);
+
+process.exit(fails ? 1 : 0);
+`
+
+const cadenceMatrixDisabledConfiguredAssertions = `
+function esc(s) { return String(s == null ? '' : s); }
+function cliChip() { return ''; }
+function modelChip() { return ''; }
+function agentIsDisabled(a) { return a && a.enabled === false; }
+function pwrSwitchHtml(on, attrs, ariaLabel, title, extraClass) { return '<span class="pwr-switch' + (on ? ' on' : '') + ' ' + (extraClass || '') + '"' + (attrs || '') + ' aria-checked="' + (on ? 'true' : 'false') + '"></span>'; }
+function agentPowerSwitchHtml(a) { return pwrSwitchHtml(!agentIsDisabled(a), ' data-action="toggleAgentEnabled" data-agent="' + esc(a.name) + '" data-enabled="' + (!agentIsDisabled(a) ? 'true' : 'false') + '"', esc(a.name) + ' enabled', '', 'agent-power-switch'); }
+function _sortAgentsBySidebar(agents) { return { sorted: agents.slice().sort((a, b) => (a.sortOrder || 100) - (b.sortOrder || 100)) }; }
+function _sidebarAgents() {
+  const runtime = [...(window._lastAgents || [])];
+  const runtimeNames = new Set(runtime.map(a => a.name));
+  for (const configured of (window._configuredAgents || [])) {
+    if (!configured.enabled && !runtimeNames.has(configured.name)) {
+      runtime.push({ ...configured, configDisabled: true });
+    }
+  }
+  return runtime;
+}
+
+global.window = {
+  _lastAgents: [{ name: 'scanner', enabled: true, busy: 'idle', sortOrder: 20 }],
+  _configuredAgents: [{ name: 'outreach', displayName: 'Outreach', enabled: false, sortOrder: 10 }],
+};
+
+const modes = ['idle', 'quiet', 'busy'];
+const matrix = [
+  { agent: 'scanner', idle: '1h', quiet: '1h', busy: '1h' },
+  { agent: 'outreach', idle: '1h', quiet: '2h', busy: '3h' },
+];
+
+const out = renderCadenceMatrix(matrix, 'idle', modes);
+
+let fails = 0;
+function check(name, cond) {
+  if (!cond) { fails++; console.log('FAIL ' + name); }
+}
+
+check('disabled configured agent row renders', out.indexOf('data-agent="outreach"') !== -1);
+check('disabled configured agent row is ordered before scanner', out.indexOf('data-agent="outreach"') < out.indexOf('data-agent="scanner"'));
+check('disabled configured agent has off chip', out.indexOf('Disabled in config') !== -1 && out.indexOf('>off</span>') !== -1);
+check('disabled configured agent power switch is off', out.indexOf('data-agent="outreach" data-enabled="false"') !== -1 && out.indexOf('aria-checked="false"') !== -1);
+check('disabled configured agent cadence cells are not editable', out.indexOf('data-agent="outreach" data-tab="Cadences"') === -1);
 
 process.exit(fails ? 1 : 0);
 `

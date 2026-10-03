@@ -1,0 +1,28 @@
+{
+  "schema_version": "stage-receipt/v1",
+  "work_key": "myorg/repo1!20260922132517-hcl-encoding-helpers",
+  "assignment_id": "task-8303",
+  "generation": 11,
+  "stage": "plan",
+  "contract_revision": "spektacular-status/v1",
+  "execution_key": "a1abbca280a6ba772fbba6b154ec60c5c4033d45290f1c69452c27249b90eed3",
+  "engine": {
+    "name": "spektacular",
+    "version": "spektacular-pr-45"
+  },
+  "input_revision": "artifact@df42d628d4f56509c762b679cd05374734f4740fcc9d9367031f5090b7430511",
+  "output_digest": "73ca044643c39dcda4806ef5996492e99d80bdd92b0dd43fa1355f32431ec3dd",
+  "result_class": "completed",
+  "started_at": "2026-09-22T13:00:00Z",
+  "ended_at": "2026-09-22T13:00:00Z",
+  "provenance": {
+    "query": "spektacular plan status 20260922132517-hcl-encoding-helpers"
+  },
+  "artifacts": [
+    {
+      "repo": "myorg/repo1",
+      "path": "plan/20260922132517-hcl-encoding-helpers",
+      "description": "Spektacular plan reached document_status final"
+    }
+  ]
+}

@@ -2,11 +2,14 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -18,22 +21,68 @@ type nousRunTarget struct {
 	title  string
 }
 
-func (s *Server) approveNousSpektacularRun() (map[string]string, bool, error) {
+// nousRunApproval is the outcome of a Strategy Lab approve in
+// spektacular-run output mode. handled is false when the mode is not active;
+// existing marks a proposal whose run was already admitted, so a repeated
+// approve reports that run instead of admitting it again (hivecommons/hive#10115).
+type nousRunApproval struct {
+	link     map[string]string
+	handled  bool
+	existing bool
+}
+
+// nousRunApprovalError carries the HTTP status an approve failure maps to:
+// a malformed proposal is the client's fault, an unavailable registry or a
+// failed admission is the server's.
+type nousRunApprovalError struct {
+	status int
+	err    error
+}
+
+func (e *nousRunApprovalError) Error() string { return e.err.Error() }
+func (e *nousRunApprovalError) Unwrap() error { return e.err }
+
+func nousRunApprovalStatus(err error) int {
+	var approvalErr *nousRunApprovalError
+	if errors.As(err, &approvalErr) {
+		return approvalErr.status
+	}
+	return http.StatusInternalServerError
+}
+
+func (s *Server) approveNousSpektacularRun() (nousRunApproval, error) {
 	if s == nil || s.deps == nil || s.deps.Nous == nil {
-		return nil, false, nil
+		return nousRunApproval{}, nil
 	}
 	ns := s.deps.Nous
 	ns.Mu.Lock()
 	defer ns.Mu.Unlock()
 	if nousConfigOutputMode(ns.Config) != nousOutputModeSpektacularRun {
-		return nil, false, nil
+		return nousRunApproval{}, nil
 	}
 	target, pending, err := nousPendingTarget(ns.Status)
 	if err != nil {
-		return nil, true, err
+		return nousRunApproval{handled: true}, &nousRunApprovalError{status: http.StatusBadRequest, err: err}
+	}
+	// Admit under the org-qualified repo, as inception approve does, so a
+	// bare repo name keys the same run as its owner/name form.
+	if s.deps.Config != nil {
+		target.repo = config.QualifyRepo(s.deps.Config.Project.Org, target.repo)
+	}
+	if link := nousAdmittedRunLink(pending, target); link != nil {
+		return nousRunApproval{link: link, handled: true, existing: true}, nil
+	}
+	if err := validateSpekHubRepoPath(target.repo); err != nil {
+		return nousRunApproval{handled: true}, &nousRunApprovalError{status: http.StatusBadRequest, err: err}
+	}
+	if s.deps.Config == nil || !s.deps.Config.Runs.Spektacular.Enabled {
+		return nousRunApproval{handled: true}, &nousRunApprovalError{status: http.StatusConflict, err: errors.New("runs.spektacular.enabled is required to admit run")}
+	}
+	if s.contributeHub == nil {
+		return nousRunApproval{handled: true}, &nousRunApprovalError{status: http.StatusServiceUnavailable, err: errors.New("run lease registry unavailable")}
 	}
 	if err := s.AdmitRun(target.repo, target.number, target.title, time.Now()); err != nil {
-		return nil, true, err
+		return nousRunApproval{handled: true}, &nousRunApprovalError{status: http.StatusInternalServerError, err: err}
 	}
 	key := worksource.Ref{Repo: target.repo, Number: target.number}.Key()
 	link := map[string]string{"key": key, "repo": target.repo, "number": strconv.Itoa(target.number), "stage": StageSpec}
@@ -46,7 +95,37 @@ func (s *Server) approveNousSpektacularRun() (map[string]string, bool, error) {
 		}
 		ns.Status["run"] = link
 	}
-	return link, true, nil
+	return nousRunApproval{link: link, handled: true}, nil
+}
+
+// nousAdmittedRunLink returns the run a pending proposal was already
+// approved into, or nil when it has not been admitted. The link is read back
+// from either its in-memory or its JSON-decoded form.
+func nousAdmittedRunLink(pending map[string]interface{}, target nousRunTarget) map[string]string {
+	if pending == nil {
+		return nil
+	}
+	key := firstString(pending, "run_key")
+	stage := ""
+	switch run := pending["run"].(type) {
+	case map[string]string:
+		if key == "" {
+			key = strings.TrimSpace(run["key"])
+		}
+		stage = strings.TrimSpace(run["stage"])
+	case map[string]interface{}:
+		if key == "" {
+			key = firstString(run, "key")
+		}
+		stage = firstString(run, "stage")
+	}
+	if key == "" {
+		return nil
+	}
+	if stage == "" {
+		stage = StageSpec
+	}
+	return map[string]string{"key": key, "repo": target.repo, "number": strconv.Itoa(target.number), "stage": stage}
 }
 
 func nousConfigOutputMode(cfg map[string]interface{}) string {

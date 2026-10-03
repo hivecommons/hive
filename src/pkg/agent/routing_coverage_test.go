@@ -275,13 +275,26 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 
 func TestConnectionMCPFlags_Claude(t *testing.T) {
 	conns := []config.ConnectionConfig{
-		{Type: "mcp", URI: "https://mcp.example.com"},
+		{Name: "ops", Type: "mcp", URI: "https://mcp.example.com/x?a=1&b=2"},
 		{Type: "http", URI: "https://ignored"},
 		{Type: "mcp", URI: ""},
 	}
 	flags := connectionMCPFlags(conns, "claude")
-	if !containsBoot(flags, "--mcp-server 'https://mcp.example.com'") {
-		t.Errorf("expected mcp-server flag, got %q", flags)
+	want := ` --mcp-config '{"mcpServers":{"ops":{"type":"http","url":"https://mcp.example.com/x?a=1&b=2"}}}'`
+	if flags != want {
+		t.Errorf("flags = %q, want %q", flags, want)
+	}
+	if containsBoot(flags, "--mcp-server") {
+		t.Errorf("Claude Code has no --mcp-server flag, got %q", flags)
+	}
+}
+
+func TestConnectionMCPFlags_ClaudeUnnamedAndQuoted(t *testing.T) {
+	conns := []config.ConnectionConfig{{Type: "mcp", URI: "https://it's.example"}}
+	flags := connectionMCPFlags(conns, "claude")
+	want := ` --mcp-config '{"mcpServers":{"mcp-0":{"type":"http","url":"https://it'"'"'s.example"}}}'`
+	if flags != want {
+		t.Errorf("flags = %q, want %q", flags, want)
 	}
 }
 

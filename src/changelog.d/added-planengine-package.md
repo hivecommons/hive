@@ -1,0 +1,1 @@
+- Add `pkg/planengine`, the engine-neutral planning-engine boundary from ADR-0021: the `Engine` interface, a `Register`/`Lookup` engine registry that panics on duplicate names, and the document status, plan, and error types moved out of `pkg/spektacular` (which keeps type aliases). Nothing selects an engine yet, so behaviour is unchanged.

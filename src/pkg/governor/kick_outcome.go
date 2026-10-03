@@ -112,7 +112,7 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 
 func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time) {
 	ac, ok := g.agents[agentName]
-	if !ok || !ac.Continuous {
+	if !ok || !g.agentContinuousInCurrentModeLocked(agentName) {
 		return
 	}
 	if endedAt.IsZero() {
@@ -159,7 +159,7 @@ func (g *Governor) RecordKickFailure(agentName string, err error, at time.Time) 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	ac, ok := g.agents[agentName]
-	if !ok || !ac.Continuous {
+	if !ok || !g.agentContinuousInCurrentModeLocked(agentName) {
 		return
 	}
 	if at.IsZero() {

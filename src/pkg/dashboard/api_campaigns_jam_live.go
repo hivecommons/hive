@@ -3,6 +3,7 @@ package dashboard
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,10 @@ func (s *Server) handleCampaignJamWebSocket(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return
 	}
+	// SECURITY: the socket only needs the read role, so without a read limit
+	// any signed-in reader could make the server decode arbitrarily large
+	// frames into memory (#10082). Same hard bound as the contribute hub.
+	conn.SetReadLimit(wsMaxMessageSize)
 	actor := jamActorFromRequest(r)
 	client := &jamLiveClient{
 		id:       jamID("client"),
@@ -226,12 +231,19 @@ func (c *jamLiveClient) applyEdit(s *Server, msg jamLiveMessage) {
 		c.enqueue(jamLiveMessage{Type: jamLiveError, Error: "read-write access required"})
 		return
 	}
+	// Same validation REST POST /jam applies: an empty or whitespace-only
+	// edit would otherwise blank the spec over the socket (#10082).
+	content := strings.TrimSpace(msg.Content)
+	if content == "" {
+		c.enqueue(jamLiveMessage{Type: jamLiveError, Error: "content required"})
+		return
+	}
 	var revisionID string
 	state, err := s.mutateCampaignJam(c.campaign, func(state *CampaignJamState) error {
 		if msg.BaseRevisionID != state.SpecRevisionID {
 			return errJamLiveConflict
 		}
-		rev := recordJamRevision(state, msg.Content, firstRunNonEmpty(msg.Reason, "live co-edit"), c.actor, nil)
+		rev := recordJamRevision(state, content, firstRunNonEmpty(msg.Reason, "live co-edit"), c.actor, nil)
 		revisionID = rev.ID
 		return nil
 	})

@@ -1,0 +1,1 @@
+- config: `runs.spektacular.interview` values other than `auto`/`human` are now rejected at config validation instead of silently becoming `human` ([#10130](https://github.com/hivecommons/hive/issues/10130)).

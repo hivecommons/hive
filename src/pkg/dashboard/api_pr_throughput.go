@@ -70,10 +70,12 @@ type PRThroughput struct {
 }
 
 type PRThroughputBucket struct {
-	T      string `json:"t"`
-	Opened int    `json:"opened"`
-	Merged int    `json:"merged"`
-	Closed int    `json:"closed"`
+	T      string   `json:"t"`
+	Opened int      `json:"opened"`
+	Merged int      `json:"merged"`
+	Closed int      `json:"closed"`
+	TTMP50 *float64 `json:"ttm_p50,omitempty"`
+	TTMP90 *float64 `json:"ttm_p90,omitempty"`
 }
 
 type PRThroughputMetrics struct {
@@ -306,19 +308,24 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 		return ti.Before(tj)
 	})
 	seenTerminal := map[string]bool{}
+	openedAt := map[string]time.Time{}
+	ttmByBucket := make([][]float64, len(buckets))
 	for _, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
+		key := prThroughputPRKey(e)
 		if prThroughputTerminalAction(e.Action) {
-			key := prThroughputPRKey(e)
 			if key != "" {
 				if seenTerminal[key] {
 					continue
 				}
 				seenTerminal[key] = true
 			}
+		}
+		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
+			openedAt[key] = t
 		}
 		if t.Before(since) {
 			continue
@@ -336,9 +343,18 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 			buckets[i].Opened++
 		case ghpkg.AuditActionPRMerged:
 			buckets[i].Merged++
+			if key != "" {
+				if opened, ok := openedAt[key]; ok && !t.Before(opened) {
+					ttmByBucket[i] = append(ttmByBucket[i], t.Sub(opened).Hours())
+				}
+			}
 		case ghpkg.AuditActionPRClosed:
 			buckets[i].Closed++
 		}
+	}
+	for i := range buckets {
+		buckets[i].TTMP50 = percentileHours(ttmByBucket[i], 0.50)
+		buckets[i].TTMP90 = percentileHours(ttmByBucket[i], 0.90)
 	}
 	return buckets
 }

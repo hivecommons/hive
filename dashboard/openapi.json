@@ -2739,6 +2739,24 @@
                       "type": "boolean",
                       "description": "Whether the working tree has uncommitted changes"
                     },
+                    "upgradePolicy": {
+                      "type": "object",
+                      "description": "Hub-delivered upgrade policy, present after a heartbeat when the hub has an upgrade posture for this spoke.",
+                      "properties": {
+                        "hub_managed": { "type": "boolean" },
+                        "spoke_managed": { "type": "boolean" },
+                        "schedule": { "type": "string", "enum": ["instant", "daily", "weekly"] },
+                        "schedule_hour": { "type": "integer", "description": "24h local hour for daily/weekly windows" },
+                        "schedule_timezone": { "type": "string", "description": "IANA timezone for the schedule hour" },
+                        "schedule_weekday": { "type": "string", "description": "Weekly window opening day" },
+                        "paused": { "type": "boolean" },
+                        "branch": { "type": "string" },
+                        "channel": { "type": "string" },
+                        "target_sha": { "type": "string" },
+                        "target_resolved": { "type": "boolean" },
+                        "armed_target": { "type": "string" }
+                      }
+                    },
                     "behind": {
                       "type": "integer",
                       "description": "Commits behind origin"
@@ -19303,6 +19321,137 @@
         }
       }
     },
+    "/api/upstream-watch": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get upstream-watch divergence",
+        "description": "Read-only divergence view for every repo under upstream_watch.repos: the upstream followed, the watermark and the time of the last run, counts of surfaced/ported/dismissed/skipped refs, and the recent upstream refs with their upstream and diff URLs, fork issue number and state. Reads the config and the watch's state file only; it never polls GitHub. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Divergence view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Mirrors upstream_watch.enabled."
+                    },
+                    "configured": {
+                      "type": "boolean",
+                      "description": "True when at least one repo is declared under upstream_watch.repos."
+                    },
+                    "state_path": {
+                      "type": "string",
+                      "description": "File the watch persists its watermark and per-ref outcomes to."
+                    },
+                    "state_error": {
+                      "type": "string",
+                      "description": "Why the state file could not be read; absent when it was read (a missing file is not an error)."
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "upstream": {
+                            "type": "string",
+                            "description": "owner/repo the fork follows; the runtime-resolved value when config leaves it empty."
+                          },
+                          "watermark": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_run_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "surfaced": {
+                            "type": "integer"
+                          },
+                          "ported": {
+                            "type": "integer"
+                          },
+                          "dismissed": {
+                            "type": "integer"
+                          },
+                          "skipped": {
+                            "type": "integer"
+                          },
+                          "recent": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string",
+                                  "description": "Dedupe key: upstream#<pr> or release:<tag>."
+                                },
+                                "upstream_ref": {
+                                  "type": "string",
+                                  "description": "Upstream-qualified form: owner/repo#123 or owner/repo@<tag>."
+                                },
+                                "upstream_url": {
+                                  "type": "string"
+                                },
+                                "diff_url": {
+                                  "type": "string",
+                                  "description": "Upstream patch URL; absent for a release, which has no diff."
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "filed",
+                                    "skipped",
+                                    "ported",
+                                    "dismissed"
+                                  ]
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "surfaced",
+                                    "ported",
+                                    "dismissed",
+                                    "skipped"
+                                  ]
+                                },
+                                "issue_number": {
+                                  "type": "integer"
+                                },
+                                "issue_url": {
+                                  "type": "string"
+                                },
+                                "recorded_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/linear/agent/status": {
       "get": {
         "tags": [
@@ -23360,6 +23509,42 @@
         "responses": {
           "200": {
             "description": "Trend history entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/overview/history": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "Get Overview KPI history",
+        "description": "Returns downsampled, persisted history samples for the six Overview KPI tiles. The optional `since` query parameter is a Unix millisecond lower bound.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Unix millisecond timestamp; samples before this time are omitted before downsampling."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview KPI history entries",
             "content": {
               "application/json": {
                 "schema": {

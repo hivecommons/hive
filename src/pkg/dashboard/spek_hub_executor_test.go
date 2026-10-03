@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestSpekHubExecutorClaimPreservesTriageAndSkipsRelayLease(t *testing.T) {
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 2, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
 	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
 		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
-			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+			// The pinned 0.22 CLI does not emit artifact_id (#10074).
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft"}`), nil
 		}
 		return []byte("ok"), nil
 	}
@@ -112,7 +114,7 @@ func TestSpekHubExecutorPrepareWorkspaceCreatesCloneAndWorktree(t *testing.T) {
 				return nil, fmt.Errorf("unexpected executable %q", name)
 			}
 			st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
-			if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+			if err := e.prepareWorkspace(context.Background(), st); err != nil {
 				t.Fatalf("prepareWorkspace: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(spekRepo), ".git")); err != nil {
@@ -195,6 +197,25 @@ func TestResolveSpekArtifactFromFilesMatchesCounterIDs(t *testing.T) {
 	}
 	if got := resolveSpekArtifactFromFiles(worktree, StagePlan, "myorg-repo1-42"); got != "000002_myorg-repo1-42" {
 		t.Fatalf("plan = %q", got)
+	}
+}
+
+func TestSpekHubStagePromptGitHubDoesNotRequireGhCLI(t *testing.T) {
+	p := SpekHubStagePromptWithContext(StageSpec, "myorg/repo1", 57, "myorg/repo1#57", "Do thing", "myorg-repo1-57", worksource.WorkItemContext{
+		SourceType: "github",
+		Body:       "Captured issue body",
+	})
+	for _, want := range []string{"Issue description:\nCaptured issue body", "https://api.github.com/repos/myorg/repo1/issues/57", "myorg/repo1#57"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "gh issue view") {
+		t.Fatalf("hub prompt must not ask for gh issue view; the executor env has no gh token:\n%s", p)
+	}
+	p = SpekHubStagePrompt(StagePlan, "myorg/repo1", 57, "myorg/repo1#57", "Do thing", "myorg-repo1-57")
+	if strings.Contains(p, "gh issue view") || strings.Contains(p, "Issue description:") || !strings.Contains(p, "https://api.github.com/repos/myorg/repo1/issues/57") {
+		t.Fatalf("prompt without a captured body:\n%s", p)
 	}
 }
 
@@ -401,6 +422,53 @@ func TestSpekHubExecutorCapturesStageTranscriptAndDocument(t *testing.T) {
 	}
 }
 
+// TestSpekHubExecutorCaptureWithoutArtifactIDUsesName pins the pinned CLI's
+// actual payload (#10074): Spektacular 0.22 answers status without
+// artifact_id, so the capture has to join on the bare name.
+func TestSpekHubExecutorCaptureWithoutArtifactIDUsesName(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	oldReceipts := runReceiptsDir
+	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
+	t.Cleanup(func() { runReceiptsDir = oldReceipts })
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"final","current_step":"finished"}`), nil
+		}
+		return []byte("ok"), nil
+	}
+	status, err := e.spekStatus(context.Background(), t.TempDir(), nil, StageSpec, "myorg-repo1-57")
+	if err != nil {
+		t.Fatalf("spekStatus: %v", err)
+	}
+	if status.ArtifactID != "" || status.JoinKey() != "myorg-repo1-57" {
+		t.Fatalf("0.22 status join key = %q (artifact_id %q)", status.JoinKey(), status.ArtifactID)
+	}
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, taskID: "task", gen: 3}
+	worktree := t.TempDir()
+	specPath := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57.md")
+	if err := os.MkdirAll(filepath.Dir(specPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(specPath, []byte("# Spec\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.captureCompletedStage(st, worktree, "myorg-repo1-57", status, []byte("agent output"), time.Now().Add(-time.Minute), nil, runReceiptsDir, "session"); err != nil {
+		t.Fatalf("captureCompletedStage: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(st.runKey), spekStageTranscriptFile(StageSpec, 3)))
+	if err != nil {
+		t.Fatalf("transcript sidecar missing: %v", err)
+	}
+	var cap RunDetailStageCapture
+	if err := json.Unmarshal(raw, &cap); err != nil {
+		t.Fatalf("decode capture: %v", err)
+	}
+	if len(cap.Documents) != 1 || cap.Documents[0].Content == "" {
+		t.Fatalf("document not captured without artifact_id: %+v", cap)
+	}
+}
+
 func TestSpekHubExecutorAlreadyFinalDoesNotOverwriteSessionCapture(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	oldReceipts := runReceiptsDir
@@ -456,6 +524,51 @@ func TestSpekInitAgentMapsCopilotToSupportedInitAgent(t *testing.T) {
 	}
 }
 
+func TestSpekInitAgentMatchesLaunchedBinary(t *testing.T) {
+	cases := map[string]string{
+		"claude":        "claude",
+		" Claude ":      "claude",
+		"litellm":       "claude",
+		"bob":           "bob",
+		"codex":         "codex",
+		"aider":         "codex",
+		"opencode":      "codex",
+		"gemini":        "codex",
+		"not-a-backend": "claude",
+	}
+	for backend, want := range cases {
+		if got := spekInitAgent(backend); got != want {
+			t.Errorf("spekInitAgent(%q) = %q, want %q", backend, got, want)
+		}
+	}
+}
+
+func TestSpekHubExecutorBobAPIKeyReadsGovernorConfig(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "bob", "", nil, nil)
+	keyFile := filepath.Join(t.TempDir(), "bob-key")
+	if err := os.WriteFile(keyFile, []byte("bob-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s.deps.Config == nil {
+		s.deps.Config = &config.Config{}
+	}
+	s.deps.Config.Governor.Bob.APIKeyFile = keyFile
+	if got := e.bobAPIKey(); got != "bob-secret" {
+		t.Fatalf("bobAPIKey() = %q, want bob-secret", got)
+	}
+	env, err := e.executorEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, config.BobAPIKeyEnvVar+"=bob-secret") {
+		t.Fatalf("bob key not injected: %v", env)
+	}
+	if got := (&SpekHubExecutor{}).bobAPIKey(); got != "" {
+		t.Fatalf("bobAPIKey() without server = %q, want empty", got)
+	}
+}
+
 func TestSpekHubExecutorFailureRecordsAuditTimelineAndHoldsGeneration(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
@@ -479,7 +592,7 @@ func TestSpekHubExecutorFailureRecordsAuditTimelineAndHoldsGeneration(t *testing
 	}
 }
 
-func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
+func TestSpekHubExecutorEnvUsesAllowlistedValuesWithoutCloneToken(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	t.Setenv("GITHUB_TOKEN", "old")
 	t.Setenv("GH_TOKEN", "old")
@@ -491,7 +604,7 @@ func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
 	t.Setenv("LC_ALL", "C.UTF-8")
 	t.Setenv("HTTPS_PROXY", "http://proxy.example")
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
-	env, err := e.executorEnv("readonly-run-token")
+	env, err := e.executorEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,10 +619,7 @@ func TestSpekHubExecutorEnvUsesAllowlistedValuesAndRunToken(t *testing.T) {
 	if byKey["PATH"] != "/usr/bin" || byKey["LANG"] != "C.UTF-8" || byKey["LC_ALL"] != "C.UTF-8" || byKey["HTTPS_PROXY"] != "http://proxy.example" {
 		t.Fatalf("expected allowlisted process values, got PATH=%q LANG=%q LC_ALL=%q HTTPS_PROXY=%q", byKey["PATH"], byKey["LANG"], byKey["LC_ALL"], byKey["HTTPS_PROXY"])
 	}
-	if byKey["GH_TOKEN"] != "readonly-run-token" || byKey["GITHUB_TOKEN"] != "readonly-run-token" {
-		t.Fatalf("run tokens not set from clone token: GH=%q GITHUB=%q", byKey["GH_TOKEN"], byKey["GITHUB_TOKEN"])
-	}
-	for _, key := range []string{"HIVE_HUB_TOKEN", "HIVE_DASHBOARD_TOKEN", "UNLISTED_VALUE"} {
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN", "HIVE_HUB_TOKEN", "HIVE_DASHBOARD_TOKEN", "UNLISTED_VALUE"} {
 		if _, ok := byKey[key]; ok {
 			t.Fatalf("%s reached child env", key)
 		}
@@ -679,6 +789,93 @@ func TestSpekHubExecutorSweepKeepsRunWorktreeWhileUnclaimedLeaseExists(t *testin
 	}
 }
 
+func TestSpekProjectName(t *testing.T) {
+	for repo, want := range map[string]string{
+		"myorg/repo1":               "repo1",
+		"myorg/hive.github.io":      "hive-github-io",
+		"myorg/.github":             "github",
+		"myorg/Console.UI":          "console-ui",
+		"myorg/my_repo":             "my_repo",
+		"myorg/_x":                  "x",
+		"myorg/...":                 "project",
+		"kubestellar/Kube Stellar!": "kube-stellar-",
+	} {
+		if got := spekProjectName(repo); got != want {
+			t.Errorf("spekProjectName(%q) = %q, want %q", repo, got, want)
+		}
+	}
+}
+
+// A `.spektacular/` committed to the target repo may come from another
+// Spektacular version; every verb then fails with upgrade_required until
+// `migrate` runs, so prepareWorkspace migrates instead of skipping init.
+func TestSpekHubExecutorPrepareWorkspaceMigratesExistingProject(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		migrateErr error
+	}{
+		{"migrated", nil},
+		{"migrate fails", errors.New("exit status 1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, s, _, _ := spekHub(t)
+			remote := makeBareRepo(t)
+			e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+			e.CloneURL = func(string) string { return remote }
+			st := spekHubStage{runKey: "myorg/hive.github.io#57", stage: StageSpec, repo: "myorg/hive.github.io", gen: 1}
+			worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+			if err := os.MkdirAll(filepath.Join(worktree, ".spektacular"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var spekCalls []string
+			e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+				if name == "git" {
+					cmd := exec.CommandContext(ctx, name, args...)
+					cmd.Dir = dir
+					cmd.Env = env
+					return cmd.CombinedOutput()
+				}
+				if name != "spektacular" || dir != worktree {
+					return nil, fmt.Errorf("unexpected invocation %q in %q", name, dir)
+				}
+				spekCalls = append(spekCalls, strings.Join(args, " "))
+				return []byte(`{"error":true,"code":"internal_error","message":"boom"}`), tc.migrateErr
+			}
+			if err := e.prepareWorkspace(context.Background(), st); err != nil {
+				t.Fatalf("prepareWorkspace: %v", err)
+			}
+			if strings.Join(spekCalls, ";") != "migrate" {
+				t.Fatalf("spektacular calls = %v, want only migrate", spekCalls)
+			}
+		})
+	}
+}
+
+func TestSpekHubExecutorPrepareWorkspaceInitSanitizesProjectName(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "claude", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	var spekCalls []string
+	e.Exec = func(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = dir
+			cmd.Env = env
+			return cmd.CombinedOutput()
+		}
+		spekCalls = append(spekCalls, strings.Join(args, " "))
+		return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+	}
+	st := spekHubStage{runKey: "myorg/Console.UI#57", stage: StageSpec, repo: "myorg/Console.UI", gen: 1}
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace: %v", err)
+	}
+	if strings.Join(spekCalls, ";") != "init claude --name console-ui" {
+		t.Fatalf("spektacular calls = %v", spekCalls)
+	}
+}
+
 func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *testing.T) {
 	_, s, _, _ := spekHub(t)
 	remote := makeBareRepo(t)
@@ -697,18 +894,155 @@ func TestSpekHubExecutorPrepareWorkspaceRecoversSweptButRegisteredWorktree(t *te
 		return []byte("ok"), nil
 	}
 	st := spekHubStage{runKey: "myorg/repo1#57", stage: StagePlan, repo: spekRepo, gen: 3}
-	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
 		t.Fatalf("first prepareWorkspace: %v", err)
 	}
 	// Simulate the sweep deleting the directory without telling git.
 	if err := os.RemoveAll(spekHubRunWorktreePath(e.Identity, st.runKey)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.prepareWorkspace(context.Background(), st); err != nil {
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
 		t.Fatalf("prepareWorkspace after sweep: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(spekHubRunWorktreePath(e.Identity, st.runKey), ".git")); err != nil {
 		t.Fatalf("worktree not recreated: %v", err)
+	}
+}
+
+func spekHubRealGitExec(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		return cmd.CombinedOutput()
+	}
+	if name == "spektacular" {
+		return nil, os.MkdirAll(filepath.Join(dir, ".spektacular"), 0o755)
+	}
+	return []byte("ok"), nil
+}
+
+func TestSpekHubExecutorPrepareWorkspaceRefreshesExistingRunWorktree(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = spekHubRealGitExec
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("spec prepareWorkspace: %v", err)
+	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	artifact := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("# spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The default branch advances while the spec waits for approval.
+	work := filepath.Join(t.TempDir(), "push")
+	for _, args := range [][]string{
+		{"clone", remote, work},
+		{"-C", work, "-c", "user.email=hive@example.com", "-c", "user.name=Hive", "commit", "--allow-empty", "-m", "advance"},
+		{"-C", work, "push", "origin", "HEAD"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	want, err := exec.Command("git", "-C", work, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.stage, st.gen = StagePlan, 2
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("plan prepareWorkspace: %v", err)
+	}
+	got, err := exec.Command("git", "-C", worktree, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != strings.TrimSpace(string(want)) {
+		t.Fatalf("run worktree HEAD = %s, want the fetched %s", got, want)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("refresh lost the untracked spec artifact: %v", err)
+	}
+}
+
+// Two unrelated run keys that sanitizeRunPromptPath collapses onto the same
+// worktree slug must not silently share a checkout: the second run is
+// rejected instead of reusing the first run's worktree (#10080).
+func TestSpekHubExecutorPrepareWorkspaceRejectsRunKeySlugCollision(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	remote := makeBareRepo(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.CloneURL = func(string) string { return remote }
+	e.Exec = spekHubRealGitExec
+	first := spekHubStage{runKey: "foo/bar-baz#1", stage: StageSpec, repo: spekRepo, gen: 1}
+	second := spekHubStage{runKey: "foo-bar/baz#1", stage: StageSpec, repo: spekRepo, gen: 1}
+	if sanitizeRunPromptPath(first.runKey) != sanitizeRunPromptPath(second.runKey) {
+		t.Fatalf("test fixture no longer collides: %q vs %q", sanitizeRunPromptPath(first.runKey), sanitizeRunPromptPath(second.runKey))
+	}
+	if err := e.prepareWorkspace(context.Background(), first); err != nil {
+		t.Fatalf("first prepareWorkspace: %v", err)
+	}
+	err := e.prepareWorkspace(context.Background(), second)
+	if err == nil {
+		t.Fatal("colliding run key reused the first run's worktree")
+	}
+	if !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("error = %v, want a slug collision error", err)
+	}
+}
+
+func TestSpekHubExecutorSharedCloneLockSerialisesLaunchAndSweep(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	repoDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(spekRepo))
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var gitCalls []string
+	e.Exec = func(_ context.Context, _ string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "git" {
+			gitCalls = append(gitCalls, strings.Join(args, " "))
+		}
+		return []byte("ok"), nil
+	}
+	lock, err := acquireSpekHubFence(spekHubRepoLockPath(repoDir))
+	if err != nil {
+		t.Fatalf("hold shared clone lock: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*spekHubRepoLockPoll)
+	defer cancel()
+	st := spekHubStage{runKey: "myorg/repo1#57", stage: StageSpec, repo: spekRepo, gen: 1}
+	if err := e.prepareWorkspace(ctx, st); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("prepareWorkspace with the clone locked = %v, want it to wait for the lock", err)
+	}
+	stale := runStageWorktreePath(e.Identity, "myorg/repo1#58", StageSpec, 1)
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(gitCalls) != 0 {
+		t.Fatalf("git ran on a locked shared clone: %v", gitCalls)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("sweep removed a worktree while the shared clone was locked: %v", err)
+	}
+	lock.Close()
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(gitCalls, "worktree remove --force "+stale) {
+		t.Fatalf("git calls after unlock = %v, want worktree remove", gitCalls)
+	}
+	if err := e.prepareWorkspace(context.Background(), st); err != nil {
+		t.Fatalf("prepareWorkspace after unlock: %v", err)
 	}
 }
 
@@ -806,7 +1140,8 @@ func TestSpekHubExecutorDoesNotRelaunchWhenDocumentAlreadyFinal(t *testing.T) {
 			return []byte("ok"), nil
 		case "spektacular":
 			if len(args) >= 3 && args[1] == "status" {
-				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","artifact_id":"` + args[2] + `","document_status":"final"}`), nil
+				// 0.22 shape: the join key is the name, not an artifact_id.
+				return []byte(`{"error":false,"kind":"plan","name":"myorg-repo1-57","document_status":"final"}`), nil
 			}
 			return []byte("ok"), nil
 		}
@@ -902,5 +1237,157 @@ func TestSpekHubExecutorPromptUsesConfiguredBinary(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestSpekHubExecutorEnvForwardsProxyCAButNotSSLCertFile(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	t.Setenv("NODE_EXTRA_CA_CERTS", "/etc/hive/proxy-ca.pem")
+	t.Setenv("GIT_SSL_CAINFO", "/etc/hive/proxy-ca.pem")
+	t.Setenv("SSL_CERT_FILE", "/etc/hive/combined.pem")
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	env, err := e.executorEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]string{}
+	for _, entry := range env {
+		k, v, _ := strings.Cut(entry, "=")
+		byKey[k] = v
+	}
+	if byKey["NODE_EXTRA_CA_CERTS"] != "/etc/hive/proxy-ca.pem" || byKey["GIT_SSL_CAINFO"] != "/etc/hive/proxy-ca.pem" {
+		t.Fatalf("proxy CA not forwarded: NODE_EXTRA_CA_CERTS=%q GIT_SSL_CAINFO=%q", byKey["NODE_EXTRA_CA_CERTS"], byKey["GIT_SSL_CAINFO"])
+	}
+	if _, ok := byKey["SSL_CERT_FILE"]; ok {
+		t.Fatal("SSL_CERT_FILE reached child env")
+	}
+}
+
+func TestSpekHubExecutorSweepRemovesStaleCloneCredentialFiles(t *testing.T) {
+	_, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	ownerDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "myorg")
+	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(ownerDir, SpekHubCloneCredentialFilePrefix+"myorg-repo1-1")
+	fresh := filepath.Join(ownerDir, SpekHubCloneCredentialFilePrefix+"myorg-repo1-2")
+	other := filepath.Join(ownerDir, "notes.txt")
+	for _, path := range []string{stale, fresh, other} {
+		if err := os.WriteFile(path, []byte("https://x-access-token:tok@github.com\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-spekHubCloneCredentialMaxAge - time.Minute)
+	for _, path := range []string{stale, other} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.sweepStaleWorktrees(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale credential file still exists: %v", err)
+	}
+	for _, path := range []string{fresh, other} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s removed: %v", path, err)
+		}
+	}
+}
+
+func TestWriteSpekHubPromptDoesNotFollowPlantedSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	worktree := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(worktree, ".hive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(worktree, spekHubPromptRelPath)
+	if err := os.Symlink(target, promptPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSpekHubPrompt(worktree, "prompt"); err != nil {
+		t.Fatalf("writeSpekHubPrompt: %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "keep" {
+		t.Fatalf("symlink target overwritten: %q", got)
+	}
+	info, err := os.Lstat(promptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("prompt is not a fresh regular file: %v %v", info, err)
+	}
+	if got, _ := os.ReadFile(promptPath); string(got) != "prompt" {
+		t.Fatalf("prompt = %q", got)
+	}
+
+	linkedDir := t.TempDir()
+	worktree2 := t.TempDir()
+	if err := os.Symlink(linkedDir, filepath.Join(worktree2, ".hive")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSpekHubPrompt(worktree2, "prompt"); err == nil {
+		t.Fatal("expected a symlinked .hive directory to be refused")
+	}
+	if _, err := os.Stat(filepath.Join(linkedDir, filepath.Base(spekHubPromptRelPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("prompt written through symlinked .hive: %v", err)
+	}
+}
+
+func TestCollectSpekArtifactFilesSkipsSymlinksAndScrubs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	worktree := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.md")
+	if err := os.WriteFile(secret, []byte("outside-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(worktree, ".spektacular", "specs", "myorg-repo1-57")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ghp := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+	if err := os.WriteFile(filepath.Join(artifactDir, "spec.md"), []byte("# Spec\ntoken "+ghp+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(artifactDir, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(artifactDir, "linked-dir")); err != nil {
+		t.Fatal(err)
+	}
+	docs, files, _, _ := collectSpekArtifactFiles(worktree, StageSpec, "myorg-repo1-57")
+	if len(files) != 1 || len(docs) != 1 || !strings.HasSuffix(files[0].Path, "spec.md") {
+		t.Fatalf("expected only the regular spec file, got files=%+v", files)
+	}
+	for _, text := range []string{files[0].Content, docs[0].Markdown} {
+		if strings.Contains(text, "outside-secret") || strings.Contains(text, ghp) {
+			t.Fatalf("capture leaked symlinked or unscrubbed content: %q", text)
+		}
+	}
+
+	if _, err := readSpekWorktreeFile(worktree, filepath.Join(artifactDir, "linked-dir", "secret.md")); err == nil {
+		t.Fatal("expected a read through a symlinked directory to be refused")
+	}
+}
+
+func TestSpekHubCappedWriterDropsOutputPastLimit(t *testing.T) {
+	var sb strings.Builder
+	w := &spekHubCappedWriter{dst: &sb, limit: 10}
+	for _, chunk := range []string{"12345", "6789012345", "more"} {
+		if n, err := w.Write([]byte(chunk)); err != nil || n != len(chunk) {
+			t.Fatalf("Write(%q) = %d, %v; want full length", chunk, n, err)
+		}
+	}
+	if want := "1234567890" + spekHubLogTruncatedMarker; sb.String() != want {
+		t.Fatalf("log = %q, want %q", sb.String(), want)
 	}
 }

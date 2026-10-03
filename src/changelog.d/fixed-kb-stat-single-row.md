@@ -1,0 +1,1 @@
+- Keep Knowledge Base stat tiles on one compact row and constrain the Total Facts sparkline.

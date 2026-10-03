@@ -1,0 +1,1 @@
+- Reworked the dashboard feedback modal layout and added full diagnostics disclosure before feedback is submitted.

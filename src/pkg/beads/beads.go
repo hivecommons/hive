@@ -447,16 +447,75 @@ func (s *Store) Update(id string, fn func(b *Bead)) error {
 		return fmt.Errorf("bead %s not found", id)
 	}
 
-	wasTerminal := b.Status == StatusDone || b.Status == StatusClosed
-	fn(b)
+	// Copy-on-write: Get/List hand out the live *Bead, and readers hold it
+	// without the store lock (planning.GetPlanTree walks Metadata while a
+	// concurrent ApprovePlan calls SetMetadata). Mutating the shared bead in
+	// place is a data race, so fn edits a private copy that replaces the
+	// original once it is complete; existing readers keep a stable snapshot.
+	nb := b.clone()
+	wasTerminal := nb.Status == StatusDone || nb.Status == StatusClosed
+	fn(nb)
 	now := flexTime{time.Now().UTC()}
-	isTerminal := b.Status == StatusDone || b.Status == StatusClosed
-	if isTerminal && !wasTerminal && b.ClosedAt == nil {
-		b.ClosedAt = &now
+	isTerminal := nb.Status == StatusDone || nb.Status == StatusClosed
+	if isTerminal && !wasTerminal && nb.ClosedAt == nil {
+		nb.ClosedAt = &now
 	}
-	b.UpdatedAt = now
+	nb.UpdatedAt = now
+	s.beads[id] = nb
 
-	return s.persist(b)
+	return s.persist(nb)
+}
+
+// clone returns a deep copy of b: the Metadata map, DependsOn slice and
+// time pointers are duplicated so edits to the copy never show through to
+// readers holding the original.
+func (b *Bead) clone() *Bead {
+	c := *b
+	if b.Metadata != nil {
+		c.Metadata = make(map[string]interface{}, len(b.Metadata))
+		for k, v := range b.Metadata {
+			c.Metadata[k] = cloneMetadataValue(v)
+		}
+	}
+	if b.DependsOn != nil {
+		c.DependsOn = append([]string(nil), b.DependsOn...)
+	}
+	if b.ClosedAt != nil {
+		t := *b.ClosedAt
+		c.ClosedAt = &t
+	}
+	if b.LastSeenAt != nil {
+		t := *b.LastSeenAt
+		c.LastSeenAt = &t
+	}
+	return &c
+}
+
+func cloneMetadataValue(v interface{}) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		cp := make(map[string]interface{}, len(x))
+		for k, v := range x {
+			cp[k] = cloneMetadataValue(v)
+		}
+		return cp
+	case []interface{}:
+		cp := make([]interface{}, len(x))
+		for i, v := range x {
+			cp[i] = cloneMetadataValue(v)
+		}
+		return cp
+	case []string:
+		return append([]string(nil), x...)
+	case map[string]string:
+		cp := make(map[string]string, len(x))
+		for k, v := range x {
+			cp[k] = v
+		}
+		return cp
+	default:
+		return v
+	}
 }
 
 func (s *Store) Claim(id string) error {

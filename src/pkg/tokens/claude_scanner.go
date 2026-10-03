@@ -21,6 +21,15 @@ type claudeRawEntry struct {
 	Type      string          `json:"type"`
 	Timestamp string          `json:"timestamp,omitempty"`
 	Message   json.RawMessage `json:"message,omitempty"`
+	// Cwd is the working directory Claude Code recorded for this entry (every
+	// line in a native session file carries it). It is the authoritative
+	// source for agent attribution — hive agents run with cwd under
+	// /data/agents/<name>/ — unlike the project directory NAME under
+	// ~/.claude/projects, whose encoding is Claude's own implementation
+	// detail and not something hive controls or can assume (#10142: a live
+	// hive's project dirs didn't match the assumed "-data-agents-<name>"
+	// pattern, so every session fell through to "unknown").
+	Cwd string `json:"cwd,omitempty"`
 	// Also support the flat format used by the existing collector as a fallback.
 	Role         string `json:"role,omitempty"`
 	Model        string `json:"model,omitempty"`
@@ -73,6 +82,7 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 	scanner.Buffer(make([]byte, 0, maxScanBufSizeClaude), maxScanBufSizeClaude)
 
 	firstHumanMsg := ""
+	firstCwd := ""
 	var firstTimestamp int64
 	var lastTimestamp int64
 	// timeline retains the per-message usage grain that the loop below would
@@ -84,6 +94,10 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 		var raw claudeRawEntry
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			continue
+		}
+
+		if firstCwd == "" && raw.Cwd != "" {
+			firstCwd = raw.Cwd
 		}
 
 		switch raw.Type {
@@ -188,7 +202,14 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 	summary.LastActive = lastTimestamp
 	summary.Usage, summary.UsageCoalesced = timeline.finish()
 
-	if agentDetector != nil && firstHumanMsg != "" {
+	// Prefer the cwd Claude Code itself recorded on each entry: it is the
+	// real working directory, not a guess decoded from the project
+	// directory's name (whose encoding is Claude's implementation detail,
+	// see claudeRawEntry.Cwd). Fall back to path/keyword detection only when
+	// no entry carried a cwd (older session files, or non-native formats).
+	if agent := detectAgentFromCwd(firstCwd); agent != "" {
+		summary.Agent = agent
+	} else if agentDetector != nil && firstHumanMsg != "" {
 		summary.Agent = agentDetector(firstHumanMsg)
 	}
 

@@ -1,0 +1,1 @@
+- runs: rejecting a design's Spec checkpoint now forgets the rejected design artifact digest so the redrafted spec is posted again, and rejecting a plan supersedes the imported plan so the next plan replaces the rejected children even when its text is unchanged (#10062, #10063)

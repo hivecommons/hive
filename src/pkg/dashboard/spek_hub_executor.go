@@ -7,14 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -31,10 +34,29 @@ const (
 	spekHubOutputTailBytes        = 64 * 1024
 	spekHubLastErrorMaxBytes      = 2 * 1024
 	spekHubLogPartialLineMaxBytes = 64 * 1024
-	spekHubExecutorTier           = "trusted"
-	spekHubFailureReason          = "hub_executor_failed"
-	spekHubNonFinalReason         = "hub_executor_cli_exited_nonfinal"
-	spekHubLeaseRenewInterval     = 5 * time.Minute
+	// spekHubLogMaxBytes caps the per-generation CLI log on disk; output
+	// past it is dropped and a single marker line is appended.
+	spekHubLogMaxBytes        = 32 * 1024 * 1024
+	spekHubLogTruncatedMarker = "\n[hive] log truncated: size limit reached\n"
+	spekHubExecutorTier       = "trusted"
+	spekHubFailureReason      = "hub_executor_failed"
+	spekHubNonFinalReason     = "hub_executor_cli_exited_nonfinal"
+	spekHubLeaseRenewInterval = 5 * time.Minute
+	// SpekHubCloneCredentialFilePrefix names the per-clone git credential
+	// store files written beside the shared clones.
+	SpekHubCloneCredentialFilePrefix = ".hive-git-credentials-"
+	// spekHubCloneCredentialMaxAge matches the lifetime of the installation
+	// token a credential file holds; an older file is never in use.
+	spekHubCloneCredentialMaxAge = time.Hour
+	// spekHubPostExitTimeout bounds the post-exit status check and capture,
+	// which run after the stage deadline so an agent that exits just before
+	// it does not lose its final check (#10110).
+	spekHubPostExitTimeout = 2 * time.Minute
+	// Infrastructure failures before the agent launches (claim, clone, fetch,
+	// init) back off from the base to the cap instead of spending a stage
+	// generation (#10077).
+	spekHubInfraBackoffBase = time.Minute
+	spekHubInfraBackoffMax  = 30 * time.Minute
 )
 
 type SpekHubCloneAuth func(ctx context.Context, repo, dir string) (authArgs []string, token string, cleanup func(), err error)
@@ -67,10 +89,34 @@ type SpekHubExecutor struct {
 	// held marks generations (executionKey) Tick must not launch again: the
 	// document is already final, or the generation was spent and settled
 	// against the stage budget. The key changes with every new generation.
-	held      map[string]bool
+	held map[string]bool
+	// backoff delays relaunching a generation whose workspace could not be
+	// prepared; the generation is not spent.
+	backoff map[string]spekHubBackoff
+	// unsettled holds spent generations whose settlement failed to persist;
+	// Tick retries them so the run is neither stuck nor double-launched.
+	unsettled map[string]spekHubUnsettled
 	activity  map[string]runActivitySignal
 	lastError string
 }
+
+type spekHubBackoff struct {
+	until    time.Time
+	failures int
+}
+
+type spekHubUnsettled struct {
+	stage  spekHubStage
+	reason string
+}
+
+// spekHubInfraError marks a failure before the agent launched (claim,
+// workspace preparation, executor env). It says nothing about the stage, so
+// it is retried with backoff instead of spending a generation.
+type spekHubInfraError struct{ err error }
+
+func (e *spekHubInfraError) Error() string { return e.err.Error() }
+func (e *spekHubInfraError) Unwrap() error { return e.err }
 
 type spekHubExecution struct {
 	started time.Time
@@ -146,6 +192,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 	if err := e.sweepStaleWorktrees(ctx); err != nil {
 		e.log().Warn("[spektacular] hub executor worktree sweep failed", "error", err)
 	}
+	e.retryUnsettled()
 	stages, err := e.unclaimedStages()
 	if err != nil {
 		e.setLastError(err.Error())
@@ -168,7 +215,7 @@ func (e *SpekHubExecutor) Tick(ctx context.Context, now time.Time) {
 		if e.held == nil {
 			e.held = map[string]bool{}
 		}
-		if _, running := e.inFlight[key]; e.stopped || running || e.held[key] || e.runningLocked() >= e.maxConcurrent() {
+		if _, running := e.inFlight[key]; e.stopped || running || e.held[key] || now.Before(e.backoff[key].until) || e.runningLocked() >= e.maxConcurrent() {
 			e.mu.Unlock()
 			continue
 		}
@@ -187,6 +234,18 @@ func (e *SpekHubExecutor) Status() FrontendSpektacularHubExecutor {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return FrontendSpektacularHubExecutor{Running: e.runningLocked(), LastError: spekHubLastErrorSummary(e.lastError)}
+}
+
+// Stopped reports whether Stop has been called. Exported for cmd/hive's
+// rewire tests (hivecommons/hive#10069): the keep-executor path must never
+// stop the executor it means to keep running.
+func (e *SpekHubExecutor) Stopped() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
 }
 
 func (e *SpekHubExecutor) IsExecuting(runKey, stage string) bool {
@@ -246,12 +305,23 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 			delete(e.held, key)
 		}
 	}
+	for key := range e.backoff {
+		if !active[key] {
+			delete(e.backoff, key)
+		}
+	}
+	for key := range e.unsettled {
+		if !active[key] {
+			delete(e.unsettled, key)
+		}
+	}
 	for key := range e.activity {
 		if !active[key] {
 			delete(e.activity, key)
 		}
 	}
 	e.mu.Unlock()
+	e.sweepStaleCloneCredentials(time.Now())
 	root := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "runs")
 	runDirs, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -266,32 +336,104 @@ func (e *SpekHubExecutor) sweepStaleWorktrees(ctx context.Context) error {
 		if !runDir.IsDir() {
 			continue
 		}
-		// The stable lock lives outside the removable worktree. Never unlink it:
-		// another hub or an orphaned CLI may still hold that inode.
-		fence, err := acquireSpekHubFence(filepath.Join(root, runDir.Name(), ".executor.lock"))
+		runPath := filepath.Join(root, runDir.Name())
+		lockPath := filepath.Join(runPath, ".executor.lock")
+		// The stable lock lives outside the removable worktree. Another hub or
+		// an orphaned CLI may still hold it, so it is only unlinked below while
+		// this sweep holds it; acquireSpekHubFence rejects a lock whose path
+		// was unlinked or replaced after it was opened.
+		fence, err := acquireSpekHubFence(lockPath)
 		if err != nil {
 			continue
 		}
-		stageDirs, err := os.ReadDir(filepath.Join(root, runDir.Name()))
+		stageDirs, err := os.ReadDir(runPath)
 		if err != nil {
 			fence.Close()
 			continue
+		}
+		runLive := false
+		for path := range live {
+			if strings.HasPrefix(path, runPath+string(filepath.Separator)) {
+				runLive = true
+				break
+			}
 		}
 		for _, stageDir := range stageDirs {
 			if !stageDir.IsDir() {
 				continue
 			}
-			path := filepath.Join(root, runDir.Name(), stageDir.Name())
+			path := filepath.Join(runPath, stageDir.Name())
 			if live[path] {
 				continue
 			}
-			if err := e.removeWorktree(ctx, repos, path); err != nil {
+			if err := e.removeWorktree(ctx, repos, path); errors.Is(err, errSpekHubFenceBusy) {
+				e.log().Debug("[spektacular] stale worktree removal deferred; shared clone busy", "path", path, "error", err)
+			} else if err != nil {
 				e.log().Warn("[spektacular] removing stale worktree failed", "path", path, "error", err)
 			}
+		}
+		if !runLive && spekHubRunDirOnlyLock(runPath) {
+			// A finished run leaves only its lock behind; drop it and the run
+			// directory so they do not accumulate on the workspace (#10111).
+			if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Warn("[spektacular] removing finished run lock failed", "path", lockPath, "error", err)
+			}
+			fence.Close()
+			if err := os.Remove(runPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Debug("[spektacular] removing finished run directory skipped", "path", runPath, "error", err)
+			}
+			continue
 		}
 		fence.Close()
 	}
 	return nil
+}
+
+// sweepStaleCloneCredentials removes clone credential files whose in-process
+// cleanup never ran (hub crash or kill during clone/fetch).
+func (e *SpekHubExecutor) sweepStaleCloneCredentials(now time.Time) {
+	root := filepath.Join(currentAgentWorkspaceRoot(), e.Identity)
+	owners, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, owner := range owners {
+		if !owner.IsDir() || owner.Name() == "runs" || owner.Name() == "home" {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(root, owner.Name()))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasPrefix(entry.Name(), SpekHubCloneCredentialFilePrefix) {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil || now.Sub(info.ModTime()) < spekHubCloneCredentialMaxAge {
+				continue
+			}
+			path := filepath.Join(root, owner.Name(), entry.Name())
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				e.log().Warn("[spektacular] removing stale clone credential file failed", "path", path, "error", err)
+			}
+		}
+	}
+}
+
+// spekHubRunDirOnlyLock reports whether a run directory holds nothing but its
+// `.executor.lock`.
+func spekHubRunDirOnlyLock(runPath string) bool {
+	entries, err := os.ReadDir(runPath)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".executor.lock" {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *SpekHubExecutor) sharedRepoDirs() []string {
@@ -324,11 +466,18 @@ func (e *SpekHubExecutor) sharedRepoDirs() []string {
 func (e *SpekHubExecutor) removeWorktree(ctx context.Context, repos []string, path string) error {
 	var last error
 	for _, repo := range repos {
-		if _, err := e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path); err == nil {
-			return nil
-		} else {
-			last = err
+		// A launch may be cloning, fetching or adding a worktree in this
+		// clone; leave the path for a later sweep rather than race it.
+		lock, err := acquireSpekHubFence(spekHubRepoLockPath(repo))
+		if err != nil {
+			return fmt.Errorf("shared clone %s: %w", repo, err)
 		}
+		_, err = e.runner()(ctx, repo, spekGitEnv(os.Environ()), "git", "worktree", "remove", "--force", path)
+		lock.Close()
+		if err == nil {
+			return nil
+		}
+		last = err
 	}
 	if err := removeRunStageWorktreeByPath(path); err != nil {
 		if last != nil {
@@ -344,6 +493,38 @@ func removeRunStageWorktreeByPath(path string) error {
 		return nil
 	}
 	return os.RemoveAll(path)
+}
+
+// spekHubRunKeyMarkerFile records which run key owns a run worktree. The
+// worktree/lock/artifact slot is named after sanitizeRunPromptPath(runKey),
+// which collapses distinct run keys onto the same slug (e.g. "foo/bar-baz#1"
+// and "foo-bar/baz#1" both become "foo-bar-baz-1"), so two unrelated runs can
+// otherwise silently share one worktree, lock and Spektacular project. The
+// marker lets a later prepare detect the collision instead of reusing another
+// run's checkout (hivecommons/hive#10080).
+const spekHubRunKeyMarkerFile = ".hive-run-key"
+
+// verifySpekHubRunWorktreeOwner rejects reusing a run worktree whose slug
+// already belongs to a different run key. A worktree created before this
+// marker existed has none yet and is adopted the next time it is prepared.
+func verifySpekHubRunWorktreeOwner(worktree, runKey string) error {
+	data, err := os.ReadFile(filepath.Join(worktree, spekHubRunKeyMarkerFile))
+	if err != nil {
+		return nil
+	}
+	if owner := strings.TrimSpace(string(data)); owner != "" && owner != runKey {
+		return fmt.Errorf("run worktree slug collision: %q is owned by run %q, refusing to reuse it for %q", worktree, owner, runKey)
+	}
+	return nil
+}
+
+// recordSpekHubRunWorktreeOwner writes the marker verifySpekHubRunWorktreeOwner
+// reads. A write failure only loses collision detection for this generation,
+// so it is logged, not fatal.
+func (e *SpekHubExecutor) recordSpekHubRunWorktreeOwner(worktree, runKey string) {
+	if err := os.WriteFile(filepath.Join(worktree, spekHubRunKeyMarkerFile), []byte(runKey), 0o644); err != nil {
+		e.log().Warn("[spektacular] recording run worktree owner failed", "run", runKey, "worktree", worktree, "error", err)
+	}
 }
 
 func spekHubRunWorktreePath(identity, runKey string) string {
@@ -378,24 +559,35 @@ func (e *SpekHubExecutor) runStage(parent context.Context, st spekHubStage, key 
 		}
 		e.mu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
-	defer cancel()
 	// The snapshot in Tick may predate a stage advance made by a run that
 	// finished in the meantime; never relaunch a stage the lease has left.
 	if !e.stageStillActive(st) {
 		e.log().Info("[spektacular] hub executor skipping stale stage snapshot", "run", st.runKey, "stage", st.stage, "gen", st.gen)
 		return
 	}
+	err := e.executeStage(parent, st)
+	var infra *spekHubInfraError
+	switch {
 	// A canceled parent is hub shutdown, not a failed generation: spending
 	// the stage budget on it would burn a retry on every restart.
 	// A fence held by another process is not a failed generation either.
-	if err := e.executeStage(ctx, st); err != nil && parent.Err() == nil && !errors.Is(err, errSpekHubFenceBusy) {
+	case err == nil, parent.Err() != nil, errors.Is(err, errSpekHubFenceBusy):
+		e.clearBackoff(key)
+	case errors.As(err, &infra):
+		e.recordInfraFailure(st, key, err)
+	default:
+		e.clearBackoff(key)
 		e.recordFailure(st, key, err)
 		e.settleGeneration(st, spekHubFailureReason)
 	}
 }
 
-func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) error {
+// executeStage runs one generation. The agent runs under the stage timeout;
+// the post-exit status check gets its own bound from parent so an agent that
+// exits right at the deadline is still judged by its document.
+func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) error {
+	ctx, cancel := context.WithTimeout(parent, e.Config.Spektacular.HubExecutor.Timeout())
+	defer cancel()
 	fence, err := acquireSpekHubFence(filepath.Join(filepath.Dir(spekHubRunWorktreePath(e.Identity, st.runKey)), ".executor.lock"))
 	if err != nil {
 		return err
@@ -411,19 +603,27 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	if st.identity != e.Identity {
 		e.log().Info("[spektacular] hub executor claiming stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID)
 		if err := e.Server.contributeHub.recordLeaseForKeyStage(e.Identity, taskID, st.repo, st.number, st.key, spekHubExecutorTier, st.stage, st.gen, now); err != nil {
-			return err
+			return &spekHubInfraError{err: err}
 		}
 	}
 	stopRenew := e.startRenewing(ctx, taskID)
 	defer stopRenew()
-	appToken, err := e.prepareWorkspace(ctx, st)
-	if err != nil {
+	if err := validateSpekHubRepoPath(st.repo); err != nil {
+		// Never succeeds on a retry, so it spends the generation.
 		return err
+	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
+		// A slug collision is permanent until an operator intervenes, so spend
+		// the generation instead of treating it like retryable infrastructure.
+		return err
+	}
+	if err := e.prepareWorkspace(ctx, st); err != nil {
+		return &spekHubInfraError{err: err}
 	}
 	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
 		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
 	}
-	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if e.stageInterviewMode() != "auto" {
 		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
 			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
@@ -432,9 +632,9 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	e.recordStageProgress(st, "worktree_prepared", map[string]string{"worktree": worktree, "backend": e.backend()})
 	artifact := e.artifact(st.runKey)
-	env, err := e.executorEnv(appToken)
+	env, err := e.executorEnv()
 	if err != nil {
-		return err
+		return &spekHubInfraError{err: err}
 	}
 	if status, final := e.finalArtifact(ctx, worktree, env, st.stage, artifact); final {
 		// The document is already final (e.g. the plan is held for human
@@ -443,6 +643,13 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 		e.recordStageProgress(st, "document_already_final", map[string]string{stageAttrArtifact: status.JoinKey(), stageAttrDocumentStatus: status.DocumentStatus})
 		if err := e.captureCompletedStage(st, worktree, artifact, status, nil, now, nil, receiptDir, spekCaptureAlreadyFinal); err != nil {
 			e.log().Warn("[spektacular] stage transcript capture failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "error", err)
+		}
+		// The capture above has recorded any answered round; clear it so the
+		// next stage in this shared worktree is not prompted with it.
+		if e.stageInterviewMode() != "auto" {
+			if err := clearConsumedSpekInterview(worktree, readSpekInterviewAnswers(worktree)); err != nil {
+				e.log().Warn("[spektacular] clearing consumed interview failed", "run", st.runKey, "error", err)
+			}
 		}
 		e.holdGeneration(st)
 		e.Server.tickStageRunner(time.Now().UTC())
@@ -481,16 +688,32 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 	}
 	e.log().Info("[spektacular] hub executor finished stage", "run", st.runKey, "stage", st.stage, "gen", st.gen, "worktree", worktree, "pid", pid, "exit_code", exitCode, "duration", time.Since(started).String())
 	e.recordStageProgress(st, "cli_exited", map[string]string{"backend": e.backend(), "pid": strconv.Itoa(pid), "exit_code": strconv.Itoa(exitCode), "duration": time.Since(started).String(), "worktree": worktree})
+	postCtx, postCancel := context.WithTimeout(parent, spekHubPostExitTimeout)
+	defer postCancel()
+	postCtx = context.WithValue(postCtx, spekHubFenceContextKey{}, fence)
 	if e.stageInterviewMode() != "auto" {
 		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
-			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
-			return nil
+			final := false
+			if err == nil {
+				_, final = e.finalArtifact(postCtx, worktree, env, st.stage, artifact)
+			}
+			if !final {
+				e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
+				return nil
+			}
+			// The document is already final, so the request is moot: capture
+			// this pass and drop the request instead of holding the run (and
+			// the next stage in this shared worktree) on a human answer.
+			e.log().Info("[spektacular] discarding interview request left beside a final document", "run", st.runKey, "stage", st.stage, "gen", st.gen, "questions", len(pending))
+			if cleanupErr := clearSpekInterviewRound(worktree, req.RequestID); cleanupErr != nil {
+				e.log().Warn("[spektacular] discarding interview request failed", "run", st.runKey, "error", cleanupErr)
+			}
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("agent CLI failed: %w: %s", err, tailString(string(out), spekHubOutputTailBytes))
 	}
-	if err := e.afterCLIExit(ctx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
+	if err := e.afterCLIExit(postCtx, st, taskID, worktree, env, artifact, out, started, statusHistory(), receiptDir); err != nil {
 		// The CLI exited but whether it reached final is unknown; treat the
 		// generation as spent rather than relaunching it on every tick. If the
 		// document is in fact final the poll runner still advances it.
@@ -503,31 +726,48 @@ func (e *SpekHubExecutor) executeStage(ctx context.Context, st spekHubStage) err
 // pipes after the stage process itself has exited or been killed.
 const spekHubWaitDelay = 10 * time.Second
 
+// spekHubRepoLockPoll is how often a launch retries a busy shared-clone lock.
+const spekHubRepoLockPoll = 200 * time.Millisecond
+
 func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, env []string, st spekHubStage, cmd []string) ([]byte, int, error) {
 	logPath := filepath.Join(worktree, ".hive", fmt.Sprintf("spek-stage-%s-%d.log", sanitizeRunPromptPath(st.stage), st.gen))
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return nil, 0, err
-	}
 	writeLog := func(out []byte) {
-		if writeErr := os.WriteFile(logPath, out, 0o600); writeErr != nil {
+		if writeErr := writeSpekHubWorktreeFile(logPath, out); writeErr != nil {
 			e.log().Warn("[spektacular] writing hub executor cli log failed", "path", logPath, "error", writeErr)
 		}
 	}
 	if e.Exec == nil {
+		cmd, err := spekHubDropCapsCommand(cmd)
+		if err != nil {
+			return nil, 0, err
+		}
+		userSpec, err := spekHubExecUserSpec(e.Identity)
+		if err != nil {
+			return nil, 0, err
+		}
+		if userSpec != "" {
+			home := spekHubExecutorHome(e.Identity)
+			if err := spekHubShareWithExecUser(worktree, home); err != nil {
+				return nil, 0, fmt.Errorf("granting the executor user access to the worktree: %w", err)
+			}
+			cmd = spekHubRunAsCommand(cmd, userSpec, home)
+			env = spekHubExecUserEnv(env, e.Identity)
+			defer e.reclaimFromExecUser(userSpec, worktree, home)
+		}
 		var buf spekHubTailWriter
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		f, err := createSpekHubWorktreeFile(logPath)
 		if err != nil {
 			return nil, 0, err
 		}
 		defer f.Close()
-		logWriter := newSpekHubScrubWriter(f)
+		logWriter := newSpekHubScrubWriter(&spekHubCappedWriter{dst: f, limit: spekHubLogMaxBytes})
 		c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 		c.Dir = worktree
 		c.Env = env
 		// The agent CLI is `sh -c …` that forks node grandchildren. Kill the
 		// whole group on timeout/cancel and bound Wait so an orphan holding
 		// the inherited output pipe cannot pin the executor slot forever.
-		spekHubConfigureProcessGroup(c)
+		spekHubConfigureProcessGroup(c, userSpec)
 		spekHubInheritFence(c, ctx)
 		c.WaitDelay = spekHubWaitDelay
 		w := io.MultiWriter(&buf, logWriter)
@@ -548,7 +788,7 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 		// The process has exited: reap any orphan still holding the output
 		// pipe or the inherited fence fd, then judge the run by the exit
 		// status rather than by pipe EOF (ErrWaitDelay implies exit 0).
-		spekHubKillProcessGroup(c)
+		spekHubKillProcessGroup(c, userSpec)
 		if errors.Is(err, exec.ErrWaitDelay) {
 			err = nil
 		}
@@ -562,6 +802,199 @@ func (e *SpekHubExecutor) runStageCommand(ctx context.Context, worktree string, 
 	out = []byte(scrubSpekHubOutput(string(out)))
 	writeLog(out)
 	return out, 0, err
+}
+
+// spekHubUIDMapPaths lists the UID maps the entrypoint writes, durable copy
+// first (the same order the agent manager loads them in).
+var spekHubUIDMapPaths = func() []string {
+	return []string{agent.PersistedUIDMapPath, agent.UIDMapPath}
+}
+
+// spekHubExecUserSpec returns the su-exec user spec the stage CLI runs as, or
+// "" when the deployment has no per-agent UID isolation. With isolation
+// active, the CLI must not run as the hive uid (which can read the GitHub App
+// key, is exempt from the forced-egress redirect, and holds NET_ADMIN), so a
+// missing executor UID or su-exec fails the launch instead of falling back.
+func spekHubExecUserSpec(identity string) (string, error) {
+	var uidMap *agent.UIDMap
+	for _, path := range spekHubUIDMapPaths() {
+		if loaded, err := agent.LoadUIDMap(path); err == nil {
+			uidMap = loaded
+			break
+		}
+	}
+	if uidMap == nil {
+		return "", nil
+	}
+	uid := uidMap.LookupByName(identity)
+	if uid <= 0 {
+		return "", fmt.Errorf("per-agent UID isolation is active but the hub executor identity %q has no UID; restart hive so the entrypoint provisions it", identity)
+	}
+	if _, err := exec.LookPath("su-exec"); err != nil {
+		return "", fmt.Errorf("su-exec unavailable to run the agent CLI as the hub executor user: %w", err)
+	}
+	name := "hive-" + identity
+	if _, err := user.Lookup(name); err == nil {
+		return name, nil
+	}
+	return fmt.Sprintf("%d:%d", uid, os.Getgid()), nil
+}
+
+// spekHubRunAsCommand runs cmd as userSpec with the executor HOME (su-exec
+// resets HOME from passwd) and a group-writable umask, so the hive uid can
+// still update and remove what the CLI writes.
+func spekHubRunAsCommand(cmd []string, userSpec, home string) []string {
+	wrapped := []string{"su-exec", userSpec, "env", "HOME=" + home, "sh", "-c", `umask 002 && exec "$@"`, "sh"}
+	return append(wrapped, cmd...)
+}
+
+// spekHubExecUserEnv points the CLI running as the executor user at the
+// egress proxy the way the agent manager does for regular agents: explicit
+// HTTP(S)_PROXY (the :443 redirect alone misses non-443 ports and clients
+// that pin a direct connection), the proxy CA, the identity the proxy
+// attributes the UID to, and no interactive git credential prompts.
+// Forwarded proxy settings from the hive process are replaced; CA paths the
+// hive process already exports (e.g. the combined bundle) are kept.
+func spekHubExecUserEnv(env []string, identity string) []string {
+	override := map[string]string{
+		"HTTPS_PROXY":         agent.ProxyURL(),
+		"HTTP_PROXY":          agent.ProxyURL(),
+		"HIVE_PROXY_AGENT":    identity,
+		"GIT_TERMINAL_PROMPT": "0",
+	}
+	defaults := map[string]string{
+		"NODE_EXTRA_CA_CERTS": agent.ProxyCACertPath,
+		"GIT_SSL_CAINFO":      agent.ProxyCACertPath,
+	}
+	out := make([]string, 0, len(env)+len(override)+len(defaults))
+	for _, entry := range env {
+		key, value, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if _, ok := override[upper]; ok {
+			continue
+		}
+		if _, ok := defaults[upper]; ok {
+			if key != upper || value == "" {
+				continue
+			}
+			delete(defaults, upper)
+		}
+		out = append(out, entry)
+	}
+	for _, key := range []string{"HTTPS_PROXY", "HTTP_PROXY", "HIVE_PROXY_AGENT", "GIT_TERMINAL_PROMPT", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO"} {
+		if value, ok := override[key]; ok {
+			out = append(out, key+"="+value)
+		} else if value, ok := defaults[key]; ok {
+			out = append(out, key+"="+value)
+		}
+	}
+	return out
+}
+
+// spekHubShareWithExecUser gives the executor user (primary group node) write
+// access to the stage worktree and its HOME. The worktree's .git entry is left
+// as is and the worktree root gets the sticky bit, so the CLI cannot replace
+// the gitdir pointer that hive's own git and spektacular commands trust.
+func spekHubShareWithExecUser(worktree, home string) error {
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return err
+	}
+	if err := spekHubGrantGroupWrite(home, ""); err != nil {
+		return err
+	}
+	if err := spekHubGrantGroupWrite(worktree, ".git"); err != nil {
+		return err
+	}
+	info, err := os.Lstat(worktree)
+	if err != nil {
+		return err
+	}
+	return os.Chmod(worktree, info.Mode()|os.ModeSticky|0o070)
+}
+
+// spekHubGrantGroupWrite adds group rw (and x for directories and
+// executables) to every hive-owned regular file and directory under dir. It
+// works through os.Root so a symlink planted by the CLI cannot redirect the
+// chmod outside dir. Entries owned by the executor user are skipped.
+func spekHubGrantGroupWrite(dir, skip string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == "." {
+				return err
+			}
+			return nil
+		}
+		if skip != "" && path == skip {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		mode := info.Mode() | 0o060
+		if d.IsDir() || info.Mode().Perm()&0o100 != 0 {
+			mode |= 0o010
+		}
+		if mode == info.Mode() {
+			return nil
+		}
+		if err := root.Chmod(path, mode); err != nil && !errors.Is(err, fs.ErrPermission) && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
+}
+
+// reclaimFromExecUser makes what the CLI created group-writable again (a tool
+// may create entries with an explicit 0755/0644 mode that umask cannot widen),
+// so worktree reuse and sweeping keep working as the hive uid.
+func (e *SpekHubExecutor) reclaimFromExecUser(userSpec, worktree, home string) {
+	script := `find "$@" -user "$(id -u)" \( -type d -o -type f \) -exec chmod g+rwX {} +`
+	out, err := exec.Command("su-exec", userSpec, "sh", "-c", script, "sh", worktree, home).CombinedOutput()
+	if err != nil {
+		e.log().Warn("[spektacular] restoring group access to executor files failed", "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
+	}
+}
+
+// spekHubCappedWriter forwards at most limit bytes to dst, then swallows the
+// rest so a chatty agent cannot fill the disk; the caller's writes still
+// succeed and the executor's in-memory tail is unaffected.
+type spekHubCappedWriter struct {
+	dst     io.Writer
+	limit   int64
+	written int64
+	capped  bool
+}
+
+func (w *spekHubCappedWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if w.capped {
+		return n, nil
+	}
+	if room := w.limit - w.written; int64(len(p)) > room {
+		p = p[:room]
+		w.capped = true
+	}
+	m, err := w.dst.Write(p)
+	w.written += int64(m)
+	if err != nil {
+		return m, err
+	}
+	if w.capped {
+		_, err = io.WriteString(w.dst, spekHubLogTruncatedMarker)
+	}
+	return n, err
 }
 
 type spekHubScrubWriter struct {
@@ -737,7 +1170,7 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	if started.IsZero() {
 		started = ended
 	}
-	promptBytes, _ := os.ReadFile(filepath.Join(worktree, spekHubPromptRelPath))
+	promptBytes, _ := readSpekWorktreeFile(worktree, filepath.Join(worktree, spekHubPromptRelPath))
 	artifactKey := firstRunNonEmpty(status.JoinKey(), artifact)
 	docs, files, interview, notes := collectSpekArtifactFiles(worktree, st.stage, artifactKey)
 	interview = appendSpekHumanInterview(worktree, interview, ended.Format(time.RFC3339Nano))
@@ -793,6 +1226,19 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	return writeSpekStageCaptureInDir(receiptDir, st.runKey, st.stage, st.gen, capture)
 }
 
+// interviewFromStatusHistory derives interview rows from the instruction (or
+// question/prompt/description) carried by each status poll. The pinned
+// Spektacular 0.22.0 `status` verb never emits any of those keys (its wire
+// shape is kind/name/artifact_id/document_status/current_step/
+// completed_steps/created_at/updated_at/closed_at/error/spec/plan, none of
+// which is a question), so against that CLI this tier is a no-op and
+// captureCompletedStage falls through to the completed_steps placeholder
+// rows below. It is kept, rather than removed, for a status payload that
+// does carry one of these keys (a future Spektacular release, or a non-
+// default backend) instead of silently dropping that richer source if it
+// ever appears; populating this tier without one requires a different data
+// source than the status verb and is tracked, unresolved, as
+// hivecommons/hive#10099.
 func interviewFromStatusHistory(history []RunDetailStageStatus, docs []RunDetailStageDocument, at time.Time) []RunDetailInterview {
 	var doc string
 	if len(docs) > 0 {
@@ -978,6 +1424,11 @@ func (s spekHubArtifactStatus) JoinKey() string {
 	return strings.TrimSpace(s.Name)
 }
 
+// Instruction reads the status payload for any key that would name the
+// agent's current prompt. The pinned Spektacular 0.22.0 `status` verb never
+// emits one (see interviewFromStatusHistory), so this always returns "" in
+// production; it only matters for a status payload richer than that CLI's
+// (hivecommons/hive#10099).
 func (s spekHubArtifactStatus) Instruction() string {
 	return firstRunNonEmpty(
 		runDetailStringFromAny(firstAny(s.Raw, "instruction", "question", "prompt", "current_instruction", "step_instruction")),
@@ -1063,7 +1514,7 @@ func (e *SpekHubExecutor) recordNonFinal(st spekHubStage, taskID string, status 
 }
 
 func resolveSpekArtifactFromFiles(worktree, kind, slug string) string {
-	slug = sanitizeRunPromptPath(slug)
+	slug = worksource.CapArtifactSlug(sanitizeRunPromptPath(slug))
 	rootName := "specs"
 	if kind == StagePlan {
 		rootName = "plans"
@@ -1136,58 +1587,166 @@ func (e *SpekHubExecutor) startRenewing(ctx context.Context, taskID string) func
 	return func() { close(done); <-joined }
 }
 
-func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) (string, error) {
+// prepareWorkspace clones/fetches the repo and adds the run worktree. The clone
+// credential is used only for these git calls; it is never handed to the
+// agent CLI.
+func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage) error {
+	if err := validateSpekHubRepoPath(st.repo); err != nil {
+		return err
+	}
 	repoDir := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, filepath.FromSlash(st.repo))
 	if err := os.MkdirAll(filepath.Dir(repoDir), 0o755); err != nil {
-		return "", err
+		return err
 	}
-	authArgs, appToken, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
+		// executeStage checks this before wrapping prepare errors as
+		// infrastructure failures; keep direct prepareWorkspace callers safe too.
+		return err
+	}
+	authArgs, _, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer cleanup()
-	runGit := func(dir string, args ...string) error {
+	if err := e.syncRunWorktree(ctx, st, repoDir, worktree, authArgs); err != nil {
+		return err
+	}
+	e.recordSpekHubRunWorktreeOwner(worktree, st.runKey)
+	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
+		copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree)
+		if copyErr != nil {
+			e.log().Warn("[spektacular] copying previous Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", copyErr)
+		}
+		if !copied || copyErr != nil {
+			if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", spekProjectName(st.repo)); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+	// A project committed to the repo (or copied from an earlier generation)
+	// may come from another Spektacular version, which gates every verb behind
+	// `upgrade_required` until `migrate` runs.
+	if out, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "migrate"); err != nil {
+		e.log().Warn("[spektacular] migrate of existing Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", err, "output", tailString(string(out), spekHubOutputTailBytes))
+	}
+	return nil
+}
+
+// syncRunWorktree clones/fetches the shared clone and creates or refreshes the
+// run worktree. Every git command on the shared clone runs under its repo lock
+// so concurrent runs and the sweep never interleave on one clone (#10107).
+func (e *SpekHubExecutor) syncRunWorktree(ctx context.Context, st spekHubStage, repoDir, worktree string, authArgs []string) error {
+	lock, err := waitSpekHubRepoLock(ctx, repoDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	gitOut := func(dir string, args ...string) (string, error) {
 		full := append([]string{}, authArgs...)
 		full = append(full, args...)
 		out, err := e.runner()(ctx, dir, spekGitEnv(os.Environ()), "git", full...)
 		if err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, tailString(string(out), spekHubOutputTailBytes))
 		}
-		return nil
+		return strings.TrimSpace(string(out)), nil
+	}
+	runGit := func(dir string, args ...string) error {
+		_, err := gitOut(dir, args...)
+		return err
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
 		if err := runGit(filepath.Dir(repoDir), "clone", "--no-checkout", e.cloneURL(st.repo), filepath.Base(repoDir)); err != nil {
-			return "", err
+			return err
 		}
 	}
 	if err := runGit(repoDir, "fetch", "origin", "HEAD"); err != nil {
-		return "", err
+		return err
 	}
-	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if _, err := os.Stat(worktree); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-			return "", err
+			return err
 		}
 		// A swept directory can leave git with a "missing but already
 		// registered" worktree entry that makes `worktree add` refuse.
 		if err := runGit(repoDir, "worktree", "prune"); err != nil {
 			e.log().Warn("[spektacular] git worktree prune failed", "repo", repoDir, "error", err)
 		}
-		if err := runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD"); err != nil {
-			return "", err
+		return runGit(repoDir, "worktree", "add", "--detach", worktree, "FETCH_HEAD")
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".git")); err != nil {
+		return nil
+	}
+	// The run worktree is reused across stages and generations; move it to
+	// the freshly fetched commit so a later stage reads current code (#10105).
+	// FETCH_HEAD is per worktree, so resolve it in the shared clone. A plain
+	// checkout keeps the untracked .spektacular/ and .hive/ files and refuses
+	// rather than overwrite local changes; then the old checkout is kept.
+	head, err := gitOut(repoDir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	if err == nil {
+		err = runGit(worktree, "checkout", "--detach", head)
+	}
+	if err != nil {
+		e.log().Warn("[spektacular] refreshing run worktree failed; keeping its current checkout", "run", st.runKey, "worktree", worktree, "error", err)
+	}
+	return nil
+}
+
+// spekHubRepoLockPath is the lock serialising git on one shared clone. It sits
+// beside the clone so neither git nor the sweep removes it.
+func spekHubRepoLockPath(repoDir string) string {
+	return filepath.Join(filepath.Dir(repoDir), "."+filepath.Base(repoDir)+".executor.lock")
+}
+
+// waitSpekHubRepoLock blocks until the shared clone's lock is held or ctx ends.
+func waitSpekHubRepoLock(ctx context.Context, repoDir string) (*os.File, error) {
+	for {
+		lock, err := acquireSpekHubFence(spekHubRepoLockPath(repoDir))
+		if !errors.Is(err, errSpekHubFenceBusy) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(spekHubRepoLockPoll):
 		}
 	}
-	if _, err := os.Stat(filepath.Join(worktree, ".spektacular")); errors.Is(err, os.ErrNotExist) {
-		if copied, copyErr := copyPreviousSpektacularProject(e.Identity, st.runKey, worktree); copyErr != nil {
-			e.log().Warn("[spektacular] copying previous Spektacular project failed", "run", st.runKey, "worktree", worktree, "error", copyErr)
-		} else if copied {
-			return appToken, nil
-		}
-		if _, err := e.runner()(ctx, worktree, spekGitEnv(os.Environ()), e.binary(), "init", spekInitAgent(e.backend()), "--name", filepath.Base(st.repo)); err != nil {
-			return "", err
+}
+
+// validateSpekHubRepoPath rejects a repo that cannot be joined under the
+// executor workspace as owner/name (or a nested group path): absolute paths,
+// backslashes, and empty, "." or ".." segments would escape it (#10080).
+func validateSpekHubRepoPath(repo string) error {
+	if repo == "" || strings.ContainsAny(repo, "\\\x00") || strings.HasPrefix(repo, "/") || filepath.IsAbs(repo) {
+		return fmt.Errorf("invalid run repo %q: must be a relative owner/name path", repo)
+	}
+	for _, seg := range strings.Split(repo, "/") {
+		if seg == "" || seg == "." || seg == ".." || strings.TrimSpace(seg) != seg {
+			return fmt.Errorf("invalid run repo %q: must be a relative owner/name path", repo)
 		}
 	}
-	return appToken, nil
+	return nil
+}
+
+// spekProjectName turns a repo basename into a name `spektacular init`
+// accepts: lowercase letters, digits, '-' or '_', starting with a letter or
+// digit (`hive.github.io` -> `hive-github-io`, `.github` -> `github`).
+func spekProjectName(repo string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(filepath.Base(repo)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "-_")
+	if name == "" {
+		return "project"
+	}
+	return name
 }
 
 func copyPreviousSpektacularProject(identity, runKey, worktree string) (bool, error) {
@@ -1250,24 +1809,36 @@ func (e *SpekHubExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) (
 	return e.CloneAuth(ctx, repo, dir)
 }
 
-func (e *SpekHubExecutor) executorEnv(appToken string) ([]string, error) {
-	home := filepath.Join(currentAgentWorkspaceRoot(), e.Identity, "home")
+func spekHubExecutorHome(identity string) string {
+	return filepath.Join(currentAgentWorkspaceRoot(), identity, "home")
+}
+
+func (e *SpekHubExecutor) executorEnv() ([]string, error) {
+	home := spekHubExecutorHome(e.Identity)
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return nil, err
 	}
 	env := allowedSpekHubExecutorEnv(os.Environ())
 	env = spekGitEnv(env)
 	env = append(env, "HOME="+home, "npm_config_cache="+filepath.Join(home, ".npm-cache"))
-	creds, err := agent.HeadlessCredentialEnv(e.backend())
+	creds, err := agent.HeadlessCredentialEnv(e.backend(), agent.HeadlessCredentialSources{BobAPIKey: e.bobAPIKey})
 	if err != nil {
-		e.log().Warn("[spektacular] headless credential env unavailable", "backend", e.backend(), "error", err)
-	} else {
-		env = append(env, creds...)
+		// A missing credential means the agent cannot authenticate; launching
+		// it anyway only burns the stage budget on a predictable failure.
+		// The caller wraps this as a spekHubInfraError so it backs off and
+		// retries instead of spending a generation (hivecommons/hive#10077).
+		return nil, fmt.Errorf("headless credential env unavailable for backend %s: %w", e.backend(), err)
 	}
-	if tok := strings.TrimSpace(appToken); tok != "" {
-		env = append(env, "GH_TOKEN="+tok, "GITHUB_TOKEN="+tok)
-	}
+	env = append(env, creds...)
 	return env, nil
+}
+
+func (e *SpekHubExecutor) bobAPIKey() string {
+	if e.Server == nil || e.Server.deps == nil || e.Server.deps.Config == nil {
+		return ""
+	}
+	bob := e.Server.deps.Config.Governor.Bob
+	return bob.ResolveAPIKey()
 }
 
 func allowedSpekHubExecutorEnv(env []string) []string {
@@ -1287,6 +1858,10 @@ func spekHubExecutorEnvAllowed(key string) bool {
 	case "PATH", "LANG", "LANGUAGE", "TERM", "TZ", "NPM_CONFIG_CACHE":
 		return true
 	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+		return true
+	// The proxy CA, as regular agents receive it. SSL_CERT_FILE stays out:
+	// it replaces the system bundle and breaks Copilot API TLS.
+	case "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO":
 		return true
 	}
 	return strings.HasPrefix(upper, "LC_")
@@ -1314,6 +1889,52 @@ func filteredSpekEnv(env []string, keys ...string) []string {
 		}
 	}
 	return out
+}
+
+// retryUnsettled settles again every spent generation whose settlement
+// failed to persist.
+func (e *SpekHubExecutor) retryUnsettled() {
+	e.mu.Lock()
+	pending := make([]spekHubUnsettled, 0, len(e.unsettled))
+	for _, p := range e.unsettled {
+		pending = append(pending, p)
+	}
+	e.mu.Unlock()
+	for _, p := range pending {
+		e.settleGeneration(p.stage, p.reason)
+	}
+}
+
+// recordInfraFailure reports a failure before the agent launched and backs
+// the generation off without holding or spending it (#10077).
+func (e *SpekHubExecutor) recordInfraFailure(st spekHubStage, key string, err error) {
+	msg := spekHubLastErrorSummary(err.Error())
+	now := time.Now().UTC()
+	e.mu.Lock()
+	if e.backoff == nil {
+		e.backoff = map[string]spekHubBackoff{}
+	}
+	b := e.backoff[key]
+	b.failures++
+	delay := spekHubInfraBackoffMax
+	if b.failures <= 10 {
+		delay = min(spekHubInfraBackoffBase<<(b.failures-1), spekHubInfraBackoffMax)
+	}
+	b.until = now.Add(delay)
+	e.backoff[key] = b
+	e.lastError = msg
+	e.mu.Unlock()
+	e.recordStageProgress(st, "workspace_unavailable", map[string]string{
+		"attempt":     strconv.Itoa(b.failures),
+		"retry_after": b.until.Format(time.RFC3339),
+	})
+	e.log().Warn("[spektacular] hub executor could not prepare stage; retrying without spending the generation", "run", st.runKey, "stage", st.stage, "gen", st.gen, "attempt", b.failures, "retry_after", b.until, "error", msg)
+}
+
+func (e *SpekHubExecutor) clearBackoff(key string) {
+	e.mu.Lock()
+	delete(e.backoff, key)
+	e.mu.Unlock()
 }
 
 func (e *SpekHubExecutor) recordFailure(st spekHubStage, key string, err error) {
@@ -1357,8 +1978,25 @@ func (e *SpekHubExecutor) settleGeneration(st spekHubStage, reason string) {
 		identity, taskID = st.identity, st.taskID
 		outcome, lease, attempts, err = hub.settleStageGeneration(identity, taskID, st.gen, budget, now)
 	}
+	key := e.executionKey(st)
 	if err != nil {
 		e.log().Warn("[spektacular] settling spent stage generation failed", "run", st.runKey, "stage", st.stage, "gen", st.gen, "task", taskID, "error", err)
+		if !errors.Is(err, errLeaseNotFound) {
+			// The lease rolled back to this generation; Tick settles it again
+			// rather than leaving the run held in memory only (#10108).
+			e.mu.Lock()
+			if e.unsettled == nil {
+				e.unsettled = map[string]spekHubUnsettled{}
+			}
+			e.unsettled[key] = spekHubUnsettled{stage: st, reason: reason}
+			e.mu.Unlock()
+			return
+		}
+	}
+	e.mu.Lock()
+	delete(e.unsettled, key)
+	e.mu.Unlock()
+	if err != nil {
 		return
 	}
 	switch outcome {
@@ -1521,7 +2159,7 @@ func (e *SpekHubExecutor) runner() func(context.Context, string, []string, strin
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = dir
 		cmd.Env = env
-		spekHubConfigureProcessGroup(cmd)
+		spekHubConfigureProcessGroup(cmd, "")
 		spekHubInheritFence(cmd, ctx)
 		cmd.WaitDelay = spekHubWaitDelay
 		cmd.Stdout = &buf
@@ -1542,7 +2180,7 @@ func (e *SpekHubExecutor) artifact(runKey string) string {
 	if e.Artifact != nil {
 		return e.Artifact(runKey)
 	}
-	return sanitizeRunPromptPath(runKey)
+	return worksource.CapArtifactSlug(sanitizeRunPromptPath(runKey))
 }
 
 func (e *SpekHubExecutor) backend() string {
@@ -1560,11 +2198,41 @@ func (e *SpekHubExecutor) log() *slog.Logger {
 }
 
 func writeSpekHubPrompt(worktree, prompt string) error {
-	path := filepath.Join(worktree, spekHubPromptRelPath)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return writeSpekHubWorktreeFile(filepath.Join(worktree, spekHubPromptRelPath), []byte(prompt))
+}
+
+func writeSpekHubWorktreeFile(path string, data []byte) error {
+	f, err := createSpekHubWorktreeFile(path)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(prompt), 0o600)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// createSpekHubWorktreeFile creates a fresh executor-owned file in the reused
+// worktree. The agent can write there, so a symlinked parent directory is
+// refused and any existing entry (a planted symlink or hard link) is unlinked
+// rather than written through.
+func createSpekHubWorktreeFile(path string) (*os.File, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("refusing to write %s: %s is not a directory", path, dir)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 }
 
 func SpekHubStagePrompt(stage, repo string, number int, runKey, title, artifact string) string {
@@ -1627,18 +2295,29 @@ func spekHubStagePromptWithBinary(stage, repo string, number int, runKey, title,
 		fmt.Fprintf(&b, "You are authoring a Spektacular %s for the source work item above in this repository checkout. Use the target repository %s for code changes and PRs. %s", stageNoun, item.Repo, cliSteps)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "You are authoring a Spektacular %s for GitHub issue %s%s in this repository checkout. Read the issue with `gh issue view %d --repo %s` (if `gh` is available; otherwise use the GitHub API) and the relevant code. %s", stageNoun, issue, titleText, number, repo, cliSteps)
+	// The executor env carries no GitHub token, and the image's `gh` is a
+	// wrapper that refuses without a per-agent token cache, so the prompt
+	// carries the captured description and never sends the agent to `gh`.
+	if item.Body != "" {
+		fmt.Fprintf(&b, "Issue description:\n%s\n\n", item.Body)
+	}
+	fmt.Fprintf(&b, "You are authoring a Spektacular %s for GitHub issue %s%s in this repository checkout. Read the issue description above (if it is missing or incomplete, fetch the issue from the GitHub REST API at `https://api.github.com/repos/%s/issues/%d`; the `gh` CLI is not authenticated here) and the relevant code. %s", stageNoun, issue, titleText, item.Repo, item.Number, cliSteps)
 	return b.String()
 }
 
+// spekInitAgent picks the `spektacular init` agent (claude, codex or bob) that
+// matches the CLI binary the stage launch actually execs. Other CLIs read the
+// AGENTS.md convention that the codex init writes.
 func spekInitAgent(backend string) string {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case "bob":
-		return "bob"
-	case "codex", "copilot":
-		return "codex"
-	default:
+	binary, err := agent.HeadlessBackendBinary(strings.ToLower(strings.TrimSpace(backend)))
+	if err != nil {
 		return "claude"
+	}
+	switch binary {
+	case "claude", "bob":
+		return binary
+	default:
+		return "codex"
 	}
 }
 

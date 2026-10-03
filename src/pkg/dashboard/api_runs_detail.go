@@ -45,9 +45,17 @@ type RunDetailIssue struct {
 	Repo       string `json:"repo,omitempty"`
 	Number     int    `json:"number,omitempty"`
 	SourceType string `json:"source_type,omitempty"`
-	ExternalID string `json:"external_id,omitempty"`
-	Title      string `json:"title,omitempty"`
-	URL        string `json:"url,omitempty"`
+	// SourceDisplayName is the dashboard label for SourceType: for the
+	// work_source.external adapter, its configured display_name (falling back
+	// to its name), empty for every built-in source, which keeps labelling
+	// itself (never "GitHub") for those. The "source badge" wherever the
+	// dashboard labels the work source — here the run detail panel's source
+	// pill — prefers this over SourceType when set (ADR-0020, "Dashboard
+	// terminology", #10174).
+	SourceDisplayName string `json:"source_display_name,omitempty"`
+	ExternalID        string `json:"external_id,omitempty"`
+	Title             string `json:"title,omitempty"`
+	URL               string `json:"url,omitempty"`
 }
 
 type RunDetailPlan struct {
@@ -237,6 +245,23 @@ func (s *Server) taskRunLogPathForDetail() string {
 	return taskRunLogPath
 }
 
+// externalWorkSourceDisplayName resolves a work item's SourceType to the
+// configured work_source.external display_name, when the configured external
+// adapter's name matches (ADR-0020, "Dashboard terminology", #10174). Every
+// built-in SourceType ("github", "linear", "jira", ...) returns "", so
+// callers that only want the external label can always fall back to their
+// own existing SourceType handling for those.
+func (s *Server) externalWorkSourceDisplayName(sourceType string) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || sourceType == "" {
+		return ""
+	}
+	ext := s.deps.Config.Governor.WorkSource.External
+	if ext.Name == "" || ext.Name != sourceType {
+		return ""
+	}
+	return ext.Label()
+}
+
 func (s *Server) runDetailIssue(run Run) RunDetailIssue {
 	repo, number := run.Repo, runIssueNumber(run.Key)
 	if ref, ok := worksource.ParseKey(run.Key); ok {
@@ -246,6 +271,7 @@ func (s *Server) runDetailIssue(run Run) RunDetailIssue {
 	if run.WorkItem != nil {
 		item := run.WorkItem.Normalized()
 		out.SourceType = item.SourceType
+		out.SourceDisplayName = s.externalWorkSourceDisplayName(item.SourceType)
 		out.ExternalID = item.ExternalID
 		out.Title = item.Title
 		out.URL = firstRunNonEmpty(item.URL, out.URL)

@@ -567,6 +567,27 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 	if reset {
 		attrs["reset"] = "true"
 	}
+	// A retry re-mints the same stage (from == to); mark it so consumers can
+	// tell it from a real advance.
+	retry := !reset && from == to
+	if retry {
+		attrs["retry"] = "true"
+	}
+	// Timeline stages merge attrs per (ref, kind), so a plain advance blanks
+	// the reason/reset left by an earlier reset instead of inheriting them.
+	timelineAttrs := make(map[string]string, len(attrs)+2)
+	for k, v := range attrs {
+		timelineAttrs[k] = v
+	}
+	if reason == "" {
+		timelineAttrs["reason"] = ""
+	}
+	if !reset {
+		timelineAttrs["reset"] = ""
+	}
+	if !retry {
+		timelineAttrs["retry"] = ""
+	}
 	eventAt := int64(0)
 	if !at.IsZero() {
 		eventAt = at.UnixMilli()
@@ -576,7 +597,7 @@ func (h *ContributeWSHub) emitLeaseStageTransitionAt(from, to, reason string, re
 		Kind:     timeline.KindStageCompleted,
 		Agent:    l.identity,
 		At:       eventAt,
-		Attrs:    attrs,
+		Attrs:    timelineAttrs,
 	})
 	payload := hooks.Payload{
 		Transition: hooks.TransitionStageCompleted,
@@ -689,6 +710,32 @@ func (h *ContributeWSHub) completeImplementStage(identity, taskID string, now ti
 			"identity", completed.identity, "task", taskID, "error", err)
 	}
 	return true
+}
+
+// releaseImplementStageUnverified is the task_complete path for an implement
+// lease whose reported PR did NOT verify (#10090): the lease is revoked so the
+// relay cannot re-adopt it and the per-stage worktree is removed because nothing
+// owns it any more, but no stage_completed event fires — the run stays open for
+// a later generation to finish it properly.
+func (h *ContributeWSHub) releaseImplementStageUnverified(identity, taskID string) {
+	if h == nil || identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	var released *taskLease
+	if l := h.leaseForLocked(identity, taskID); l != nil {
+		copied := *l
+		released = &copied
+	}
+	h.leaseMu.Unlock()
+	h.revokeLease(identity, taskID)
+	if released == nil || released.stage == "" {
+		return
+	}
+	if err := removeRunStageWorktree(released.identity, leaseWorkKey(released), released.stage, released.gen); err != nil {
+		h.logger.Warn("[contribute-ws] unverified run-stage worktree cleanup failed",
+			"identity", identity, "task", taskID, "stage", released.stage, "error", err)
+	}
 }
 
 func (h *ContributeWSHub) postCompletionPRComment(ctx context.Context, task *WSTaskAssign, item worksource.WorkItemContext, prURL string) {

@@ -36,7 +36,7 @@ spec:
     spec:
       initContainers:
         - name: model-download
-          image: curlimages/curl:8.13.0
+          image: curlimages/curl:8.13.0@sha256:d43bdb28bae0be0998f3be83199bfb2b81e0a30b034b6d7586ce7e05de34c3fd
           command:
             - /bin/sh
             - -c

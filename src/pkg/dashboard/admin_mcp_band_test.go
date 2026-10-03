@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,6 +162,83 @@ func TestDashboardAdminMCPBandFilterMatchesRowKeyNotLabel(t *testing.T) {
 		m := row.(map[string]any)
 		if m["band"] != "blocked" {
 			t.Fatalf("row band = %#v, want the band key \"blocked\" not its display label", m["band"])
+		}
+	}
+}
+
+// TestDashboardAdminMCPReviewQueueUsesRealOverviewRows runs review_queue over
+// the real Overview row builders, so the queue sees display-label bands
+// exactly as production serves them (#10018) and still classifies them.
+func TestDashboardAdminMCPReviewQueueUsesRealOverviewRows(t *testing.T) {
+	s := NewServerWithAuth(0, "secret", nil)
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "h1", Dashboard: config.DashboardConfig{AuthToken: "secret"}}}
+	s.statusMu.Lock()
+	s.status = parityStatus9102(t)
+	s.statusMu.Unlock()
+
+	result, err := dashboardAdminMCPProvider{server: s}.Read(context.Background(), adminmcp.ToolReviewQueue, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Total int `json:"total"`
+		Rows  []struct {
+			Kind       string  `json:"kind"`
+			Number     float64 `json:"number"`
+			ReasonCode string  `json:"reason_code"`
+			Reason     string  `json:"reason"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatalf("decode %s: %v", encoded, err)
+	}
+	found := map[string]string{}
+	for _, row := range body.Rows {
+		if row.Reason == "" {
+			t.Fatalf("row without reason: %+v", row)
+		}
+		found[fmt.Sprintf("%s#%d", row.Kind, int(row.Number))] = row.ReasonCode
+	}
+	if found["issue#6"] != adminmcp.ReviewReasonConfirmClose {
+		t.Fatalf("rows = %s, want hive/likely-done issue #6 as confirm_close", encoded)
+	}
+	if _, ok := found["pr#10"]; !ok {
+		t.Fatalf("rows = %s, want needs-human PR #10 queued", encoded)
+	}
+	for _, absent := range []string{"pr#12", "pr#14", "issue#1"} {
+		if _, ok := found[absent]; ok {
+			t.Fatalf("rows = %s, %s needs no human and must not be queued", encoded, absent)
+		}
+	}
+}
+
+func TestDashboardAdminMCPGovernorSetupReadsGovernorSettings(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/config/governor", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"repoCount":           12,
+			"cadenceScope":        "aggregate",
+			"thresholdScaling":    "linear",
+			"effectiveThresholds": map[string]any{"quiet": 24, "busy": 120, "surge": 240},
+			"pinnedThresholds":    map[string]any{},
+			"budget":              map[string]any{"totalTokens": 0, "periodDays": 7, "criticalPct": 90},
+		})
+	})
+	result, err := dashboardAdminMCPProvider{server: s}.Read(context.Background(), adminmcp.ToolGovernorSetup, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"type":"governor_setup_proposal"`, `"operation":"governor.threshold_scaling"`, `"scaling":"sqrt"`, `"owner_input":["totalTokens"]`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("proposal = %s, missing %s", encoded, want)
 		}
 	}
 }

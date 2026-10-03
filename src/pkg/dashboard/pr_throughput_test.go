@@ -386,6 +386,33 @@ func TestPRThroughputBucketsAlignAndEmpty(t *testing.T) {
 	}
 }
 
+func TestPRThroughputBucketsTimeToMergePercentiles(t *testing.T) {
+	since := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	until := since.Add(time.Hour)
+	entries := []AuditEntry{
+		{Timestamp: rfc3339(since.Add(-30 * time.Minute)), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=1"},
+		{Timestamp: rfc3339(since.Add(5 * time.Minute)), Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=1"},
+		{Timestamp: rfc3339(since), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=2"},
+		{Timestamp: rfc3339(since.Add(20 * time.Minute)), Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=2"},
+		{Timestamp: rfc3339(since), Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=3"},
+		{Timestamp: rfc3339(since.Add(25 * time.Minute)), Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=3"},
+	}
+
+	buckets := prThroughputBuckets(entries, since, until, 15*time.Minute, "")
+	if len(buckets) < 2 {
+		t.Fatalf("bucket count = %d, want at least 2", len(buckets))
+	}
+	if buckets[0].TTMP50 == nil || *buckets[0].TTMP50 < 0.58 || *buckets[0].TTMP50 > 0.59 {
+		t.Fatalf("bucket 0 p50 = %v, want about 0.58h", buckets[0].TTMP50)
+	}
+	if buckets[1].TTMP50 == nil || *buckets[1].TTMP50 < 0.37 || *buckets[1].TTMP50 > 0.38 {
+		t.Fatalf("bucket 1 p50 = %v, want about 0.375h", buckets[1].TTMP50)
+	}
+	if buckets[1].TTMP90 == nil || *buckets[1].TTMP90 < 0.40 || *buckets[1].TTMP90 > 0.42 {
+		t.Fatalf("bucket 1 p90 = %v, want about 0.408h", buckets[1].TTMP90)
+	}
+}
+
 func TestPRThroughputPercentilesAndEmptyTrend(t *testing.T) {
 	if percentileHours(nil, 0.5) != nil {
 		t.Fatal("empty percentile must be nil")

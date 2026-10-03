@@ -187,3 +187,56 @@ func isRunStageExternalID(ext string) bool {
 		return false
 	}
 }
+
+// ArtifactSlug renders the ref as a filesystem- and Spektacular-safe slug:
+// the lowercased repository and identifier joined by "-", with every run of
+// non-alphanumeric characters collapsed to a single dash. "owner/repo#42"
+// becomes "owner-repo-42". It is the canonical artifact spelling for
+// issue-numbered runs, shared by Spektacular's run directory naming and the
+// dashboard's campaign ids so the two never disagree (hivecommons/hive#10091).
+// An empty result (no repo, no id) yields "run".
+func (r Ref) ArtifactSlug() string {
+	return CapArtifactSlug(r.uncappedArtifactSlug())
+}
+
+// MaxArtifactSlugLen is Spektacular's artifact name limit (schema maxLength).
+const MaxArtifactSlugLen = 64
+
+// CapArtifactSlug bounds a slug to MaxArtifactSlugLen, keeping the trailing
+// characters so the run number or external id stays distinguishing.
+func CapArtifactSlug(s string) string {
+	if len(s) <= MaxArtifactSlugLen {
+		return s
+	}
+	out := strings.TrimLeft(s[len(s)-MaxArtifactSlugLen:], "-")
+	if out == "" {
+		return "run"
+	}
+	return out
+}
+
+func (r Ref) uncappedArtifactSlug() string {
+	id := r.ExternalID
+	if r.Number > 0 {
+		id = strconv.Itoa(r.Number)
+	}
+	raw := strings.ToLower(r.Repo + "-" + id)
+	var b strings.Builder
+	lastDash := false
+	for _, c := range raw {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "run"
+	}
+	return out
+}

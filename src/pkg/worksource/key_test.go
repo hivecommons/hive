@@ -1,6 +1,9 @@
 package worksource
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestDisplayNeverRendersZero pins the human-facing short form: "#42" for
 // GitHub-backed work, the native key for a string-keyed source, and never the
@@ -99,5 +102,44 @@ func TestParseKeyRefusesMalformedInput(t *testing.T) {
 	}
 	if ref, ok := ParseKey(" acme/repo!ENG-9 "); !ok || ref.Key() != "acme/repo!ENG-9" {
 		t.Errorf("ParseKey should trim the external form too, got %+v ok=%v", ref, ok)
+	}
+}
+
+func TestRefArtifactSlug(t *testing.T) {
+	cases := map[string]string{
+		"Owner/Repo#42":      "owner-repo-42",
+		"owner/repo!ENG-123": "owner-repo-eng-123",
+		"x/y#7":              "x-y-7",
+	}
+	for in, want := range cases {
+		ref, ok := ParseKey(in)
+		if !ok {
+			t.Fatalf("ParseKey(%q) failed", in)
+		}
+		if got := ref.ArtifactSlug(); got != want {
+			t.Errorf("ArtifactSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := (Ref{}).ArtifactSlug(); got != "run" {
+		t.Errorf("empty ref slug = %q, want run", got)
+	}
+}
+
+func TestCapArtifactSlug(t *testing.T) {
+	short := "owner-repo-42"
+	if got := CapArtifactSlug(short); got != short {
+		t.Errorf("short slug changed: %q", got)
+	}
+	long := strings.Repeat("a", 70) + "-42"
+	got := CapArtifactSlug(long)
+	if len(got) != MaxArtifactSlugLen || !strings.HasSuffix(got, "-42") {
+		t.Errorf("CapArtifactSlug = %q (len %d), want %d chars ending -42", got, len(got), MaxArtifactSlugLen)
+	}
+	ref, ok := ParseKey("owner/" + strings.Repeat("r", 80) + "#7")
+	if !ok {
+		t.Fatal("ParseKey failed")
+	}
+	if got := ref.ArtifactSlug(); len(got) != MaxArtifactSlugLen || !strings.HasSuffix(got, "-7") {
+		t.Errorf("ArtifactSlug = %q (len %d)", got, len(got))
 	}
 }

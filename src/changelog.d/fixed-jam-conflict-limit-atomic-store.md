@@ -1,0 +1,1 @@
+- Fix Jam spec edits: `POST /api/campaigns/{id}/jam` now rejects a stale or missing `base_revision_id` with `409` instead of overwriting concurrent work, the Jam WebSocket reads under the same 64 KiB frame limit as the contribute hub and refuses blank edits, and `campaign-jam.json` is written atomically so a failed write can no longer corrupt every campaign's Jam state.

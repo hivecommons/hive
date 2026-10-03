@@ -1,0 +1,1 @@
+- Publish Jam Projects sync through the real Projects v2 `addProjectV2DraftIssue` mutation for GitHub Enterprise Server endpoints (`https://<host>/api/graphql`) too, instead of posting the hive's own `hiveJamProjectSync` mutation that no GitHub GraphQL API implements (#10086).

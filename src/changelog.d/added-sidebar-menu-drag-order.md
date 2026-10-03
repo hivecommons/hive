@@ -1,0 +1,1 @@
+- Add sidebar drag handles that keep dashboard sections and agent cards in the same saved order.

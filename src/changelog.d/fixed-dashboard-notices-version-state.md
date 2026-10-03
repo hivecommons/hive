@@ -1,0 +1,1 @@
+- Move dashboard notices into the pinned top slot and clear stale upgrade-in-progress state once a spoke has moved on.
