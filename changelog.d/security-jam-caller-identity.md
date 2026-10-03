@@ -1,0 +1,1 @@
+- Jam REST writes and WebSocket presence/edits now use the authenticated user instead of caller-supplied agent/model attribution, preventing forged authorship and unlimited poll votes through changing agent names; server-generated agent replies retain their attribution (Refs #10056).
