@@ -30691,14 +30691,14 @@ function burnAreaChart() {
       const dim = st.enabled ? '' : ' rt-dim';
       return `
         <h4 class="rt-h4">Reporter trust</h4>
-        <p class="fs-sm text-muted mb-4">Gate work on <b>who filed the issue</b>, not only on its labels. Issues from trusted reporters are worked under the rules above. Issues from anyone else wait until a maintainer adds one of the triage labels below — and the PR that follows is held for a maintainer at every autonomy level (see the Repos tab). Off by default; existing hives change nothing until you switch it on. <a class="text-accent" href="https://github.com/hivecommons/hive/issues/9665" target="_blank" rel="noopener">#9665 ↗</a></p>
+        <p class="fs-sm text-muted mb-4">Gate work on <b>who filed the issue</b>, not only on its labels. Issues from trusted reporters are worked under the rules above. Issues from anyone else wait until a maintainer adds one of the triage labels below — and the PR that follows is held for a maintainer at every autonomy level (see the Repos tab).</p>
         <div class="config-toggle rt-toggle">
           <div class="config-toggle-switch ${st.enabled ? 'on' : ''}" data-action="toggleReporterTrustEnabled" data-arg-types="t" title="Require maintainer triage for issues from untrusted reporters"></div>
           <span class="config-toggle-label">Require triage for issues from untrusted reporters</span>
         </div>
         <div class="rt-body${dim}">
           <div class="fs-sm mb-2 rt-subhead">Trusted GitHub associations</div>
-          <p class="fs-xs text-muted mb-3">GitHub reports one of these for every issue author. Checked = trusted. The default trusts owners, members and collaborators; <code>CONTRIBUTOR</code> means "had a commit merged once" and is deliberately not trusted.</p>
+          <p class="fs-xs text-muted mb-3">GitHub reports one of these for every issue author. Checked = trusted. <code>CONTRIBUTOR</code>, <code>FIRST_TIME_CONTRIBUTOR</code> and <code>FIRST_TIMER</code> are assigned automatically from commit history (one commit to this repo makes anyone a <code>CONTRIBUTOR</code>), and <code>NONE</code> means no relationship at all. Check any of those and people become trusted without your say. <code>OWNER</code>, <code>MEMBER</code> and <code>COLLABORATOR</code> change only when someone is given org membership or repo access; note that <code>MEMBER</code> means <i>any</i> member of the owning org, even one with no access to this repo. With the default (those three checked), nobody gains trust just by getting PRs merged. To trust a specific outside person, add their login under Always-trusted logins below; that trusts them without giving them repo access.</p>
           <div class="rt-assoc-grid">${assocRows}</div>
           <div class="fs-sm mb-2 rt-subhead">Always-trusted logins</div>
           <p class="fs-xs text-muted mb-3">People to trust whatever GitHub says about them — an external maintainer of a dependency, for example.</p>

@@ -1,0 +1,1 @@
+- Reworded the Settings → Labels → Reporter trust copy: dropped the rollout sentence and closed-issue link, and the associations help now says which associations are assigned automatically and that Always-trusted logins is the way to trust one person ([#10487](https://github.com/hivecommons/hive/issues/10487)).
