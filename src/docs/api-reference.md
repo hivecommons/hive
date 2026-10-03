@@ -56,6 +56,24 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/campaigns/{id}/jam/ws` | Dashboard auth/session | Upgrade to a Jam WebSocket for live participant presence, section focus, and conflict-aware spec co-edit messages. Live edits require read-write role and stale `base_revision_id` values are rejected with a conflict message. | `pkg/dashboard/api.go:113` |
 | `GET` | `/api/runs/{key}/trace` | Dashboard auth/session | Resolve `Hive-Run`, `Hive-Plan`, and `Hive-Spec` commit trailers for `?sha=...`, returning the linked plan section, spek clause, approval audit record, rationale audit entries, and typed no-linkage results when trailers are missing. | `pkg/dashboard/api.go:87` |
 
+### Owner run recovery
+
+The reset rows above describe ordinary backwards resets. An **escalated**
+(`waiting_reason=stage_budget_exhausted`) lease also accepts its current stage
+as `to`; that owner reset mints a new generation, clears escalation, and starts
+with a fresh stage budget. Same-stage reset still returns 400 for a lease that
+has not escalated; forward moves remain forbidden.
+
+`POST /api/runs/{key}/reset` also accepts `{"reason":"triage_fix"}` without
+`to`, only at `spec`. It atomically retires the stage lease to the direct-fix
+path and persists that decision across restarts. Automatic design-label
+admission respects the retirement. Run triage can be explicitly overridden
+with `run/spec`.
+
+| Method | Path | Auth | Description | Source |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/runs/{key}/abandon` | Owner only | Terminally abandon a staged run. Body `{"reason":"<why>"}`, reason required. Atomically removes its stage leases and persists a non-expiring admission tombstone; old generations cannot resume. Records an owner audit and lifecycle event, and retained timeline detail shows `state=abandoned`. Automatic run triage, design admission, and explicit owner starts cannot restart this run key; no abandonment reversal operation is provided. Does not close the source issue. Returns `{ok,key,state,reason}`. 400 for invalid/missing reason, 403 for an unverified owner, 404 for no live staged lease, 409 for a concurrent generation change, 500 for a persistence failure (leases remain unchanged). | `handleRunAbandon`, `pkg/dashboard/api.go:449` |
+
 ## Snapshots and style
 
 | Method | Path | Auth | Purpose | Source |
