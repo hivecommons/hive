@@ -9,7 +9,7 @@ func TestExternalCampaignIdentityDoesNotCollide(t *testing.T) {
 	dir := t.TempDir()
 	e := NewInceptionEngine(dir, nil, nil)
 	now := time.Now()
-	ids := []string{"myorg/repo1#8450", "myorg/repo#18450", "myorgrepo18450", "Owner/Repo.Name!spec:plan"}
+	ids := []string{"myorg/repo1#8450", "myorg/repo#18450", "myorgrepo18450", "Owner/Repo.Name!spec:plan", "External Campaign", "external-campaign", "MyOrg/repo#18450"}
 	for _, id := range ids {
 		archive, err := e.ReviseExternalCampaign(id, id, id, "", "", "alice", nil, now)
 		if err != nil {

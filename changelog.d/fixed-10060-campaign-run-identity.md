@@ -1,1 +1,1 @@
-- Preserve exact Spektacular run IDs when revising campaigns, preventing phantom rows and slug collisions; releasing a revise lease now leaves the live stage lease intact.
+- Preserve exact Spektacular run IDs when revising campaigns, preventing phantom rows and slug collisions while keeping artifact-name translation confined to CLI resume commands; releasing a revise lease now leaves the live stage lease intact.

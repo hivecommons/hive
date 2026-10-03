@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,10 @@ func TestCampaignReviseIssueRunsPreservesIdentityAndStageLease(t *testing.T) {
 		if campaign.Revision != 1 || campaign.LeaseOwner != "alice" || campaign.CurrentStage != StageSpec {
 			t.Fatalf("live revision = %+v", campaign)
 		}
+		resume := doOwnerPostAsUser(s, "/api/campaigns/"+url.PathEscape(campaign.ID)+"/resume", "alice", map[string]string{"surface": "cli"})
+		if resume.Code != http.StatusOK || !strings.Contains(resume.Body.String(), "spektacular spec status "+campaignArtifactID(campaign.ID)) {
+			t.Fatalf("resume = %d: %s", resume.Code, resume.Body.String())
+		}
 		archive, err := s.deps.Inception.LoadCampaignArchive(campaign.ID)
 		if err != nil || archive.Source != campaign.RunKey {
 			t.Fatalf("archive = %+v, err = %v", archive, err)
@@ -72,6 +77,12 @@ func TestCampaignReviseIssueRunsPreservesIdentityAndStageLease(t *testing.T) {
 		archive, err = s.deps.Inception.LoadCampaignArchive(campaign.ID)
 		if err != nil || archive.Lease != nil {
 			t.Fatalf("revise lease not released: %+v, err = %v", archive, err)
+		}
+		// Once the archive lease is cleared, another campaign release must not
+		// fall through to revoking the still-live stage lease.
+		again := doOwnerPostAsUser(s, "/api/campaigns/"+url.PathEscape(campaign.ID)+"/release", "alice", map[string]string{})
+		if again.Code != http.StatusNotFound {
+			t.Fatalf("second release = %d: %s", again.Code, again.Body.String())
 		}
 		after, ok := s.contributeHub.runLeaseHolder(campaign.RunKey, time.Now())
 		if !ok || after.identity != held.identity || after.taskID != held.taskID {
