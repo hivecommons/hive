@@ -136,6 +136,30 @@ Network=hive.network
 Volume=%E/hive/hive.yaml:/etc/hive/hive.yaml:ro,Z
 Volume=%E/hive/secrets:/secrets:ro,Z
 
+# THE UPGRADE REQUEST BRIDGE (#10344). The one writable bind mount, and the
+# only way the dashboard Upgrade button can reach a host lifecycle at all.
+#
+# Hive runs in its own mount, PID and user namespace, so the dashboard cannot
+# exec a host-side upgrade helper: the helper is not in the image and systemctl,
+# podman and the drop-ins under %E/hive are not reachable from here. Mounting a
+# podman or systemd socket in to fix that would hand the container the host's
+# whole lifecycle API, which this deployment refuses to do — hence a directory
+# and a grammar instead of an API.
+#
+# Hive writes one small JSON request per click (atomically: temp name, then
+# rename(2)); on the host, src/deploy/systemd/hive-upgrade.path notices the
+# new *.json and starts hive-upgrade.service, which runs
+# bin/hive-upgrade-request.sh OUTSIDE every container namespace. That script
+# re-validates the image reference against the closed
+# ghcr.io/hivecommons/hive allow-list and passes it to
+# bin/hive-podman-update.sh as argv — nothing written here is ever evaluated as
+# shell text. The container's whole capability is "cause that script to run".
+#
+# rw, because the request has to be written; :Z and not :z for the same reason
+# as the two lines above — exactly one container uses this path. The format and
+# the trust boundary are in src/docs/dashboard-standalone-upgrades.md.
+Volume=%E/hive/upgrade-requests:/run/hive/upgrade-requests:rw,Z
+
 # Tokens and notification settings, kept out of the unit file.
 #
 # This file must EXIST — create it empty if every setting lives in hive.yaml.

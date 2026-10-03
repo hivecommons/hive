@@ -1,0 +1,57 @@
+# The host half of the dashboard upgrade bridge (#10344, option A).
+#
+# WHY A FILE AND NOT A SOCKET. A Hive running under Quadlet lives in its own
+# mount, PID and user namespace. The dashboard upgrade button used to
+# exec.CommandContext a host-side helper from INSIDE that namespace, which can
+# never work: the helper is not in the image, and the lifecycle it has to drive
+# (systemctl, podman, the Quadlet drop-ins under %E/hive) is not reachable from
+# a container that deliberately mounts no podman, docker or systemd socket.
+#
+# So the container does the only thing it safely can across that boundary: it
+# writes a REQUEST FILE into a bind-mounted directory. This unit watches that
+# directory from the host and starts hive-upgrade.service, which runs the real
+# bin/hive-podman-update.sh outside every container namespace.
+#
+# The trust boundary is therefore one directory and one grammar, not an API:
+# the container can only ever cause hive-upgrade-request.sh to run, and that
+# script re-validates every field it reads. Nothing the container writes is
+# ever evaluated as shell text. See src/docs/dashboard-standalone-upgrades.md.
+#
+# BOTH ROOT MODES, ONE FILE. %E is systemd's configuration-directory specifier:
+# /etc for a system (rootful) unit and ~/.config for a --user (rootless) one —
+# the same portability rule ADR-0017 imposes on src/deploy/quadlet/hive.container,
+# and the reason this unit is written with %E rather than %h.
+
+[Unit]
+Description=Watch for Hive dashboard upgrade requests
+Documentation=https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-standalone-upgrades.md
+
+[Path]
+# PathExistsGlob and NOT PathChanged/PathModified, deliberately. The container
+# writes each request to a temporary name in this same directory and then
+# rename(2)s it onto its final `*.json` name, so a request becomes visible
+# atomically and this unit can never observe a half-written file. A
+# PathModified watch would fire on the temporary write too, and the drain
+# script would then race the writer for a file that has no closing brace yet.
+#
+# The glob also scopes the watch: the drain script's own `done/` and `failed/`
+# subdirectories are directories, not `*.json` entries at this level, so
+# archiving a handled request does not re-trigger this unit into a loop.
+PathExistsGlob=%E/hive/upgrade-requests/*.json
+
+# Level-triggered, not edge-triggered: if a request is already sitting in the
+# directory when this unit starts — written while the host was down, or left
+# behind by a drain that failed — MakeDirectory below plus PathExistsGlob's
+# start-time evaluation still activates the service. A request is never lost
+# because nobody was watching at the moment it landed.
+MakeDirectory=true
+DirectoryMode=0750
+
+Unit=hive-upgrade.service
+
+[Install]
+# This one IS wanted at boot, unlike the Quadlet units (#4478). It starts no
+# container and blocks nothing: a .path unit's start job is an inotify watch
+# being installed, so it cannot hold the boot transaction the way a
+# Notify=healthy container start can.
+WantedBy=default.target
