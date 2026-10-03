@@ -34,7 +34,6 @@ type RunDetailTextBlock struct {
 type RunDetailStageStatus struct {
 	At             string         `json:"at,omitempty"`
 	Step           string         `json:"step,omitempty"`
-	Instruction    string         `json:"instruction,omitempty"`
 	DocumentStatus string         `json:"document_status,omitempty"`
 	CompletedSteps []string       `json:"completed_steps,omitempty"`
 	Artifact       string         `json:"artifact,omitempty"`
