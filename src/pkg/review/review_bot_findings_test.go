@@ -86,7 +86,7 @@ func TestReviewBotThreadFilterSelectsOpenBotThreads(t *testing.T) {
 	if err != nil {
 		t.Skip("jq not installed")
 	}
-	section := buildReviewBotFindingsInstruction(PullRequest{Repo: "o/r", Number: 1}, []string{"chatgpt-codex-connector[bot]", "Copilot"})
+	section := buildReviewBotFindingsInstruction(PullRequest{Repo: "o/r", Number: 1}, []string{"chatgpt-codex-connector[bot]", "Copilot"}, "")
 	_, after, ok := strings.Cut(section, "--jq '")
 	if !ok {
 		t.Fatalf("no --jq filter in section:\n%s", section)
@@ -117,5 +117,49 @@ func TestReviewBotThreadFilterSelectsOpenBotThreads(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Errorf("filter selected %s (human-opened or resolved):\n%s", bad, got)
 		}
+	}
+}
+
+// min_priority is mirrored in the jq filter: a badge below the threshold is
+// dropped, at-or-above and unbadged threads are kept, and unset adds no clause.
+func TestReviewBotThreadFilterMinPriority(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed")
+	}
+	badge := func(p string) string {
+		return "**<sub><sub>![" + p + " Badge](https://img.shields.io/badge/" + p + "-yellow)</sub></sub>** x"
+	}
+	thread := func(path, body string) string {
+		return `{"isResolved":false,"isOutdated":false,"path":"` + path + `","line":1,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"},"body":"` + strings.ReplaceAll(body, `"`, `\"`) + `","url":"u"}]}}`
+	}
+	page := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[` +
+		strings.Join([]string{thread("p0.go", badge("P0")), thread("p1.go", badge("P1")), thread("p2.go", badge("P2")), thread("none.go", "no badge")}, ",") + `]}}}}}`
+	run := func(min string) string {
+		section := buildReviewBotFindingsInstruction(PullRequest{Repo: "o/r", Number: 1}, []string{"chatgpt-codex-connector"}, min)
+		_, after, _ := strings.Cut(section, "--jq '")
+		filter, _, ok := strings.Cut(after, "'\n")
+		if !ok {
+			t.Fatalf("no jq filter:\n%s", section)
+		}
+		cmd := exec.Command(jq, "-c", filter)
+		cmd.Stdin = strings.NewReader(page)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("jq failed: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	got := run("P1")
+	for _, want := range []string{"p0.go", "p1.go", "none.go"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("P1 dropped %s:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "p2.go") {
+		t.Errorf("P1 kept the P2 thread:\n%s", got)
+	}
+	if all := run(""); !strings.Contains(all, "p2.go") {
+		t.Errorf("unset min_priority dropped P2:\n%s", all)
 	}
 }

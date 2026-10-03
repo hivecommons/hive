@@ -99,6 +99,8 @@ type DispatchOptions struct {
 	// prompt builder, so reviewers read and answer those bots' unresolved
 	// threads (hivecommons/hive#9360).
 	ReviewBotLogins []string
+	// ReviewBotMinPriority is classification.review_bots.min_priority ("P0".."P3"); see PromptOptions.
+	ReviewBotMinPriority string
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
@@ -363,6 +365,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
+				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
@@ -412,6 +415,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ProposeFixesOnly:      !fixPushAllowed(pr, opts),
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
+				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 			})
 			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})

@@ -106,7 +106,9 @@ exempt label (the same exclusions as every other kick input), and for each
 remaining PR runs one GraphQL `pullRequest.reviewThreads` query. A thread is listed when it is
 **unresolved**, **not outdated**, its **first comment is from a configured
 bot**, and it has **fewer than `max_attempts_per_thread` replies from the
-hive**. Threads a human opened never appear.
+hive**, and (when `min_priority` is set) its priority badge is not below it.
+Threads a human opened never appear. A PR's `excluded_by_priority` counts
+threads dropped only by `min_priority` (omitted when zero).
 
 ```json
 {

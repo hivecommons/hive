@@ -57,8 +57,12 @@ type ReviewThreadPR struct {
 	// open question, a person decides whether the thread is actually closed,
 	// since the bot's finding may be disputing a deliberate decision the PR's
 	// own author made.
-	HumanOpened bool           `json:"human_opened,omitempty"`
-	Threads     []ReviewThread `json:"threads"`
+	HumanOpened bool `json:"human_opened,omitempty"`
+	// ExcludedByPriority counts open bot threads left out only because their
+	// priority badge is below classification.review_bots.min_priority, so an
+	// operator can tell "nothing to do" from "filtered".
+	ExcludedByPriority int            `json:"excluded_by_priority,omitempty"`
+	Threads            []ReviewThread `json:"threads"`
 }
 
 // ReviewThread is one unresolved, non-outdated inline thread whose first
@@ -165,20 +169,23 @@ func (c *Client) isHiveLogin(login string) bool {
 // property the watcher's guard re-checks server-side, so an agent cannot be
 // prompted into a human's conversation even by a wrong kick.
 func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig, isHive func(string) bool) []ReviewThread {
+	out, _ := filterReviewThreadsCounted(threads, bots, isHive)
+	return out
+}
+
+// filterReviewThreadsCounted is filterReviewThreads plus the number of
+// threads that passed every other check and were dropped only by min_priority.
+func filterReviewThreadsCounted(threads []rawReviewThread, bots config.ReviewBotsConfig, isHive func(string) bool) (out []ReviewThread, excludedByPriority int) {
 	if !bots.Enabled() {
-		return nil
+		return nil, 0
 	}
 	maxAttempts := bots.MaxAttempts()
-	var out []ReviewThread
 	for _, t := range threads {
 		if t.IsResolved || t.IsOutdated || len(t.Comments.Nodes) == 0 {
 			continue
 		}
 		first := t.Comments.Nodes[0]
 		if !bots.IsBot(first.Author.Login) {
-			continue
-		}
-		if !bots.AtOrAbovePriority(first.Body) {
 			continue
 		}
 		replies := 0
@@ -188,6 +195,10 @@ func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig
 			}
 		}
 		if replies >= maxAttempts {
+			continue
+		}
+		if !bots.AtOrAbovePriority(first.Body) {
+			excludedByPriority++
 			continue
 		}
 		body := strings.TrimSpace(first.Body)
@@ -208,7 +219,7 @@ func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig
 			HiveReplies: replies,
 		})
 	}
-	return out
+	return out, excludedByPriority
 }
 
 // hasBlockedLabel reports whether the PR carries the "blocked" label
@@ -370,7 +381,7 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 		if !hasBotThread(raw, bots) {
 			continue
 		}
-		threads := filterReviewThreads(raw, bots, c.isHiveLogin)
+		threads, excluded := filterReviewThreadsCounted(raw, bots, c.isHiveLogin)
 		if threads == nil {
 			threads = []ReviewThread{}
 		}
@@ -381,6 +392,8 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 			HeadRef:     headRef,
 			HumanOpened: !mediated,
 			Threads:     threads,
+
+			ExcludedByPriority: excluded,
 		})
 		report.TotalThreads += len(threads)
 	}

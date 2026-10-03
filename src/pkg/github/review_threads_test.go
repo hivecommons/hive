@@ -283,7 +283,13 @@ func TestFilterReviewThreads_MinPriority(t *testing.T) {
 	if want := "PRRT_p0,PRRT_p1,PRRT_nobadge"; strings.Join(got, ",") != want {
 		t.Errorf("got %v, want %s", got, want)
 	}
+	if _, excluded := filterReviewThreadsCounted(threads, bots, isHiveTest); excluded != 1 {
+		t.Errorf("excluded = %d, want 1", excluded)
+	}
 	bots.MinPriority = ""
+	if _, excluded := filterReviewThreadsCounted(threads, bots, isHiveTest); excluded != 0 {
+		t.Errorf("unset min_priority must exclude nothing, got %d", excluded)
+	}
 	if got := filterReviewThreads(threads, bots, isHiveTest); len(got) != 4 {
 		t.Errorf("unset min_priority must route everything, got %d", len(got))
 	}

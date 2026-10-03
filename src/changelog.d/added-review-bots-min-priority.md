@@ -1,1 +1,1 @@
-- Added `classification.review_bots.min_priority` (P0–P3) to route only bot review threads at or above a priority badge, leaving lower-priority ones for a human.
+- Added `classification.review_bots.min_priority` (P0–P3) to route only bot review threads at or above a priority badge, leaving lower-priority ones for a human. The reviewer prompt applies the same threshold, and `review-threads.json` reports `excluded_by_priority` per PR.
