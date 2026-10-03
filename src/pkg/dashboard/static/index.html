@@ -13494,9 +13494,9 @@
       if (typeof _overviewKPILocalScope !== 'undefined') _overviewKPILocalScope = kpiScope;
       const useServerHistory = kpiScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
         { key: 'median-age', field: 'overviewMedianAgeSec', label: 'Median age', value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: 'Median selected actionable item age by the configured time basis.' }

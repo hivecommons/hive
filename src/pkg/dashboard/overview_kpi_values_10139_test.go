@@ -66,9 +66,9 @@ const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\
 assert.equal(values.length, 6);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
 assert.deepEqual(Object.fromEntries(values), {
-  'Open issues': '99',
-  'Open PRs': '7',
-  'Actionable now': '103',
+  'Total open issues': '99',
+  'Total open PRs': '7',
+  'Actionable now (issues and PRs)': '103',
   'Held': '1',
   'Blocked / needs-human': '1',
   'Median age': '7m',
