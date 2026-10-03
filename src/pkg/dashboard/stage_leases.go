@@ -472,20 +472,36 @@ func (s *Server) findRunEpic(runKey string) (*beads.Store, *beads.Bead) {
 }
 
 // runPlanSource is the MetaSource value stamped on epics minted from a
-// Spektacular plan.
+// plan when no engine name is supplied.
 const runPlanSource = "spektacular"
 
-// ImportRunPlan admits a final Spektacular plan as a DRAFT Hive plan: the
+// ImportRunPlan admits a final engine plan as a DRAFT Hive plan: the
 // task-list text the runner rendered from Spektacular's export is decomposed
 // with AutoApprove false, so children stay gated until ApprovePlan and no
 // model is asked to redecompose an already-structured plan. The epic is found
 // by its run_key metadata (or created bound to the run key). A run whose epic
-// already carries a plan is left alone (idempotent across ticks).
-func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
+// already carries a plan is left alone (idempotent across ticks). The optional
+// engine name stamps MetaSource; omitted names retain the Spektacular default.
+func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...string) error {
 	if s == nil {
 		return errors.New("no server")
 	}
+	source := runPlanSource
+	if len(engineName) > 1 {
+		return errors.New("at most one planning engine name is required")
+	}
+	if len(engineName) == 1 {
+		source = strings.TrimSpace(engineName[0])
+		if source == "" {
+			return errors.New("planning engine name is required")
+		}
+	}
 	store, epic := s.findRunEpic(runKey)
+	// Never take over a run epic owned by another planner, even when its
+	// plan-status marker is absent. Keep lookup shared with approval/reset.
+	if epic != nil && epic.Meta(planning.MetaSource) != "" && epic.Meta(planning.MetaSource) != source {
+		return nil
+	}
 	if epic == nil {
 		var name string
 		store, name = s.planEpicStore()
@@ -499,7 +515,7 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		for key, value := range map[string]string{
 			planning.MetaRunKey:    runKey,
 			planning.MetaIssueRepo: repo,
-			planning.MetaSource:    runPlanSource,
+			planning.MetaSource:    source,
 		} {
 			if value == "" {
 				continue
@@ -513,9 +529,16 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if epic.Meta(planning.MetaPlanStatus) != "" {
 		return nil
 	}
+	// Epics bound by external ref may predate run metadata. Record their
+	// producing engine too, without retagging an already imported plan.
+	if epic.Meta(planning.MetaSource) == "" {
+		if err := store.SetMetadata(epic.ID, planning.MetaSource, source); err != nil {
+			return fmt.Errorf("tagging run epic: %w", err)
+		}
+	}
 	result, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
 	if err != nil {
-		return fmt.Errorf("importing spektacular plan: %w", err)
+		return fmt.Errorf("importing %s plan: %w", source, err)
 	}
 	if updated, err := store.Get(epic.ID); err == nil {
 		epic = updated

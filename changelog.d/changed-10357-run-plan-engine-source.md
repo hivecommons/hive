@@ -1,0 +1,1 @@
+- Imported run plans record the producing planning engine as their source, retaining `spektacular` for existing callers and leaving epics owned by another planner untouched ([#10357](https://github.com/hivecommons/hive/issues/10357)).

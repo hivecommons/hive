@@ -85,7 +85,7 @@ If export is unavailable, Hive falls back to `spektacular plan file read <name>/
 2. Ensure the binary prints JSON for `spec status`, `plan status`, and preferably `plan export --format json`; Hive passes no `--json` flag.
 3. Use the bare artifact name as the CLI address. Hive normalizes `<name>.md` and `<name>/plan.md` to `<name>` with `ArtifactKey` (`src/pkg/spektacular/runner.go:65`).
 4. Let Hive own stage leases. `RunStageLeaseAccessor` lists pending stages as work items when `run_stages: true` is enabled (`src/pkg/worksource/run_stage.go:37`).
-5. Let Hive import final plan tasks. `ImportRunPlan` admits exported tasks as a draft Hive plan; implement work is listed only after approval (`src/pkg/dashboard/stage_leases.go:478`).
+5. Let Hive import final plan tasks. `ImportRunPlan` admits exported tasks as a draft Hive plan; implement work is listed only after approval (`src/pkg/dashboard/stage_leases.go:485`).
 
 ## Example flow
 

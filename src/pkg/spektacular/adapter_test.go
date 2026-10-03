@@ -17,18 +17,19 @@ import (
 // fakeLeaseRegistry is a primitives-only registry the adapter drives, with
 // the same generation and expiry rules the dashboard applies.
 type fakeLeaseRegistry struct {
-	stage      string
-	gen        uint64
-	expiresAt  time.Time
-	present    bool
-	visitErr   error
-	advanceErr error
-	advances   []map[string]string
-	receipts   [][]byte
-	retries    int
-	refusals   []map[string]string
-	escalates  []map[string]string
-	plans      []string
+	stage       string
+	gen         uint64
+	expiresAt   time.Time
+	present     bool
+	visitErr    error
+	advanceErr  error
+	advances    []map[string]string
+	receipts    [][]byte
+	retries     int
+	refusals    []map[string]string
+	escalates   []map[string]string
+	plans       []string
+	planEngines []string
 }
 
 func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time)) error {
@@ -71,7 +72,8 @@ func (f *fakeLeaseRegistry) EscalateStageLease(_ string, _ time.Time, attrs map[
 	f.escalates = append(f.escalates, attrs)
 }
 
-func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
+func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string, engineName ...string) error {
+	f.planEngines = append(f.planEngines, engineName...)
 	f.plans = append(f.plans, taskList)
 	return nil
 }
@@ -197,5 +199,29 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 	// And again a same-instant tick is inert.
 	if res := r.Tick(context.Background(), now); res != (TickResult{}) {
 		t.Fatalf("second same-instant tick = %+v", res)
+	}
+}
+
+func TestLeaseAdapterImportsReceiptEngineName(t *testing.T) {
+	for _, name := range []string{EngineName, "second-planner", ""} {
+		t.Run("engine="+name, func(t *testing.T) {
+			reg := &fakeLeaseRegistry{}
+			adapter := NewLeaseRegistryAdapter(reg)
+			st := Stage{RunKey: testRunKey, Repo: testRepo, Identity: testIdentity, TaskID: testTaskID, Stage: StagePlan, Gen: 1}
+			receipt := outputschema.StageReceipt{}
+			if name != "" {
+				receipt.Engine = &outputschema.StageReceiptEngine{Name: name}
+			}
+			if err := adapter.Advance(context.Background(), st, ArtifactStatus{}, receipt, &Plan{}, t0); err != nil {
+				t.Fatal(err)
+			}
+			want := name
+			if want == "" {
+				want = EngineName
+			}
+			if len(reg.planEngines) != 1 || reg.planEngines[0] != want {
+				t.Fatalf("import engine names = %q, want %q", reg.planEngines, want)
+			}
+		})
 	}
 }
