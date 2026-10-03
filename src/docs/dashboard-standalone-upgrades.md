@@ -24,6 +24,37 @@ Quadlet installs append the runtime and mode to `hive.env`. Existing installs
 must reconcile or add these values manually; until then the dashboard refuses
 to offer a standalone upgrade action.
 
+## Upgrade target
+
+For a standalone deployment with `HIVE_SELF_IMAGE` naming a release channel
+(`stable`, `candidate`, or `edge`), the default install target is that image
+reference, not the head of the binary's build branch. Setup derives this
+metadata from the installed image, whose default comes from
+`src/deploy/standalone-images.sh`; no separate default channel is invented by
+the dashboard. `HIVE_SELF_IMAGE_TRACKING=registry|pinned` describes the host's
+update posture; it does not turn a digest pin into a channel subscription.
+
+`/api/version` reports `target.source=channel`, `target.channel`, `target.ref`,
+and the image's OCI revision in `target.sha`/`target.short`. If the registry
+cannot resolve that revision, `target.resolved=false`: the dashboard must not
+substitute a branch head or offer an unverified upgrade. The button identifies
+the channel and revision, and confirmation displays the full image ref. The
+helper receives the channel ref, so a promotion between viewing the dashboard
+and pulling can advance the installed revision.
+
+An empty `/api/self-upgrade` target resolves to the installed channel ref. An
+explicit `target` overrides it: either a legacy 7–40 character hexadecimal
+commit (mapped to its short image tag), or a fully qualified
+`ghcr.io/hivecommons/hive:<tag>` / `ghcr.io/hivecommons/hive@sha256:<digest>`
+reference accepted by the host helper's existing allow-list. A deployment
+without channel metadata must supply an explicit target for this API default;
+a digest pin is never guessed to be `stable`.
+
+Target selection does not itself change the host executor's update semantics.
+The registry-tracking executor work is tracked in #10421, and the host request
+bridge in #10423; this target contract supplies one channel ref to either
+executor rather than independently selecting a branch commit.
+
 ## Host helper contract
 
 Standalone upgrades are host lifecycle operations. Hive must not mount Docker,
