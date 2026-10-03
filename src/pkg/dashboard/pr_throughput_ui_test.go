@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,37 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	}
 	if !(gov < throughput && throughput < advisory) {
 		t.Fatalf("Change Throughput must be a top-level sibling after Governor and before Advisory: gov=%d throughput=%d advisory=%d", gov, throughput, advisory)
+	}
+}
+
+func TestPRThroughputCollapsedHeadlineKeepsWindowPill(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Change Throughput headline window controls were not executed")
+	}
+	html := indexHTML(t)
+	render := jsFunc(t, html, "renderPRThroughput")
+	for _, snippet := range []string{
+		`<div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>`,
+		"${prtWindowControls()}",
+	} {
+		if !strings.Contains(render, snippet) {
+			t.Fatalf("Change Throughput render missing collapsed-headline window control snippet %q", snippet)
+		}
+	}
+	script := `const assert = require('node:assert/strict');
+const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
+let prtHours = 168;
+` + jsFunc(t, html, "prtWindowControls") + `
+const out = prtWindowControls();
+assert.match(out, /class="gov-pr-models-toggle prt-window-controls"/);
+assert.match(out, /data-stop="1"/);
+assert.match(out, /data-action="setPRThroughputHours"/);
+assert.match(out, /data-arg0="168"[^>]*>7d<\/button>/);
+assert.match(out, /class="active"[^>]*data-action="setPRThroughputHours"[^>]*data-arg0="168"/);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node Change Throughput window controls failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
