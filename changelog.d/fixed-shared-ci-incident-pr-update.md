@@ -1,0 +1,1 @@
+- Closing a shared-CI incident now requests branch updates for open PRs carrying its `hive-shared-ci-N` marker, even when their changed files do not intersect the incident fix.
