@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
@@ -392,5 +394,73 @@ func TestCampaignJamRequiresConfiguredDataDir(t *testing.T) {
 	}
 	if _, err := os.Stat("campaign-jam.json"); !os.IsNotExist(err) {
 		t.Fatalf("jam store written to the working directory: err=%v", err)
+	}
+}
+
+// TestCampaignJamMutationTakesCrossProcessLock covers #10083: every campaign's
+// Jam state lives in one file that each mutation rewrites whole, so a second
+// hive sharing the data directory must not read its own snapshot and write it
+// back over the first one's work. A mutation has to wait for the advisory
+// lock beside the store, exactly as the beads ledger does. flock is held per
+// open file description, so a second descriptor opened here contends with the
+// server's just as another process would.
+func TestCampaignJamMutationTakesCrossProcessLock(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-lock/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "first",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed thread = %d body=%s", seed.Code, seed.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	held, err := os.OpenFile(filepath.Join(filepath.Dir(path), campaignJamLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open jam lock: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX); err != nil {
+		t.Skipf("filesystem does not support flock: %v", err)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		var b bytes.Buffer
+		_ = json.NewEncoder(&b).Encode(map[string]any{"section": "Goals", "body": "second"})
+		req := httptest.NewRequest(http.MethodPost, "/api/campaigns/spec-lock/jam/threads", &b)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hive-Role", "read-write")
+		req.Header.Set("X-Hive-User", "bob")
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+
+	select {
+	case code := <-done:
+		t.Fatalf("jam write finished (%d) while another holder had the store lock", code)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("release jam lock: %v", err)
+	}
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("jam write after lock release = %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("jam write did not finish after the store lock was released")
+	}
+
+	get := doOwnerGet(s, "/api/campaigns/spec-lock/jam")
+	if get.Code != http.StatusOK {
+		t.Fatalf("jam get = %d body=%s", get.Code, get.Body.String())
+	}
+	if jam := decodeJam(t, get); len(jam.Threads) != 2 {
+		t.Fatalf("threads after serialized writes = %d, want 2", len(jam.Threads))
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -424,6 +425,8 @@ func (s *Server) mutateCampaignJam(id string, fn func(*CampaignJamState) error) 
 	}
 	campaignJamStoreMu.Lock()
 	defer campaignJamStoreMu.Unlock()
+	unlock := s.lockCampaignJamStore()
+	defer unlock()
 	disk, err := s.readCampaignJamDisk()
 	if err != nil {
 		return nil, err
@@ -479,6 +482,52 @@ func (s *Server) requireKnownJamCampaign(id string) error {
 }
 
 var errJamCampaignNotFound = errors.New("campaign not found")
+
+// campaignJamLockName is the advisory cross-process lock guarding the
+// read-modify-write cycle on the shared campaign-jam.json (#10083). It is a
+// separate file, not the store itself, because the store is replaced by
+// rename: locking the data file would leave the lock on the orphaned inode.
+const campaignJamLockName = "campaign-jam.lock"
+
+// lockCampaignJamStore serializes a Jam mutation against every other process
+// writing the same store (#10083). campaignJamStoreMu only covers goroutines
+// inside ONE process, but every campaign's threads, polls and decisions live
+// in one file that each mutation rewrites whole: a second hive (or a hive
+// restarted beside a still-running one) sharing the data directory reads its
+// own snapshot and writes it back, silently dropping everything the other
+// process recorded in between.
+//
+// Same discipline as the beads ledger: a blocking exclusive flock on a lock
+// file beside the store, taken before the store is read and released after it
+// has been written, so a mutation never persists a snapshot taken before
+// another process's write. Best-effort by design — if the lock file cannot be
+// created or the filesystem does not support flock, Jam degrades to the
+// previous single-process behavior rather than refusing the edit.
+func (s *Server) lockCampaignJamStore() func() {
+	noop := func() {}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		return noop
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return noop
+	}
+	f, err := os.OpenFile(filepath.Join(dir, campaignJamLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return noop
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close() // best-effort: degrade to unserialized behavior per the doc comment above
+		return noop
+	}
+	return func() {
+		// The flock is released implicitly by Close, and unconditionally by
+		// process exit, so a crashed holder can never wedge the store.
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+}
 
 func (s *Server) readCampaignJamDisk() (campaignJamDisk, error) {
 	disk := campaignJamDisk{Campaigns: map[string]*CampaignJamState{}}

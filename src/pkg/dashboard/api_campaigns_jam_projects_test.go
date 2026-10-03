@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -228,5 +230,139 @@ func TestPostGitHubProjectDraftsUsesProjectsV2Mutation(t *testing.T) {
 	}
 	if err := postGitHubProjectDrafts(api.URL, "tok", campaignProjectSyncPayload{}); err == nil {
 		t.Fatal("missing project_id err = nil, want error")
+	}
+}
+
+// TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID covers
+// hivecommons/hive#10086: a GitHub Projects v2 node id is always "PVT_…"; a
+// project number or a project URL pasted into project_id by mistake must be
+// rejected locally with an actionable message instead of reaching the real
+// API only to come back as an opaque GraphQL error.
+func TestPostGitHubProjectDraftsRejectsNonNodeIDProjectID(t *testing.T) {
+	var calls int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"data":{"addProjectV2DraftIssue":{"projectItem":{"id":"PVTI_1"}}}}`))
+	}))
+	t.Cleanup(api.Close)
+
+	cases := []string{"7", "https://github.com/orgs/hivecommons/projects/7", "PVT"}
+	for _, projectID := range cases {
+		payload := campaignProjectSyncPayload{ProjectID: projectID, Items: []CampaignProjectItem{{Type: "spec", Title: "t"}}}
+		if err := postGitHubProjectDrafts(api.URL, "tok", payload); err == nil {
+			t.Fatalf("project_id %q err = nil, want rejection", projectID)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("rejected project_id still reached the API %d times", calls)
+	}
+}
+
+// TestCampaignJamProjectSyncStoreFailuresReport5xx covers hivecommons/hive#10083:
+// the project-sync GET and POST handlers loaded/mutated the shared Jam store
+// the same way the thread and agent-invite handlers do, but still reported
+// every store error (corrupt campaign-jam.json) as a client-error 400 instead
+// of deferring to campaignJamStatus like api_campaigns_jam_agents.go was
+// fixed to do in #10268. A corrupt store is a server-side fault, not a bad
+// request, for every Jam endpoint — including project sync.
+func TestCampaignJamProjectSyncStoreFailuresReport5xx(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam", "read-write", "alice", map[string]any{
+		"spec_content": "## Goals\nShip together",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed = %d body=%s", seed.Code, seed.Body.String())
+	}
+	enable := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action":      "enable",
+		"project_url": "https://github.com/orgs/hivecommons/projects/7",
+	}, true)
+	if enable.Code != http.StatusOK {
+		t.Fatalf("enable sync = %d body=%s", enable.Code, enable.Body.String())
+	}
+
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"campaigns": {"spec`), 0o600); err != nil {
+		t.Fatalf("truncate jam store: %v", err)
+	}
+
+	get := doOwnerGet(s, "/api/campaigns/spec-sync-store/jam/project-sync")
+	if get.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync get on corrupt store = %d body=%s, want 500", get.Code, get.Body.String())
+	}
+
+	disablePost := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action": "disable",
+	}, true)
+	if disablePost.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync disable on corrupt store = %d body=%s, want 500", disablePost.Code, disablePost.Body.String())
+	}
+
+	syncPost := jamPostAs(t, s, "/api/campaigns/spec-sync-store/jam/project-sync", "owner", "maintainer", map[string]any{
+		"action": "sync",
+	}, true)
+	if syncPost.Code != http.StatusInternalServerError {
+		t.Fatalf("project-sync sync on corrupt store = %d body=%s, want 500", syncPost.Code, syncPost.Body.String())
+	}
+}
+
+// TestJamProjectSyncUsesProjectsV2ForEnterpriseEndpoints covers the rest of
+// hivecommons/hive#10086: a GitHub Enterprise Server GraphQL endpoint
+// (https://<host>/api/graphql) is a real GitHub API with the Projects v2
+// schema and no hiveJamProjectSync field, so an override pointing at one must
+// publish draft issues the same way the canonical endpoint does instead of
+// posting the hive's own mutation. Endpoints that are not GitHub GraphQL
+// APIs keep the previous behaviour.
+func TestJamProjectSyncUsesProjectsV2ForEnterpriseEndpoints(t *testing.T) {
+	projectsV2 := []string{
+		"https://api.github.com/graphql",
+		"https://ghe.example.com/api/graphql",
+		"https://github.example.com/api/graphql",
+	}
+	for _, raw := range projectsV2 {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %s: %v", raw, err)
+		}
+		if !jamProjectSyncUsesProjectsV2(u) {
+			t.Fatalf("%s treated as a non-GitHub endpoint, want the Projects v2 mutation", raw)
+		}
+	}
+	custom := []string{
+		"http://127.0.0.1:8080",
+		"https://relay.example.com/jam-sync",
+		"https://user:pass@ghe.example.com/api/graphql",
+		"https://ghe.example.com/graphql",
+	}
+	for _, raw := range custom {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %s: %v", raw, err)
+		}
+		if jamProjectSyncUsesProjectsV2(u) {
+			t.Fatalf("%s treated as a GitHub GraphQL endpoint", raw)
+		}
+	}
+}
+
+// TestJamProjectSyncEnterpriseEndpointKeepsItsOwnToken pins the token binding
+// that #10086's routing change must not disturb: an enterprise GraphQL
+// override now gets the Projects v2 mutation, but still only ever receives
+// HIVE_JAM_PROJECT_SYNC_TOKEN, never GITHUB_TOKEN (#8811).
+func TestJamProjectSyncEnterpriseEndpointKeepsItsOwnToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "gh-secret")
+	t.Setenv(jamProjectSyncTokenEnv, "custom-token")
+	endpoint, token, err := jamProjectSyncAuth("https://ghe.example.com/api/graphql")
+	if err != nil {
+		t.Fatalf("jamProjectSyncAuth: %v", err)
+	}
+	if endpoint != "https://ghe.example.com/api/graphql" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+	if token != "custom-token" {
+		t.Fatalf("token = %q, want the custom endpoint token", token)
 	}
 }

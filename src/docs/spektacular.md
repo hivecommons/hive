@@ -150,7 +150,8 @@ needs the project's node id (`PVT_…`) as `project_id`.
 `HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
 `https` (plain `http` is accepted only for loopback hosts) and never receives
 `GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its
-own bearer token.
+own bearer token. A GitHub Enterprise Server override
+(`https://<host>/api/graphql`) publishes the same Projects v2 draft issues.
 
 Maintainers can invite Spektacular or another configured hive agent into a Jam
 thread (`POST /api/campaigns/{id}/jam/agents`, handler
@@ -285,11 +286,18 @@ key), a final Spec parks the lease at `stage=spec`, surfaces
 requires an owner to approve or reject the `/api/runs/{key}/checkpoint` payload
 before Plan can start. Until the Spec receipt exists the run is still drafting
 and the checkpoint cannot be decided. Rejecting re-mints the Spec generation
-and marks the design `requested` again, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
+and marks the design `requested` again, and forgets the rejected artifact
+digest so the redrafted spec is posted to the work item even when its text is
+unchanged, so a revised spec is drafted. Approving moves the reviewed spec generation to Plan
 first, then marks the design approved and applies the approved label/status on
 the work item. A failed label or status write does not undo or fail the
 approval: it is logged, audited as `design_signal_failed`, and recorded on the
-run's timeline. The same checkpoint holds runs admitted without a design epic
+run's timeline. The design artifact comment posted when the Spec stage advances
+is best-effort in the same way: a forge write that fails does not block the
+advance, is retried on the next one, and is logged, audited as
+`design_artifact_failed`, and recorded on the run's timeline. An owner reset
+back to `spec` also forgets the artifact digest, so the re-run Spec stage posts
+its artifact again even when the text is unchanged. The same checkpoint holds runs admitted without a design epic
 (a triage `spec` verdict, `POST /api/runs/spec` outside design mode, nous or
 inception): their parked Spec receipt surfaces the same `waiting_on=human`
 projection, approval advances the lease to Plan and records a `stage_approval`

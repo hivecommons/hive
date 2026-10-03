@@ -142,6 +142,21 @@ func designArtifactComment(body string) string {
 	return strings.TrimSpace("📐 Spektacular design artifact\n\n" + strings.TrimSpace(body))
 }
 
+// clearDesignArtifactDigest forgets the rejected design artifact, so the spec
+// the re-minted generation drafts is posted to the work item again even when
+// its text is unchanged - otherwise a rejection leaves the reviewer with no
+// new artifact to read (hivecommons/hive#10062).
+func clearDesignArtifactDigest(store *beads.Store, epicID string) error {
+	if store == nil || epicID == "" {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil || epic.Meta(planning.MetaDesignArtifactDigest) == "" {
+		return nil
+	}
+	return store.UnsetMetadata(epicID, planning.MetaDesignArtifactDigest)
+}
+
 func designArtifactDigest(body string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(body)))
 	return "sha256:" + hex.EncodeToString(sum[:])
