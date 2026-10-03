@@ -33778,6 +33778,8 @@ function burnAreaChart() {
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
               <span class="config-toggle-label"><code>${esc(b.login)}</code> <span class="am-bot-source">${esc(amBotSourceLabel[b.source] || b.source || '')}</span> <span class="config-info">i<span class="config-tooltip">On: PRs authored by ${esc(b.login)} are merged by the self-authored sweep once every gate passes (required CI green, mergeable, no hold label, intent tier, approval desk). Off: the sweep skips them and they wait for a human.</span></span>${b.source === 'custom' ? ` <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh99" data-arg0="${esc(b.login)}" data-arg-types="s">remove</button>` : ''}</span>
             </div>`;
+      const rb = (_configState.data || {}).review_bots;
+      const rbLogins = rb && Array.isArray(rb.logins) ? rb.logins : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
       const rvBuiltin = Array.isArray(rv.builtin_perspectives) ? rv.builtin_perspectives : [];
       const rvSelected = Array.isArray(rv.perspectives) ? rv.perspectives : [];
@@ -34088,6 +34090,15 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
+          </div>
+          <div class="config-subgroup" style="margin-top:14px">External review bots (read-only) <span class="config-info">i<span class="config-tooltip">Effective classification.review_bots settings from hive.yaml, falling back to hive-project.yaml. Listed logins grant agents the right to address and resolve those accounts&apos; threads; changing this trust boundary requires a config-file edit. This is separate from the review swarm gate.</span></span></div>
+          <div id="review-bots-settings" style="font-size:0.76rem">
+            ${!rb ? '<p>Review-bot settings unavailable from this server.</p>' : rb.load_error ? `<p>Unable to load review-bot settings: ${esc(rb.load_error)}</p>` : `
+              <p>Status: ${rb.enabled ? 'Enabled' : 'Disabled (no bot logins configured)'}</p>
+              <p>Bot logins: ${rbLogins.length ? rbLogins.map(login => `<code>${esc(login)}</code>`).join(', ') : 'None'}</p>
+              <p>Max attempts per thread: ${esc(String(rb.max_attempts_per_thread))}</p>
+              <p>Resolve after fix: ${rb.resolve_after_fix ? 'Yes' : 'No — leave open for a human'}</p>
+            `}
           </div>
           <div class="config-subgroup" style="margin-top:14px">Effectiveness <span class="config-info">i<span class="config-tooltip">Does reviewing PRs actually shrink the queue? Every eval cycle the hive records each open PR it sees and, when it later leaves the queue, whether it merged or closed. PRs the hive reviewed before their outcome are compared against the ones it did not (the control group) on merge rate and median time to merge. Verdict counts alone cannot answer this; the comparison can.</span></span></div>
           <div class="config-field">
