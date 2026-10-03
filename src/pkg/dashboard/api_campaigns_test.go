@@ -391,19 +391,17 @@ func TestCampaignFromCompletedRunUsesStableSpecID(t *testing.T) {
 	}
 }
 
-// Issue-numbered runs ("owner/repo#N") have no embedded artifact slug: the id
-// must be Spektacular's "owner-repo-n" artifact name, not the bare worksource
-// key, or the generated resume command addresses an artifact that does not
-// exist on disk (hivecommons/hive#10091).
-func TestCampaignFromIssueRunUsesSpektacularArtifactName(t *testing.T) {
+// Issue-numbered campaigns retain their worksource identity, while resume
+// commands address Spektacular's artifact name rather than the worksource key.
+func TestCampaignFromIssueRunSeparatesIdentityFromArtifactName(t *testing.T) {
 	campaign := campaignFromRun(Run{
 		Key:   "myorg/repo#42",
 		Repo:  "myorg/repo",
 		Stage: StagePlan,
 		State: "active",
 	})
-	if campaign.ID != "myorg-repo-42" {
-		t.Fatalf("campaign id = %q, want spektacular artifact name", campaign.ID)
+	if campaign.ID != "myorg/repo#42" {
+		t.Fatalf("campaign id = %q, want lossless worksource identity", campaign.ID)
 	}
 	if campaign.RunKey != "myorg/repo#42" {
 		t.Fatalf("campaign run key = %q, want worksource key preserved", campaign.RunKey)
