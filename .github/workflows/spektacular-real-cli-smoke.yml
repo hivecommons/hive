@@ -11,6 +11,12 @@ name: Spektacular real-CLI smoke
 # `ARG SPEKTACULAR_VERSION`), the same image backend-smoke.yml's pinned lane
 # uses, so no separate download/checksum step is needed here.
 #
+# It also runs on pull requests that touch the Spektacular contract surface
+# (the package, its fake, the pinned version in the contributor Dockerfile,
+# or this workflow), so a change that only the fake agrees with cannot merge
+# green on fake-backed tests alone; the nightly schedule still catches a
+# drift from a re-published contributor image.
+#
 # This is a read-only smoke against a throwaway `.spektacular` store the test
 # creates under its own temp dir; it needs no secrets and nothing it does
 # persists past the job.
@@ -19,13 +25,18 @@ on:
   schedule:
     - cron: '48 4 * * *'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/pkg/spektacular/**'
+      - 'src/Dockerfile.contributor'
+      - '.github/workflows/spektacular-real-cli-smoke.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: spektacular-real-cli-smoke
-  cancel-in-progress: false
+  group: spektacular-real-cli-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   smoke:
