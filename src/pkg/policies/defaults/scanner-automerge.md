@@ -203,15 +203,21 @@ This prevents the cyclical failure pattern where 5 PRs touch the same files, eac
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". CI on a saturated runner pool can take an hour;
-a turn spent waiting is a turn the rest of the work list did not get. The hive's
-automerge sweep merges your PR the moment its checks are green — waiting buys
-nothing, and it hides as "Working" on the dashboard while nothing happens.
+a turn spent waiting is a turn the rest of the work list did not get. A PR that
+is NOT held merges automatically once its checks are green. A PR carrying
+`hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>`, or `do-not-merge`
+does NOT auto-merge on green CI — it merges only after a human removes that
+label. Waiting buys nothing either way, and it hides as "Working" on the
+dashboard while nothing happens.
 
 - Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
-  note on the PR itself (e.g. `gh pr comment <number> --body "hive/awaiting-ci:
-  CI pending — sweep will merge when green."`) so anyone reading the PR, not
-  just the dashboard, can see it was deliberately deferred, then **move to
-  the next item**.
+  note on the PR itself. If it is NOT held: `gh pr comment <number> --body
+  "hive/awaiting-ci: CI pending — sweep will merge when green."` If it IS held
+  (carries `hold` or another hold label): `gh pr comment <number> --body
+  "hive/awaiting-ci: held for human review. Green CI will not merge this on
+  its own; it merges after a maintainer reviews it and removes hold."` Either
+  way this is so anyone reading the PR, not just the dashboard, can see it was
+  deliberately deferred, then **move to the next item**.
 - A check on your PR is red → run the Shared CI Baseline Triage once. If the
   cause is your diff, fix it and push once. If it is infrastructure (runner
   lost, "No space left on device", shards still `queued`, job failed with no
@@ -219,7 +225,8 @@ nothing, and it hides as "Working" on the dashboard while nothing happens.
   **DEFER — move to the next item**.
 - Never spend more than **two** status checks on the same run in one kick.
 - Summarize with "PR #N opened/updated; CI pending — sweep will merge when
-  green", then continue.
+  green" (or "...; merges after human review" if the PR is held), then
+  continue.
 
 ## Workflow
 
