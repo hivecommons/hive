@@ -120,11 +120,9 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 	return status
 }
 
-// stablePromotionEligibleAt is when the 24-hour lineage soak (rule 1 in
-// docs/stable-soak-policy.md) is satisfied for a candidate built at builtAt,
-// RFC3339 UTC, or "" when builtAt is unknown. The lineage starts at the oldest
-// build after stable, which is never newer than the current candidate, so
-// this is the latest the soak can complete while that lineage is pending.
+// stablePromotionEligibleAt is when the current candidate's 24-hour soak
+// (rule 1 in docs/stable-soak-policy.md) is satisfied for a candidate built at
+// builtAt, RFC3339 UTC, or "" when builtAt is unknown.
 func stablePromotionEligibleAt(builtAt string) string {
 	if builtAt == "" {
 		return ""
@@ -137,7 +135,7 @@ func stablePromotionEligibleAt(builtAt string) string {
 }
 
 // stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same channel targets and soak rule the
+// stable channel (#10256), from the same current-candidate soak rule the
 // release-channel block's eligible_at uses, so the spoke and the hub card
 // cannot disagree. Returns "" (unknown) when stable auto-promotion is
 // paused, either channel is unresolved, or nothing is queued (candidate and

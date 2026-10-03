@@ -23,29 +23,24 @@ current `candidate` build is ever promoted.
 A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
-1. **Minimum lineage soak:** the oldest build published after the current
-   `stable` build has aged at least 24 hours. Frequent `v5` merges may keep
-   moving `candidate`, but they do not reset this lineage timer. The soak is
-   measured on the oldest build in the lineage, not on the build being
-   promoted: if B2 is the oldest build after `stable` (B1) and is 24 hours old
-   when B52 is `candidate`, B52 can be promoted even though it is minutes old.
+1. **Minimum candidate soak:** the current `candidate` build must have aged at
+   least 24 hours. Frequent `v5` merges keep moving `candidate`, and each new
+   `candidate` build starts its own 24-hour timer; a minutes-old build is not
+   promoted merely because an older, now-superseded build soaked after the
+   current `stable` build.
 2. **Current candidate only:** the build being promoted is whichever one is the
    current `candidate` when the gate decides, and it must still be the current
-   `candidate` immediately before any tag is moved. This does not require
-   `candidate` to be quiet for 24 hours; a run that loses the race to a newer
-   build leaves `stable` unchanged and the next hourly run evaluates the new
-   `candidate`. There are two places this race can be lost, both in `promote`
-   in `src/scripts/promote-stable.sh`: the `hive`, `hive-contributor`, and
-   `hive-hub` candidate digests are read one image at a time, so a `docker.yml`
-   run completing mid-loop can leave the images pointing at different
-   generations — the gate treats that as `CURRENT_CANDIDATE=false` and holds
-   with "newer candidate superseded this digest before the soak window
-   completed"; and immediately before any tag moves, each image's `candidate`
-   digest is re-read and compared with the digest the gate decided to promote
-   — a mismatch there refuses the whole promotion ("refusing to promote a
-   superseded candidate") rather than recording a hold, so `stable` is left
-   unchanged either way and the next hourly run re-evaluates whichever build is
-   `candidate` by then.
+   `candidate` immediately before any tag is moved. The `candidate` tag is a
+   moving release-channel tag written by `docker.yml`; it can change while
+   `src/scripts/promote-stable.sh promote` is reading evidence or between the
+   decision and the tag move. If that happens, the run always holds (never
+   fails the workflow run) and leaves `stable` unchanged, so the next hourly run
+   evaluates the newer `candidate` and its own 24-hour soak window. The gate
+   detects this in two places: first, the `hive`, `hive-contributor`, and
+   `hive-hub` candidate digests must all resolve to the same revision and
+   generation while evidence is collected; second, each image's `candidate`
+   digest is re-read immediately before any tag moves and must still match the
+   digest the gate decided to promote.
 3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy.
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate
@@ -71,31 +66,28 @@ It:
    `hive-hub`;
 2. compares the candidate digest with the current `stable` digest;
 3. reads the current candidate's first-seen time from the successful `docker.yml`
-   run number recorded in the image metadata;
-4. reads the lineage first-seen time from the oldest successful `docker.yml`
-   candidate generation newer than the current `stable` generation and no newer
-   than the current candidate generation;
-5. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
-   candidate SHA. The workflow does not currently have per-generation release
-   evidence for every candidate generation in the lineage; until that is added,
-   the enforced invariant is current-candidate green evidence plus lineage age;
-6. requires no open **issue** labelled `release-blocker` — `blocker_count` in
+   run number recorded in the image metadata and requires that build to have
+   aged for the configured soak window;
+4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
+   candidate SHA;
+5. requires no open **issue** labelled `release-blocker` — `blocker_count` in
    `src/scripts/promote-stable.sh` runs `gh issue list`, which does not return
    pull requests, so condition 4's "issue or PR" is enforced by CI only for the
    issue half. A `release-blocker` label on an open PR alone does not hold the
    gate; open an issue when you need the promotion stopped;
-7. reads `GET /api/hub/release/stable-promotion`; if the hub is unreachable or
+6. reads `GET /api/hub/release/stable-promotion`; if the hub is unreachable or
    the stable line is paused, the workflow skips without moving tags. When
    playing, the hub's public maintained-hive summary synthesizes smoke evidence
    for a healthy candidate hive. The manual dispatch `smoke-evidence` input or
    `STABLE_SMOKE_EVIDENCE` repository variable still overrides that automatic
    evidence; and
-8. retags `stable` to the candidate digest only when the gate passes and the
+7. retags `stable` to the candidate digest only when the gate passes and the
    moving-tag generation is newer than the currently published `stable` tag.
 
 The hub dashboard's release-channel block has a play/pause control on the
 `stable` row for hub admins. Play is the default: scheduled runs catch `stable`
-up to `candidate` after the 24-hour lineage soak and automatic smoke evidence.
+up to `candidate` after the current candidate's 24-hour soak and automatic
+smoke evidence.
 Pause records the admin and timestamp, shows "paused" next to any behind count,
 and stops scheduled and manual stable-promotion runs until an admin resumes.
 The public GET endpoint exposes only non-secret channel state and maintained
@@ -104,18 +96,17 @@ hive smoke summaries; the PUT toggle is hub-admin gated and audit logged.
 Hives on the `stable` channel also receive the hub's expected time of the next
 promotion as `next_update_at` in the heartbeat upgrade policy
 ([#10256](https://github.com/hivecommons/hive/issues/10256)). It is the end of
-the 24-hour lineage soak measured from the current `candidate` build — the
-latest the soak can finish, since the oldest build after `stable` is never
-newer — and the hourly run promotes at or after it once the other conditions
-pass. It is omitted (unknown) while stable is paused, when `candidate` and
+the current `candidate` build's 24-hour soak, and the hourly run promotes at or
+after it once the other conditions pass. It is omitted (unknown) while stable
+is paused, when `candidate` and
 `stable` are the same build, or when the channels have not resolved.
 
 The workflow writes the candidate digest, SHA, generation, candidate first-seen
-time and age, lineage first-seen time and age, checks consulted, blocker count,
-smoke evidence, decision, and any exception note to the GitHub Actions step
-summary. If the gate fails, the workflow leaves `stable` unchanged with a
-human-readable reason such as `lineage age 3600s < required 86400s (24h)` or
-`newer candidate superseded this digest before the soak window completed`.
+time and age, checks consulted, blocker count, smoke evidence, decision, and any
+exception note to the GitHub Actions step summary. If the gate fails, the
+workflow leaves `stable` unchanged with a human-readable reason such as
+`candidate age 3600s < required 86400s (24h)` or `newer candidate superseded
+this digest before the soak window completed`.
 
 One hold is expected and benign: the candidate digest is pushed part-way
 through its `docker.yml` run, so an hourly promotion that lands in that window
@@ -149,8 +140,8 @@ issue.
 branch *before* the soak-age and smoke-evidence branches, so an exception waives
 exactly two of the five promotion conditions:
 
-- **condition 1, minimum lineage soak** — the lineage age is never compared
-  against `soak-hours`; and
+- **condition 1, minimum candidate soak** — the current candidate age is never
+  compared against `soak-hours`; and
 - **condition 5, operator smoke signal** — the `smoke_evidence` test is only
   reached on the non-exception path, so an exception promotes even when both the
   `smoke-evidence` input and `STABLE_SMOKE_EVIDENCE` are empty.

@@ -23392,6 +23392,42 @@
         }
       }
     },
+    "/api/overview/history": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "Get Overview KPI history",
+        "description": "Returns downsampled, persisted history samples for the six Overview KPI tiles. The optional `since` query parameter is a Unix millisecond lower bound.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Unix millisecond timestamp; samples before this time are omitted before downsampling."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview KPI history entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/prs/{owner}/{repo}/{number}/queue-automerge": {
       "post": {
         "tags": [
