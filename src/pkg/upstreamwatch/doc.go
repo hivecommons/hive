@@ -5,5 +5,7 @@
 // classification, fork applicability and port-difficulty judgement
 // (hivecommons/hive#9999), and the poll loop that renders and files fork
 // issues with a hidden upstream-ref marker (hivecommons/hive#10002), all
-// modelled on pkg/releasesentinel. It opens issues only, never PRs.
+// modelled on pkg/releasesentinel. It opens issues only, never PRs. Each run
+// also reconciles previously filed refs against their fork issue, recording
+// ported or dismissed once the fork has closed it (hivecommons/hive#9969).
 package upstreamwatch

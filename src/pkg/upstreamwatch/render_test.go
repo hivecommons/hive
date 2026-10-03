@@ -184,3 +184,48 @@ func TestGitHubFiler_File(t *testing.T) {
 		t.Fatal("File succeeded against a failing API")
 	}
 }
+
+func TestGitHubFiler_GetIssue(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		wantFound bool
+		wantOut   IssueOutcome
+		wantErr   bool
+	}{
+		{name: "open issue", body: `{"number":7,"state":"open"}`, wantFound: true, wantOut: IssueOutcome{Open: true}},
+		{name: "closed as completed", body: `{"number":7,"state":"closed","state_reason":"completed"}`,
+			wantFound: true, wantOut: IssueOutcome{Ported: true}},
+		{name: "closed as not planned", body: `{"number":7,"state":"closed","state_reason":"not_planned"}`,
+			wantFound: true, wantOut: IssueOutcome{Dismissed: true}},
+		{name: "closed with dismissed label", body: `{"number":7,"state":"closed","state_reason":"completed","labels":[{"name":"upstream/dismissed"}]}`,
+			wantFound: true, wantOut: IssueOutcome{Dismissed: true}},
+		{name: "closed with no recognised reason is neither ported nor dismissed",
+			body: `{"number":7,"state":"closed","state_reason":"duplicate"}`, wantFound: true},
+		{name: "missing issue", status: http.StatusNotFound, body: `{"message":"Not Found"}`},
+		{name: "server error", status: http.StatusInternalServerError, body: `{"message":"boom"}`, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/repos/fork/widgets/issues/7", func(w http.ResponseWriter, _ *http.Request) {
+				if tc.status != 0 {
+					w.WriteHeader(tc.status)
+				}
+				writeJSON(w, tc.body)
+			})
+			f := NewGitHubFiler(newTestClient(t, mux), "fork", "widgets")
+			out, found, err := f.GetIssue(t.Context(), 7)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if found != tc.wantFound || out != tc.wantOut {
+				t.Errorf("GetIssue = %+v, found=%v; want %+v, found=%v", out, found, tc.wantOut, tc.wantFound)
+			}
+		})
+	}
+}
