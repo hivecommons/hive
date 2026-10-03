@@ -22103,6 +22103,7 @@ function burnAreaChart() {
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
+        case 'loadUpstreamWatch': loadUpstreamWatch(); break;
         case 'linearAgentConnect': linearAgentConnect(); break;
         case 'linearAgentDisconnect': linearAgentDisconnect(); break;
         case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
@@ -26022,6 +26023,10 @@ function burnAreaChart() {
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
+        // The same tab carries the read-only upstream-watch divergence view
+        // (#9969); it loads from its own endpoint and renders "not
+        // configured" when upstream_watch is off.
+        if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -32449,6 +32454,14 @@ function burnAreaChart() {
           </div>
         </div>
 
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Upstream Watch <span class="config-info">i<span class="config-tooltip">Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Read-only — configure the watch under upstream_watch in hive.yaml.</span></span></div>
+          <div id="upstream-watch-panel" style="font-size:0.72rem;color:var(--muted)">Loading…</div>
+          <div class="config-field" style="margin-top:10px">
+            <button class="hv-btn btn-secondary btn" data-action="loadUpstreamWatch">Refresh</button>
+          </div>
+        </div>
+
         <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:var(--sp-6)">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-5);flex-wrap:wrap">
             <div class="config-toggle m-0">
@@ -33155,6 +33168,50 @@ function burnAreaChart() {
         out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    // ── Upstream watch divergence view (#9969) ──────────────────────────────
+    // loadUpstreamWatch paints the per-repo divergence table from the
+    // read-only /api/upstream-watch endpoint: upstream followed, watermark and
+    // last run, surfaced/ported/dismissed counts, and the recent upstream refs
+    // with their fork issue. Each recent PR row offers "port this" — the
+    // upstream patch the fixer agent is handed when it picks the issue up.
+    async function loadUpstreamWatch() {
+      const out = document.getElementById('upstream-watch-panel');
+      if (!out) return;
+      out.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/upstream-watch');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rows = [];
+        if (!data.configured) {
+          out.innerHTML = '<div>Not configured — declare the forks to follow under <code>upstream_watch.repos</code> in hive.yaml (see docs/upstream-watch.md).</div>';
+          return;
+        }
+        if (!data.enabled) rows.push('<div class="text-warn">Configured but switched off — set <code>upstream_watch.enabled: true</code> to resume polling. The figures below are the last recorded state.</div>');
+        if (data.state_error) rows.push(`<div class="text-danger">State unreadable: ${esc(data.state_error)}</div>`);
+        const when = t => t ? new Date(t).toLocaleString() : '—';
+        for (const repo of (Array.isArray(data.repos) ? data.repos : [])) {
+          rows.push(`<div class="mt-2"><strong>${esc(repo.repo)}</strong> follows ${repo.upstream ? `<code>${esc(repo.upstream)}</code>` : '<span class="text-warn">an unresolved upstream</span>'}</div>`);
+          rows.push(`<div>Watermark ${esc(when(repo.watermark))} · last run ${esc(when(repo.last_run_at))} · surfaced ${repo.surfaced || 0} · ported ${repo.ported || 0} · dismissed ${repo.dismissed || 0} · skipped ${repo.skipped || 0}</div>`);
+          const recent = Array.isArray(repo.recent) ? repo.recent : [];
+          if (!recent.length) {
+            rows.push('<div>No upstream items recorded yet.</div>');
+            continue;
+          }
+          const cells = recent.map(it => {
+            const ref = it.upstream_url ? `<a class="text-accent" href="${esc(it.upstream_url)}" target="_blank" rel="noopener">${esc(it.upstream_ref || it.ref)}</a>` : esc(it.upstream_ref || it.ref);
+            const issue = it.issue_number ? (it.issue_url ? `<a class="text-accent" href="${esc(it.issue_url)}" target="_blank" rel="noopener">#${it.issue_number}</a>` : `#${it.issue_number}`) : '—';
+            const port = it.diff_url ? `<a class="text-accent" href="${esc(it.diff_url)}" target="_blank" rel="noopener">port this</a>` : '—';
+            return `<tr><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${ref}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${issue}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${esc(it.state || '')}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${esc(when(it.recorded_at))}</td><td style="padding:var(--sp-1) var(--sp-0)">${port}</td></tr>`;
+          }).join('');
+          rows.push(`<table style="margin-top:var(--sp-2);border-collapse:collapse;font-size:0.72rem"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Upstream</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Fork issue</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">State</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Recorded</th><th style="padding:var(--sp-1) var(--sp-0)">Patch</th></tr></thead><tbody>${cells}</tbody></table>`);
+        }
+        out.innerHTML = rows.join('');
+      } catch (err) {
+        out.textContent = `Failed to load upstream watch: ${err.message}`;
       }
     }
 

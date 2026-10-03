@@ -17914,6 +17914,137 @@
         }
       }
     },
+    "/api/upstream-watch": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get upstream-watch divergence",
+        "description": "Read-only divergence view for every repo under upstream_watch.repos: the upstream followed, the watermark and the time of the last run, counts of surfaced/ported/dismissed/skipped refs, and the recent upstream refs with their upstream and diff URLs, fork issue number and state. Reads the config and the watch's state file only; it never polls GitHub. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Divergence view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Mirrors upstream_watch.enabled."
+                    },
+                    "configured": {
+                      "type": "boolean",
+                      "description": "True when at least one repo is declared under upstream_watch.repos."
+                    },
+                    "state_path": {
+                      "type": "string",
+                      "description": "File the watch persists its watermark and per-ref outcomes to."
+                    },
+                    "state_error": {
+                      "type": "string",
+                      "description": "Why the state file could not be read; absent when it was read (a missing file is not an error)."
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "upstream": {
+                            "type": "string",
+                            "description": "owner/repo the fork follows; the runtime-resolved value when config leaves it empty."
+                          },
+                          "watermark": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_run_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "surfaced": {
+                            "type": "integer"
+                          },
+                          "ported": {
+                            "type": "integer"
+                          },
+                          "dismissed": {
+                            "type": "integer"
+                          },
+                          "skipped": {
+                            "type": "integer"
+                          },
+                          "recent": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string",
+                                  "description": "Dedupe key: upstream#<pr> or release:<tag>."
+                                },
+                                "upstream_ref": {
+                                  "type": "string",
+                                  "description": "Upstream-qualified form: owner/repo#123 or owner/repo@<tag>."
+                                },
+                                "upstream_url": {
+                                  "type": "string"
+                                },
+                                "diff_url": {
+                                  "type": "string",
+                                  "description": "Upstream patch URL; absent for a release, which has no diff."
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "filed",
+                                    "skipped",
+                                    "ported",
+                                    "dismissed"
+                                  ]
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "surfaced",
+                                    "ported",
+                                    "dismissed",
+                                    "skipped"
+                                  ]
+                                },
+                                "issue_number": {
+                                  "type": "integer"
+                                },
+                                "issue_url": {
+                                  "type": "string"
+                                },
+                                "recorded_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/linear/agent/status": {
       "get": {
         "tags": [
