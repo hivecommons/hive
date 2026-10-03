@@ -42,6 +42,12 @@ type fakeFiler struct {
 	failAfter int
 	filed     []Issue
 	searched  []string
+
+	// issues backs GetIssue, keyed by issue number; getErr fails every call
+	// when set, gotten records every number asked for.
+	issues map[int]IssueOutcome
+	getErr error
+	gotten []int
 }
 
 func (f *fakeFiler) FindMarker(_ context.Context, marker string) (Existing, bool, error) {
@@ -59,6 +65,18 @@ func (f *fakeFiler) File(_ context.Context, issue Issue) (int, error) {
 	}
 	f.filed = append(f.filed, issue)
 	return 100 + len(f.filed) - 1, nil
+}
+
+func (f *fakeFiler) GetIssue(_ context.Context, number int) (IssueOutcome, bool, error) {
+	f.gotten = append(f.gotten, number)
+	if f.getErr != nil {
+		return IssueOutcome{}, false, f.getErr
+	}
+	out, ok := f.issues[number]
+	if !ok {
+		return IssueOutcome{Open: true}, true, nil
+	}
+	return out, true, nil
 }
 
 var t0 = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -312,5 +330,87 @@ func TestWatchRun_CancelledContext(t *testing.T) {
 	}
 	if len(filer.filed) != 0 {
 		t.Fatalf("filed %d issues after cancel", len(filer.filed))
+	}
+}
+
+// TestWatchRun_Reconcile covers the reconciliation pass (hivecommons/hive#9969
+// remainder 2): a previously filed ref whose fork issue has since closed is
+// updated to ported or dismissed; one still open is left alone.
+func TestWatchRun_Reconcile(t *testing.T) {
+	tests := []struct {
+		name       string
+		issues     map[int]IssueOutcome
+		wantStatus RefStatus
+	}{
+		{name: "still open leaves the ref filed", issues: map[int]IssueOutcome{7: {Open: true}}, wantStatus: StatusFiled},
+		{name: "closed as completed becomes ported", issues: map[int]IssueOutcome{7: {Ported: true}}, wantStatus: StatusPorted},
+		{name: "closed as not planned becomes dismissed", issues: map[int]IssueOutcome{7: {Dismissed: true}}, wantStatus: StatusDismissed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memStore{state: State{}}
+			store.state.Repo("widgets").Put(Outcome{Ref: "upstream#1", Status: StatusFiled, IssueNumber: 7}, t0)
+			filer := &fakeFiler{issues: tc.issues}
+			w := New(Options{Repo: "widgets", Upstream: testUpstream, Now: func() time.Time { return t0.Add(72 * time.Hour) }},
+				&fakeSource{}, &fakeContents{}, store, filer)
+			res, err := w.Run(context.Background())
+			if err != nil {
+				t.Fatalf("Run err = %v", err)
+			}
+			rs := store.state["widgets"]
+			rec, ok := rs.Record("upstream#1")
+			if !ok || rec.Status != tc.wantStatus {
+				t.Fatalf("status = %+v, want %s", rec, tc.wantStatus)
+			}
+			switch tc.wantStatus {
+			case StatusPorted:
+				if !reflect.DeepEqual(res.Ported, []string{"upstream#1"}) {
+					t.Errorf("Ported = %v", res.Ported)
+				}
+			case StatusDismissed:
+				if !reflect.DeepEqual(res.Dismissed, []string{"upstream#1"}) {
+					t.Errorf("Dismissed = %v", res.Dismissed)
+				}
+			}
+			if len(filer.gotten) != 1 || filer.gotten[0] != 7 {
+				t.Errorf("gotten = %v, want [7]", filer.gotten)
+			}
+			if !rs.Watermark.IsZero() {
+				t.Errorf("Watermark = %v, want zero (reconciliation must not move it)", rs.Watermark)
+			}
+		})
+	}
+}
+
+// TestWatchRun_ReconcileSkipsJustFiled confirms a ref filed in this very run
+// is not immediately reconciled: a freshly opened issue is certainly still
+// open, so reconciling it would only waste a GitHub call.
+func TestWatchRun_ReconcileSkipsJustFiled(t *testing.T) {
+	store := &memStore{state: State{}}
+	src := &fakeSource{items: []Item{prItem(1, t0.Add(time.Hour), "a.go")}}
+	filer := &fakeFiler{}
+	w := New(Options{Repo: "widgets", Upstream: testUpstream}, src, &fakeContents{exists: map[string]bool{"a.go": true}}, store, filer)
+	if _, err := w.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(filer.gotten) != 0 {
+		t.Errorf("gotten = %v, want none for a ref filed this run", filer.gotten)
+	}
+}
+
+// TestWatchRun_ReconcileError confirms a GetIssue failure is reported and
+// leaves the ref's recorded status untouched for next run to retry.
+func TestWatchRun_ReconcileError(t *testing.T) {
+	store := &memStore{state: State{}}
+	store.state.Repo("widgets").Put(Outcome{Ref: "upstream#1", Status: StatusFiled, IssueNumber: 7}, t0)
+	filer := &fakeFiler{getErr: errors.New("rate limited")}
+	w := New(Options{Repo: "widgets", Upstream: testUpstream}, &fakeSource{}, &fakeContents{}, store, filer)
+	_, err := w.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reconcile filed issues") {
+		t.Fatalf("err = %v, want it to mention reconcile filed issues", err)
+	}
+	rec, ok := store.state["widgets"].Record("upstream#1")
+	if !ok || rec.Status != StatusFiled {
+		t.Fatalf("status = %+v, want unchanged StatusFiled", rec)
 	}
 }

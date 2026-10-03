@@ -72,7 +72,12 @@ func (e *spekExec) exec(_ context.Context, _ string, args []string) ([]byte, err
 		return []byte(`{"error":true,"code":"usage","message":"unknown flag: ` + args[3] + `"}`), errors.New("exit status 64")
 	}
 	if len(args) >= 2 && args[1] == "export" {
-		return []byte(`{"error":false,"kind":"plan","name":"` + spekRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers"},{"ref":"T2","title":"Wire helpers","depends_on":["T1"]},{"ref":"T3","title":"Sign off","depends_on":["T2"],"execution":"human_required"}]}`), nil
+		// Spektacular 0.23+ identifies exported tasks by UUID `id` (never a
+		// plan-local `ref`) and emits object-valued execution (#10074).
+		return []byte(`{"error":false,"kind":"plan","name":"` + spekRunKey + `","tasks":[` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000001","title":"Add encoding helpers","execution":{"type":"agent_suitable","reason":"code change"}},` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000002","title":"Wire helpers","depends_on":["8f1c2b7e-0000-4000-8000-000000000001"]},` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000003","title":"Sign off","depends_on":["8f1c2b7e-0000-4000-8000-000000000002"],"execution":{"type":"human_required","reason":"sign-off"}}]}`), nil
 	}
 	q := e.queues[args[0]]
 	if len(q) == 0 {

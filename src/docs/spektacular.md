@@ -729,7 +729,11 @@ UUID `id`. The fake also implements `init`, `<kind> new --data`,
 store in the working directory, so the resolver, the plan-export fallback and
 the hub executor's `init` flow run against the CLI boundary rather than a Go
 stub. Artifact ids the store mints are timestamped, which makes a bare slug
-`artifact_not_found` exactly as the real store answers it. The originalassumptions from the first cut of the runner (PR #8398) and their fate:
+`artifact_not_found` exactly as the real store answers it. The Go `plan
+export` stubs in the package tests print the same 0.23+ shape the fake does
+(UUID `id` tasks, object `repo` / `execution`), so no test passes against a
+`ref`-based export no release emits. The original assumptions from the first
+cut of the runner (PR #8398) and their fate:
 
 Confirmed:
 
@@ -783,7 +787,9 @@ Changed:
 
 Scenarios: `draft-final` (draft, draft, final), `never-final`,
 `final-then-draft`, `final-no-updated-at` (final with the `updated_at`
-member absent), `missing`, selected through `SPEK_FAKE_SCENARIO`. The fake
+member absent), `superseded`, `archived`, `stale-plan` (refused unless
+`SPEK_FAKE_VERSION` is 0.23+, because 0.22 cannot report `stale`) and
+`missing`, selected through `SPEK_FAKE_SCENARIO`. The fake
 answers `artifact_not_found` for a name spelled with an extension or a
 document path, as the real store does, and a usage error for `--json`.
 

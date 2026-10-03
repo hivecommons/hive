@@ -47,7 +47,7 @@ Preferred final-plan export:
 spektacular plan export <name> --format json
 ```
 
-The response maps to `Plan`/`PlanTask` (`src/pkg/spektacular/runner.go:225`):
+The response maps to `Plan`/`PlanTask` (`src/pkg/spektacular/runner.go:225`). Spektacular 0.23+ identifies each task by a UUID `id` (there is no plan-local `ref`) and emits `repo` and `execution` as objects:
 
 ```json
 {
@@ -55,16 +55,17 @@ The response maps to `Plan`/`PlanTask` (`src/pkg/spektacular/runner.go:225`):
   "name": "000057_git-commit",
   "tasks": [
     {
-      "id": "T1",
-      "ref": "T1",
-      "repo": "hivecommons/hive",
+      "id": "8f1c2b7e-0000-4000-8000-000000000001",
+      "repo": {"name": "hivecommons/hive", "location": "."},
       "title": "Add encoding helpers",
-      "depends_on": ["T0"],
-      "execution": "agent_suitable"
+      "depends_on": ["8f1c2b7e-0000-4000-8000-000000000000"],
+      "execution": {"type": "agent_suitable", "reason": "code change"}
     }
   ]
 }
 ```
+
+The pinned 0.22 release has no `export` verb (it swallows `export` as a positional argument and rejects `--format`), so Hive falls back there; the string-valued `repo` / `execution` and `ref` forms are still accepted for the `tasks.json` convention below.
 
 If export is unavailable, Hive falls back to `spektacular plan file read <name>/tasks.json` and then `<name>/plan.md` (`src/pkg/spektacular/runner.go:429`, `src/pkg/spektacular/runner.go:445`).
 
