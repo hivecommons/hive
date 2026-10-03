@@ -1901,11 +1901,6 @@
     }
     .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
 
-    /* Beads */
-    .beads { display: flex; gap: var(--sp-8); font-size: 0.85rem; }
-    .bead-stat .num { font-weight: 700; font-size: 1.1rem; }
-    .bead-stat .label { color: var(--muted); font-size: var(--fs-sm); }
-
     .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
@@ -4157,7 +4152,6 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
     </div>
     <div class="oc-nav-group">
@@ -4401,13 +4395,6 @@
       <div id="repos-issue-filter" style="display:none;font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)"></div>
       <div id="swarm-panel" class="swarm-panel"></div>
       <div class="repo-grid" id="repos"></div>
-    </div>
-  </div>
-
-  <div class="mt-6 mb-8" id="beads-section" data-dashboard-section="beads-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="beads-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Beads section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Beads</h2>
-    <div class="section-body">
-      <div class="beads" id="beads"></div>
     </div>
   </div>
 
@@ -5215,7 +5202,6 @@
       'token-panel': { title: '🪙 Token Usage', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
       'repos-section': { title: '📦 Repositories', summary: '0 repos' },
-      'beads-section': { title: '🔮 Beads', summary: '0 beads' },
       'acmm-eval-section': { title: '🎯 ACMM Evaluation', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
@@ -5457,7 +5443,7 @@
         const open = nums[1] || 0, issues = nums[2] || 0;
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
         inner = miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
-      } else if (sectionId === 'beads-section' || sectionId === 'knowledge-section' || sectionId === 'audit-section') {
+      } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
         inner = miniSpark(hist('count', n0), sectionId === 'audit-section' ? 'var(--yellow)' : 'var(--cyan)', text);
       } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
@@ -5543,10 +5529,6 @@
       const openPrs = repos.reduce((n, r) => n + ((r.openPrs || r.prs || []).length || Number(r.open_prs || r.openPRs || 0) || 0), 0);
       const issues = repos.reduce((n, r) => n + ((r.actionableIssues || r.issues || []).length || Number(r.openIssues || r.open_issues || 0) || 0), 0);
       setSectionSummary('repos-section', `${repos.length} repos · ${openPrs} open PRs · ${issues} issues`);
-      const beads = data.beads || {};
-      const beadTotal = Number(beads.total || beads.count || 0) || ((Number(beads.workers) || 0) + (Number(beads.supervisor) || 0));
-      const beadOpen = Number(beads.open || beads.open_count || beads.pending || 0) || 0;
-      setSectionSummary('beads-section', `${beadTotal} beads${beadOpen ? ' · ' + beadOpen + ' open' : ''}`);
       const adv = data.advisoryDigest || {};
       const advCount = Number(adv.open || adv.openAdvisories || adv.total || adv.count || 0) || ((adv.items || adv.advisories || []).length || 0);
       const advWhen = relativeTimeShort(adv.generatedAt || adv.updatedAt || adv.latest || data.timestamp);
@@ -5766,7 +5748,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -7638,8 +7620,6 @@
       govPrs: 'var(--purple)',
       govTotal: 'var(--green)',
       govHold: 'var(--muted)', // sparkline tint only — the count itself is neutral
-      beadsWorkers: 'var(--cyan)',
-      beadsSupervisor: 'var(--yellow)',
       tokenTotal: 'var(--cyan)',
       tokenInput: 'var(--blue)',
       tokenOutput: 'var(--purple)',
@@ -7734,16 +7714,16 @@
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
 
-    // ── Governor / repo / beads / system trend history (server-persisted) ──
+    // ── Governor / repo / system trend history (server-persisted) ──
     // These trends used to live only in the browser's localStorage
     // (hive_sparkline_history), so they were blank after a pod restart or for a
     // brand-new viewer. The server now persists ~30 days of snapshots to
     // /data/trend-history.json (same ring-buffer treatment as fact/cost). We
     // fetch them and merge into historyData by timestamp so the governor / repo
-    // / beads / system-gauge sparklines render immediately instead of blank.
+    // / system-gauge sparklines render immediately instead of blank.
     // Field names in the server entry mirror the client snapshot shape
-    // (govIssues, govPrs, govTotal, govHold, beadsWorkers, beadsSupervisor,
-    // repos[name].{issues,prs}) so no per-field translation is needed.
+    // (govIssues, govPrs, govTotal, govHold, repos[name].{issues,prs}) so no
+    // per-field translation is needed.
     let _serverTrendHistory = [];
     const TREND_MERGE_DELTA_MS = 60000;
     async function fetchTrendHistory() {
@@ -7785,8 +7765,6 @@
           govPrs: e.govPrs || 0,
           govTotal: e.govTotal || 0,
           govHold: e.govHold || 0,
-          beadsWorkers: e.beadsWorkers || 0,
-          beadsSupervisor: e.beadsSupervisor || 0,
           repos,
           agents: {},
           _fromTrend: true,
@@ -13405,25 +13383,6 @@
         `<h3><span class="empty-state-icon">${icon}</span> ${title}</h3>` +
         `<p>${bodyHtml}</p>` +
       '</div>';
-    }
-
-    function renderBeads(beads) {
-      refreshSectionCardShell('beads-section');
-      const el = document.getElementById('beads');
-      const workers = beads.workers >= 0 ? beads.workers : 0;
-      const supervisor = beads.supervisor >= 0 ? beads.supervisor : 0;
-      if (workers === 0 && supervisor === 0) {
-        setIfChanged(el, emptyStateCard('🔮', 'Beads — your hive’s shared work ledger',
-          'Beads are the findings and work items agents file for each other — bugs, tasks, decisions, and advisories, each with a status and priority. ' +
-          'Worker agents open beads as they discover issues; the supervisor triages the ledger and dispatches follow-up work. ' +
-          'Counts appear here as soon as agents start filing beads — kick an agent, or let the governor cadence run, and check back.'));
-        return;
-      }
-      const wSpark = sparkline('beadsWorkers');
-      const sSpark = sparkline('beadsSupervisor');
-      setIfChanged(el, `
-        <div class="bead-stat"><div class="spark-row"><span class="num">${workers}</span>${wSpark}</div><div class="label">workers</div></div>
-        <div class="bead-stat"><div class="spark-row"><span class="num">${supervisor}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
     }
 
     function fmtTokens(n) {
@@ -20605,14 +20564,6 @@ function burnAreaChart() {
       renderSwarm(data.swarm || {});
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
-      renderBeads(data.beads || {});
-      var beadsBadge = document.getElementById('beads-sidebar-badge');
-      if (beadsBadge) {
-        var bWorkers = (data.beads && data.beads.workers >= 0) ? data.beads.workers : 0;
-        var bSupervisor = (data.beads && data.beads.supervisor >= 0) ? data.beads.supervisor : 0;
-        var bTotal = bWorkers + bSupervisor;
-        setSidebarCountBadge(beadsBadge, bTotal, bWorkers + ' worker / ' + bSupervisor + ' supervisor beads');
-      }
       updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
@@ -20625,7 +20576,7 @@ function burnAreaChart() {
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
-        'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'beads-section', 'acmm-eval-section',
+        'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
@@ -25224,8 +25175,6 @@ function burnAreaChart() {
             govTotal: (data.governor?.issues || 0) + (data.governor?.prs || 0),
             govHold: data.hold?.total || 0,
             govActive: data.governor?.active ? 1 : 0,
-            beadsWorkers: Math.max(data.beads?.workers ?? 0, 0),
-            beadsSupervisor: Math.max(data.beads?.supervisor ?? 0, 0),
             repos: {},
             agents: {},
           };
@@ -25808,7 +25757,6 @@ function burnAreaChart() {
       const advisorySection = document.getElementById('advisory-section');
       const tokenPanel = document.getElementById('token-panel');
       const reposSection = document.getElementById('repos-section');
-      const beadsSection = document.getElementById('beads-section');
       const contributorsSection = document.getElementById('contributors-section');
       const leaderboardSection = document.getElementById('leaderboard-section');
       const nousSection = document.getElementById('nous-section');
@@ -25824,7 +25772,6 @@ function burnAreaChart() {
       const ACMM_GOVERNOR_MIN_LEVEL = 2;
       const ACMM_ADVISORY_MIN_LEVEL = 2;
       const ACMM_TOKENS_MIN_LEVEL = 3;
-      const ACMM_BEADS_MIN_LEVEL = 2;
       const ACMM_REPOS_MIN_LEVEL = 2;
       const ACMM_NOUS_MIN_LEVEL = 4;
       const ACMM_CONTRIBUTORS_MIN_LEVEL = 2;
@@ -25840,7 +25787,6 @@ function burnAreaChart() {
         level >= ACMM_GOVERNOR_MIN_LEVEL ? show(governor, '') : hide(governor);
         level >= ACMM_ADVISORY_MIN_LEVEL ? show(advisorySection, '') : hide(advisorySection);
         level >= ACMM_TOKENS_MIN_LEVEL ? show(tokenPanel, '') : hide(tokenPanel);
-        level >= ACMM_BEADS_MIN_LEVEL ? show(beadsSection, '') : hide(beadsSection);
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
@@ -25860,7 +25806,6 @@ function burnAreaChart() {
           if (section === 'advisory-section' && level < ACMM_ADVISORY_MIN_LEVEL) hide(item);
           if (section === 'token-panel' && level < ACMM_TOKENS_MIN_LEVEL) hide(item);
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
-          if (section === 'beads-section' && level < ACMM_BEADS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
           if (section === 'nous-section' && (!strategyLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);

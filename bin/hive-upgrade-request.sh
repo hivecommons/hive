@@ -39,12 +39,13 @@
 # the same directory, then rename(2)) so the path unit can never observe a
 # partial file:
 #
-#     {"ref":"ghcr.io/hivecommons/hive:a1b2c3d",
+#     {"target_ref":"ghcr.io/hivecommons/hive:a1b2c3d",
 #      "requester":"owner-login",
-#      "requestedAt":"2026-10-03T11:04:05Z"}
+#      "requested_at":"2026-10-03T11:04:05Z"}
 #
-# `ref` is required; `requester` and `requestedAt` are advisory and are only
-# recorded. Unknown fields are ignored. The full contract, including the
+# `target_ref` is required; `requester` and `requested_at` are advisory and are
+# only recorded. The legacy spellings `ref` and `requestedAt` are accepted as
+# fallbacks. Unknown fields are ignored. The full contract, including the
 # dashboard side, is src/docs/dashboard-standalone-upgrades.md.
 #
 # COMMANDS
@@ -159,7 +160,7 @@ request_field() {
 }
 
 # Seconds since the file was last modified. mtime rather than the request's own
-# `requestedAt`, because the timestamp in the file is written by the container
+# `requested_at`, because the timestamp in the file is written by the container
 # and the staleness guard must not be something the container can set.
 request_age_seconds() {
   local mtime now
@@ -215,9 +216,13 @@ apply_one() {
     return 1
   fi
 
-  ref="$(request_field "$file" ref)"
+  # The dashboard writes target_ref/requested_at (src/pkg/dashboard); the
+  # camelCase and bare spellings are accepted for hand-written requests.
+  ref="$(request_field "$file" target_ref)"
+  [ -n "$ref" ] || ref="$(request_field "$file" ref)"
   requester="$(request_field "$file" requester)"
-  requested_at="$(request_field "$file" requestedAt)"
+  requested_at="$(request_field "$file" requested_at)"
+  [ -n "$requested_at" ] || requested_at="$(request_field "$file" requestedAt)"
   [ -n "$requester" ] || requester="unknown"
   [ -n "$requested_at" ] || requested_at="unknown"
 

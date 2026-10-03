@@ -1,1 +1,0 @@
-- Install Node 22 in the rest and dashboard shuffle CI jobs so JavaScript-backed dashboard tests no longer skip on self-hosted runners without Node (#10398).

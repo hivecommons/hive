@@ -11,6 +11,25 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.128.0)
+
+### Added
+
+- dashboard: diagnostics summary and throughput timeframe pill in collapsed headers (#10411)
+- Show the self-upgrade bee-and-hex progress indicator directly in the dashboard version navbar pill while an upgrade is in progress.
+
+### Changed
+
+- dashboard: drop console-specific Health Checks card (#10407)
+- Move the ACMM level picker to the top navbar pill, remove the sidebar pill and level-card Preview actions, and refresh ACMM level copy from the current pack policy.
+- Removed the floating dashboard Feedback button while keeping the remaining feedback entry points.
+- Drove the System Diagnostics quality stats card from the quality agent's configured Stats instead of console-specific workflow checks.
+
+### Fixed
+
+- Install Node 22 in the rest and dashboard shuffle CI jobs so JavaScript-backed dashboard tests no longer skip on self-hosted runners without Node (#10398).
+- Fix Overview KPI tiles so all six render sparklines from persisted or local history, including zero-value and first-sample cases.
+
 ## 2026-10-03 (v5.127.0)
 
 ### Added

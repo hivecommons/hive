@@ -1,1 +1,0 @@
-- Show the self-upgrade bee-and-hex progress indicator directly in the dashboard version navbar pill while an upgrade is in progress.
