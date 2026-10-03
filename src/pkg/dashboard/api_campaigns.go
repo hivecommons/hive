@@ -174,23 +174,11 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if campaign.RunKey != "" && campaign.Type == "spektacular" {
-			if s.contributeHub == nil {
-				jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			held, ok := s.contributeHub.runLeaseHolder(campaign.RunKey, time.Now())
-			if !ok {
-				jsonError(w, "campaign lease not found", http.StatusNotFound)
-				return
-			}
-			if held.identity != requestUser(r) {
-				jsonError(w, "campaign lease held by "+held.identity, http.StatusConflict)
-				return
-			}
-			s.contributeHub.revokeLease(held.identity, held.taskID)
-			campaign.LeaseOwner = ""
-			s.auditFromRequest(r, "campaign_release", auditDetail("campaign", campaign.ID, "type", campaign.Type), "")
-			jsonResponse(w, campaignReleaseResponse{OK: true, Campaign: campaign, Message: "Campaign lease released"})
+			// Run-backed campaigns expose the runner's stage lease, not a
+			// separate campaign pickup lease. Revoking it here stops the
+			// contributor and can remove the run from both API projections
+			// (hivecommons/hive#10057).
+			jsonError(w, "run-backed campaigns cannot be released here; the contributor's stage lease is managed by the run lifecycle", http.StatusConflict)
 			return
 		}
 		archive, err := s.deps.Inception.ReleaseCampaignArchive(campaign.ID, requestUser(r), time.Now())

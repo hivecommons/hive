@@ -40,6 +40,16 @@ func (set *ProfileSet) Use(name string) (profile Profile, already bool, err erro
 	return *target, already, nil
 }
 
+// SetDisabled pauses or resumes solicitation without changing rank or credentials.
+func (set *ProfileSet) SetDisabled(name string, disabled bool) error {
+	target, _ := set.Find(name)
+	if target == nil {
+		return fmt.Errorf("%w: %q", ErrProfileNotFound, name)
+	}
+	target.Disabled = disabled
+	return nil
+}
+
 // Add appends a profile, optionally making it active.
 //
 // The FIRST profile added to an empty set is always made active regardless of

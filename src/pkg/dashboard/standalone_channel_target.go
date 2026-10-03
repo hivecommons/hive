@@ -7,10 +7,9 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/imageref"
 )
 
 var standaloneChannelRevision = cachedStandaloneChannelRevision
@@ -25,8 +24,31 @@ var standaloneRevisionCache = struct {
 	at  time.Time
 })}
 
+// isStandaloneReleaseChannel mirrors imageref.IsReleaseChannel; pkg/dashboard
+// keeps its internal-import count ratcheted down, so the three tags are not
+// imported from there.
+func isStandaloneReleaseChannel(tag string) bool {
+	return tag == "stable" || tag == "candidate" || tag == "edge"
+}
+
+// standaloneReleaseChannel returns the release channel named by a tag-form
+// image ref, or "" for digest refs, pins and branch tags.
+func standaloneReleaseChannel(ref string) string {
+	if strings.Contains(ref, "@") {
+		return ""
+	}
+	i := strings.LastIndex(ref, ":")
+	if i < 0 || strings.Contains(ref[i+1:], "/") {
+		return ""
+	}
+	if tag := ref[i+1:]; isStandaloneReleaseChannel(tag) {
+		return tag
+	}
+	return ""
+}
+
 func resolveStandaloneChannelTarget(ref string) upgradeTarget {
-	channel := imageref.ReleaseChannel(ref)
+	channel := standaloneReleaseChannel(ref)
 	t := upgradeTarget{Source: "channel", Channel: channel, Ref: ref}
 	t.SHA = standaloneChannelRevision(channel)
 	t.Short = shortSHADashboard(t.SHA)
@@ -56,7 +78,7 @@ func cachedStandaloneChannelRevision(channel string) string {
 // multi-platform index may include attestations; only the running platform's
 // image manifest has the config whose labels describe what will be installed.
 func standaloneChannelRevisionWithClient(client *http.Client, baseURL, channel string) string {
-	if !imageref.IsReleaseChannel(channel) {
+	if !isStandaloneReleaseChannel(channel) {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*ghcrCheckTimeout)

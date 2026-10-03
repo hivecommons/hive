@@ -100,49 +100,49 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Grand total.
 	writeHeader("hive_estimated_cost_usd_total",
 		"All-time cumulative ESTIMATED cost in USD (token counts x list price; not a bill).", "counter")
-	fmt.Fprintf(&b, "hive_estimated_cost_usd_total{hive_id=%q} %g\n", hiveID, est.TotalUSD)
+	fmt.Fprintf(&b, "hive_estimated_cost_usd_total{hive_id=%s} %g\n", promQuote(hiveID), est.TotalUSD)
 
 	// Per-model cost.
 	writeHeader("hive_estimated_cost_usd",
 		"All-time cumulative ESTIMATED cost in USD per model (token counts x list price; not a bill).", "counter")
 	for _, m := range sortedByName(est.ByModel) {
-		fmt.Fprintf(&b, "hive_estimated_cost_usd{hive_id=%q,model=%q,source=%q} %g\n",
-			hiveID, m.Name, m.Source, m.USD)
+		fmt.Fprintf(&b, "hive_estimated_cost_usd{hive_id=%s,model=%s,source=%s} %g\n",
+			promQuote(hiveID), promQuote(m.Name), promQuote(m.Source), m.USD)
 	}
 
 	// Per-agent cost.
 	writeHeader("hive_estimated_cost_usd_by_agent",
 		"All-time cumulative ESTIMATED cost in USD per agent (token counts x list price; not a bill).", "counter")
 	for _, a := range sortedByName(est.ByAgent) {
-		fmt.Fprintf(&b, "hive_estimated_cost_usd_by_agent{hive_id=%q,agent=%q} %g\n",
-			hiveID, a.Name, a.USD)
+		fmt.Fprintf(&b, "hive_estimated_cost_usd_by_agent{hive_id=%s,agent=%s} %g\n",
+			promQuote(hiveID), promQuote(a.Name), a.USD)
 	}
 
 	// Per-model token counters (the price-independent basis of the estimate).
 	writeHeader("hive_model_input_tokens_total",
 		"All-time cumulative input tokens per model.", "counter")
 	for _, m := range sortedByName(est.ByModel) {
-		fmt.Fprintf(&b, "hive_model_input_tokens_total{hive_id=%q,model=%q} %d\n", hiveID, m.Name, m.Input)
+		fmt.Fprintf(&b, "hive_model_input_tokens_total{hive_id=%s,model=%s} %d\n", promQuote(hiveID), promQuote(m.Name), m.Input)
 	}
 	writeHeader("hive_model_output_tokens_total",
 		"All-time cumulative output tokens per model.", "counter")
 	for _, m := range sortedByName(est.ByModel) {
-		fmt.Fprintf(&b, "hive_model_output_tokens_total{hive_id=%q,model=%q} %d\n", hiveID, m.Name, m.Output)
+		fmt.Fprintf(&b, "hive_model_output_tokens_total{hive_id=%s,model=%s} %d\n", promQuote(hiveID), promQuote(m.Name), m.Output)
 	}
 	writeHeader("hive_prs_by_model_total",
 		"All-time cumulative agent-authored pull requests per model and outcome.", "counter")
 	for _, s := range s.prometheusPRModelSeries() {
-		fmt.Fprintf(&b, "hive_prs_by_model_total{hive_id=%q,model=%q,outcome=%q} %d\n", hiveID, s.Model, s.Outcome, s.Count)
+		fmt.Fprintf(&b, "hive_prs_by_model_total{hive_id=%s,model=%s,outcome=%s} %d\n", promQuote(hiveID), promQuote(s.Model), promQuote(s.Outcome), s.Count)
 	}
 	writeHeader("hive_pr_rework_by_model",
 		"All-time aggregate rework evidence for merged agent-authored pull requests per model.", "gauge")
 	for _, s := range s.prometheusPRReworkSeries() {
-		fmt.Fprintf(&b, "hive_pr_rework_by_model{hive_id=%q,model=%q,metric=%q} %g\n", hiveID, s.Model, s.Metric, s.Value)
+		fmt.Fprintf(&b, "hive_pr_rework_by_model{hive_id=%s,model=%s,metric=%s} %g\n", promQuote(hiveID), promQuote(s.Model), promQuote(s.Metric), s.Value)
 	}
 	writeHeader("hive_reviews_by_model_pair_total",
 		"All-time cumulative review verdicts by author model, review model, and verdict.", "counter")
 	for _, s := range prometheusReviewModelPairSeries() {
-		fmt.Fprintf(&b, "hive_reviews_by_model_pair_total{hive_id=%q,author_model=%q,review_model=%q,verdict=%q} %d\n", hiveID, s.AuthorModel, s.ReviewModel, s.Verdict, s.Count)
+		fmt.Fprintf(&b, "hive_reviews_by_model_pair_total{hive_id=%s,author_model=%s,review_model=%s,verdict=%s} %d\n", promQuote(hiveID), promQuote(s.AuthorModel), promQuote(s.ReviewModel), promQuote(s.Verdict), s.Count)
 	}
 
 	outcomeCounts, outcomeMedians := prometheusReviewOutcomeSeries(time.Now())
@@ -150,12 +150,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeHeader("hive_review_outcome_prs",
 			"PRs first seen in the last 30 days by whether the hive reviewed them before their outcome, and that outcome.", "gauge")
 		for _, s := range outcomeCounts {
-			fmt.Fprintf(&b, "hive_review_outcome_prs{hive_id=%q,reviewed=%q,outcome=%q} %d\n", hiveID, s.Cohort, s.Outcome, s.Count)
+			fmt.Fprintf(&b, "hive_review_outcome_prs{hive_id=%s,reviewed=%s,outcome=%s} %d\n", promQuote(hiveID), promQuote(s.Cohort), promQuote(s.Outcome), s.Count)
 		}
 		writeHeader("hive_review_outcome_median_hours_to_merge",
 			"Median hours from first seen to merged over the last 30 days, per cohort.", "gauge")
 		for _, s := range outcomeMedians {
-			fmt.Fprintf(&b, "hive_review_outcome_median_hours_to_merge{hive_id=%q,reviewed=%q} %.2f\n", hiveID, s.Cohort, s.Median)
+			fmt.Fprintf(&b, "hive_review_outcome_median_hours_to_merge{hive_id=%s,reviewed=%s} %.2f\n", promQuote(hiveID), promQuote(s.Cohort), s.Median)
 		}
 	}
 
@@ -271,4 +271,14 @@ func sortedByName(in []costModelEntry) []costModelEntry {
 	copy(out, in)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// promQuote renders a Prometheus text-format label value. The format only
+// defines the escapes \\, \" and \n; Go's %q emits others (\x00, \u2028, \t)
+// that make the scraper reject the entire payload, so one odd model or agent
+// name would blank every series.
+func promQuote(v string) string {
+	v = strings.ToValidUTF8(v, "\uFFFD")
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+	return `"` + r.Replace(v) + `"`
 }

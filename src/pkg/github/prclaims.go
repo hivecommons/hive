@@ -864,7 +864,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if mergedAt.Before(mergedCutoff) {
 					continue
 				}
-				mergedBy := safeGetLogin(pr.GetMergedBy())
+				mergedBy := c.prTerminalMergedBy(ctx, owner, repoName, pr)
 				c.emitPRTerminalObserved(PRTerminalObservation{
 					Repo:        repo,
 					Number:      pr.GetNumber(),
@@ -897,6 +897,26 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 	}
 
 	return ClaimScan{Claims: claims, History: history}, firstErr
+}
+
+func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
+	if pr == nil {
+		return ""
+	}
+	if login := safeGetLogin(pr.GetMergedBy()); login != "" {
+		return login
+	}
+	if c == nil || c.client == nil || pr.GetNumber() <= 0 {
+		return ""
+	}
+	full, _, err := c.client.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debug("merged PR actor lookup failed", "repo", owner+"/"+repo, "number", pr.GetNumber(), "error", err)
+		}
+		return ""
+	}
+	return safeGetLogin(full.GetMergedBy())
 }
 
 // ClaimLedger is the persisted issue→PR claim mapping. It is the fail-closed

@@ -1,0 +1,56 @@
+# Drains the dashboard upgrade request directory (#10344, option A).
+#
+# Started ONLY by hive-upgrade.path, which is why there is no [Install]
+# section: this unit has no business being enabled, and `systemctl enable
+# hive-upgrade.service` would start an upgrade at boot. Enable the .path unit
+# instead — that is the one bin/hive-podman-setup.sh enables.
+#
+# WHAT IT ACTUALLY RUNS. bin/hive-upgrade-request.sh, on the HOST, outside
+# every container namespace, which is the entire point of the bridge: it can
+# reach systemctl, podman and the Quadlet drop-ins under %E/hive that the Hive
+# container deliberately cannot. The script re-validates every field it reads
+# out of the request file and passes the image reference to
+# bin/hive-podman-update.sh as argv, never as shell text.
+#
+# Type=oneshot, and the .path unit does not re-trigger while it runs: systemd
+# does not re-activate a path unit's target while that target is already
+# active, so two requests landing a millisecond apart are drained by one run
+# rather than racing two. The script loops over the directory for that reason,
+# and runs again from the level-triggered watch if anything is left.
+#
+# BOTH ROOT MODES, ONE FILE. %E is /etc for a system (rootful) unit and
+# ~/.config for a --user (rootless) one, matching hive-upgrade.path and
+# src/deploy/quadlet/hive.container. The script derives its own root mode from
+# $MANAGERPID the same way hive-boot-gate.service does — set for a process
+# spawned by a systemd USER instance and never by the system instance.
+
+[Unit]
+Description=Apply a Hive dashboard upgrade request from the host
+Documentation=https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-standalone-upgrades.md
+
+# An upgrade restarts hive.service, so it must not run while the deployment is
+# mid-start. This is ordering only, not a requirement: a request that arrives
+# while Hive is down is still applied — the host is the actor here, not Hive.
+After=hive.service
+
+[Service]
+Type=oneshot
+
+# The directory is passed in rather than compiled into the script so the
+# contract test can drive this against a fixture, the same convention as
+# HIVE_UPDATE_QUADLET_DIR in bin/hive-podman-update.sh.
+Environment=HIVE_UPGRADE_REQUEST_DIR=%E/hive/upgrade-requests
+
+# Installed by bin/hive-podman-setup.sh into the same BIN_DIR as hivectl:
+# /usr/local/bin for a rootful install, ~/.local/bin for a rootless one. Both
+# are spelled so that whichever exists wins and a missing one is not an error
+# the other has to pay for.
+ExecStart=/bin/sh -c 'for d in /usr/local/bin "$${HOME:-/nonexistent}/.local/bin"; do [ -x "$$d/hive-upgrade-request.sh" ] && exec "$$d/hive-upgrade-request.sh" apply; done; echo "hive-upgrade-request.sh is not installed; rerun bin/hive-podman-setup.sh" >&2; exit 78'
+
+# An upgrade is a pull plus a restart that waits for Notify=healthy, so it is
+# budgeted like hive.container's TimeoutStartSec rather than like a script.
+TimeoutStartSec=1800
+
+# A failed upgrade must stay visible in `systemctl status`, not be retried in a
+# loop against a request the script has already archived into failed/.
+Restart=no

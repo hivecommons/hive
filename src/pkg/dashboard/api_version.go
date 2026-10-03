@@ -128,7 +128,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		// upgrade to, compare never attempted) from "the compare failed"
 		// (genuinely unknown). Without this the frontend renders a yellow
 		// "? behind" next to the green ✓ whenever the tip is unbuilt (#4804).
-		targetImageReady := target.Source == "channel" || ghcrTagExistsCached(target.Short)
+		targetImageReady := target.Resolved && (target.Source == "channel" || ghcrTagExistsCached(target.Short))
 		resp["stableV4ImageReady"] = targetImageReady
 		if sameCommitDashboard(versionHash, target.SHA) {
 			resp["behind"] = false
@@ -684,6 +684,10 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt:   time.Now().UTC(),
 		})
 		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
+		if deployment.UpgradeAction == "podman-quadlet-request" {
+			jsonResponse(w, map[string]any{"status": "accepted", "runtime": deployment.Runtime, "message": "upgrade request accepted for the host bridge; upgrade has not completed"})
+			return
+		}
 		jsonResponse(w, map[string]any{"status": "upgrading", "runtime": deployment.Runtime})
 		return
 	}

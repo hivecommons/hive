@@ -62,7 +62,7 @@ func TestStandaloneChannelDefaultReachesHelper(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = testDeps(t)
 	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
-	if err := srv.runStandaloneUpgrade(req, deploymentInfo{Runtime: deploymentRuntimePodmanQuadlet, PodmanMode: podmanModeRootless}); err != nil {
+	if err := srv.runStandaloneUpgrade(req, deploymentInfo{Runtime: deploymentRuntimeDockerCompose}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(argsPath)

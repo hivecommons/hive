@@ -258,14 +258,18 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		case github.PRStateMerged:
 			path := obs.Attribution
 			if path == "" {
-				path = "other_automation"
+				path = "unknown"
 			}
 			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
 				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
 		case github.PRStateClosed:
+			path := obs.Attribution
+			if path == "" {
+				path = "unknown"
+			}
 			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRClosed,
-				fmt.Sprintf("repo=%s, number=%d, reason=observed_closed", obs.Repo, obs.Number),
+				fmt.Sprintf("repo=%s, number=%d, path=%s, reason=observed_closed, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
 		}
 	})

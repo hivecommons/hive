@@ -40,8 +40,8 @@ case "$runtime" in
     update_script="${HIVE_PODMAN_UPDATE_SCRIPT:-${repo_root}/bin/hive-podman-update.sh}"
     [ -x "$update_script" ] || { echo "ERROR: podman update script is not executable: $update_script" >&2; exit 78; }
     case "$podman_mode" in
-      rootless) exec "$update_script" pin "$ref" --rootless ;;
-      rootful) exec "$update_script" pin "$ref" --rootful ;;
+      rootless) exec "$update_script" upgrade "$ref" --rootless ;;
+      rootful) exec "$update_script" upgrade "$ref" --rootful ;;
       *) echo "ERROR: podman mode must be rootless or rootful" >&2; exit 64 ;;
     esac
     ;;

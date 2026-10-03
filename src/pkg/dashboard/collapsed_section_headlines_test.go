@@ -14,11 +14,16 @@ func TestDiagnosticsCollapsedHeadlineRendersQuotaAndTokens(t *testing.T) {
 	html := indexHTML(t)
 	script := `const assert = require('node:assert/strict');
 process.env.TZ = 'America/New_York';
-function visualSectionSummary(){ return '<span class="mini-health-dot ok"></span><svg class="mini-spark"></svg>'; }
 ` + jsFunc(t, html, "escapeHtml") + `
 ` + jsFunc(t, html, "textOrDash") + `
 ` + jsFunc(t, html, "debugQuotaClass") + `
+` + jsFunc(t, html, "debugQuotaChipClass") + `
 ` + jsFunc(t, html, "debugCompactNum") + `
+` + jsFunc(t, html, "debugQuotaResetLabel") + `
+` + jsFunc(t, html, "debugQuotaNormalize") + `
+` + jsFunc(t, html, "debugQuotaFromWorkSources") + `
+` + jsFunc(t, html, "debugGitHubQuotaSources") + `
+` + jsFunc(t, html, "debugQuotaWidgetHtml") + `
 ` + jsFunc(t, html, "debugDiagnosticsHeadlineHtml") + `
 const fixture = {
   ghRateLimits: { core: { limit: 5000, remaining: 4929, reset: 1791027360 } },
@@ -29,12 +34,21 @@ assert.match(out, /class="debug-headline sec-headline" data-collapsed-keep/);
 assert.match(out, /GitHub API 71\/5000 \(1%\) · resets 07:36 AM/);
 assert.match(out, /372M in · 2\.9M out · 340M cache/);
 assert.match(out, /debug-quota-ok/);
-assert.match(out, /mini-health-dot ok/);
-assert.match(out, /mini-spark/);
-assert.equal(debugQuotaClass(51), 'debug-quota-warn');
-assert.equal(debugQuotaClass(81), 'debug-quota-bad');
+assert.match(out, /debug-quota-strip/);
+assert.match(out, /debug-quota-chip ok/);
+assert.match(out, /GitHub API: 71\/5000 used \(1%\)\. Resets 07:36 AM/);
+assert.match(out, /<span class="debug-quota-label">GitHub API<\/span>/);
+assert.match(out, /<span class="debug-quota-frac">71\/5000<\/span>/);
+assert.doesNotMatch(out, /mini-health-dot/);
+assert.doesNotMatch(out, /mini-spark/);
+assert.equal(debugQuotaClass(51), 'debug-quota-ok');
+assert.equal(debugQuotaClass(61), 'debug-quota-warn');
+assert.equal(debugQuotaClass(86), 'debug-quota-bad');
 assert.equal(debugCompactNum(371933665), '372M');
 assert.equal(debugCompactNum(2949302), '2.9M');
+const future = debugQuotaWidgetHtml({ quotaSources: [{ name: 'GitLab', quotas: [{ limit: 100, remaining: 10, reset: 1791027360 }] }] });
+assert.match(future, /GitLab/);
+assert.match(future, /debug-quota-chip bad/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -44,9 +58,11 @@ assert.equal(debugCompactNum(2949302), '2.9M');
 	for _, snippet := range []string{
 		"${debugDiagnosticsHeadlineHtml(data, debugSummary)}",
 		"applySectionCollapse('debug-section');",
+		".debug-quota-strip",
+		".debug-quota-chip",
 	} {
-		if !strings.Contains(render, snippet) {
-			t.Fatalf("System Diagnostics render missing collapsed-headline refresh snippet %q", snippet)
+		if !strings.Contains(html, snippet) && !strings.Contains(render, snippet) {
+			t.Fatalf("System Diagnostics collapsed quota contract missing %q", snippet)
 		}
 	}
 }

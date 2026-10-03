@@ -53,7 +53,7 @@ class El {
 }
 const sections = {};
 function makeSection(id){ sections[id]={ section:new El(id), body:new El(id+'-body'), chevron:new El(id+'-chevron'), card:new El(id+'-card'), header:new El(id+'-header') }; return sections[id]; }
-['repos-section','beads-section','overview-section'].forEach(makeSection);
+['repos-section','contributors-section','overview-section'].forEach(makeSection);
 const document = {
   getElementById(id){ return sections[id] && sections[id].section || null; },
   querySelector(sel){
@@ -83,23 +83,23 @@ assert(sections['repos-section'].header.getAttribute('aria-expanded') === 'true'
 applySectionCollapse('repos-section');
 assert(sections['repos-section'].body.collapsed === false, 'refresh collapsed a peek-expanded section');
 assert(localStorage.getItem(SECTION_LS_PREFIX + 'repos-section') === '1', 'refresh changed persisted collapse state');
-localStorage.setItem(SECTION_LS_PREFIX + 'beads-section', '1');
-assert(navPeekRestore('beads-section') === true, 'different nav did not restore previous peek');
+localStorage.setItem(SECTION_LS_PREFIX + 'contributors-section', '1');
+assert(navPeekRestore('contributors-section') === true, 'different nav did not restore previous peek');
 assert(sections['repos-section'].section.getAttribute('data-nav-peek') === null, 'restore left peek flag');
 assert(sections['repos-section'].body.collapsed === true, 'restore did not collapse previous section');
 assert(localStorage.getItem(SECTION_LS_PREFIX + 'repos-section') === '1', 'restore changed persisted collapse state');
-assert(navPeekExpand('beads-section') === true, 'new collapsed target did not peek');
-assert(sections['beads-section'].body.collapsed === false, 'new target not expanded');
-assert(navPeekRestore('beads-section') === false, 'same-section restore should be a no-op');
-assert(sections['beads-section'].body.collapsed === false, 'same-section nav collapsed target');
+assert(navPeekExpand('contributors-section') === true, 'new collapsed target did not peek');
+assert(sections['contributors-section'].body.collapsed === false, 'new target not expanded');
+assert(navPeekRestore('contributors-section') === false, 'same-section restore should be a no-op');
+assert(sections['contributors-section'].body.collapsed === false, 'same-section nav collapsed target');
 navPeekRestore('repos-section');
-assert(sections['beads-section'].body.collapsed === true, 'setup restore did not collapse beads');
+assert(sections['contributors-section'].body.collapsed === true, 'setup restore did not collapse contributors');
 assert(navPeekExpand('repos-section') === true, 'manual setup peek failed');
 toggleSection('repos-section');
 assert(sections['repos-section'].section.getAttribute('data-nav-peek') === null, 'manual toggle did not clear peek flag');
 assert(localStorage.getItem(SECTION_LS_PREFIX + 'repos-section') === null, 'manual toggle did not persist expanded state');
 assert(sections['repos-section'].body.collapsed === false, 'manual toggle collapsed instead of committing peek expansion');
-assert(navPeekRestore('beads-section') === false, 'manual toggle should cancel later restore');
+assert(navPeekRestore('contributors-section') === false, 'manual toggle should cancel later restore');
 assert(sections['repos-section'].body.collapsed === false, 'cancelled restore still collapsed manual section');
 assert(navPeekExpand('overview-section') === false, 'expanded section should not be peeked');
 assert(sections['overview-section'].section.getAttribute('data-nav-peek') === null, 'expanded section got peek flag');
@@ -153,7 +153,7 @@ class El {
 }
 const sections = {};
 function makeSection(id){ sections[id]={ section:new El(id), body:new El(id+'-body', id), chevron:new El(id+'-chevron', id), card:new El(id+'-card', id), header:new El(id+'-header', id) }; return sections[id]; }
-['repos-section','beads-section','overview-section'].forEach(makeSection);
+['repos-section','contributors-section','overview-section'].forEach(makeSection);
 const detail = new El('oc-agent-detail');
 const navItems = [];
 const document = {
@@ -185,23 +185,23 @@ function ocUpdateFocusedState(){}
 function assert(cond, msg){ if (!cond) throw new Error(msg + ' :: ' + JSON.stringify(calls)); }
 ` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocNavigate") + `
 localStorage.setItem(SECTION_LS_PREFIX + 'repos-section', '1');
-localStorage.setItem(SECTION_LS_PREFIX + 'beads-section', '1');
+localStorage.setItem(SECTION_LS_PREFIX + 'contributors-section', '1');
 assert(navPeekExpand('repos-section') === true, 'setup peek failed');
 calls.length = 0;
-ocNavigate('beads-section');
-assert(calls.join('|') === 'collapse:repos-section:false|expand:beads-section:true', 'restore/expand order wrong or scroll happened early');
+ocNavigate('contributors-section');
+assert(calls.join('|') === 'collapse:repos-section:false|expand:contributors-section:true', 'restore/expand order wrong or scroll happened early');
 runTimers();
-assert(calls.indexOf('scroll:beads-section') < 0, 'scroll ran before settle paint');
+assert(calls.indexOf('scroll:contributors-section') < 0, 'scroll ran before settle paint');
 runRafs(); runRafs();
-assert(calls.join('|') === 'collapse:repos-section:false|expand:beads-section:true|scroll:beads-section', 'scroll did not wait for settle');
+assert(calls.join('|') === 'collapse:repos-section:false|expand:contributors-section:true|scroll:contributors-section', 'scroll did not wait for settle');
 
 calls.length = 0; timers = []; rafs = [];
-ocNavigate('beads-section');
+ocNavigate('contributors-section');
 runRafs(); runRafs();
-assert(calls.join('|') === 'scroll:beads-section', 'same peek target toggled instead of only scrolling');
+assert(calls.join('|') === 'scroll:contributors-section', 'same peek target toggled instead of only scrolling');
 
 calls.length = 0; timers = []; rafs = [];
-sections['beads-section'].section.removeAttribute('data-nav-peek');
+sections['contributors-section'].section.removeAttribute('data-nav-peek');
 _dashboardNavPeekSectionId = null;
 localStorage.removeItem(SECTION_LS_PREFIX + 'overview-section');
 ocNavigate('overview-section');

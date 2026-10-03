@@ -5109,6 +5109,7 @@ function updateContributorAgentRoleGrants(cid,removeRole,addRole){
     .then(function(x){if(x.ok){toast('Agent-role grants updated',true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to update grants',false);}})
     .catch(function(){toast('Failed to update grants',false);});
 }
+var ccDeferredClankers=null;
 function renderClankers(list){
   list=list||[];
   var el=document.getElementById('clanker-list');
@@ -5125,6 +5126,10 @@ function renderClankers(list){
   // a malformed row can't leave the roster stuck on "Loading…".
   try{ccRenderInterestRoster(list);}catch(e){console.error('interest roster render failed',e);}
   if(!el)return;
+  // Keep drafts, focus and selection intact across fleet polls, including disconnects.
+  // Summaries above stay live; only the cards wait until the last form closes.
+  if(el.querySelector('.op-msg-form')){ccDeferredClankers=list;return;}
+  ccDeferredClankers=null;
   if(!list.length){el.innerHTML='<div class="ops-empty">No contributor agents connected right now.</div>';return;}
   el.innerHTML=list.map(function(c){
     var user=c.github_username||c.contributor_id||'contributor agent';
@@ -5536,10 +5541,14 @@ function ccOperatorMessageStatus(c){
   var txt=(pending?pending+' pending':'acked')+(delivered?' · delivered':'');
   return '<span class="op-msg-state" title="Operator messages">'+esc(txt)+'</span>';
 }
+function ccCloseMessageForm(form){
+  form.remove();
+  if(ccDeferredClankers!==null)renderClankers(ccDeferredClankers);
+}
 function ccToggleMessageForm(cid,user,btn){
   var host=(btn&&btn.getAttribute('data-role')==='message-runs')?document.getElementById('runs-message-form'):(btn&&btn.parentNode);
   if(!host)return;
-  var old=host.querySelector('.op-msg-form'); if(old){old.remove();return;}
+  var old=host.querySelector('.op-msg-form'); if(old){ccCloseMessageForm(old);return;}
   var target=cid||user;
   var form=document.createElement('div'); form.className='op-msg-form';
   form.innerHTML='<textarea maxlength="1000" placeholder="Short note for '+esc(user)+'"></textarea><button type="button" class="hv-btn btn-secondary btn-sm admin-act">Send</button>';
@@ -5547,7 +5556,7 @@ function ccToggleMessageForm(cid,user,btn){
     var text=form.querySelector('textarea').value;
     fetch('/api/contribute/operators/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contributor:target,text:text})})
       .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
-      .then(function(x){if(x.ok){toast('Message sent to '+user,true);form.remove();opsPoll();ccLoadOperatorMessages();}else{toast((x.d&&x.d.error)||'Message failed',false);}})
+      .then(function(x){if(x.ok){toast('Message sent to '+user,true);ccCloseMessageForm(form);opsPoll();ccLoadOperatorMessages();}else{toast((x.d&&x.d.error)||'Message failed',false);}})
       .catch(function(){toast('Message failed',false);});
   });
   host.appendChild(form);

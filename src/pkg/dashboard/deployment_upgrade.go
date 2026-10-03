@@ -12,12 +12,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/imageref"
 )
 
 const (
@@ -72,12 +72,12 @@ func (s *Server) detectDeployment() deploymentInfo {
 				info.Reason = "Podman/Quadlet mode is not explicitly configured as rootless or rootful; upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful)"
 				return info
 			}
-			if standaloneUpgradeHelper(cfg) == "" {
+			if !upgradeRequestDirWritable(upgradeRequestDir(cfg)) {
 				info.Reason = "standalone upgrade helper is not available inside the container; upgrade from the host with `" + podmanHostUpgradeCommand(info.PodmanMode) + "` (as the hive user when rootless)"
 				return info
 			}
 			info.UpgradeSupported = true
-			info.UpgradeAction = "podman-quadlet"
+			info.UpgradeAction = "podman-quadlet-request"
 			info.Reason = ""
 			return info
 		case deploymentRuntimeDockerCompose:
@@ -147,9 +147,69 @@ func deploymentConfigValue(cfg *config.Config, key string) string {
 		return cfg.Deployment.Runtime
 	case "podman_mode":
 		return cfg.Deployment.PodmanMode
+	case "upgrade_request_dir":
+		return cfg.Deployment.UpgradeRequestDir
 	default:
 		return ""
 	}
+}
+
+func upgradeRequestDir(cfg *config.Config) string {
+	return firstNonEmpty(os.Getenv("HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR"), deploymentConfigValue(cfg, "upgrade_request_dir"))
+}
+
+// Probe actual write access (including read-only mounts and ACLs), not mode bits.
+// The host watches only *.json; hidden probe/temp files never trigger an upgrade.
+func upgradeRequestDirWritable(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".hive-upgrade-probe-*")
+	if err != nil {
+		return false
+	}
+	closeErr := f.Close()
+	removeErr := os.Remove(f.Name())
+	return closeErr == nil && removeErr == nil
+}
+
+type upgradeRequest struct {
+	TargetRef   string `json:"target_ref"`
+	Requester   string `json:"requester"`
+	RequestedAt string `json:"requested_at"`
+}
+
+func writeUpgradeRequest(dir, targetRef, requester string) error {
+	if dir == "" {
+		return fmt.Errorf("upgrade request directory is not configured")
+	}
+	data, err := json.Marshal(upgradeRequest{
+		TargetRef: targetRef, Requester: requester,
+		RequestedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".hive-upgrade-*")
+	if err != nil {
+		return fmt.Errorf("creating upgrade request: %w", err)
+	}
+	temp := f.Name()
+	defer os.Remove(temp)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing upgrade request: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing upgrade request: %w", err)
+	}
+	// Publish only after close, in the same directory/filesystem. CreateTemp
+	// gives each request a unique name and mode 0600.
+	final := filepath.Join(dir, strings.TrimPrefix(filepath.Base(temp), ".")+".json")
+	if err := os.Rename(temp, final); err != nil {
+		return fmt.Errorf("publishing upgrade request: %w", err)
+	}
+	return nil
 }
 
 func standaloneUpgradeHelper(cfg *config.Config) string {
@@ -237,7 +297,7 @@ func dashboardUpgradeTargetFromRequest(r *http.Request) string {
 // from. A digest pin is not a channel subscription, even if it carries a tag.
 func standaloneTrackedChannelRef() string {
 	ref := strings.TrimSpace(os.Getenv("HIVE_SELF_IMAGE"))
-	if !standaloneUpgradeRefRE.MatchString(ref) || imageref.ReleaseChannel(ref) == "" {
+	if !standaloneUpgradeRefRE.MatchString(ref) || standaloneReleaseChannel(ref) == "" {
 		return ""
 	}
 	return ref
@@ -338,6 +398,12 @@ func (s *Server) runStandaloneUpgrade(r *http.Request, info deploymentInfo) erro
 	if err != nil {
 		return err
 	}
+	if info.Runtime == deploymentRuntimePodmanQuadlet {
+		if info.UpgradeAction != "podman-quadlet-request" {
+			return fmt.Errorf("Podman/Quadlet upgrades require the host request bridge")
+		}
+		return writeUpgradeRequest(upgradeRequestDir(s.deps.Config), targetRef, requestUser(r))
+	}
 	helper := standaloneUpgradeHelper(s.deps.Config)
 	if helper == "" {
 		return fmt.Errorf("standalone upgrade helper is not configured or executable")
@@ -345,9 +411,6 @@ func (s *Server) runStandaloneUpgrade(r *http.Request, info deploymentInfo) erro
 	ctx, cancel := context.WithTimeout(context.Background(), standaloneUpgradeTimeout)
 	defer cancel()
 	args := []string{"upgrade", "--runtime", info.Runtime, "--ref", targetRef}
-	if info.Runtime == deploymentRuntimePodmanQuadlet {
-		args = append(args, "--podman-mode", info.PodmanMode)
-	}
 	cmd := exec.CommandContext(ctx, helper, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

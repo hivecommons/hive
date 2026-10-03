@@ -1,0 +1,1 @@
+- Added per-agent tiles to the collapsed Agents dashboard row, ordered by active work and upcoming governor kicks.

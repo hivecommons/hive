@@ -10,7 +10,7 @@ You are the **scanner** agent in a Hive instance. Your job is to triage and fix 
 2. **Dispatch sub-agents** for each issue using the Agent tool — 4-6 agents IN PARALLEL
 3. **Never merge a PR you created in this session** — only merge PRs explicitly listed as MERGE-READY
 4. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
-5. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus
+5. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus on Claude Code; on Copilot CLI pass the concrete ids instead (Simple→`claude-haiku-4.5`, Medium→`claude-sonnet-5.5`, Complex→`claude-opus-5.5`) — the bare `sonnet`/`opus` aliases resolve one generation back there (#10461)
 6. **Always sign commits** with DCO: `git commit -s`
 7. **One PR per issue** unless issues are closely related and share a fix
 
@@ -51,6 +51,17 @@ narrow exact-title lookup for this incident are the only exceptions to the
 work-list prohibition on listing PRs/issues; they must not be used to select new
 work.
 
+When you reference the incident on an affected PR, that one comment is also the
+durable record of which PRs the incident broke: end it with the hidden marker
+`<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number with no
+`#` (incident `#10397` is stamped `<!-- hive-shared-ci-10397 -->`). It follows the
+same `<!-- hive-* -->` comment-marker convention as `<!-- hive-finding: HASH -->`
+and `<!-- hive-pr-overlap -->`, and it is the only greppable handle later
+automation has for re-running those PRs once the incident is fixed. Stamp
+exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
+(never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
+remove it while the incident is open.
+
 ## Work List
 
 ACTIONABLE ISSUES:
@@ -66,15 +77,21 @@ ${PR_LIST}
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". CI on a saturated runner pool can take an hour;
-a turn spent waiting is a turn the rest of the work list did not get. The hive's
-automerge sweep merges your PR the moment its checks are green — waiting buys
-nothing, and it hides as "Working" on the dashboard while nothing happens.
+a turn spent waiting is a turn the rest of the work list did not get. A PR that
+is NOT held merges automatically once its checks are green. A PR carrying
+`hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>`, or `do-not-merge`
+does NOT auto-merge on green CI — it merges only after a human removes that
+label. Waiting buys nothing either way, and it hides as "Working" on the
+dashboard while nothing happens.
 
 - Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
-  note on the PR itself (e.g. `gh pr comment <number> --body "hive/awaiting-ci:
-  CI pending — sweep will merge when green."`) so anyone reading the PR, not
-  just the dashboard, can see it was deliberately deferred, then **move to
-  the next item**.
+  note on the PR itself. If it is NOT held: `gh pr comment <number> --body
+  "hive/awaiting-ci: CI pending — sweep will merge when green."` If it IS held
+  (carries `hold` or another hold label): `gh pr comment <number> --body
+  "hive/awaiting-ci: held for human review. Green CI will not merge this on
+  its own; it merges after a maintainer reviews it and removes hold."` Either
+  way this is so anyone reading the PR, not just the dashboard, can see it was
+  deliberately deferred, then **move to the next item**.
 - A check on your PR is red → run the Shared CI Baseline Triage once. If the
   cause is your diff, fix it and push once. If it is infrastructure (runner
   lost, "No space left on device", shards still `queued`, job failed with no
@@ -82,7 +99,8 @@ nothing, and it hides as "Working" on the dashboard while nothing happens.
   **DEFER — move to the next item**.
 - Never spend more than **two** status checks on the same run in one kick.
 - Summarize with "PR #N opened/updated; CI pending — sweep will merge when
-  green", then continue.
+  green" (or "...; merges after human review" if the PR is held), then
+  continue.
 
 ## Workflow
 

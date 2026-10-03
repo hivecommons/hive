@@ -155,6 +155,15 @@ That is safe but invisible, so the tooling makes it loud:
 `hive-podman-update.sh autoupdate on` **refuses** while a pin is in place, and
 both `status` and `autoupdate status` flag the combination when it exists.
 
+The one caller that used to create this silently was a dashboard-triggered
+upgrade, which called `pin` unconditionally
+([#10344 gap 3](https://github.com/hivecommons/hive/issues/10421)).
+`bin/hive-podman-update.sh upgrade <ref>` is the fix: on a host tracking the
+registry it drives `podman auto-update` instead of writing a pin, and it
+**refuses** a `<ref>` that is not the tracked tag rather than pinning over
+tracking without being asked — `--force-pin` is the explicit override. See
+[dashboard-standalone-upgrades.md](dashboard-standalone-upgrades.md).
+
 There is a worse case. If the pinned digest stops resolving in the registry —
 garbage-collected, or pinned across repositories, which #4378's own failure run
 did when it pinned `docker.io/library/nginx@sha256:…` onto a unit whose tag is
