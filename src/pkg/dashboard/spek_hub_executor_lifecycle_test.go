@@ -589,7 +589,7 @@ func TestSpekHubExecutorPostExitStatusOutlivesStageDeadline(t *testing.T) {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"final"}`), nil
+				return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"final"}`), nil
 			}
 			return nil, nil
 		}
