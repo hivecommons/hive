@@ -73,6 +73,43 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 	}
 }
 
+func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
+	s := &Server{}
+	s.appendTrendHistoryAt(&StatusPayload{}, time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC))
+	data, err := json.Marshal(s.OverviewKPIHistory(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{
+		"overviewOpenIssues",
+		"overviewOpenPrs",
+		"overviewActionable",
+		"overviewHeld",
+		"overviewBlockedHuman",
+	} {
+		if !strings.Contains(string(data), `"`+field+`":0`) {
+			t.Fatalf("marshaled zero-value overview history missing %s: %s", field, data)
+		}
+	}
+	if strings.Contains(string(data), `"overviewMedianAgeSec"`) {
+		t.Fatalf("marshaled overview history reported unavailable median as zero: %s", data)
+	}
+
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	withMedian := &Server{}
+	withMedian.appendTrendHistoryAt(&StatusPayload{Repos: []FrontendRepo{{
+		Name:             "hive",
+		ActionableIssues: []any{github.Issue{UpdatedAt: at}},
+	}}}, at)
+	data, err = json.Marshal(withMedian.OverviewKPIHistory(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"overviewMedianAgeSec":0`) {
+		t.Fatalf("marshaled real zero median missing: %s", data)
+	}
+}
+
 func timeHistoryStep() time.Duration {
 	return time.Duration(trendHistoryMinIntervalMs) * time.Millisecond
 }
@@ -88,12 +125,13 @@ func TestOverviewKPITilesRenderSparklines(t *testing.T) {
 function esc(s){return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 const escapeHtml = esc, SPARK_W = 80, SPARK_H = 20;
 const OVERVIEW_KPI_WINDOWS = {'24h': 86400000, '7d': 604800000};
+const OVERVIEW_REPOS_KEY = 'hive.overview.repos';
 let _overviewKPIWindow = '24h';
 let _overviewKPILocalScope = 'all';
-let _overviewLastRepos = [{name: 'hive'}];
+let _overviewLastRepos = [{name: 'hive', full: 'hivecommons/hive'}];
 global.window = {_lastStatus: {hiveId: 'test'}};
+global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
 let _overviewKPIHistory = [
-  {t: Date.now() - 3600000, overviewOpenIssues: 50, overviewOpenPrs: 10, overviewActionable: 30, overviewHeld: 4, overviewBlockedHuman: 2, overviewMedianAgeSec: 1800},
   {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3, overviewMedianAgeSec: 3600}
 ];
 function overviewKPILoadLocal(){ return []; }
@@ -104,6 +142,7 @@ function overviewItemAgeMinutes(){ return NaN; }
 	for _, name := range []string{
 		"fmtSparkVal", "sparklineSeriesKey", "sparklineReducedMotion", "sparklineValueSummary", "renderSparkline",
 		"fmtDurationFromSeconds", "overviewMedianAgeSeconds", "overviewMedianAgeLabel", "overviewKPIRepoScope", "overviewKPIHistoryEntries",
+		"overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewFilterRepos",
 		"overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))
@@ -112,10 +151,12 @@ function overviewItemAgeMinutes(){ return NaN; }
 	source.WriteString(`
 const issueSlices = [{key: 'ready', count: 58, items: []}];
 const prSlices = [{key: 'ready', count: 12, items: []}, {key: 'blocked', count: 3, items: []}];
-// The selected repos must cover every repo in _overviewLastRepos: a narrower
-// selection scopes the KPI history to the (stubbed, empty) local samples and
-// renders no sparklines by design (overviewKPIRepoScope).
-const markup = renderOverviewKPIs([{name: 'hive', heldIssues: [1,2], heldPrs: [3,4,5,6]}], issueSlices, prSlices, {showKPIs: true, timeBasis: 'updated'});
+// Match the production renderOverviewCharts path: _overviewLastRepos is the
+// full status payload repo shape (name + full) and renderOverviewKPIs receives
+// the selected objects returned by overviewFilterRepos.
+const liveRepos = [{name: 'hive', full: 'hivecommons/hive', heldIssues: [1,2], heldPrs: [3,4,5,6]}];
+_overviewLastRepos = liveRepos;
+const markup = renderOverviewKPIs(overviewFilterRepos(liveRepos), issueSlices, prSlices, {showKPIs: true, timeBasis: 'updated'});
 assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
 assert.equal((markup.match(/<svg/g) || []).length, 6);
 for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','median-age']) {

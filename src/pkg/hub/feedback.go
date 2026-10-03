@@ -31,6 +31,11 @@ const (
 	feedbackTypeBug                = "bug"
 	feedbackTypeFeature            = "feature"
 	feedbackMaxIssueRefs           = 50
+	// feedbackScreenshotBranch is the only branch screenshots are ever
+	// committed to. Uploads are unreviewed writes made with the hub's token,
+	// so they must never land on the repository's default branch.
+	feedbackScreenshotBranch = "feedback-screenshots"
+	feedbackScreenshotDir    = "feedback-screenshots"
 )
 
 var feedbackGitHubAPIBase = "https://api.github.com"
@@ -302,7 +307,7 @@ func validateHubFeedbackRequest(req *feedbackReportRequest) error {
 		return errors.New("feedback text and diagnostics are too large")
 	}
 	for _, ss := range req.Screenshots {
-		if _, err := decodeHubFeedbackDataURI(ss); err != nil {
+		if _, _, err := decodeHubFeedbackDataURI(ss); err != nil {
 			return err
 		}
 	}
@@ -462,7 +467,7 @@ func createHubFeedbackIssue(ctx context.Context, client *http.Client, token stri
 	}
 	valid := []string{}
 	for _, ss := range req.Screenshots {
-		if _, err := decodeHubFeedbackDataURI(ss); err == nil {
+		if _, _, err := decodeHubFeedbackDataURI(ss); err == nil {
 			valid = append(valid, ss)
 		}
 	}
@@ -552,33 +557,46 @@ func postHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token
 	}
 	return feedbackIssueResult{Number: out.Number, URL: out.HTMLURL, ID: out.ID}, resp.StatusCode, nil
 }
-func decodeHubFeedbackDataURI(dataURI string) ([]byte, error) {
+
+// feedbackScreenshotExtensions maps the sniffed content type of a decoded
+// screenshot to the file extension it is stored under. Only these types are
+// accepted: the declared data-URI media type is never trusted on its own.
+var feedbackScreenshotExtensions = map[string]string{
+	"image/png":  "png",
+	"image/jpeg": "jpg",
+}
+
+// decodeHubFeedbackDataURI decodes one screenshot and returns its bytes with
+// the extension matching its sniffed content type. The bytes must actually be
+// a PNG or JPEG image; any other content is rejected regardless of the media
+// type the data URI claims.
+func decodeHubFeedbackDataURI(dataURI string) ([]byte, string, error) {
 	parts := strings.SplitN(dataURI, ",", 2)
 	if len(parts) != 2 || !strings.HasPrefix(parts[0], "data:image/") {
-		return nil, errors.New("screenshots must be image data URIs")
+		return nil, "", errors.New("screenshots must be image data URIs")
 	}
 	b, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, errors.New("invalid screenshot data")
+		return nil, "", errors.New("invalid screenshot data")
 	}
 	if len(b) > feedbackMaxScreenshotBytes {
-		return nil, fmt.Errorf("each screenshot must be %d MiB or smaller", feedbackMaxScreenshotBytes>>20)
+		return nil, "", fmt.Errorf("each screenshot must be %d MiB or smaller", feedbackMaxScreenshotBytes>>20)
 	}
-	return b, nil
+	ext, ok := feedbackScreenshotExtensions[http.DetectContentType(b)]
+	if !ok {
+		return nil, "", errors.New("screenshots must be PNG or JPEG images")
+	}
+	return b, ext, nil
 }
 func uploadHubFeedbackScreenshots(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, screenshots []string) {
 	_, _ = postHubGitHubComment(ctx, client, apiBase, token, owner, repo, issue, "Processing feedback screenshots…")
 	lines := []string{}
 	for i, ss := range screenshots {
-		content, err := decodeHubFeedbackDataURI(ss)
+		content, ext, err := decodeHubFeedbackDataURI(ss)
 		if err != nil {
 			continue
 		}
-		ext := "png"
-		if strings.HasPrefix(ss, "data:image/jpeg") {
-			ext = "jpg"
-		}
-		path := fmt.Sprintf(".github/feedback-screenshots/%d/screenshot-%d.%s", issue, i+1, ext)
+		path := fmt.Sprintf("%s/%d/screenshot-%d.%s", feedbackScreenshotDir, issue, i+1, ext)
 		dl, err := putHubGitHubContent(ctx, client, apiBase, token, owner, repo, path, content)
 		if err == nil && dl != "" {
 			lines = append(lines, fmt.Sprintf("![screenshot %d](%s)", i+1, dl))
@@ -588,25 +606,44 @@ func uploadHubFeedbackScreenshots(ctx context.Context, client *http.Client, apiB
 		_, _ = postHubGitHubComment(ctx, client, apiBase, token, owner, repo, issue, "Feedback screenshots:\n\n"+strings.Join(lines, "\n\n"))
 	}
 }
+
+// putHubGitHubContent commits one screenshot to the dedicated
+// feedbackScreenshotBranch, never to the repository's default branch. The
+// branch is created from the default branch head on first use.
 func putHubGitHubContent(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, error) {
-	payload := map[string]string{"message": "Add feedback screenshot", "content": base64.StdEncoding.EncodeToString(content)}
+	dl, status, err := putHubGitHubContentOnBranch(ctx, client, apiBase, token, owner, repo, path, content)
+	if err == nil || (status != http.StatusNotFound && status != http.StatusUnprocessableEntity) {
+		return dl, err
+	}
+	if err := ensureHubGitHubBranch(ctx, client, apiBase, token, owner, repo, feedbackScreenshotBranch); err != nil {
+		return "", err
+	}
+	dl, _, err = putHubGitHubContentOnBranch(ctx, client, apiBase, token, owner, repo, path, content)
+	return dl, err
+}
+func putHubGitHubContentOnBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, int, error) {
+	payload := map[string]string{
+		"message": "Add feedback screenshot",
+		"content": base64.StdEncoding.EncodeToString(content),
+		"branch":  feedbackScreenshotBranch,
+	}
 	data, _ := json.Marshal(payload)
 	u := strings.TrimRight(apiBase, "/") + "/repos/" + owner + "/" + repo + "/contents/" + url.PathEscape(path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("github upload: %d", resp.StatusCode)
+		return "", resp.StatusCode, fmt.Errorf("github upload: %d", resp.StatusCode)
 	}
 	var out struct {
 		Content struct {
@@ -614,7 +651,71 @@ func putHubGitHubContent(ctx context.Context, client *http.Client, apiBase, toke
 		} `json:"content"`
 	}
 	_ = json.Unmarshal(raw, &out)
-	return out.Content.DownloadURL, nil
+	return out.Content.DownloadURL, resp.StatusCode, nil
+}
+
+// ensureHubGitHubBranch creates `branch` from the repository's default branch
+// head when it does not exist yet. An already-existing branch is left alone.
+func ensureHubGitHubBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, branch string) error {
+	base := strings.TrimRight(apiBase, "/") + "/repos/" + owner + "/" + repo
+	var repoInfo struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if _, err := hubGitHubJSON(ctx, client, token, http.MethodGet, base, nil, &repoInfo); err != nil {
+		return err
+	}
+	if repoInfo.DefaultBranch == "" {
+		return errors.New("github: default branch unknown")
+	}
+	var ref struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if _, err := hubGitHubJSON(ctx, client, token, http.MethodGet, base+"/git/ref/"+url.PathEscape("heads/"+repoInfo.DefaultBranch), nil, &ref); err != nil {
+		return err
+	}
+	if ref.Object.SHA == "" {
+		return errors.New("github: default branch head unknown")
+	}
+	payload := map[string]string{"ref": "refs/heads/" + branch, "sha": ref.Object.SHA}
+	status, err := hubGitHubJSON(ctx, client, token, http.MethodPost, base+"/git/refs", payload, nil)
+	// 422 means the ref already exists (a concurrent upload created it).
+	if err != nil && status != http.StatusUnprocessableEntity {
+		return err
+	}
+	return nil
+}
+func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u string, payload any, out any) (int, error) {
+	var body io.Reader
+	if payload != nil {
+		data, _ := json.Marshal(payload)
+		body = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, fmt.Errorf("github %s: %d", method, resp.StatusCode)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return resp.StatusCode, err
+		}
+	}
+	return resp.StatusCode, nil
 }
 func postHubGitHubComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, body string) (string, error) {
 	payload := map[string]string{"body": body}

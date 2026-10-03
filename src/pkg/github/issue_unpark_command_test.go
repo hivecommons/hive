@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -146,6 +147,12 @@ func parkedIssue(number int, comments ...unparkWireComment) unparkWireIssue {
 	}
 }
 
+func directionParkedIssue(number int, comments ...unparkWireComment) unparkWireIssue {
+	issue := parkedIssue(number, comments...)
+	issue.Labels = []wireLabel{{Name: issueNeedsDirectionLabel}, {Name: "hold"}}
+	return issue
+}
+
 func humanComment(id int64, login, body string) unparkWireComment {
 	return unparkWireComment{
 		ID:        id,
@@ -154,6 +161,33 @@ func humanComment(id int64, login, body string) unparkWireComment {
 		CreatedAt: unparkNow(),
 		UpdatedAt: unparkNow(),
 		HTMLURL:   fmt.Sprintf("https://example.test/c/%d", id),
+	}
+}
+
+func TestSweepIssueUnparkCommandsNeedsDirectionClearsParkingLabel(t *testing.T) {
+	issues := []unparkWireIssue{directionParkedIssue(6, humanComment(10, "maintainer", "/hive approve"))}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "write"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 1 || result.Unparked[0].Number != 6 {
+		t.Fatalf("expected needs-direction issue 6 un-parked, got %+v", result.Unparked)
+	}
+	removed := strings.Join(rec.removed[6], ",")
+	if !strings.Contains(removed, issueNeedsDirectionLabel) {
+		t.Fatalf("expected %s removed, got %v", issueNeedsDirectionLabel, rec.removed[6])
+	}
+	if strings.Contains(removed, "hold") {
+		t.Fatalf("hold must never be removed, got %v", rec.removed[6])
+	}
+	if len(rec.added[6]) != 1 || rec.added[6][0] != HumanAckLabel {
+		t.Fatalf("expected %s added, got %v", HumanAckLabel, rec.added[6])
+	}
+	if joined := strings.Join(rec.posted[6], "\n"); !strings.Contains(joined, issueNeedsDirectionLabel) {
+		t.Fatalf("accepted reply should name %s, got %v", issueNeedsDirectionLabel, rec.posted[6])
 	}
 }
 
@@ -287,6 +321,7 @@ func TestSweepIssueUnparkCommandsPostsNoticeOnceAndAnswersOnce(t *testing.T) {
 		CreatedAt: unparkNow(),
 		UpdatedAt: unparkNow(),
 	}
+
 	answered := unparkWireComment{
 		ID:        53,
 		Body:      fmt.Sprintf("%s52 -->\nUn-parked by @maintainer.", unparkReplyMarkerPrefix),
@@ -316,13 +351,44 @@ func TestSweepIssueUnparkCommandsPostsNoticeOnceAndAnswersOnce(t *testing.T) {
 	}
 }
 
+func TestSweepIssueUnparkCommandsNeedsDirectionIdempotency(t *testing.T) {
+	notice := unparkWireComment{
+		ID:        54,
+		Body:      unparkNoticeBody(directionParkedIssue(16).Body),
+		User:      wireUser{Login: "hive[bot]"},
+		CreatedAt: unparkNow(),
+		UpdatedAt: unparkNow(),
+	}
+	answered := unparkWireComment{
+		ID:        56,
+		Body:      fmt.Sprintf("%s55 -->\nUn-parked by @maintainer.", unparkReplyMarkerPrefix),
+		User:      wireUser{Login: "hive[bot]"},
+		CreatedAt: unparkNow(),
+		UpdatedAt: unparkNow(),
+	}
+	issues := []unparkWireIssue{directionParkedIssue(16, notice, humanComment(55, "maintainer", "/hive decision option C"), answered)}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 0 {
+		t.Fatalf("an answered needs-direction command must not be replayed: %+v", result.Unparked)
+	}
+	if len(rec.posted[16]) != 0 || len(rec.removed[16]) != 0 || len(rec.added[16]) != 0 {
+		t.Fatalf("no writes expected, posted=%v removed=%v added=%v", rec.posted[16], rec.removed[16], rec.added[16])
+	}
+}
+
 func TestSweepIssueUnparkCommandsHelpAndProseDoNotUnpark(t *testing.T) {
 	cases := []struct {
 		name    string
 		comment unparkWireComment
 		want    string
 	}{
-		{"help", humanComment(61, "maintainer", "/hive help"), "What to reply"},
+		{"help", humanComment(61, "maintainer", "/hive help"), "Maintainer commands"},
 		{"prose", humanComment(62, "maintainer", "approved, go with A"), "To start work, reply"},
 	}
 	for _, tc := range cases {
@@ -425,7 +491,7 @@ func TestParseUnparkCommand(t *testing.T) {
 
 func TestUnparkNoticeBodyListsIssueOptions(t *testing.T) {
 	body := unparkNoticeBody("Recommendation: A.\n\n- **Option A** — strip the secret\n- Option B: document only\n")
-	for _, want := range []string{unparkNoticeMarker, "What to reply", "`/hive approve`", "option A", "/hive decision B", "`/hive help`"} {
+	for _, want := range []string{unparkNoticeMarker, "What to reply", "`/hive approve`", "option A", "/hive decision B", "`/hive help`", "/fixed", maintainerCommandsDocURL} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("notice missing %q:\n%s", want, body)
 		}
@@ -450,10 +516,41 @@ func TestIsUnparkProseAssent(t *testing.T) {
 }
 
 func TestHasIssueParkingLabel(t *testing.T) {
-	if !hasIssueParkingLabel([]string{"Needs-Human"}) || !hasIssueParkingLabel([]string{"needs-decision"}) {
+	if !hasIssueParkingLabel([]string{"Needs-Human"}) || !hasIssueParkingLabel([]string{"needs-decision"}) || !hasIssueParkingLabel([]string{"Needs-Direction"}) {
 		t.Fatal("parking labels must be recognised case-insensitively")
 	}
 	if hasIssueParkingLabel([]string{"hold", "bug"}) {
 		t.Fatal("hold is not a parking label this sweep answers")
+	}
+}
+
+func TestRenderUnparkHelpReplyListsDocumentedCommands(t *testing.T) {
+	body := renderUnparkHelpReply("Recommendation: option A.")
+	doc, err := os.ReadFile("../../docs/maintainer-commands.md")
+	if err != nil {
+		t.Fatalf("read maintainer commands doc: %v", err)
+	}
+	docBody := string(doc)
+	for _, want := range []string{
+		"/hive approve",
+		"/hive decision",
+		"/hive help",
+		"/fixed",
+		"/reopen",
+		"/help-wanted",
+		"/good-first-issue",
+		"/hacktober-fest",
+		"/kind",
+		"/area",
+		"/assign",
+		"/unassign",
+		maintainerCommandsDocURL,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("help reply missing %q:\n%s", want, body)
+		}
+		if !strings.Contains(docBody, want) {
+			t.Fatalf("maintainer commands doc missing %q", want)
+		}
 	}
 }

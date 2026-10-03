@@ -264,7 +264,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.287
+ARG CLAUDE_CODE_VERSION=2.1.288
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -285,9 +285,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.52.0
-ARG GOOSE_SHA256_AMD64=4aee1f770b405c44194c0e9407df1fb06bda4c50eee935f0d8fd10731821cc5e
-ARG GOOSE_SHA256_ARM64=ae602c4f6e9a785bf087da52c89908d4dc6aa605dcc17bf83293873f626d9c85
+ARG GOOSE_VERSION=1.53.0
+ARG GOOSE_SHA256_AMD64=deb2191a6b75acc0a20232fc5c52655ea2f9cc8fa2f5dffc8622e8d378a915dc
+ARG GOOSE_SHA256_ARM64=01a0ea109e1984e7a511ff3f99d1a29d32e6f90f0852b5a3b416499c8eaae567
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -333,9 +333,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.4.3
-ARG OMP_SHA256_AMD64=afcecdff1f421f3c88fb1714c407b3700899b4de3ed003cd8369f52ae6ca87de
-ARG OMP_SHA256_ARM64=f000c2945751f84a8706ba0bafe0de42f67cb3b8681a3703f8d1397fa22c5edd
+ARG OMP_VERSION=18.5.0
+ARG OMP_SHA256_AMD64=b8413e6e085a423c7a9b1d7bc025c2af794923b6b6c57330a309639b6176c8a1
+ARG OMP_SHA256_ARM64=1244860c58bb68a3a45390d4932e5c7983183ec8c12cb6848c1afd709de38a07
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

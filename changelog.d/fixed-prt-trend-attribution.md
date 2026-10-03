@@ -1,0 +1,1 @@
+- Fix Change Throughput actor attribution and render the Hive vs human trend as a stacked share area.

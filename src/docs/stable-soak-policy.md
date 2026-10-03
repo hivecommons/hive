@@ -24,23 +24,30 @@ A `v5` build may be promoted from `candidate` to `stable` only when all of these
 conditions hold:
 
 1. **Minimum candidate soak:** the current `candidate` build must have aged at
-   least 24 hours. Frequent `v5` merges keep moving `candidate`, and each new
-   `candidate` build starts its own 24-hour timer; a minutes-old build is not
-   promoted merely because an older, now-superseded build soaked after the
-   current `stable` build.
-2. **Current candidate only:** the build being promoted is whichever one is the
-   current `candidate` when the gate decides, and it must still be the current
-   `candidate` immediately before any tag is moved. The `candidate` tag is a
-   moving release-channel tag written by `docker.yml`; it can change while
+   least 24 hours since the oldest build in its lineage (the oldest build
+   promoted to `stable` before this `candidate` arrived) was first seen on the
+   `candidate` channel. Frequent `v5` merges keep moving `candidate`, and each
+   new `candidate` build starts its own 24-hour soak timer from that lineage's
+   oldest build; a minutes-old build is not promoted merely because an older,
+   now-superseded build soaked after the current `stable` build. (The soak is
+   measured on the lineage age, not per-build age: if build B2 replaces B1 on
+   the `candidate` channel, and B1 is 25 hours old, then B2 is promotable after
+   24 hours from B1's first appearance, even if B2 itself is only seconds old.)
+2. **Current candidate only:** the build being promoted must be the current
+   `candidate` both when the gate decides and immediately before any tag is
+   moved. The race being guarded is between the promotion gate reading the
+   candidate digest (to measure the lineage soak age and check evidence) and the
+   `docker.yml` workflow writing a newer candidate digest. The `candidate` tag
+   is a moving release-channel tag written by `docker.yml`; it can change while
    `src/scripts/promote-stable.sh promote` is reading evidence or between the
-   decision and the tag move. If that happens, the run always holds (never
-   fails the workflow run) and leaves `stable` unchanged, so the next hourly run
-   evaluates the newer `candidate` and its own 24-hour soak window. The gate
-   detects this in two places: first, the `hive`, `hive-contributor`, and
-   `hive-hub` candidate digests must all resolve to the same revision and
-   generation while evidence is collected; second, each image's `candidate`
-   digest is re-read immediately before any tag moves and must still match the
-   digest the gate decided to promote.
+   gate decision and the tag move. If the candidate digest changes before the
+   tag move, the run always holds (never fails the workflow run) and leaves
+   `stable` unchanged, so the next hourly run evaluates the newer `candidate`
+   and its own lineage-soak window. The gate detects this race in two places:
+   first, the `hive`, `hive-contributor`, and `hive-hub` candidate digests must
+   all resolve to the same revision and generation while evidence is collected;
+   second, each image's `candidate` digest is re-read immediately before any tag
+   moves and must still match the digest the gate decided to promote.
 3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy.
 4. **No open blocker:** no open issue or PR label explicitly marks the candidate

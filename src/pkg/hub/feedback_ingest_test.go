@@ -2,7 +2,6 @@ package hub
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -308,7 +307,7 @@ func TestHubFeedbackIngestRateLimitsPerHive(t *testing.T) {
 }
 
 func TestValidateHubFeedbackRequest(t *testing.T) {
-	png := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("not really a png"))
+	png := pngDataURI(t)
 	base := func() feedbackReportRequest {
 		return feedbackReportRequest{Title: "  A title  ", Description: "  A description  ", RequestType: feedbackTypeBug}
 	}

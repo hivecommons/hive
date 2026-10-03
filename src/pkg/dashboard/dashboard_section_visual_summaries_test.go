@@ -55,7 +55,6 @@ const fixtures = {
   'token-panel': '8 tok/hr · 2 sessions (24h)',
   'cost-panel': '$2.00',
   'repos-section': '1 repos · 3 open PRs · 2 issues',
-  'beads-section': '4 beads',
   'acmm-eval-section': 'L3',
   'audit-section': '5 events today',
   'review-queue-section': '6 PRs',

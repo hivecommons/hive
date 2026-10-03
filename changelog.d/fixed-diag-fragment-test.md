@@ -1,0 +1,1 @@
+- Removed a dashboard test that asserted its own changelog fragment existed; the release workflow consumes fragments, which turned every post-release v5 build red.

@@ -96,7 +96,6 @@ func TestDashboardSectionRenderersRefreshSharedShell(t *testing.T) {
 	html := indexHTML(t)
 	cases := map[string]string{
 		"function renderRepos(repos)":               "repos-section",
-		"function renderBeads(beads)":               "beads-section",
 		"function renderAgents(agents)":             "agents-section",
 		"function acmmRenderCard()":                 "acmm-eval-section",
 		"function renderApprovals(dto)":             "approvals-section",
