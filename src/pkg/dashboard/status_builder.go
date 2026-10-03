@@ -1317,6 +1317,9 @@ func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
 				"key": s.Key, "label": s.Label,
 				"source": s.Source, "field": s.Field, "style": s.Style,
 			}
+			if s.Icon != "" {
+				entry["icon"] = s.Icon
+			}
 			if s.TrendField != "" {
 				entry["trendField"] = s.TrendField
 			}

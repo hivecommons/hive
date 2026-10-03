@@ -28,7 +28,7 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
 
-The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **System Diagnostics → Platform**, keeping the information available without consuming a top-level card.
+The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **System Diagnostics → Platform**, keeping the information available without consuming a top-level card. System Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks.
 
 ## Topbar and sidebar status
 

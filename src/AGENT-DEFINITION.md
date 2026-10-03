@@ -88,11 +88,12 @@ Each `StatsEntry`:
 stats_display:
   - key: actionable
     label: Actionable
-    source: status           # status, health, agentMetrics, tokens
+    source: status           # status, agentMetrics, tokens, or resolver-backed sources
     field: actionableCount
     style: spark             # number, dot, pct, pct-bar, spark
+    icon: 📈                 # optional
     trend_field: actionable
-    target: 0
+    target: 0                # optional numeric goal for pct-bar
 ```
 
 ---

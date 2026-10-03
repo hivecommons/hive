@@ -2302,6 +2302,15 @@
     .health-ci { font-weight: 700; font-size: 0.7rem; }
     .health-ci.good { color: var(--green); }
     .health-ci.warn { color: var(--yellow); }
+    .quality-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); }
+    .quality-stat-title { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
+    .quality-stat-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-4); padding-block: var(--sp-1); font-size: var(--fs-sm); }
+    .quality-stat-empty { color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .quality-stat-value { font-weight: 600; }
+    .quality-stat-value.ok { color: var(--green); }
+    .quality-stat-value.fail { color: var(--red); }
+    .quality-stat-value.skip, .quality-stat-value.unknown { color: var(--muted); }
+
     .health-ci.bad { color: var(--red); }
 
     /* GitHub API rate limit alert bar */
@@ -8395,6 +8404,13 @@
 
     const SPARK_COLORS = { stars: '#e3b341', outreachOpen: 'var(--blue)', outreachMerged: 'var(--green)', actionable: 'var(--red)', openPrs: 'var(--purple)', mergeable: 'var(--green)' };
     const DEFAULT_SPARK_COLOR = 'var(--blue)';
+
+    function statTargetHref(stat) {
+      const target = stat && stat.target;
+      if (typeof target !== 'string') return '';
+      const href = target.trim();
+      return /^(https?:\/\/|\/|#)/.test(href) ? href : '';
+    }
 
     function renderStatHtml(stat, name) {
       const v = resolveStatValue(stat, name);
@@ -21630,6 +21646,74 @@ function burnAreaChart() {
       } catch (e) { /* non-fatal */ }
     });
 
+    function qualityDiagnosticsAgent(agents) {
+      return (agents || []).find(a => a && a.name === 'quality') || null;
+    }
+
+    function renderQualityStatValue(stat, agentName) {
+      const v = resolveStatValue(stat, agentName);
+      const style = stat.style || 'number';
+      const hasValue = v !== undefined && v !== null && v !== '';
+      const icon = stat.icon ? escapeHtml(stat.icon) + ' ' : '';
+
+      if (style === 'dot') {
+        const skip = v === -1;
+        const ok = v === true || v === 1;
+        const dot = skip ? '⊘' : ok ? '✓' : hasValue ? '✗' : '—';
+        const label = skip ? 'skipped' : ok ? 'ok' : hasValue ? 'fail' : 'unknown';
+        const cls = skip ? 'skip' : ok ? 'ok' : hasValue ? 'fail' : 'unknown';
+        return `<span class="quality-stat-value ${cls}">${dot} ${label}</span>`;
+      }
+
+      if (style === 'pct') {
+        const PCT_GOOD = 90;
+        const PCT_WARN = 70;
+        const cls = !hasValue ? 'unknown' : Number(v) >= PCT_GOOD ? 'good' : Number(v) >= PCT_WARN ? 'warn' : 'bad';
+        return `<span class="health-ci ${cls}">${hasValue ? escapeHtml(String(v)) + '%' : '—'}</span>`;
+      }
+
+      if (style === 'pct-bar') {
+        const numericTarget = typeof stat.target === 'number' ? stat.target : 100;
+        const pct = hasValue ? Number(v) : 0;
+        const TARGET_WARN_OFFSET = 10;
+        const covCls = !hasValue ? '' : pct >= numericTarget ? 'ind-ok' : pct >= numericTarget - TARGET_WARN_OFFSET ? 'ind-warn' : 'ind-err';
+        return `<span class="ind-num ${covCls}">${hasValue ? escapeHtml(String(v)) + '%' : '—'}</span> <span class="ind-dlabel">goal: ${numericTarget}%</span>`;
+      }
+
+      if (style === 'spark') {
+        const statKey = stat.key || stat.field;
+        const trendField = stat.trendField || stat.field;
+        const color = SPARK_COLORS[trendField] || DEFAULT_SPARK_COLOR;
+        const histSeries = historyData.map(s => s.agentStats?.[agentName]?.[statKey] ?? 0);
+        const hasHistData = histSeries.some(v => v > 0);
+        const trendSeries = hasHistData ? histSeries : (window._trendData || []).map(s => s[trendField] || 0);
+        const trendTimes = hasHistData ? getHistoryTimes() : (window._trendData || []).map(s => s.t ?? s.timestamp);
+        return `<span class="ind-num">${icon}${hasValue ? escapeHtml(String(v)) : '0'}</span> ${sparkSvg(trendSeries, color, trendTimes, `agent-stat:${agentName}:${statKey}`)}`;
+      }
+
+      return `<span class="ind-num">${icon}${hasValue ? escapeHtml(String(v)) : '0'}</span>`;
+    }
+
+    function renderQualityStatsCard(agents) {
+      const quality = qualityDiagnosticsAgent(agents);
+      const stats = (quality && Array.isArray(quality.statsConfig)) ? quality.statsConfig : [];
+      const emptyAction = '<button class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-config-type="agent" data-agent="quality" data-tab="Stats">Configure quality stats</button>';
+      if (!quality || stats.length === 0) {
+        return `<div class="quality-stat-card"><div class="quality-stat-title">Quality stats</div><div class="quality-stat-empty">No stats configured — add them under quality → Configuration → Stats.</div>${emptyAction}</div>`;
+      }
+      const rows = stats.map(stat => {
+        const labelText = stat.label || stat.key || stat.field || 'Stat';
+        const icon = stat.icon ? `${escapeHtml(stat.icon)} ` : '';
+        const desc = stat.desc ? ` title="${escapeHtml(stat.desc)}"` : '';
+        const href = statTargetHref(stat);
+        const labelHtml = href
+          ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener"${desc}>${icon}${escapeHtml(labelText)}</a>`
+          : `<span${desc}>${icon}${escapeHtml(labelText)}</span>`;
+        return `<div class="quality-stat-row">${labelHtml}<span>${renderQualityStatValue(stat, quality.name)}</span></div>`;
+      }).join('');
+      return `<div class="quality-stat-card"><div class="quality-stat-title">Quality stats</div>${rows}</div>`;
+    }
+
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;
     function renderDebugSection() {
@@ -21712,6 +21796,7 @@ function burnAreaChart() {
       setSectionSummary('debug-section', version ? `version ${version}` : 'platform diagnostics');
       grid.innerHTML = `
         <div style="${cardStyle}" class="platform-diagnostics"><div style="${labelStyle}">Platform</div>${platformFactTiles(platform)}</div>
+        ${renderQualityStatsCard(agents)}
         <div style="${cardStyle}"><div style="${labelStyle}">Agent States</div>${agentRows || '<div style="color:var(--muted);font-size:0.8rem">No agents</div>'}</div>
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>

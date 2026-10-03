@@ -1,1 +1,0 @@
-- Removed the console-specific workflow Health Checks card from System Diagnostics.
