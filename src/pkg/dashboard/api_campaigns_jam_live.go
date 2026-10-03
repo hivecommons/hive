@@ -89,7 +89,7 @@ func (s *Server) handleCampaignJamWebSocket(w http.ResponseWriter, r *http.Reque
 	// any signed-in reader could make the server decode arbitrarily large
 	// frames into memory (#10082). Same hard bound as the contribute hub.
 	conn.SetReadLimit(wsMaxMessageSize)
-	actor := jamActorFromRequest(r, r.URL.Query().Get("agent"), r.URL.Query().Get("model"))
+	actor := jamActorFromRequest(r)
 	client := &jamLiveClient{
 		id:       jamID("client"),
 		campaign: campaignID,

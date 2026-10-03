@@ -167,7 +167,7 @@ func TestCampaignJamRevisionAttributionAndSuggestionAcceptance(t *testing.T) {
 		t.Fatalf("suggestion create = %d body=%s", suggestion.Code, suggestion.Body.String())
 	}
 	jam := decodeJam(t, suggestion)
-	if jam.Suggestions[0].Author.Type != "agent" || jam.Suggestions[0].Author.Model != "gpt-5.4" {
+	if jam.Suggestions[0].Author != (CampaignJamActor{Type: "human", Name: "agent-runner"}) {
 		t.Fatalf("suggestion attribution = %+v", jam.Suggestions[0].Author)
 	}
 	accept := jamPostAs(t, s, "/api/campaigns/spec-4/jam/suggestions", "owner", "maintainer", map[string]any{

@@ -134,7 +134,12 @@ subroutes. Phase 1 is async: participants with read-write access can anchor
 threads and suggestions to spec sections, vote in advisory polls, and resume
 the workspace after a restart. Maintainers record poll decisions with a
 rationale; accepted suggestions and decisions create attributed spec revisions
-with human or agent/model attribution and diffs.
+with authenticated human attribution and diffs. REST writes and WebSocket
+presence/edits ignore legacy caller-supplied `agent` and `model` fields;
+only server-generated replies from `/jam/agents` carry agent/model attribution.
+Poll votes are keyed by authenticated user, so voting again updates that user's
+vote rather than adding another vote. Existing historical attribution and votes
+are retained unchanged.
 
 Live Jam mode upgrades `/api/campaigns/{id}/jam/ws` to a WebSocket so signed-in
 participants can see who is present and which section each person is editing.
