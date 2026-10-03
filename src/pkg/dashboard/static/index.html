@@ -884,6 +884,8 @@
     .agent-card.idle { border-left-color: var(--line); }
     .agent-card.stopped { border-left-color: var(--red); }
     .agent-card.needs-login { border-left-color: var(--red); }
+    .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }
+    .agent-card.disabled-agent .agent-state { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
     .terminal-copy-hint {
       display: flex; align-items: center; gap: var(--sp-4);
       margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: 6px 10px;
@@ -5495,9 +5497,11 @@
     }
     function agentsSectionSummary(agents) {
       agents = Array.isArray(agents) ? agents : [];
-      const off = agents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
-      const on = Math.max(0, agents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off`;
+      const disabled = agents.filter(agentIsDisabled).length;
+      const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
+      const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
+      const on = Math.max(0, activeAgents.length - off);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
@@ -6921,7 +6925,11 @@
     function _sidebarBuildGroups(agents) {
       let groups;
       if (!_sidebarLayout || !_sidebarLayout.groups) {
-        const sorted = [...agents].sort((a, b) => (a.sortOrder || 100) - (b.sortOrder || 100));
+        const sorted = [...agents].sort((a, b) => {
+          const disabled = (agentIsDisabled(a) ? 1 : 0) - (agentIsDisabled(b) ? 1 : 0);
+          if (disabled !== 0) return disabled;
+          return (a.sortOrder || 100) - (b.sortOrder || 100);
+        });
         groups = [{ name: null, agents: sorted.map(a => a.name) }];
       } else {
         groups = _sidebarLayout.groups.map(g => ({ ...g }));
@@ -7403,7 +7411,7 @@
       const runtimeNames = new Set(runtime.map(a => a.name));
       for (const configured of (window._configuredAgents || [])) {
         if (!configured.enabled && !runtimeNames.has(configured.name)) {
-          runtime.push({ ...configured, configDisabled: true });
+          runtime.push({ ...configured, enabled: false, configDisabled: true, state: 'stopped', busy: 'idle' });
         }
       }
       return runtime;
@@ -9293,6 +9301,13 @@
         + `</div>`;
     }
     function renderAgents(agents) {
+      agents = (typeof _sidebarAgents === 'function') ? (() => {
+        const prev = window._lastAgents;
+        window._lastAgents = Array.isArray(agents) ? agents : [];
+        const merged = _sidebarAgents();
+        window._lastAgents = prev;
+        return merged;
+      })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
       const el = document.getElementById('agents');
@@ -9313,6 +9328,8 @@
       const orderedAgents = agentLayoutApplyOrder(sortedAgents);
       agentCardLayoutUpdateResetButton(sortedAgents);
       const cards = agentsFocusedFirst(orderedAgents).map(a => {
+        const isDisabled = agentIsDisabled(a);
+        const isPoweredOff = isDisabled && a.state !== 'running';
         const isOnDemand = a.onDemand === true;
         // Manual/persisted pause wins over offByCadence — see the agent-detail
         // renderer for the incident this ordering prevents.
@@ -9330,10 +9347,10 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
@@ -9391,12 +9408,20 @@
         const agentOrderHandle = `<button type="button" class="dashboard-grip agent-card-order-handle" draggable="true" data-agent-order-grip data-agent="${esc(a.name)}" data-stop="1" aria-label="Drag to reorder ${esc(a.displayName || a.name)}" title="Drag to reorder" aria-pressed="false">⠿</button>`;
         const agentSpanTip = `Drag or use ← / → to set ${a.displayName || a.name} to span 1, 2, or 3 columns; Esc resets width`;
         const agentSpanHandle = `<button type="button" class="agent-card-resize-col" data-agent-resize-col data-agent="${esc(a.name)}" data-stop="1" aria-label="${esc(agentSpanTip)}" title="${esc(agentSpanTip)}" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${layoutSize.span || 1}"></button>`;
+        const disabledEnableBtn = isDisabled ? `<button class="hv-btn btn-primary btn-sm oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General" title="Configure ${esc(a.displayName || a.name)} — review its settings and enable it from the General tab">⚙ Enable…</button>` : '';
+        const historyLink = `<a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a>`;
+        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} ${historyLink}`;
+        const sessionActions = isPoweredOff
+          ? `${historyLink}`
+          : isDisabled
+          ? liveSessionActions
+          : `${liveSessionActions} <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button>`;
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}" data-agent-order-key="${esc(a.name)}" data-agent-span="${layoutSize.span || 1}">
           ${agentSpanHandle}
           <span class="working-indicator"></span>
-          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
-          <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
@@ -9431,7 +9456,7 @@
           ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
           ${watchdogConditionsRow(a)}
-          <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${(() => {
+          <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${isDisabled ? '—' : (() => {
             const isClaude = a.cli === 'claude';
             const isCopilot = a.cli === 'copilot';
             const claudeIcon = '<span class="cli-icon claude-icon"></span>';
@@ -9446,7 +9471,7 @@
             return '<button class="hv-btn btn-secondary btn-sm cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
           })()}</span></div>
           ${summaryEl}${indEl}
-          <div class="agent-actions">
+          ${isDisabled ? '' : `<div class="agent-actions">
             <input type="text" class="kick-prompt" id="kick-prompt-${esc(a.name)}" placeholder="custom instruction (optional)" data-enter-action="kick" data-agent="${esc(a.name)}" title="Type a custom prompt to send to this agent instead of its default kick dialog. Press Enter to send." />
             <button class="hv-btn btn-secondary btn" data-action="kick" data-agent="${esc(a.name)}" title="Send the custom prompt above to this agent immediately, bypassing the governor cadence timer">send</button>
             <button class="hv-btn btn-secondary btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
@@ -9459,7 +9484,7 @@
               ${modelOptionsHtml(a.cli, a.model)}
             </select>
             ${effortSelectHtml(a)}
-          </div>
+          </div>`}
           </div>
         </div>`;
       });

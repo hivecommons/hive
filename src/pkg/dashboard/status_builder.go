@@ -677,14 +677,15 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agentCfg.Enabled {
-				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonDisabled})
-				seen[name] = true
-				continue
-			}
 			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
+				continue
+			}
+			if packAllowed != nil && !packAllowed[name] && !activeOutsidePack(cfg, name, nil) && !agentCfg.Enabled {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+				slog.Debug("agent card omitted: config-only disabled agent outside ACMM pack", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
 				continue
 			}
@@ -1069,7 +1070,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		cadenceValue = lookupCadenceValue(name, cfg)
 	}
 	onDemand := agentCfg.OnDemand || onDemandSet[name]
-	noCadence := !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
+	noCadence := agentCfg.Enabled && !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
 	unscheduledInMode, cadenceModes := agentUnscheduledInMode(cfg, name, currentMode, agentCfg.Enabled, onDemand, agentCfg.UsesGovernorKick())
 
 	acmmLevel := 0
@@ -1093,9 +1094,12 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			model = gw.DefaultModel
 		}
 	}
-	evidence := fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
-	if err := cfg.Governor.ValidateBackend(cli); err != nil {
-		evidence = err.Error()
+	evidence := ""
+	if agentCfg.Enabled {
+		evidence = fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
+		if err := cfg.Governor.ValidateBackend(cli); err != nil {
+			evidence = err.Error()
+		}
 	}
 
 	return FrontendAgent{
@@ -1134,17 +1138,22 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			}(),
 			ContinuousModes: cfg.ContinuousModes(name),
 		},
-		GovBackend:       cli,
-		GovModel:         model,
-		StatsConfig:      resolveStatsSources(loadStatsConfig(name), cfg),
-		Mode:             mode.String(),
-		ModeEmoji:        mode.Emoji(),
-		DefaultMode:      defaultMode.String(),
-		IsCustomMode:     mode != defaultMode,
-		StructuredStatus: "BLOCKED",
-		StatusEvidence:   evidence,
-		LastError:        evidence,
-		Enabled:          true,
+		GovBackend:   cli,
+		GovModel:     model,
+		StatsConfig:  resolveStatsSources(loadStatsConfig(name), cfg),
+		Mode:         mode.String(),
+		ModeEmoji:    mode.Emoji(),
+		DefaultMode:  defaultMode.String(),
+		IsCustomMode: mode != defaultMode,
+		StructuredStatus: func() string {
+			if evidence == "" {
+				return ""
+			}
+			return "BLOCKED"
+		}(),
+		StatusEvidence: evidence,
+		LastError:      evidence,
+		Enabled:        agentCfg.Enabled,
 
 		UnscheduledInMode: unscheduledInMode,
 		CadenceModes:      cadenceModes,
