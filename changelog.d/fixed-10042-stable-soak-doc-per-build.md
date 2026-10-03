@@ -1,0 +1,3 @@
+Docs: the stable promotion rule now describes the per-build candidate soak the
+gate actually enforces (a freshly cut build cannot ride an older build's soak),
+and the candidate race paragraph names the two events it compares.
