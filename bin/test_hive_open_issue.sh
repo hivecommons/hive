@@ -219,6 +219,62 @@ check "--blocked-by refusal writes no request" "" "$(find_req badblockedbot)"
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --- Section 3d: --close-on-merge flag (filing-time opt-in, #10304) ---
+run_script "closeonmergebot" --repo "org/repo" --title "Sweep finding" --body "found by reading the code" --close-on-merge
+
+REQ_FILE="$(find_req closeonmergebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BODY="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['body'])" "$REQ_FILE")"
+  check "--close-on-merge appends the marker to the body" "$(printf 'found by reading the code\n\nhive: close-on-merge')" "$GOT_BODY"
+else
+  echo "  FAIL: request file not created for --close-on-merge test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# A body that already carries the marker is left alone.
+run_script "closeonmergedupbot" --repo "org/repo" --title "Sweep finding 2" --body "Hive: Close-On-Merge" --close-on-merge
+
+REQ_FILE="$(find_req closeonmergedupbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BODY="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['body'])" "$REQ_FILE")"
+  check "--close-on-merge does not duplicate an existing marker" "Hive: Close-On-Merge" "$GOT_BODY"
+else
+  echo "  FAIL: request file not created for --close-on-merge dedup test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# Without the flag the body is unchanged.
+run_script "nocloseonmergebot" --repo "org/repo" --title "Symptom bug" --body "it broke"
+
+REQ_FILE="$(find_req nocloseonmergebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_BODY="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['body'])" "$REQ_FILE")"
+  check "no --close-on-merge leaves the body unchanged" "it broke" "$GOT_BODY"
+else
+  echo "  FAIL: request file not created for no --close-on-merge test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# The flag only applies to a create; a comment with it is refused.
+set +e
+run_script "closeonmergecommentbot" comment --repo "org/repo" 5 --body "x" --close-on-merge >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "--close-on-merge on a non-create is refused (exit 2)" "2" "$BAD_RC"
+check "--close-on-merge refusal writes no request" "" "$(find_req closeonmergecommentbot)"
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --parent=value style also works.
 run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
 
