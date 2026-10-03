@@ -1,0 +1,1 @@
+- dashboard: keep `/api/nous/status` `baseline_pct` bounded to the 0..100 progress range after snapshot counts pass the baseline target (#10026)
