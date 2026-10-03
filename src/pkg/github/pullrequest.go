@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -297,6 +298,10 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 // UpdateBranch syncs a PR's head branch with its base (PUT
 // /repos/{owner}/{repo}/pulls/{n}/update-branch), resolving the common
 // "behind main" case before a merge. Like MergePR it goes over REST as the App.
+//
+// GitHub answers this endpoint with 202 Accepted (the merge is queued), which
+// go-github surfaces as *gh.AcceptedError; that is the success path here, not
+// a failure, so it is swallowed rather than returned.
 func (c *Client) UpdateBranch(ctx context.Context, repo string, number int) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
@@ -311,6 +316,10 @@ func (c *Client) UpdateBranch(ctx context.Context, repo string, number int) erro
 		Target: strconv.Itoa(number),
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.PullRequests.UpdateBranch(ctx, owner, repo, number, nil)
+		var accepted *gh.AcceptedError
+		if errors.As(apiErr, &accepted) {
+			apiErr = nil
+		}
 		return effects.Result{Provenance: owner + "/" + repo + "#" + strconv.Itoa(number)}, apiErr
 	})
 	if err != nil {

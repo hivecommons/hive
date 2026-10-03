@@ -9,27 +9,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 // fakeLeaseRegistry is a primitives-only registry the adapter drives, with
 // the same generation rules the dashboard applies.
 type fakeLeaseRegistry struct {
-	workDir    string
-	runKey     string
-	stage      string
-	gen        uint64
-	expiresAt  time.Time
-	present    bool
-	visitErr   error
-	workDirErr error
-	advanceErr error
-	importErr  error
-	advances   []map[string]string
-	receipts   [][]byte
-	refusals   []map[string]string
-	progress   []map[string]string
-	plans      []string
+	workDir     string
+	runKey      string
+	stage       string
+	gen         uint64
+	expiresAt   time.Time
+	present     bool
+	visitErr    error
+	workDirErr  error
+	advanceErr  error
+	importErr   error
+	advances    []map[string]string
+	receipts    [][]byte
+	refusals    []map[string]string
+	progress    []map[string]string
+	plans       []string
+	planEngines []string
 }
 
 func (f *fakeLeaseRegistry) VisitActiveStageLeases(visit func(runKey, key, stage, identity, taskID, repo string, gen uint64, expiresAt time.Time)) error {
@@ -79,10 +81,11 @@ func (f *fakeLeaseRegistry) RecordStageProgress(_ string, _ string, attrs map[st
 	f.progress = append(f.progress, attrs)
 }
 
-func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
+func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string, engineName ...string) error {
 	if f.importErr != nil {
 		return f.importErr
 	}
+	f.planEngines = append(f.planEngines, engineName...)
 	f.plans = append(f.plans, taskList)
 	return nil
 }
@@ -245,5 +248,28 @@ func TestLeaseAdapter_ActiveStagesSurfacesWorkDirError(t *testing.T) {
 	reg := &fakeLeaseRegistry{runKey: testRunKey, stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, workDirErr: boom}
 	if _, err := NewLeaseRegistryAdapter(reg, &scriptedEngine{}).ActiveStages(t0); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+}
+
+func TestLeaseAdapter_ImportsReceiptEngineName(t *testing.T) {
+	for _, name := range []string{config.DefaultRunsEngine, "second-planner", ""} {
+		t.Run("engine="+name, func(t *testing.T) {
+			reg := &fakeLeaseRegistry{}
+			adapter := NewLeaseRegistryAdapter(reg, &scriptedEngine{})
+			receipt := outputschema.StageReceipt{OutputDigest: "digest"}
+			if name != "" {
+				receipt.Engine = &outputschema.StageReceiptEngine{Name: name}
+			}
+			if err := adapter.Advance(context.Background(), Stage{RunKey: testRunKey, Repo: testRepo, Identity: testIdentity, TaskID: testTaskID}, ArtifactStatus{DocumentStatus: DocumentFinal}, receipt, testPlan(), t0); err != nil {
+				t.Fatal(err)
+			}
+			want := name
+			if want == "" {
+				want = config.DefaultRunsEngine
+			}
+			if len(reg.planEngines) != 1 || reg.planEngines[0] != want {
+				t.Fatalf("import engine names = %q, want %q", reg.planEngines, want)
+			}
+		})
 	}
 }

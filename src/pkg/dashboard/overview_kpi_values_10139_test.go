@@ -26,7 +26,7 @@ let _overviewLastRepos = [];
 const window = { _lastStatus: {} };
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
-function renderSparkline(){ throw new Error('renderSparkline should not be called in this test'); }
+function renderSparkline(){ return '<svg></svg>'; }
 ` + jsFunc(t, html, "esc") + `
 ` + jsFunc(t, html, "overviewItemAgeMinutes") + `
 ` + jsFunc(t, html, "overviewMedianAgeLabel") + `
@@ -66,9 +66,9 @@ const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\
 assert.equal(values.length, 6);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
 assert.deepEqual(Object.fromEntries(values), {
-  'Open issues': '99',
-  'Open PRs': '7',
-  'Actionable now': '103',
+  'Total open issues': '99',
+  'Total open PRs': '7',
+  'Actionable now (issues and PRs)': '103',
   'Held': '1',
   'Blocked / needs-human': '1',
   'Median age': '7m',

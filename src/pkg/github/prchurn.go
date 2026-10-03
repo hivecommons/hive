@@ -148,10 +148,10 @@ func (c *Client) emitPRTerminalObserved(obs PRTerminalObservation) {
 func prTerminalMergeAttribution(actor string, identity HiveIdentity, appBotLogin string) string {
 	login := strings.TrimSpace(actor)
 	if login == "" {
-		return "other_automation"
+		return "unknown"
 	}
 	if identity.Matches(login) || (appBotLogin != "" && strings.EqualFold(login, appBotLogin)) {
-		return "other_automation"
+		return "hive"
 	}
 	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return "other_automation"

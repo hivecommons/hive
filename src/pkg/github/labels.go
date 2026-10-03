@@ -5,8 +5,10 @@ type issueLabelDefinition struct {
 	description string
 }
 
+const issueNeedsDirectionLabel = "needs-direction"
+
 var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
-	"needs-direction": {
+	issueNeedsDirectionLabel: {
 		color:       "d4c5f9",
 		description: "Hive needs a maintainer direction decision before continuing",
 	},

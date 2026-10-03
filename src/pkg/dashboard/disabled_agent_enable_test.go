@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -63,6 +64,48 @@ func TestDisabledAgentSidebarEnableWiring(t *testing.T) {
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing disabled-agent enable wiring %q", snippet)
+		}
+	}
+}
+
+func TestRenderAgentsIncludesConfiguredDisabledCards(t *testing.T) {
+	html := indexHTML(t)
+	script := `
+const window = { _lastAgents: [], _configuredAgents: [], _hiveRole: 'owner' };
+global.window = window;
+global.localStorage = { getItem() { return null; }, setItem() {}, removeItem() {} };
+var _sidebarLayout = null;
+` + jsFunc(t, html, "agentIsDisabled") + "\n" +
+		jsFunc(t, html, "_sidebarBuildGroups") + "\n" +
+		jsFunc(t, html, "_sortAgentsBySidebar") + "\n" +
+		jsFunc(t, html, "_sidebarAgents") + "\n" +
+		jsFunc(t, html, "agentsSectionSummary") + `
+const fixture = [
+  { name: 'scanner', displayName: 'Scanner', enabled: true, sortOrder: 10, state: 'running', busy: 'idle', cli: 'copilot', model: 'gpt-5' },
+  { name: 'outreach', displayName: 'Outreach', enabled: false, sortOrder: 20, state: 'stopped', busy: 'idle' }
+];
+const sorted = _sortAgentsBySidebar(fixture).sorted;
+if (sorted.length !== 2) throw new Error('want two agents in card source, got ' + sorted.length);
+if (sorted[0].name !== 'scanner' || sorted[1].name !== 'outreach') throw new Error('enabled agent must sort before disabled agent: ' + sorted.map(a => a.name).join(','));
+const summary = agentsSectionSummary(sorted);
+if (!summary.includes('1 on') || !summary.includes('1 disabled')) throw new Error('summary should count only enabled agent as on and append disabled count: ' + summary);
+`
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node renderAgents fixture failed: %v\n%s", err, out)
+	}
+	renderBody := jsFunc(t, html, "renderAgents")
+	for _, snippet := range []string{
+		`const isPoweredOff = isDisabled && a.state !== 'running';`,
+		`class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}"`,
+		`<span class="status-badge disabled"`,
+		`data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General"`,
+		`${isPoweredOff ? 'powered off'`,
+		"${isDisabled ? '' : `<div class=\"agent-actions\">",
+	} {
+		if !strings.Contains(renderBody, snippet) {
+			t.Fatalf("renderAgents missing disabled-card snippet %q", snippet)
 		}
 	}
 }

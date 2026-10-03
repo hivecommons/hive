@@ -1,0 +1,1 @@
+- dashboard: replaced the collapsed System Diagnostics dot and fake sparkline with data-driven per-source quota chips (#PR).

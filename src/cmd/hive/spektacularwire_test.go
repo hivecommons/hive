@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
@@ -217,4 +219,78 @@ func TestLazySpektacularCloneAuthResolvesMinterPerLaunch(t *testing.T) {
 		t.Fatalf("rebuilt minter not used: token=%q err=%v", token, err)
 	}
 	cleanup()
+}
+
+// probeFailureEngine is a planning engine whose binary is not installed: it
+// answers every document question, but Probe reports the failure.
+type probeFailureEngine struct{ name string }
+
+func (e probeFailureEngine) Name() string             { return e.name }
+func (e probeFailureEngine) ContractRevision() string { return e.name + "-status/v1" }
+
+func (e probeFailureEngine) Probe(context.Context) (planengine.ProbeResult, error) {
+	return planengine.ProbeResult{Binary: e.name}, errors.New("executable file not found in $PATH")
+}
+
+func (probeFailureEngine) Status(context.Context, string, string, string) (planengine.ArtifactStatus, error) {
+	return planengine.ArtifactStatus{}, nil
+}
+
+func (probeFailureEngine) ResolveArtifact(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (probeFailureEngine) ExportPlan(context.Context, string, string) (planengine.Plan, error) {
+	return planengine.Plan{}, nil
+}
+
+func (probeFailureEngine) ReadSpec(context.Context, string, string) (string, error) { return "", nil }
+
+// ADR-0021 AC-4(b), last row: an engine whose Probe fails is shown absent on
+// the Extensions card, but the stage observer is still installed — a missing
+// binary today must not leave the run stages unobserved when it appears.
+func TestWirePlanningEngine_ProbeFailureStillInstallsTheObserver(t *testing.T) {
+	const name = "probe-failure-engine"
+	planengine.Register(name, func(config.RunsConfig, *slog.Logger) (planengine.Engine, error) {
+		return probeFailureEngine{name: name}, nil
+	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := dashboard.NewServer(0, logger)
+	cfg := &config.Config{Runs: config.RunsConfig{
+		Engine:      name,
+		Spektacular: config.SpektacularConfig{Enabled: true, Binary: name},
+	}}
+
+	if !wirePlanningEngine(cfg, srv, logger, nil, false) {
+		t.Fatal("a failing probe prevented the stage runner from being installed")
+	}
+	if srv.StageRunner() == nil {
+		t.Fatal("no stage runner installed for an engine whose probe failed")
+	}
+	st := srv.SpektacularStatus()
+	if st == nil || st.Engine != name || st.Present {
+		t.Fatalf("status card = %+v, want the engine named and reported absent", st)
+	}
+}
+
+// An engine the registry cannot build installs no runner and never falls
+// back to another engine.
+func TestWirePlanningEngine_BuildFailureInstallsNoRunner(t *testing.T) {
+	const name = "build-failure-engine"
+	planengine.Register(name, func(config.RunsConfig, *slog.Logger) (planengine.Engine, error) {
+		return nil, errors.New("binary not configured")
+	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := dashboard.NewServer(0, logger)
+	cfg := &config.Config{Runs: config.RunsConfig{
+		Engine:      name,
+		Spektacular: config.SpektacularConfig{Enabled: true, Binary: name},
+	}}
+
+	if wirePlanningEngine(cfg, srv, logger, nil, true) {
+		t.Fatal("a failed engine build reported a runner installed")
+	}
+	if srv.StageRunner() != nil || srv.StageExecutor() != nil {
+		t.Fatalf("failed build left runner=%v executor=%v", srv.StageRunner(), srv.StageExecutor())
+	}
 }

@@ -83,6 +83,13 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 // the dashboard and chat paths, but does not re-apply the label that caused the
 // call.
 func (s *Server) StartDesignSpektacularFromIssue(ctx context.Context, store *beads.Store, issue github.Issue) (*beads.Bead, string, error) {
+	// A design label is not an instruction to undo an owner's retirement on
+	// every governor cycle. Abandonment is terminal for the run key: explicit
+	// owner starts are also refused by the shared admission path. Other
+	// retirements (such as triage_fix) have separate owner-start semantics.
+	if s.RunAbandoned(issueWorkRef(issue).Key()) || s.RunTriageFixRetired(issue.Repo, issue.Number) || s.runRetirement(issueWorkRef(issue).Key()) == runResetReasonTriageFix {
+		return nil, "", nil
+	}
 	return s.startDesignSpektacular(ctx, store, issue, "", false)
 }
 

@@ -1,0 +1,40 @@
+name: Hive Help Command
+
+# Answers `/hive help` on any open issue or pull request. The Go un-park sweep
+# still handles the state-changing `/hive approve` and `/hive decision <text>`
+# commands on parked issues; this workflow is the cheap on-demand read-only
+# path for the command reference.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  help:
+    name: Reply with maintainer commands
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.issue.state == 'open' &&
+      github.event.comment.user.type != 'Bot'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned
+        with:
+          sparse-checkout: |
+            src/docs
+            src/scripts
+
+      - name: Reply to /hive help
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HIVE_HELP_REPO: ${{ github.repository }}
+          HIVE_HELP_ISSUE: ${{ github.event.issue.number }}
+          HIVE_HELP_COMMENT_ID: ${{ github.event.comment.id }}
+          HIVE_HELP_COMMENTER: ${{ github.event.comment.user.login }}
+          HIVE_HELP_COMMENT_BODY: ${{ github.event.comment.body }}
+        run: src/scripts/hive-help-command.sh

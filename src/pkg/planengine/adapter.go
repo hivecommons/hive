@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -50,8 +51,8 @@ type LeaseRegistry interface {
 	// owns the engine's project for this stage. An empty result parks the lease.
 	ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error)
 	// ImportRunPlan admits taskList (the planner's task-list text) as the
-	// run's DRAFT plan.
-	ImportRunPlan(runKey, repo, taskList string) error
+	// run's DRAFT plan. engineName identifies the producing planner.
+	ImportRunPlan(runKey, repo, taskList string, engineName ...string) error
 }
 
 // leaseAdapter implements Registry over a LeaseRegistry.
@@ -113,7 +114,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 
 func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatus, receipt outputschema.StageReceipt, plan *Plan, now time.Time) error {
 	if plan != nil {
-		if err := a.reg.ImportRunPlan(st.RunKey, st.Repo, RenderTaskList(*plan)); err != nil {
+		if err := a.reg.ImportRunPlan(st.RunKey, st.Repo, RenderTaskList(*plan), receiptEngineName(receipt)); err != nil {
 			return &PlanImportError{RunKey: st.RunKey, Artifact: status.JoinKey(), Err: err}
 		}
 	}
@@ -130,6 +131,15 @@ func (a *leaseAdapter) Advance(_ context.Context, st Stage, status ArtifactStatu
 		AttrArtifactBody:   status.Body,
 		AttrDocumentStatus: string(status.DocumentStatus),
 	})
+}
+
+// receiptEngineName keeps import provenance aligned with the Hive-built receipt.
+// The fallback preserves callers that predate engine-bearing receipts.
+func receiptEngineName(receipt outputschema.StageReceipt) string {
+	if receipt.Engine != nil && receipt.Engine.Name != "" {
+		return receipt.Engine.Name
+	}
+	return config.DefaultRunsEngine
 }
 
 func (a *leaseAdapter) Refuse(st Stage, reason string, status *ArtifactStatus) {

@@ -287,10 +287,11 @@ func TestCampaignJamAgentInviteScansTitleAndAuthorName(t *testing.T) {
 		model := serveFakeJamModel(t, s, `{"reply":"ok","proposed_text":""}`)
 		jam := createJamThread(t, s, "spec-agent-author", "Scope", "Ask for help")
 
-		comment := jamPostAs(t, s, "/api/campaigns/spec-agent-author/jam/threads", "read-write", "alice", map[string]any{
+		// Comment authors are the authenticated identity (request-body agent
+		// names are ignored), so the injection rides in on the caller's user.
+		comment := jamPostAs(t, s, "/api/campaigns/spec-agent-author/jam/threads", "read-write", injection, map[string]any{
 			"thread_id": jam.Threads[0].ID,
 			"body":      "a follow-up",
-			"agent":     injection,
 		}, false)
 		if comment.Code != http.StatusOK {
 			t.Fatalf("comment create = %d body=%s", comment.Code, comment.Body.String())
