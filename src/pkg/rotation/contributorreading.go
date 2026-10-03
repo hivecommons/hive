@@ -65,12 +65,16 @@ var contributorGuardProviders = map[string]bool{
 // disabled there is no operator-authored Providers map to read Backends from,
 // yet the publisher still needs to know which pool-keyed files to write. The
 // flattened backend set MUST equal QUOTA_GUARD_SUPPORTED_BACKENDS in
-// bin/contributor-relay.js ({claude, pi, codex, agy, gemini, kiro}) — a backend
+// bin/contributor-relay.js ({claude, codex, agy, gemini, kiro}) — a backend
 // listed there but absent here gets no reading and stays on the unprovisioned
 // admit; a backend here but not there writes files nothing reads. A parity
 // test pins the set.
+//
+// Pi is intentionally absent: its provider/model selection and credentials
+// belong to Pi, not the Claude Code or Codex CLI readers. Even a rotation
+// configuration that lists pi must not publish another CLI's quota to its pool.
 var contributorGuardDefaultBackends = map[string][]string{
-	"anthropic": {"claude", "pi"},
+	"anthropic": {"claude"},
 	"openai":    {"codex"},
 	"google":    {"agy", "gemini"},
 	"aws-kiro":  {"kiro"},
@@ -281,7 +285,7 @@ func (m *Manager) announceContributorPublisher() {
 			continue
 		}
 		for _, backend := range pc.Backends {
-			if strings.TrimSpace(backend) == "" {
+			if strings.TrimSpace(backend) == "" || strings.EqualFold(strings.TrimSpace(backend), "pi") {
 				continue
 			}
 			_ = writeContributorPublisherMarker(ContributorPublisherMarkerPath(dir, backend, account))
@@ -394,7 +398,7 @@ func (m *Manager) publishContributorReading(h Headroom) {
 	if m.contributorPublishSkipNotInstalled && h.ProbeErr != nil && h.ProbeErrCause == ProbeCauseNotInstalled {
 		account := m.contributorPublishAccount
 		for _, backend := range m.cfg.Providers[h.Provider].Backends {
-			if strings.TrimSpace(backend) == "" {
+			if strings.TrimSpace(backend) == "" || strings.EqualFold(strings.TrimSpace(backend), "pi") {
 				continue
 			}
 			_ = os.Remove(ContributorPublisherMarkerPath(dir, backend, account))
@@ -405,7 +409,7 @@ func (m *Manager) publishContributorReading(h Headroom) {
 	reading := HeadroomToContributorReading(h)
 	backends := m.cfg.Providers[h.Provider].Backends
 	for _, backend := range backends {
-		if strings.TrimSpace(backend) == "" {
+		if strings.TrimSpace(backend) == "" || strings.EqualFold(strings.TrimSpace(backend), "pi") {
 			continue
 		}
 		path := ContributorReadingPath(dir, backend, account)

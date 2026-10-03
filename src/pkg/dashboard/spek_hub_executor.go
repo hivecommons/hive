@@ -1111,7 +1111,6 @@ func (e *SpekHubExecutor) startStageStatusCapture(ctx context.Context, st spekHu
 		snap := RunDetailStageStatus{
 			At:             time.Now().UTC().Format(time.RFC3339Nano),
 			Step:           status.CurrentStep,
-			Instruction:    status.Instruction(),
 			DocumentStatus: status.DocumentStatus,
 			CompletedSteps: append([]string(nil), status.CompletedSteps...),
 			Artifact:       status.JoinKey(),
@@ -1175,9 +1174,6 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	docs, files, interview, notes := collectSpekArtifactFiles(worktree, st.stage, artifactKey)
 	interview = appendSpekHumanInterview(worktree, interview, ended.Format(time.RFC3339Nano))
 	if len(interview) == 0 {
-		interview = interviewFromStatusHistory(history, docs, ended)
-	}
-	if len(interview) == 0 {
 		for _, step := range status.CompletedSteps {
 			interview = append(interview, RunDetailInterview{
 				Step:       step,
@@ -1203,7 +1199,6 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 		StatusHistory: appendDistinctStageStatus(history, RunDetailStageStatus{
 			At:             ended.Format(time.RFC3339Nano),
 			Step:           status.CurrentStep,
-			Instruction:    status.Instruction(),
 			DocumentStatus: status.DocumentStatus,
 			CompletedSteps: append([]string(nil), status.CompletedSteps...),
 			Artifact:       status.JoinKey(),
@@ -1226,44 +1221,6 @@ func (e *SpekHubExecutor) captureCompletedStage(st spekHubStage, worktree, artif
 	return writeSpekStageCaptureInDir(receiptDir, st.runKey, st.stage, st.gen, capture)
 }
 
-// interviewFromStatusHistory derives interview rows from the instruction (or
-// question/prompt/description) carried by each status poll. The pinned
-// Spektacular 0.22.0 `status` verb never emits any of those keys (its wire
-// shape is kind/name/artifact_id/document_status/current_step/
-// completed_steps/created_at/updated_at/closed_at/error/spec/plan, none of
-// which is a question), so against that CLI this tier is a no-op and
-// captureCompletedStage falls through to the completed_steps placeholder
-// rows below. It is kept, rather than removed, for a status payload that
-// does carry one of these keys (a future Spektacular release, or a non-
-// default backend) instead of silently dropping that richer source if it
-// ever appears; populating this tier without one requires a different data
-// source than the status verb and is tracked, unresolved, as
-// hivecommons/hive#10099.
-func interviewFromStatusHistory(history []RunDetailStageStatus, docs []RunDetailStageDocument, at time.Time) []RunDetailInterview {
-	var doc string
-	if len(docs) > 0 {
-		doc = firstRunNonEmpty(docs[0].Content, docs[0].Markdown)
-	}
-	var out []RunDetailInterview
-	seen := map[string]bool{}
-	for _, st := range history {
-		q := strings.TrimSpace(st.Instruction)
-		if q == "" {
-			q = strings.TrimSpace(runDetailStringFromAny(firstAny(st.Raw, "question", "prompt", "description")))
-		}
-		if q == "" || seen[st.Step+"\x00"+q] {
-			continue
-		}
-		seen[st.Step+"\x00"+q] = true
-		answer := "The answer is reflected in the final document."
-		if strings.TrimSpace(doc) != "" {
-			answer = doc
-		}
-		out = append(out, RunDetailInterview{Step: st.Step, Question: q, Answer: answer, AnsweredAt: firstRunNonEmpty(st.At, at.Format(time.RFC3339Nano)), Source: "spektacular status"})
-	}
-	return out
-}
-
 func appendDistinctStageStatus(history []RunDetailStageStatus, statuses ...RunDetailStageStatus) []RunDetailStageStatus {
 	for _, final := range statuses {
 		key := stageStatusCaptureKey(final)
@@ -1284,7 +1241,7 @@ func appendDistinctStageStatus(history []RunDetailStageStatus, statuses ...RunDe
 
 func stageStatusCaptureKey(st RunDetailStageStatus) string {
 	raw, _ := json.Marshal(st.Raw)
-	return st.Step + "\x00" + st.Instruction + "\x00" + st.DocumentStatus + "\x00" + strings.Join(st.CompletedSteps, "\x00") + "\x00" + string(raw)
+	return st.Step + "\x00" + st.DocumentStatus + "\x00" + strings.Join(st.CompletedSteps, "\x00") + "\x00" + string(raw)
 }
 
 func (e *SpekHubExecutor) recordStageProgress(st spekHubStage, event string, attrs map[string]string) {
@@ -1422,31 +1379,6 @@ func (s spekHubArtifactStatus) JoinKey() string {
 		return strings.TrimSpace(s.ArtifactID)
 	}
 	return strings.TrimSpace(s.Name)
-}
-
-// Instruction reads the status payload for any key that would name the
-// agent's current prompt. The pinned Spektacular 0.22.0 `status` verb never
-// emits one (see interviewFromStatusHistory), so this always returns "" in
-// production; it only matters for a status payload richer than that CLI's
-// (hivecommons/hive#10099).
-func (s spekHubArtifactStatus) Instruction() string {
-	return firstRunNonEmpty(
-		runDetailStringFromAny(firstAny(s.Raw, "instruction", "question", "prompt", "current_instruction", "step_instruction")),
-		nestedStatusString(s.Raw, "current_step", "instruction"),
-		nestedStatusString(s.Raw, "step", "instruction"),
-		nestedStatusString(s.Raw, "current_step", "question"),
-		nestedStatusString(s.Raw, "step", "question"),
-	)
-}
-
-func nestedStatusString(raw map[string]any, key, nested string) string {
-	if raw == nil {
-		return ""
-	}
-	if m, ok := raw[key].(map[string]any); ok {
-		return runDetailStringFromAny(m[nested])
-	}
-	return ""
 }
 
 func (e *SpekHubExecutor) spekStatus(ctx context.Context, worktree string, env []string, kind, artifact string) (spekHubArtifactStatus, error) {
