@@ -1,0 +1,1 @@
+- The stable promotion gate now measures a candidate's 24-hour soak from the completion of the `docker.yml` run that published it instead of when that run was queued, so a build can no longer reach the `stable` channel short of a full soak window ([#10042](https://github.com/hivecommons/hive/issues/10042)).

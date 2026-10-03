@@ -360,6 +360,57 @@ else
   bad "an in-flight candidate run must hold with a reason (rc=${rc}; output: ${out})"
 fi
 
+# The soak clock starts when the candidate's docker.yml run FINISHED, not when
+# it was queued: a multi-arch build takes tens of minutes, and measuring from
+# the run's createdAt credits the candidate with time before its digest existed
+# (#10042). Run 200 below was queued two days ago but completed 33 minutes ago,
+# so it is still short of the window.
+queued_early="$tmp/queued-early"
+mkdir -p "$queued_early/bin"
+cp "$inflight/bin/docker" "$queued_early/bin/docker"
+cat > "$queued_early/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == run && $2 == list ]]; then
+  echo '[{"number":200,"createdAt":"2033-05-16T00:00:00Z","updatedAt":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"}]' \
+    | jq -r "${@: -1}"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then
+  echo 0
+  exit 0
+fi
+if [[ $1 == api ]]; then
+  if [[ $* == *'head_sha='* ]]; then
+    json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  else
+    json='{"workflow_runs":[]}'
+  fi
+  jqexpr=""
+  prev=""
+  for a in "$@"; do
+    [[ $prev == --jq ]] && jqexpr=$a
+    prev=$a
+  done
+  if [[ -n $jqexpr ]]; then
+    jq -r "$jqexpr" <<<"$json"
+  else
+    echo "$json"
+  fi
+  exit 0
+fi
+echo '[]'
+MOCK
+chmod +x "$queued_early/bin/gh"
+out=$(PATH="$queued_early/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"abcdef","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'candidate age' <<<"$out"; then
+  pass "soak is measured from the publishing run's completion, not when it was queued"
+else
+  bad "a build queued before the window but completed inside it must hold (rc=${rc}; output: ${out})"
+fi
+
 echo
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL — stable promotion gate regressed."

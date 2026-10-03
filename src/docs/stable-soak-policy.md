@@ -71,9 +71,10 @@ It:
 1. resolves the current `candidate` digest for `hive`, `hive-contributor`, and
    `hive-hub`;
 2. compares the candidate digest with the current `stable` digest;
-3. reads the current candidate's first-seen time from the successful `docker.yml`
-   run number recorded in the image metadata and requires that build to have
-   aged for the configured soak window;
+3. reads the completion time of the successful `docker.yml` run recorded in the
+   image metadata — the moment that build became a candidate, not when its run
+   was queued — and requires that build to have aged for the configured soak
+   window;
 4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
    candidate SHA;
 5. requires no open **issue** labelled `release-blocker` — `blocker_count` in
@@ -107,12 +108,12 @@ after it once the other conditions pass. It is omitted (unknown) while stable
 is paused, when `candidate` and
 `stable` are the same build, or when the channels have not resolved.
 
-The workflow writes the candidate digest, SHA, generation, candidate first-seen
-time and age, checks consulted, blocker count, smoke evidence, decision, and any
-exception note to the GitHub Actions step summary. If the gate fails, the
-workflow leaves `stable` unchanged with a human-readable reason such as
-`candidate age 3600s < required 86400s (24h)` or `newer candidate superseded
-this digest before the soak window completed`.
+The workflow writes the candidate digest, SHA, generation, candidate build
+completion time and age, checks consulted, blocker count, smoke evidence,
+decision, and any exception note to the GitHub Actions step summary. If the
+gate fails, the workflow leaves `stable` unchanged with a human-readable reason
+such as `candidate age 3600s < required 86400s (24h)` or `newer candidate
+superseded this digest before the soak window completed`.
 
 One hold is expected and benign: the candidate digest is pushed part-way
 through its `docker.yml` run, so an hourly promotion that lands in that window
@@ -125,7 +126,7 @@ sees a candidate whose publishing run has not completed yet. Since v4.24.4
 
 and the next hourly schedule re-evaluates once the run finishes — no action is
 needed. On builds **before v4.24.4** the same race instead killed the script
-with exit 1 and *no output at all* (the empty `workflow_run_created_at` lookup
+with exit 1 and *no output at all* (the empty `workflow_run_completed_at` lookup
 under `set -e`): a Promote Stable Channel run that failed with no step summary
 and nothing in the log is this condition, not a broken gate.
 
