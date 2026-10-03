@@ -1,0 +1,1 @@
+- Keep contributor-card message drafts open across fleet polls, refreshing the cards after the last message form closes ([#10473](https://github.com/hivecommons/hive/issues/10473)).
