@@ -65,9 +65,11 @@ set -eu
 
 version="${SPEK_FAKE_VERSION:-0.22.0}"
 
-# Version probe (Probe runs `spektacular --version`); the pinned release.
+# Version probe (Probe runs `spektacular --version`). The real release
+# prints `spektacular version <ver> (<commit>)`; the fake mirrors that shape
+# so Probe consumers and the real-CLI smoke see the same thing.
 if [ "${1:-}" = "--version" ]; then
-  echo "spektacular ${version}"
+  echo "spektacular version ${version} (0000000000000000000000000000000000000000)"
   exit 0
 fi
 

@@ -41,19 +41,21 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	bin := realSpektacularBinary(t)
 	ctx := context.Background()
 
-	// Confirmed #1 (sort of): --version answers "spektacular <version>" so
-	// Probe can run against it (#10269).
+	// Confirmed #1 (sort of): --version answers
+	// "spektacular version <version> (<commit>)" so Probe can run against it
+	// (#10269). The in-tree fake prints the same shape.
 	probed, err := Probe(ctx, bin)
 	if err != nil || !probed.Present {
 		t.Fatalf("Probe(%s): present=%v err=%v", bin, probed.Present, err)
 	}
-	if !strings.HasPrefix(probed.Version, "spektacular ") {
-		t.Fatalf("--version printed %q, want the documented `spektacular <version>` shape", probed.Version)
+	fields := strings.Fields(probed.Version)
+	if len(fields) < 3 || fields[0] != "spektacular" || fields[1] != "version" {
+		t.Fatalf("--version printed %q, want the `spektacular version <version> (<commit>)` shape", probed.Version)
 	}
 	// The workflow exports the pin it downloaded, so the smoke fails loudly
 	// if it ever runs a binary other than the pinned release.
 	if want := strings.TrimSpace(os.Getenv("SPEKTACULAR_EXPECTED_VERSION")); want != "" {
-		if got := strings.TrimSpace(strings.TrimPrefix(probed.Version, "spektacular ")); got != want {
+		if got := strings.TrimPrefix(fields[2], "v"); got != strings.TrimPrefix(want, "v") {
 			t.Fatalf("--version reported %q, want the pinned %q", got, want)
 		}
 	}
