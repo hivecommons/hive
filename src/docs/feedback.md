@@ -1,6 +1,6 @@
 # Dashboard feedback
 
-The spoke dashboard has a **Feedback** button in the avatar menu, a floating button, a top-bar 🐛 button, and a **Report an Issue** item in the left sidebar. Use it to report a bug or request a feature; each submission becomes a GitHub issue in `hivecommons/hive`, or `hivecommons/docs` when you choose **Documentation**.
+The spoke dashboard has a **Feedback** button in the avatar menu, a top-bar 🐛 button, and a **Report an Issue** item in the left sidebar. Use it to report a bug or request a feature; each submission becomes a GitHub issue in `hivecommons/hive`, or `hivecommons/docs` when you choose **Documentation**.
 
 Submissions include the title, description, feedback type, target repository, and optional pasted or uploaded screenshots. Diagnostics are optional and previewed before submit. Tokens, bearer values, emails, and secret-like key/value text are redacted before sending.
 

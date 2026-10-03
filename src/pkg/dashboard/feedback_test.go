@@ -105,6 +105,11 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 			t.Errorf("index.html missing %q", want)
 		}
 	}
+	for _, removed := range []string{`class="hv-btn btn-primary feedback-fab"`, ".feedback-fab {", "💬 Feedback"} {
+		if strings.Contains(html, removed) {
+			t.Errorf("index.html still contains removed floating feedback button marker %q", removed)
+		}
+	}
 	if strings.Contains(html, `href="https://github.com/hivecommons/hive/issues"`) {
 		t.Fatal("sidebar Report an Issue still links externally instead of opening feedback modal")
 	}
