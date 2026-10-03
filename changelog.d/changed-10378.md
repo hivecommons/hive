@@ -1,0 +1,1 @@
+- planengine: port the stage observer off ExecFunc onto the Engine interface (#10378)
