@@ -119,12 +119,9 @@ func TestCovH2_BuildHealthAndRateLimits(t *testing.T) {
 		t.Fatalf("buildGHRateLimits(live) returned nil")
 	}
 
-	// The live branch of buildHealth CACHES what it fetched into the package
-	// global cachedHealth — the mock above answers the workflow endpoints with
-	// an empty run list, so the cached map carries ci=0 (#5553:
-	// TestBuildHealth_NilClient_Boost failed with "ci = 0" only on the
-	// shuffle orders that put this test first). Both dirtied globals are
-	// restored by the restoreHealthCaches hook registered at the top.
+	// The live branch no longer fetches repo workflow health, but it still
+	// refreshes the green-CI streak cache used by the ACMM advisor. Both dirtied
+	// globals are restored by the restoreHealthCaches hook registered above.
 	_ = buildHealth(ghc, ctx)
 
 	// App-auth identity branch: set an AppID so buildGHRateLimits takes the "app" path.

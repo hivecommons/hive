@@ -89,6 +89,13 @@ services:
       - HIVE_DEPLOYMENT_RUNTIME=docker-compose
       - HIVE_DEPLOYMENT_PODMAN_MODE=
       - HIVE_DASHBOARD_UPGRADE_HELPER=${HIVE_DASHBOARD_UPGRADE_HELPER:-}
+      # Deliberately empty here: the upgrade request bridge (#10344) is the
+      # Podman/Quadlet answer to a container that cannot reach its host
+      # lifecycle. Compose upgrades go through the helper above instead. The
+      # name is still spelled out because
+      # src/deploy/test_standalone_runtime_parity.sh requires both runtimes to
+      # name the same set of variables.
+      - HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     # BOTH LISTENERS, not just the Go API (#4476). 3002 is the Go API; 3001 is

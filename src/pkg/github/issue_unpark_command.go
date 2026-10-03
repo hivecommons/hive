@@ -11,12 +11,15 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-// issueNeedsDecisionLabel is the second parking label a /hive command clears.
-// `needs-human` and `needs-decision` are the only labels this sweep removes:
-// `hold` is deliberately untouched because it has several independent sources
-// (the ACMM level gate, the SHA hold, holdguard and a person), and clearing one
-// of them from a comment would silently clear all of them.
+// issueNeedsDecisionLabel is one of the parking labels a /hive command clears.
+// `needs-human`, `needs-decision` and ADR-0019's `needs-direction` are the
+// only labels this sweep removes: `hold` is deliberately untouched because it
+// has several independent sources (the ACMM level gate, the SHA hold,
+// holdguard and a person), and clearing one of them from a comment would
+// silently clear all of them.
 const issueNeedsDecisionLabel = "needs-decision"
+
+const maintainerCommandsDocURL = "https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md"
 
 // unparkCommandPrefix is the first token of every command this sweep answers.
 const unparkCommandPrefix = "/hive"
@@ -97,9 +100,10 @@ type IssueUnparkSweepResult struct {
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
 // one-line reply instead of editing labels (hivecommons/hive#9879).
 //
-// On every parked issue (`needs-human` or `needs-decision`) the sweep keeps a
-// "What to reply" comment listing the commands, because the maintainer should
-// never have to remember what to type. When an eligible person replies:
+// On every parked issue (`needs-human`, `needs-decision` or `needs-direction`)
+// the sweep keeps a "What to reply" comment listing the commands, because the
+// maintainer should never have to remember what to type. When an eligible
+// person replies:
 //
 //   - `/hive approve` — go with the issue's own recommendation;
 //   - `/hive decision <text>` — go ahead, following <text>;
@@ -230,19 +234,20 @@ func hasIssueParkingLabel(labels []string) bool {
 		return true
 	}
 	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), issueNeedsDecisionLabel) {
+		switch strings.ToLower(strings.TrimSpace(label)) {
+		case issueNeedsDecisionLabel, issueNeedsDirectionLabel:
 			return true
 		}
 	}
 	return false
 }
 
-// clearIssueParkingLabels removes the two parking labels the issue actually
+// clearIssueParkingLabels removes the parking labels the issue actually
 // carries and adds the approval label, so the resulting PR is not held for
 // #5117 and the issue ranks as an agreed direction. A label that has already
 // gone is not an error.
 func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	for _, label := range []string{issueNeedsHumanLabel, issueNeedsDecisionLabel} {
+	for _, label := range []string{issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel} {
 		if !labelPresent(labels, label) {
 			continue
 		}
@@ -421,18 +426,19 @@ func isUnparkProseAssent(body string) bool {
 const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
 
 func renderUnparkAcceptedReply(actor, decision string) string {
-	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human` and `needs-decision` are cleared and `%s` is applied; any `hold` label is left exactly as it was.",
+	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human`, `needs-decision` and `needs-direction` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
 		actor, decision, HumanAckLabel)
 }
 
 func renderUnparkHelpReply(issueBody string) string {
-	return "**What to reply**\n" + unparkCommandBullets(issueBody)
+	return "**Maintainer commands**\n" + unparkCommandBullets(issueBody) + "\n" + maintainerCommandReference()
 }
 
 // unparkNoticeBody is the "What to reply" comment kept on every parked issue.
 func unparkNoticeBody(issueBody string) string {
 	return unparkNoticeMarker + "\n**What to reply**\n" + unparkCommandBullets(issueBody) +
-		"\n_Only a maintainer with write access can run these; everything else is ignored._"
+		"\nIf this issue is waiting only for reporter confirmation after a merged fix, the reporter or a maintainer can reply `/fixed` instead.\n\n" +
+		fmt.Sprintf("_Only a maintainer with write access can un-park; everything else is ignored. Full command reference: %s._", maintainerCommandsDocURL)
 }
 
 // unparkCommandBullets lists the commands, filled in with the options this
@@ -451,6 +457,22 @@ func unparkCommandBullets(issueBody string) string {
 	}
 	fmt.Fprintln(&b, "- `/hive help`: show these again")
 	return b.String()
+}
+
+func maintainerCommandReference() string {
+	return strings.Join([]string{
+		"Other commands:",
+		"- `/fixed`: close an open issue after the reporter or a maintainer confirms the fix.",
+		"- `/reopen`: reopen a closed issue; limited to the reporter or write/maintain/admin.",
+		"- `/help-wanted`: add the `help wanted` label.",
+		"- `/good-first-issue`: add the `good first issue` label.",
+		"- `/hacktober-fest`: add the `hacktober-fest` label.",
+		"- `/kind <kind>`: validate or request a kind label.",
+		"- `/area <area>`: validate or request an area label.",
+		"- `/assign`: assign yourself where the repository's assignment automation supports it.",
+		"- `/unassign`: remove your assignment where the repository's assignment automation supports it.",
+		fmt.Sprintf("\nFull reference: %s", maintainerCommandsDocURL),
+	}, "\n")
 }
 
 // unparkOptionLabels finds the lettered options an issue offers, e.g. a line

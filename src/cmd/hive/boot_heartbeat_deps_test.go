@@ -80,6 +80,7 @@ func newBootHeartbeatBoot(t *testing.T, f *bootHeartbeatFake, cfg *config.Config
 	t.Helper()
 	t.Setenv("HIVE_HUB_URL", "")
 	t.Setenv("HIVE_CLUSTER_ID", "")
+	t.Setenv(config.TaskStatusPushEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(&f.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -258,3 +259,42 @@ func TestBootHeartbeatWith_TaskStatusPayloadCarriesHiveID(t *testing.T) {
 		t.Fatal("Leaderboard must be an empty slice, not nil, so the hub sees [] rather than null")
 	}
 }
+
+func TestBootHeartbeatWith_TaskStatusSwitchPreservesControlPlane(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		setting *bool
+		env     string
+		want    bool
+	}{
+		{"default on", nil, "", true},
+		{"config off", heartbeatTaskPushBool(false), "", false},
+		{"config on", heartbeatTaskPushBool(true), "", true},
+		{"env off", heartbeatTaskPushBool(true), "false", false},
+		{"env on", heartbeatTaskPushBool(false), "true", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBootHeartbeatFake()
+			cfg := bootHeartbeatConfig()
+			cfg.Hub.TaskStatusPush = tc.setting
+			b := newBootHeartbeatBoot(t, f, cfg)
+			t.Setenv(config.TaskStatusPushEnvVar, tc.env)
+			b.bootHeartbeatWith(f.deps)
+
+			if got := f.taskCollect != nil; got != tc.want {
+				t.Fatalf("task-status loop started = %v, want %v", got, tc.want)
+			}
+			if f.heartbeatStarts != 1 || f.collect == nil || f.identity == nil {
+				t.Fatal("task-status switch must preserve core heartbeat and identity")
+			}
+			heartbeatCallback[spoke.UpgradePolicyCallback](t, f)
+			heartbeatCallback[spoke.ProjectConfigCallback](t, f)
+			heartbeatCallback[spoke.GitHubAppConfigCallback](t, f)
+			if !tc.want && !strings.Contains(f.log.String(), "task-status push disabled by operator") {
+				t.Fatal("disabled task-status loop must be logged")
+			}
+		})
+	}
+}
+
+func heartbeatTaskPushBool(v bool) *bool { return &v }

@@ -111,19 +111,17 @@ func TestCadenceWriteReturnsStatusSeqFloor(t *testing.T) {
 // Contains check here would pass without the fix — vacuous. Both ACMM
 // assertions are therefore scoped to the enclosing function body.
 func TestACMMLevelWriteReturnsStatusSeqFloor(t *testing.T) {
-	for _, fn := range []string{"applyACMMPack", "setACMMLevel"} {
-		body := acmmFuncBody(t, fn)
-		if !strings.Contains(body, "noteStatusMutation(data.minStatusSeq);") {
-			t.Errorf("index.html: %s does not raise the stale-snapshot floor from its "+
-				"write response — the dashboard can repaint the previous level after a "+
-				"successful L4->L5 change (#5492)", fn)
-		}
+	body := acmmFuncBody(t, "applyACMMPack")
+	if !strings.Contains(body, "noteStatusMutation(data.minStatusSeq);") {
+		t.Error("index.html: applyACMMPack does not raise the stale-snapshot floor from its " +
+			"write response — the dashboard can repaint the previous level after a " +
+			"successful L4->L5 change (#5492)")
 	}
 }
 
-// acmmFuncBody returns the source of one of the two ACMM level-change
-// functions, bounded to that function so assertions cannot be satisfied by
-// identical code elsewhere in this 24k-line file.
+// acmmFuncBody returns the source of an ACMM level-change function, bounded to
+// that function so assertions cannot be satisfied by identical code elsewhere
+// in this 30k-line file.
 func acmmFuncBody(t *testing.T, name string) string {
 	t.Helper()
 	html := indexHTML(t)
@@ -153,31 +151,29 @@ func acmmFuncBody(t *testing.T, name string) string {
 // the authoritative level in its body, so the render must come from the
 // RESPONSE.
 func TestACMMOverrideRendersServerConfirmedLevel(t *testing.T) {
-	for _, fn := range []string{"applyACMMPack", "setACMMLevel"} {
-		body := acmmFuncBody(t, fn)
+	body := acmmFuncBody(t, "applyACMMPack")
 
-		// The confirmed level must be read out of the response body.
-		if !strings.Contains(body, "const confirmedLevel = (data && Number.isFinite(Number(data.level))) ? Number(data.level) : level;") {
-			t.Errorf("index.html: %s does not derive the rendered level from the "+
-				"server's response body — rendering the requested level would show a "+
-				"value the server never confirmed (#5492)", fn)
-		}
+	// The confirmed level must be read out of the response body.
+	if !strings.Contains(body, "const confirmedLevel = (data && Number.isFinite(Number(data.level))) ? Number(data.level) : level;") {
+		t.Error("index.html: applyACMMPack does not derive the rendered level from the " +
+			"server's response body — rendering the requested level would show a " +
+			"value the server never confirmed (#5492)")
+	}
 
-		// And the override/state writes must use that confirmed value, not the
-		// requested one. The literal `level` must no longer reach them.
-		for _, snippet := range []string{
-			"window._acmmOverride = { level: confirmedLevel, packAgents: data.packAgents || [] };",
-			"window._lastStatus.acmmLevel = confirmedLevel;",
-		} {
-			if !strings.Contains(body, snippet) {
-				t.Errorf("index.html %s is missing %q — the ACMM panel still renders "+
-					"the requested level rather than the server-confirmed one (#5492)", fn, snippet)
-			}
+	// And the override/state writes must use that confirmed value, not the
+	// requested one. The literal `level` must no longer reach them.
+	for _, snippet := range []string{
+		"window._acmmOverride = { level: confirmedLevel, packAgents: data.packAgents || [] };",
+		"window._lastStatus.acmmLevel = confirmedLevel;",
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Errorf("index.html applyACMMPack is missing %q — the ACMM panel still renders "+
+				"the requested level rather than the server-confirmed one (#5492)", snippet)
 		}
-		if strings.Contains(body, "window._acmmOverride = { level: level,") {
-			t.Errorf("index.html %s still pins the override to the REQUESTED level — "+
-				"that renders a value the server never confirmed (#5492)", fn)
-		}
+	}
+	if strings.Contains(body, "window._acmmOverride = { level: level,") {
+		t.Error("index.html applyACMMPack still pins the override to the REQUESTED level — " +
+			"that renders a value the server never confirmed (#5492)")
 	}
 }
 
@@ -277,37 +273,27 @@ func TestCadenceWriteStillSurfacesFailure(t *testing.T) {
 }
 
 // TestACMMFailedWriteDoesNotRender asserts the ACMM error branch returns before
-// any optimistic render, so a rejected level change leaves the old level on
+// any optimistic render, so a rejected pack apply leaves the old level on
 // screen with an error message rather than painting the requested level.
 func TestACMMFailedWriteDoesNotRender(t *testing.T) {
-	html := indexHTML(t)
+	body := acmmFuncBody(t, "applyACMMPack")
 
-	idx := strings.Index(html, "async function setACMMLevel(level) {")
-	if idx < 0 {
-		t.Fatal("index.html: setACMMLevel not found")
-	}
-	end := strings.Index(html[idx:], "\n    // Packs reconcile scheduling")
-	if end < 0 {
-		t.Fatal("index.html: could not bound setACMMLevel")
-	}
-	body := html[idx : idx+end]
-
-	errIdx := strings.Index(body, "errEl.textContent = data.error || 'Failed to set level';")
+	errIdx := strings.Index(body, "errEl.textContent = data.error || 'Failed to apply pack';")
 	renderIdx := strings.Index(body, "window._acmmOverride = { level: confirmedLevel")
 	if errIdx < 0 {
-		t.Fatal("setACMMLevel no longer reports a failed level change")
+		t.Fatal("applyACMMPack no longer reports a failed pack apply")
 	}
 	if renderIdx < 0 {
-		t.Fatal("setACMMLevel no longer renders the confirmed level")
+		t.Fatal("applyACMMPack no longer renders the confirmed level")
 	}
 	if errIdx > renderIdx {
-		t.Error("setACMMLevel renders the level before handling the error response — " +
+		t.Error("applyACMMPack renders the level before handling the error response — " +
 			"a failed write would paint the requested level (#5492)")
 	}
 	// The error branch must return, not fall through into the render.
 	tail := body[errIdx:renderIdx]
 	if !strings.Contains(tail, "return;") {
-		t.Error("setACMMLevel's error branch does not return before the render — a " +
+		t.Error("applyACMMPack's error branch does not return before the render — a " +
 			"failed level change would still repaint the requested level (#5492)")
 	}
 }

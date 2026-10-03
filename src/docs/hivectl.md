@@ -559,6 +559,7 @@ implementation of the profiles file here.
 | `enter` | Make the selected hive active — the same effect as `hivectl hives use` |
 | `[` / `]` | Move the selected hive up or down in The Commons rank |
 | `s` | Cycle the relay routing strategy: `ranked` → `spread` → `neediest` |
+| `e` | Enable/disable new work for the selected hive, retaining its credentials |
 | `a` | Add a hive: a two-field form (name, hub URL), then the registration POST |
 | `d` | Remove the selected hive — asks you to type its name, as the CLI does |
 | `r` | Rename the selected hive |
@@ -698,6 +699,8 @@ hivectl hives import acme.hive-profile --name acme-laptop
 hivectl hives session acme --label review
 hivectl hives move acme up                                    # rank order
 hivectl hives strategy spread                                 # ranked|spread|neediest
+hivectl hives disable acme                                    # pause new work, keep credentials
+hivectl hives enable acme                                     # resume without registering again
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
@@ -747,9 +750,22 @@ Notes:
 
 - **The same list is in the TUI.** `just contribute-tui` (or `hivectl tui --hives`) opens the
   [Hives overlay](#hives-switching-the-hive-you-contribute-to): the same rows,
-  with `enter` to switch, `[`/`]` to rank, `s` to cycle the strategy and
+  with `enter` to switch, `[`/`]` to rank, `s` to cycle the strategy, `e` to enable/disable and
   `a`/`d`/`r` to add, remove and rename. It calls these same functions, so
   either surface leaves the files in the same state.
+- **Disable instead of removing a hive to pause it.** `hivectl hives disable <name>`
+  (or `just contribute-hives disable <name>`) preserves its URL, registration token,
+  contributor ID and rank. `enable <name>` restores eligibility without registration
+  or token rotation. Existing profiles default to enabled. Disabled profiles remain
+  visible in the CLI/TUI but are excluded from new work under **every** strategy;
+  selecting one as active does not re-enable it. Disable every other hive to focus
+  exclusively on one, even when it has no jobs. Changes signal the running relay
+  to reload immediately, without interrupting work on its original hive. With all
+  profiles disabled, the relay reports why it is idle and waits for an enable.
+  The generated `HIVE_HUB_DISABLED` boolean list follows the same profile ordering
+  as the hub/token/contributor-ID lists; disabled entries are not removed from
+  any credential list. Upgrade the relay together with `hivectl`: older relays
+  do not understand this local routing control.
 - **The Commons strategies choose only between tasks.** `ranked` (the default)
   asks the highest-ranked hive first and falls through only when it reports no
   work; `spread` uses rank-weighted rotation with occasional mixing so lower

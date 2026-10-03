@@ -184,6 +184,19 @@ EXCEPTIONS = {
         "install-from-registry. Structural, not a contract divergence.",
     ),
 
+    "mount-target:hive:/run/hive/upgrade-requests": (
+        "deliberate",
+        "Podman-only by design (#10344). The upgrade request bridge exists "
+        "because a Quadlet-managed Hive cannot reach its host lifecycle from "
+        "inside its namespaces: the container writes a request file that a "
+        "host-side hive-upgrade.path unit acts on. Compose has no equivalent "
+        "need -- its upgrade path is the host helper driving "
+        "src/deploy/blue-green-deploy.sh -- so a Compose volume here would "
+        "describe a bridge with nothing on the far side of it. The variable "
+        "name IS spelled on both sides (empty for Compose), so the environment "
+        "axis above still compares strictly.",
+    ),
+
     # --- defect-tracked -------------------------------------------------------
 }
 

@@ -19,7 +19,7 @@ func TestRepoPillFilterStaticWiring(t *testing.T) {
 		"data-pill-kinds",
 		"aria-pressed=\"${active ? 'true' : 'false'}\"",
 		"repoPillFilterRowCounts(repoIssueFilterRows.concat(repoPRFilterRows), pillFilter)",
-		"e.key === 'Escape' && repoPillFilterActive() && e.target && e.target.closest && e.target.closest('#repos-section')",
+		"repoPillFilterActive() && document.activeElement && document.activeElement.closest && document.activeElement.closest('#repos-section')",
 		"k.indexOf('hive-repos-pill-filter:')===0",
 	} {
 		if !strings.Contains(html, want) {

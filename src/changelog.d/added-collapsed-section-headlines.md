@@ -1,0 +1,2 @@
+- System Diagnostics collapsed headers now keep a compact GitHub API quota/reset and token-usage headline alongside the existing health dot and sparkline.
+- Change Throughput collapsed headers now keep the active timeframe pill visible and clickable so headline metrics retain their time context.

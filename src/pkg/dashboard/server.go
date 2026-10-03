@@ -1113,12 +1113,14 @@ type TrendHistoryEntry struct {
 	// Overview KPI row counts. These are sampled with the same persisted ring as
 	// the governor pressure history so the Admin overview tiles have restart-safe
 	// sparkline data without a second PVC file.
-	OverviewOpenIssues   int `json:"overviewOpenIssues,omitempty"`
-	OverviewOpenPRs      int `json:"overviewOpenPrs,omitempty"`
-	OverviewActionable   int `json:"overviewActionable,omitempty"`
-	OverviewHeld         int `json:"overviewHeld,omitempty"`
-	OverviewBlockedHuman int `json:"overviewBlockedHuman,omitempty"`
-	OverviewMedianAgeSec int `json:"overviewMedianAgeSec,omitempty"`
+	OverviewKPI          bool `json:"overviewKPI,omitempty"`
+	OverviewOpenIssues   int  `json:"overviewOpenIssues,omitempty"`
+	OverviewOpenPRs      int  `json:"overviewOpenPrs,omitempty"`
+	OverviewActionable   int  `json:"overviewActionable,omitempty"`
+	OverviewHeld         int  `json:"overviewHeld,omitempty"`
+	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewMedianSample bool `json:"overviewMedianSample,omitempty"`
+	OverviewMedianAgeSec int  `json:"overviewMedianAgeSec,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -3611,6 +3613,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	if e == nil || status == nil {
 		return
 	}
+	e.OverviewKPI = true
 	cfg := config.DashboardIssueBandsConfig{}
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		cfg = s.deps.Config.Dashboard.IssueBands
@@ -3670,6 +3673,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	}
 	if len(ages) > 0 {
 		sort.Ints(ages)
+		e.OverviewMedianSample = true
 		e.OverviewMedianAgeSec = ages[len(ages)/2]
 	}
 }
@@ -3776,10 +3780,46 @@ func (s *Server) TrendHistory() []TrendHistoryEntry {
 	return out
 }
 
+// OverviewKPIHistoryEntry is the compact payload for /api/overview/history.
+// Overview fields are pointers so real zero samples are serialized while old
+// trend-history rows from before KPI sampling omit unavailable KPI data.
+type OverviewKPIHistoryEntry struct {
+	Timestamp            int64 `json:"t"`
+	OverviewOpenIssues   *int  `json:"overviewOpenIssues,omitempty"`
+	OverviewOpenPRs      *int  `json:"overviewOpenPrs,omitempty"`
+	OverviewActionable   *int  `json:"overviewActionable,omitempty"`
+	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
+	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewMedianAgeSec *int  `json:"overviewMedianAgeSec,omitempty"`
+}
+
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
 // sparkline-sized payload. sinceUnixMs <= 0 reads from the beginning.
-func (s *Server) OverviewKPIHistory(sinceUnixMs int64) []TrendHistoryEntry {
-	return downsampleOverviewKPIHistory(s.TrendHistory(), sinceUnixMs, overviewKPIHistoryMaxPoints)
+func (s *Server) OverviewKPIHistory(sinceUnixMs int64) []OverviewKPIHistoryEntry {
+	return overviewKPIHistoryPayload(downsampleOverviewKPIHistory(s.TrendHistory(), sinceUnixMs, overviewKPIHistoryMaxPoints))
+}
+
+func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistoryEntry {
+	out := make([]OverviewKPIHistoryEntry, 0, len(entries))
+	for _, e := range entries {
+		row := OverviewKPIHistoryEntry{Timestamp: e.Timestamp}
+		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 || e.OverviewMedianAgeSec != 0 {
+			row.OverviewOpenIssues = intPtr(e.OverviewOpenIssues)
+			row.OverviewOpenPRs = intPtr(e.OverviewOpenPRs)
+			row.OverviewActionable = intPtr(e.OverviewActionable)
+			row.OverviewHeld = intPtr(e.OverviewHeld)
+			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
+		}
+		if e.OverviewMedianSample || e.OverviewMedianAgeSec != 0 {
+			row.OverviewMedianAgeSec = intPtr(e.OverviewMedianAgeSec)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func downsampleOverviewKPIHistory(entries []TrendHistoryEntry, sinceUnixMs int64, maxPoints int) []TrendHistoryEntry {

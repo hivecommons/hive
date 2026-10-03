@@ -26,7 +26,7 @@ let _overviewLastRepos = [];
 const window = { _lastStatus: {} };
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
-function renderSparkline(){ throw new Error('renderSparkline should not be called in this test'); }
+function renderSparkline(){ return '<svg></svg>'; }
 ` + jsFunc(t, html, "esc") + `
 ` + jsFunc(t, html, "overviewItemAgeMinutes") + `
 ` + jsFunc(t, html, "overviewMedianAgeLabel") + `
