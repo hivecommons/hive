@@ -73,15 +73,16 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-// startPublisher starts the real publish-only rotation manager for p. It is a
-// seam so run() can be tested without probing provider CLIs.
-func startPublisher(ctx context.Context, p plan) bool {
+// startPublisher starts the real publish-only rotation manager for p and
+// returns a channel closed once its loop has stopped. It is a seam so run() can
+// be tested without probing provider CLIs. ok is false for a backend with no
+// reader, and then there is nothing to wait for.
+func startPublisher(ctx context.Context, p plan) (<-chan struct{}, bool) {
 	mgr, ok := rotation.NewContributorBackendReadingPublisher(p.poolDir, p.account, p.backend)
 	if !ok {
-		return false
+		return nil, false
 	}
-	mgr.Start(ctx)
-	return true
+	return mgr.StartPublishing(ctx), true
 }
 
 // run resolves the plan, reports it, and (when publishing) blocks until the
@@ -92,7 +93,7 @@ func run(
 	getenv func(string) string,
 	stdout, stderr io.Writer,
 	ctxFn func() (context.Context, context.CancelFunc),
-	start func(context.Context, plan) bool,
+	start func(context.Context, plan) (<-chan struct{}, bool),
 ) int {
 	p := resolvePlan(getenv, rotation.DefaultContributorPoolDir)
 	if !p.publish {
@@ -102,13 +103,17 @@ func run(
 	}
 	ctx, stop := ctxFn()
 	defer stop()
-	if !start(ctx, p) {
+	done, ok := start(ctx, p)
+	if !ok {
 		fmt.Fprintf(stderr, "hive-quota-publisher: not publishing — backend %q has no quota reader\n", p.backend)
 		return 0
 	}
 	fmt.Fprintf(stdout, "hive-quota-publisher: publishing %s quota readings every 5m0s into %s\n", p.backend, p.poolDir)
 	fmt.Fprintln(stdout, "hive-quota-publisher: quota protection active — the relay holds new work below its configured reserve.")
 	<-ctx.Done()
+	// Wait for the publish loop's last write before exiting: the process
+	// holding the pool's presence marker must not disappear mid-rename.
+	<-done
 	fmt.Fprintln(stdout, "hive-quota-publisher: stopped.")
 	return 0
 }

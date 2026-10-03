@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -689,5 +690,49 @@ func TestContributorGuardBackendProvider_CoversTheRelaySupportedSet(t *testing.T
 	}
 	if _, ok := NewContributorBackendReadingPublisher(t.TempDir(), "", "copilot"); ok {
 		t.Error("an unsupported backend must not get a publisher")
+	}
+}
+
+// StartPublishing's channel is the standalone publisher's only way to know the
+// loop has stopped writing (hivecommons/hive#10299). Cancelling the context
+// alone says "stop soon", not "the last atomic rename has landed" — a caller
+// that treated the two as the same tore down the pool directory under a live
+// publish. The channel must close, and must close only after the loop exits.
+func TestStartPublishing_ClosesDoneAfterTheLoopStops(t *testing.T) {
+	dir := t.TempDir()
+	m, ok := NewContributorBackendReadingPublisher(dir, "", "codex")
+	if !ok {
+		t.Fatal("codex must get a publisher")
+	}
+	stub := &stubProber{
+		name:   "openai",
+		h:      Headroom{Provider: "openai", Available: true, Limits: []LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 55}}},
+		probed: make(chan struct{}, 1),
+	}
+	m.SetProbers([]Prober{stub})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := m.StartPublishing(ctx)
+	select {
+	case <-stub.probed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher never probed")
+	}
+	select {
+	case <-done:
+		t.Fatal("done closed while the loop was still running")
+	default:
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("done never closed after the context was cancelled")
+	}
+	// The loop has stopped, so this read cannot race a publish.
+	var r ContributorReading
+	readJSONFile(t, ContributorReadingPath(dir, "codex", ""), &r)
+	if r.State != "available" {
+		t.Errorf("reading = %+v, want the published available reading", r)
 	}
 }

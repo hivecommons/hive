@@ -175,7 +175,7 @@ func TestRun_PublishingAnnouncesActiveProtection(t *testing.T) {
 	code := run(
 		envMap(map[string]string{"AGENT_BACKEND": "codex", "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR": "/pool"}),
 		&stdout, &stderr, cancelledCtx,
-		func(context.Context, plan) bool { started++; return true },
+		func(context.Context, plan) (<-chan struct{}, bool) { started++; return closedDone(), true },
 	)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -200,7 +200,7 @@ func TestRun_StandDownExitsZeroAndExplains(t *testing.T) {
 	code := run(
 		envMap(map[string]string{"AGENT_BACKEND": "copilot"}),
 		&stdout, &stderr, cancelledCtx,
-		func(context.Context, plan) bool { started++; return true },
+		func(context.Context, plan) (<-chan struct{}, bool) { started++; return closedDone(), true },
 	)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 — a contributor that cannot publish must keep contributing", code)
@@ -221,7 +221,7 @@ func TestRun_StartRejectionIsReported(t *testing.T) {
 	code := run(
 		envMap(map[string]string{"AGENT_BACKEND": "codex", "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR": "/pool"}),
 		&stdout, &stderr, cancelledCtx,
-		func(context.Context, plan) bool { return false },
+		func(context.Context, plan) (<-chan struct{}, bool) { return nil, false },
 	)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -234,17 +234,42 @@ func TestRun_StartRejectionIsReported(t *testing.T) {
 	}
 }
 
+// closedDone is an already-finished publisher, so run() never blocks on a
+// stub's exit.
+func closedDone() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
 // The real seam must build a publisher for a supported backend and refuse an
-// unsupported one. Start() only launches the poll goroutine against an
-// already-cancelled context here, so no provider CLI is probed.
-func TestStartPublisher_SupportedAndUnsupported(t *testing.T) {
-	ctx, cancel := cancelledCtx()
-	defer cancel()
-	if !startPublisher(ctx, plan{backend: "codex", poolDir: t.TempDir()}) {
+// unsupported one, and it must hand back a channel the caller can wait on:
+// the publish loop writes into the pool directory, so a caller that returned
+// while it was still running would tear that directory down underneath it.
+//
+// PATH is emptied so the provider probe resolves deterministically to
+// "executable file not found" on any machine, whether or not a real codex is
+// installed — the probe outcome is not what is under test here.
+func TestStartPublisher_SupportedBackendRunsAndStops(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	done, ok := startPublisher(ctx, plan{backend: "codex", poolDir: t.TempDir()})
+	if !ok {
 		t.Fatal("codex must get a publisher")
 	}
-	if startPublisher(ctx, plan{backend: "copilot", poolDir: t.TempDir()}) {
+	cancel()
+	<-done // the loop has stopped: nothing is writing into the pool dir any more
+}
+
+func TestStartPublisher_UnsupportedBackendStartsNothing(t *testing.T) {
+	ctx, cancel := cancelledCtx()
+	defer cancel()
+	done, ok := startPublisher(ctx, plan{backend: "copilot", poolDir: t.TempDir()})
+	if ok {
 		t.Fatal("copilot must not get a publisher")
+	}
+	if done != nil {
+		t.Fatal("a refused backend must not hand back a channel to wait on")
 	}
 }
 
