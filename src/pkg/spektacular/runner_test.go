@@ -122,7 +122,22 @@ func statusJSON(kind, name string, status DocumentStatus) string {
 // notFoundJSON is the #45 error envelope for a missing artifact.
 const notFoundJSON = `ERR:{"error":true,"code":"artifact_not_found","message":"plan artifact \"x\" was not found","resource":"x","next_action":"run ` + "`spektacular plan file list`" + ` to see available plans"}`
 
-const exportJSON = `{"kind":"plan","name":"` + testRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers","repo":"hivecommons/hive","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"]},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}`
+// Exported tasks are identified by UUID `id`, not by a plan-local `ref`; the
+// in-tree fake prints the same three ids (#10074).
+const (
+	exportTask1 = "8f1c2b7e-0000-4000-8000-000000000001"
+	exportTask2 = "8f1c2b7e-0000-4000-8000-000000000002"
+	exportTask3 = "8f1c2b7e-0000-4000-8000-000000000003"
+)
+
+// exportJSON is `plan export <name> --format json` exactly as Spektacular
+// 0.23+ answers it: an error:false envelope, UUID task ids and object-valued
+// repo / execution. The pinned 0.22 release has no export verb at all, which
+// the fixture tests cover against the fake binary.
+const exportJSON = `{"error":false,"kind":"plan","name":"` + testRunKey + `","tasks":[` +
+	`{"id":"` + exportTask1 + `","title":"Add encoding helpers","repo":{"name":"` + testRepo + `","location":"."},"execution":{"type":"agent_suitable","reason":"code change"}},` +
+	`{"id":"` + exportTask2 + `","title":"Wire helpers into the parser","depends_on":["` + exportTask1 + `"]},` +
+	`{"id":"` + exportTask3 + `","title":"Sign off on the public API","depends_on":["` + exportTask2 + `"],"execution":{"type":"human_required","reason":"sign-off"}}]}`
 
 // fakeRegistry is an in-memory lease registry with the same generation rules
 // the dashboard applies.
@@ -532,11 +547,14 @@ func TestExportPlanAndRenderTaskList(t *testing.T) {
 	if len(tasks) != 3 {
 		t.Fatalf("rendered task list parsed into %d tasks: %q", len(tasks), RenderTaskList(plan))
 	}
-	if tasks[1].Ref != "T2" || len(tasks[1].DependsOn) != 1 || tasks[1].DependsOn[0] != "T1" || tasks[1].Execution != agentparse.ExecutionAgentSuitable {
-		t.Fatalf("T2 = %+v, want depends on T1 and agent_suitable default", tasks[1])
+	if tasks[1].Ref != exportTask2 || len(tasks[1].DependsOn) != 1 || tasks[1].DependsOn[0] != exportTask1 || tasks[1].Execution != agentparse.ExecutionAgentSuitable {
+		t.Fatalf("task 2 = %+v, want depends on task 1 and agent_suitable default", tasks[1])
 	}
 	if tasks[2].Execution != agentparse.ExecutionHumanRequired {
-		t.Fatalf("T3 execution = %q", tasks[2].Execution)
+		t.Fatalf("task 3 execution = %q", tasks[2].Execution)
+	}
+	if plan.Tasks[0].Repo != testRepo || plan.Tasks[0].Ref != "" {
+		t.Fatalf("0.23 export task = %+v, want object repo %q and no plan-local ref", plan.Tasks[0], testRepo)
 	}
 	// A task without a ref is numbered so dependencies still resolve.
 	rendered := RenderTaskList(Plan{Tasks: []PlanTask{{Title: "Untagged"}}})

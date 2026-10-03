@@ -1,0 +1,1 @@
+- fix(spektacular): the `plan export` test stubs now print the real 0.23+ shape (UUID `id` tasks, object `repo` / `execution`) instead of a flat `ref`-based payload no release emits, and the docs record the version-gated fake scenarios ([#10074](https://github.com/hivecommons/hive/issues/10074))
