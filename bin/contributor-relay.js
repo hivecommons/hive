@@ -6384,18 +6384,22 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
   }
 
   const commands = ordered
-    .map(repo => `GH_TOKEN=$GH_TOKEN gh pr list --repo ${repo} --author ${author} --state open`)
+    .map(repo => `GH_TOKEN=$GH_TOKEN gh pr list --repo ${repo} --author ${author} --state open --json number,url,headRefName,baseRefName,mergeStateStatus`)
     .join('\n');
 
   return 'Check the open PRs you have filed, in the repositories this hive has assigned you work in, ' +
-    'for review comments. Run these, and only these:\n' +
+    'for base drift first, then review comments. Run these, and only these:\n' +
     commands + '\n' +
     'Those repositories are the whole scope of this task. Do not search across your account, ' +
     'and do not read, comment on, or push to a PR in any other repository — a PR outside that list ' +
     'was not opened on this hive\'s behalf, even if you have access to it. ' +
+    'Before review work, repair your own PRs whose mergeStateStatus is DIRTY or BEHIND, including fork PRs. ' +
+    'Fetch the named base branch and merge or rebase your PR branch onto its current tip; resolve conflicts preserving the PR intent. ' +
+    'Do not push new work onto a known-DIRTY head before repairing it, and never rewrite someone else\'s branch. ' +
+    'Reply on each repaired PR with a short hive-base-moved note naming the base commit. ' +
     'For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ' +
-    'If no PRs have comments, say so and stop — do not look for other work. ' +
-    'When you HAVE finished — every PR with comments is addressed, or there were none — print, as the very ' +
+    'If no PRs need base repair or have comments, say so and stop — do not look for other work. ' +
+    'When you HAVE finished — every PR needing base repair or comment follow-up is addressed, or there were none — print, as the very ' +
     'last thing you output and on a line by itself, in plain text, no Markdown formatting: ' +
     "'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, only when you are actually done.";
 }

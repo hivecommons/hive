@@ -1,0 +1,1 @@
+- PR follow-ups now prioritize known base conflicts or behind states over review feedback, including owned fork pointers; contributor review cycles check fork base drift before pushing review fixes ([#10457](https://github.com/hivecommons/hive/issues/10457)).
