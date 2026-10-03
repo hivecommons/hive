@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.125.0)
+
+### Added
+
+- **Human-filed bugs can opt in to close-on-merge with `hive: close-on-merge`** ([#10304](https://github.com/hivecommons/hive/issues/10304)). Code-sweep findings and bugs the reporter cannot reproduce on demand have no symptom to re-check, so the reporter-confirmation gate left them open as `hive/likely-done` after their fix merged. Put `hive: close-on-merge` in the issue body or apply it as a label when filing, and the fix PR keeps `Closes #N` (no `Refs` downgrade, no "closing keyword withheld" note) and the issue-close path accepts the merge. `hive-open-issue --close-on-merge` adds the marker. Human-filed bugs without the marker still wait for reporter confirmation, as before ([#6781](https://github.com/hivecommons/hive/issues/6781)).
+
+### Fixed
+
+- hive-merge relay: `MergePR` now upgrades squash to a merge commit for forward-merge PRs (`sync/v*-to-v*` heads or "forward-merge" titles), sharing the sweep's guard so the relay no longer re-breaks v6 Top-up (#10265)
+- upstream-watch: the dashboard divergence view no longer renders a dangling `owner/repo#` / `owner/repo@` for a stored ref with an empty PR number or tag, and its Features-tab panel now styles through shared `components.css` token classes instead of inline styles, restoring the green v5 build after #10361.
+
 ## 2026-10-03 (v5.124.0)
 
 ### Added
