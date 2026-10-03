@@ -14339,3 +14339,41 @@ test('#10040 headless Codex usage-limit refusal is a quota hold, not an ordinary
   assert.strictEqual(paneClassifier.headlessQuotaExhaustion('ERROR: build failed', 'codex'), null);
   assert.strictEqual(paneClassifier.headlessQuotaExhaustion('', 'codex'), null);
 });
+
+for (const provider of ['openai-codex', 'openrouter', 'anthropic']) {
+  test(`#10389 Pi ${provider} ignores unrelated pool readings and explains the missing reader`, () => {
+    const dir = poolDir6953();
+    const poolKey = poolStore.derivePoolKey({ backend: 'pi', account: '' });
+    fs.writeFileSync(path.join(dir, `${poolKey}.reading.json`), JSON.stringify({ state: 'unknown', cause: 'probe_failed', error: 'claude credentials missing', limits: [] }));
+    const relay = loadRelay({ backend: 'pi', model: `${provider}/model`, env: {
+      HIVE_CONTRIBUTOR_QUOTA_POOL_DIR: dir,
+      HIVE_CONTRIBUTOR_QUOTA_READING_JSON: '', HIVE_CONTRIBUTOR_QUOTA_READING_FILE: '',
+    } });
+    const lines = [];
+    const savedWarn = console.warn;
+    console.warn = (...args) => lines.push(args.join(' '));
+    try {
+      assert.strictEqual(relay.readContributorQuotaReading().state, 'unprovisioned');
+      assert.strictEqual(relay.evaluateContributorQuota(null).reason, 'unprovisioned');
+      assert.ok(lines.join('\n').includes(`Pi provider ${provider}`));
+      assert.ok(lines.join('\n').includes('no Pi-compatible quota reader'));
+      assert.ok(lines.join('\n').includes('HIVE_CONTRIBUTOR_QUOTA_READING_FILE'));
+    } finally {
+      console.warn = savedWarn;
+      teardown(relay);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('#10389 Pi explicit provider readings remain fail closed', () => {
+  for (const state of ['unknown', 'stale']) {
+    const relay = loadRelay({ backend: 'pi', model: 'openrouter/model', env: {
+      HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state, limits: [] }),
+    } });
+    try {
+      assert.strictEqual(relay.readContributorQuotaReading().state, state);
+      assert.strictEqual(relay.evaluateContributorQuota(null).admit, false);
+    } finally { teardown(relay); }
+  }
+});

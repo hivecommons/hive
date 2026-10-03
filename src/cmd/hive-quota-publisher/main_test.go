@@ -127,7 +127,7 @@ func TestResolvePlan_UnsupportedBackendIsNamed(t *testing.T) {
 // Every guard-supported backend the relay knows must resolve to a publisher,
 // or that backend is stranded on the unprovisioned admit.
 func TestResolvePlan_EveryGuardSupportedBackendPublishes(t *testing.T) {
-	for _, backend := range []string{"claude", "pi", "codex", "agy", "gemini", "kiro"} {
+	for _, backend := range []string{"claude", "codex", "agy", "gemini", "kiro"} {
 		p := resolvePlan(envMap(map[string]string{"AGENT_BACKEND": backend}), fixedPoolDir("/pool"))
 		if !p.publish {
 			t.Fatalf("backend %s must publish, got reason %q", backend, p.reason)
@@ -277,4 +277,16 @@ func TestSignalContext_IsCancellable(t *testing.T) {
 	ctx, stop := signalContext()
 	stop()
 	<-ctx.Done()
+}
+
+// Pi credentials cannot be handed to the Claude Code/Codex CLI readers.
+func TestResolvePlan_PiNamesSelectedProviderWithoutProbingAnotherCLI(t *testing.T) {
+	for _, provider := range []string{"openai-codex", "openrouter", "anthropic", "openai"} {
+		p := resolvePlan(envMap(map[string]string{
+			"AGENT_BACKEND": "pi", "AGENT_MODEL": provider + "/model",
+		}), fixedPoolDir("/pool"))
+		if p.publish || !strings.Contains(p.reason, "pi provider "+provider) || !strings.Contains(p.reason, "no Pi-compatible quota reader") || !strings.Contains(p.reason, envReadingFile) {
+			t.Fatalf("plan = %+v, want explicit unsupported Pi provider with external-source guidance", p)
+		}
+	}
 }

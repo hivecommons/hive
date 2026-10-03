@@ -1,0 +1,1 @@
+- Pi contributors no longer probe unrelated Claude credentials or read automatic Claude pool readings; unsupported Pi provider quota readers are reported with external-reading guidance ([#10389](https://github.com/hivecommons/hive/issues/10389)).
