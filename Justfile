@@ -1308,10 +1308,42 @@ contribute-hive backend="" mode="docker": check-version
       cleanup() {
         echo "Shutting down..."
         kill "$RELAY_PID" 2>/dev/null || true
+        # Starts and stops with the contributor (#10299): a surviving publisher
+        # keeps refreshing this pool's presence marker and tells the next relay
+        # a reading is coming that nothing will write.
+        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
         tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
         exit 0
       }
       trap cleanup SIGTERM SIGINT EXIT
+
+      # Publish this contributor's quota readings (hivecommons/hive#10299).
+      # Local mode runs no `hive` process either, so without this the relay's
+      # quota guard has no reading source and admits work blind. The binary
+      # decides for itself whether to publish (opt-out, guard off, configured
+      # external reading source, unsupported backend) and explains itself when
+      # it does not. Opt out with HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0.
+      #
+      # Prefer an installed binary; otherwise build it from this checkout when a
+      # Go toolchain is available. A host with neither keeps the previous
+      # no-publisher behaviour, with a note saying so — local mode must never
+      # fail to launch over quota publishing.
+      QUOTA_PUBLISHER_PID=""
+      QUOTA_PUBLISHER_BIN="$(command -v hive-quota-publisher 2>/dev/null || true)"
+      if [[ -z "$QUOTA_PUBLISHER_BIN" ]] && command -v go >/dev/null 2>&1; then
+        QUOTA_PUBLISHER_BIN="${XDG_CACHE_HOME:-${HOME}/.cache}/hive/hive-quota-publisher"
+        mkdir -p "$(dirname "$QUOTA_PUBLISHER_BIN")"
+        if ! (cd "$(dirname "$SCRIPT_DIR")/src" && go build -o "$QUOTA_PUBLISHER_BIN" ./cmd/hive-quota-publisher) 2>/dev/null; then
+          QUOTA_PUBLISHER_BIN=""
+        fi
+      fi
+      if [[ -n "$QUOTA_PUBLISHER_BIN" ]]; then
+        "$QUOTA_PUBLISHER_BIN" &
+        QUOTA_PUBLISHER_PID=$!
+      else
+        echo "NOTE: no hive-quota-publisher binary and no Go toolchain — the quota guard has no reading source."
+        echo "      See src/docs/contributor-relay.md → 'How the reading reaches the guard'."
+      fi
 
       node "$RELAY" &
       RELAY_PID=$!
@@ -1319,6 +1351,9 @@ contribute-hive backend="" mode="docker": check-version
       echo "✓ Contributor running in local mode."
       echo "  CLI:    $CMD (tmux session: $TMUX_SESSION)"
       echo "  Relay:  PID $RELAY_PID"
+      if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
+        echo "  Quota:  publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
+      fi
       echo "  Attach: tmux attach -t $TMUX_SESSION"
       echo ""
       echo "Relay logs:"

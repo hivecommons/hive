@@ -417,3 +417,53 @@ func (m *Manager) publishContributorReading(h Headroom) {
 		_ = writeContributorPublisherMarker(ContributorPublisherMarkerPath(dir, backend, account))
 	}
 }
+
+// ContributorGuardBackendProvider names the rotation provider that fronts a
+// contributor backend, and reports whether the contributor quota guard
+// supports that backend at all (hivecommons/hive#10299). It reads the same
+// contributorGuardDefaultBackends map the publish-only manager publishes from,
+// so "supported" means exactly "a reading can be produced for this backend" —
+// a standalone contributor on an unsupported backend is told so at startup
+// instead of waiting for a reading that can never arrive.
+func ContributorGuardBackendProvider(backend string) (string, bool) {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	for provider, backends := range contributorGuardDefaultBackends {
+		for _, b := range backends {
+			if b == backend {
+				return provider, true
+			}
+		}
+	}
+	return "", false
+}
+
+// NewContributorBackendReadingPublisher is NewContributorReadingPublisher
+// scoped to the single provider that fronts backend (hivecommons/hive#10299,
+// standalone contributor mode). A standalone contributor runs ONE backend with
+// ONE set of credentials, so probing every guard-supported provider would spawn
+// CLIs the contributor never signed into; the scoped manager probes only the
+// provider whose CLI the contributor actually runs. Everything else — the
+// atomic pool-keyed publish, the presence marker, the "a failed probe never
+// publishes a healthy reading" rule and the not-installed skip — is the shared
+// publish-only behaviour, so the standalone path and the server path write
+// byte-identical readings.
+//
+// ok is false for a backend the guard does not support; the caller reports that
+// as an explicit unsupported-backend state rather than starting a publisher
+// that would never write.
+func NewContributorBackendReadingPublisher(dir, account, backend string) (*Manager, bool) {
+	provider, ok := ContributorGuardBackendProvider(backend)
+	if !ok {
+		return nil, false
+	}
+	m := NewManager(config.RotationConfig{Providers: map[string]config.ProviderRotationConfig{
+		provider: {
+			Class:    ClassSubscription,
+			Backends: append([]string(nil), contributorGuardDefaultBackends[provider]...),
+		},
+	}})
+	m.contributorPublishDir = dir
+	m.contributorPublishAccount = account
+	m.contributorPublishSkipNotInstalled = true
+	return m, true
+}
