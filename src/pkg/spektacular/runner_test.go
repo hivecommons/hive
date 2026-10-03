@@ -721,8 +721,8 @@ func TestTick_PlanFinalImportsStructuredPlanAsDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first child: %v", err)
 	}
-	if first.Meta(planning.MetaPlanRepo) != "hivecommons/hive" {
-		t.Fatalf("plan_repo = %q, want hivecommons/hive", first.Meta(planning.MetaPlanRepo))
+	if first.Meta(planning.MetaPlanRepo) != testRepo {
+		t.Fatalf("plan_repo = %q, want %s", first.Meta(planning.MetaPlanRepo), testRepo)
 	}
 	got, _ := store.Get(epic.ID)
 	if got.Meta(planning.MetaPlanStatus) != planning.PlanStatusDraft {
