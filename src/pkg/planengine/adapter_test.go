@@ -1,4 +1,4 @@
-package spektacular
+package planengine
 
 import (
 	"context"
@@ -6,11 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -89,21 +87,48 @@ func (f *fakeLeaseRegistry) ImportRunPlan(_, _, taskList string) error {
 	return nil
 }
 
-func TestLeaseAdapter_ActiveStagesUsesRunArtifactNameForIssueRunKey(t *testing.T) {
+// namingEngine spells artifacts differently from the run key, the way the
+// Spektacular engine does for a worksource run key.
+type namingEngine struct {
+	*scriptedEngine
+	name func(runKey string) string
+}
+
+func (e namingEngine) ArtifactName(runKey string) string { return e.name(runKey) }
+
+func adapterRunner(reg LeaseRegistry, engine Engine) *Runner {
+	return &Runner{
+		Engine:   engine,
+		Poll:     testPoll,
+		Registry: NewLeaseRegistryAdapter(reg, engine),
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func TestLeaseAdapter_ActiveStagesUsesTheEngineArtifactName(t *testing.T) {
 	reg := &fakeLeaseRegistry{runKey: "KubeStellar/Console#23735", stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
-	stages, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0)
+	engine := namingEngine{scriptedEngine: &scriptedEngine{}, name: func(string) string { return "kubestellar-console-23735" }}
+	stages, err := NewLeaseRegistryAdapter(reg, engine).ActiveStages(t0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(stages) != 1 || stages[0].Artifact != "kubestellar-console-23735" {
 		t.Fatalf("artifact = %#v, want kubestellar-console-23735", stages)
 	}
+	// An engine that does not name artifacts is polled under the run key.
+	bare, err := NewLeaseRegistryAdapter(reg, bareEngine{name: "otherplanner"}).ActiveStages(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare[0].Artifact != "KubeStellar/Console#23735" {
+		t.Fatalf("artifact without an ArtifactNamer = %q", bare[0].Artifact)
+	}
 }
 
 func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 	reg := &fakeLeaseRegistry{stage: StagePlan, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	eng := &scriptedEngine{answers: []answer{found(KindPlan, testRunKey, DocumentFinal)}, plan: testPlan()}
+	r := adapterRunner(reg, eng)
 
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 {
 		t.Fatalf("plan final tick = %+v", res)
@@ -127,8 +152,11 @@ func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 
 	// Refusal reaches the registry as attrs.
 	reg2 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
-	ex2 := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft), notFoundJSON}}
-	r2 := &Runner{Exec: ex2.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg2), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	eng2 := &scriptedEngine{answers: []answer{
+		found(KindSpec, testRunKey, DocumentDraft),
+		missing(KindSpec, testRunKey),
+	}}
+	r2 := adapterRunner(reg2, eng2)
 	r2.Tick(context.Background(), t0)
 	r2.Tick(context.Background(), t0.Add(testPoll))
 	if len(reg2.refusals) != 1 || reg2.refusals[0][AttrReason] != RefuseReplacedDocument || reg2.refusals[0][AttrStage] != StageSpec {
@@ -136,13 +164,13 @@ func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 	}
 	// Visit errors surface as counted errors.
 	reg3 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, visitErr: errors.New("registry down")}
-	r3 := &Runner{Exec: (&scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}).exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg3), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r3 := adapterRunner(reg3, &scriptedEngine{answers: []answer{found(KindSpec, testRunKey, DocumentDraft)}})
 	if res := r3.Tick(context.Background(), t0); res.Errors != 1 {
 		t.Fatalf("visit error tick = %+v", res)
 	}
 	// Advance errors surface and do not advance.
 	reg4 := &fakeLeaseRegistry{stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, advanceErr: errors.New("persist failed")}
-	r4 := &Runner{Exec: (&scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}).exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg4), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r4 := adapterRunner(reg4, &scriptedEngine{answers: []answer{found(KindSpec, testRunKey, DocumentFinal)}})
 	if res := r4.Tick(context.Background(), t0); res.Errors != 1 || res.Advanced != 0 {
 		t.Fatalf("advance error tick = %+v", res)
 	}
@@ -150,8 +178,8 @@ func TestLeaseAdapter_AdvanceAndRefuseThroughPrimitives(t *testing.T) {
 
 func TestLeaseAdapter_FailedPlanImportRefusesWithReason(t *testing.T) {
 	reg := &fakeLeaseRegistry{stage: StagePlan, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, importErr: errors.New("no bead store configured for plan import")}
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	eng := &scriptedEngine{answers: []answer{found(KindPlan, testRunKey, DocumentFinal)}, plan: testPlan()}
+	r := adapterRunner(reg, eng)
 	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
 		t.Fatalf("tick = %+v", res)
 	}
@@ -166,23 +194,6 @@ func TestLeaseAdapter_FailedPlanImportRefusesWithReason(t *testing.T) {
 	}
 }
 
-func TestHubRunner_BuildsFromConfigAndTicks(t *testing.T) {
-	reg := &fakeLeaseRegistry{}
-	cfg := config.RunsConfig{MaxStageRetries: 3, Spektacular: config.SpektacularConfig{Binary: "false", PollIntervalS: 7}}
-	h := NewHubRunner(cfg, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	r := h.Runner()
-	if r == nil || r.Poll != 7*time.Second || r.Exec == nil || r.Registry == nil {
-		t.Fatalf("hub runner = %+v", r)
-	}
-	h.Tick(context.Background(), t0) // no leases: inert
-	var nilHub *HubRunner
-	nilHub.Tick(context.Background(), t0)
-	if nilHub.Runner() != nil {
-		t.Fatal("nil hub runner exposed a runner")
-	}
-	(&HubRunner{}).Tick(context.Background(), t0)
-}
-
 // TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp reproduces the dashboard
 // integration sequence exactly: the spec advances to plan under a new
 // generation, then a second Tick at the same instant. The successor entry
@@ -190,12 +201,12 @@ func TestHubRunner_BuildsFromConfigAndTicks(t *testing.T) {
 // not polled (and not advanced on a final answer) until one Poll has passed.
 func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 	reg := &fakeLeaseRegistry{stage: StageSpec, gen: 11, expiresAt: t0.Add(testLeaseTTL), present: true}
-	ex := &scriptedExec{statuses: []string{
-		statusJSON(KindSpec, testRunKey, DocumentDraft),
-		statusJSON(KindSpec, testRunKey, DocumentFinal),
-		statusJSON(KindPlan, testRunKey, DocumentFinal),
-	}, exportJSON: exportJSON}
-	r := &Runner{Exec: ex.exec, Poll: testPoll, Registry: NewLeaseRegistryAdapter(reg), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	eng := &scriptedEngine{answers: []answer{
+		found(KindSpec, testRunKey, DocumentDraft),
+		found(KindSpec, testRunKey, DocumentFinal),
+		found(KindPlan, testRunKey, DocumentFinal),
+	}, plan: testPlan()}
+	r := adapterRunner(reg, eng)
 
 	now := t0
 	if res := r.Tick(context.Background(), now); res.Advanced != 0 || res.Polled != 1 {
@@ -212,8 +223,8 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 	if res := r.Tick(context.Background(), now); res != (TickResult{}) {
 		t.Fatalf("same-instant tick = %+v, want a no-op", res)
 	}
-	if len(reg.advances) != 1 || ex.statusCalls() != 2 {
-		t.Fatalf("same-instant tick reached the CLI or registry: advances=%d status calls=%d", len(reg.advances), ex.statusCalls())
+	if len(reg.advances) != 1 || eng.statusCalls() != 2 {
+		t.Fatalf("same-instant tick reached the engine or registry: advances=%d status calls=%d", len(reg.advances), eng.statusCalls())
 	}
 	// One Poll later the plan is polled once and advances once.
 	now = now.Add(testPoll)
@@ -232,18 +243,7 @@ func TestLeaseAdapter_SameInstantTickAfterAdvanceIsNoOp(t *testing.T) {
 func TestLeaseAdapter_ActiveStagesSurfacesWorkDirError(t *testing.T) {
 	boom := errors.New("workdir unavailable")
 	reg := &fakeLeaseRegistry{runKey: testRunKey, stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true, workDirErr: boom}
-	if _, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0); !errors.Is(err, boom) {
+	if _, err := NewLeaseRegistryAdapter(reg, &scriptedEngine{}).ActiveStages(t0); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap %v", err, boom)
-	}
-}
-
-func TestLeaseAdapter_ActiveStagesCapsLongRunArtifactName(t *testing.T) {
-	reg := &fakeLeaseRegistry{runKey: "some-organization/" + strings.Repeat("very-long-repository-name-", 4) + "x#123", stage: StageSpec, gen: 1, expiresAt: t0.Add(testLeaseTTL), present: true}
-	stages, err := NewLeaseRegistryAdapter(reg).ActiveStages(t0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := stages[0].Artifact; len(got) != 64 || !strings.HasSuffix(got, "-x-123") {
-		t.Fatalf("artifact = %q (len %d), want 64 chars ending in -x-123", got, len(got))
 	}
 }

@@ -8,7 +8,7 @@ This page is for tool authors who want to understand Hive's Project Inception an
 
 Project Inception can admit an approved issue into a long-running `spec` run when Spektacular support is enabled. The approval handler checks `runs.spektacular.enabled` before admission (`src/pkg/dashboard/inception_handlers.go:269`). The stage runner is installed at boot only when that same config flag is true (`src/cmd/hive/spektacularwire.go:19`).
 
-Spektacular owns artifact state; Hive owns the workflow lease. Hive polls Spektacular for `spec` and `plan` artifacts, advances leases on final documents, and imports final plan tasks into Hive's planner (`src/pkg/spektacular/adapter.go:97`). The dashboard side stays decoupled through the stage lease interface and `SetStageRunner` (`src/pkg/dashboard/stage_leases.go:87`).
+Spektacular owns artifact state; Hive owns the workflow lease. Hive polls Spektacular for `spec` and `plan` artifacts, advances leases on final documents, and imports final plan tasks into Hive's planner (`src/pkg/planengine/adapter.go:114`). The dashboard side stays decoupled through the stage lease interface and `SetStageRunner` (`src/pkg/dashboard/stage_leases.go:87`).
 
 ## Interface
 
@@ -92,13 +92,13 @@ If export is unavailable, Hive falls back to `spektacular plan file read <name>/
 
 1. An operator approves an Inception run with an issue URL; when Spektacular is enabled, Hive admits the issue as a `spec` run (`src/pkg/dashboard/inception_handlers.go:269`).
 2. The runner polls `spektacular spec status <name>` until the spec is final (`src/pkg/spektacular/runner.go:359`).
-3. Hive writes a stage receipt and advances the lease to `plan` (`src/pkg/spektacular/adapter.go:97`).
+3. Hive writes a stage receipt and advances the lease to `plan` (`src/pkg/planengine/adapter.go:114`).
 4. The runner polls `plan status`; on final it imports the structured plan (`src/pkg/spektacular/runner.go:403`).
 5. Hive exposes implement work as run-stage items after plan approval (`src/pkg/worksource/run_stage.go:62`).
 
 ## Testing
 
-Use `pkg/spektacular/testdata/spektacular-fake/spektacular`, which implements the CLI scenarios documented by the runner page. Tests cover no direct file access, status parsing, stale/final transitions, retries/escalations, plan export fallback, and dashboard lease integration (`src/docs/spektacular.md:277`, `src/pkg/spektacular/adapter_test.go:142`, `src/pkg/dashboard/spektacular_runner_test.go:153`).
+Use `pkg/spektacular/testdata/spektacular-fake/spektacular`, which implements the CLI scenarios documented by the runner page. Tests cover no direct file access, status parsing, stale/final transitions, retries/escalations, plan export fallback, and dashboard lease integration (`src/docs/spektacular.md:277`, `src/pkg/planengine/adapter_test.go:128`, `src/pkg/dashboard/spektacular_runner_test.go:153`).
 
 ## Operational notes
 

@@ -1,4 +1,4 @@
-package spektacular
+package planengine
 
 import (
 	"sort"
@@ -11,27 +11,17 @@ import (
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
-// Receipt constants.
-const (
-	// ContractRevision names the status contract the receipt was produced under.
-	ContractRevision = "spektacular-status/v1"
-	// EngineName identifies Spektacular as the producing engine on the receipt.
-	EngineName = "spektacular"
-	// engineVersion is the CLI version the runner assumes; the status verb does
-	// not report one, so it names the Spektacular PR that shipped the contract.
-	engineVersion = "spektacular-pr-45"
-)
-
 // BuildReceipt produces the stage receipt Hive records when an artifact
-// reaches final. Every field is derived from the status document and the
-// lease, never from a file.
-func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.StageReceipt {
+// reaches final. Every field is derived from the status document, the lease
+// and the engine's own spellings (contract revision, name, version and the
+// provenance query text), never from a file.
+func BuildReceipt(engine Engine, st Stage, status ArtifactStatus, now time.Time) outputschema.StageReceipt {
 	workKey := st.RunKey
 	if st.Repo != "" {
 		workKey = st.Repo + "!" + st.RunKey
 	}
 	started := status.CreatedAt
-	if started.IsZero() || isSpektacularFrontmatterDate(started) {
+	if started.IsZero() || isFrontmatterDate(started) {
 		started = now
 	}
 	// closed_at is the frontmatter close date; when the artifact carries none
@@ -39,7 +29,7 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 	// fallback: it is a file mtime whenever no workflow state matches the
 	// artifact, so it says nothing about when the stage finished.
 	ended := status.ClosedAt
-	if ended.IsZero() || isSpektacularFrontmatterDate(ended) {
+	if ended.IsZero() || isFrontmatterDate(ended) {
 		ended = now
 	}
 	repo := st.Repo
@@ -52,7 +42,7 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 	artifacts := []outputschema.Artifact{{
 		Repo:        repo,
 		Path:        status.Kind + "/" + artifactKey,
-		Description: "Spektacular " + status.Kind + " reached document_status final",
+		Description: engineTitle(engine) + " " + status.Kind + " reached document_status final",
 	}}
 	// OutputDigest must equal the validator's artifact digest (outputschema
 	// stageReceiptArtifactDigest): repo, path, description per artifact, sorted.
@@ -76,19 +66,31 @@ func BuildReceipt(st Stage, status ArtifactStatus, now time.Time) outputschema.S
 		AssignmentID:     st.TaskID,
 		Generation:       st.Gen,
 		Stage:            st.Stage,
-		ContractRevision: ContractRevision,
+		ContractRevision: engine.ContractRevision(),
 		ExecutionKey:     effects.StableDigest(st.RunKey, st.Stage, strconv.FormatUint(st.Gen, 10)),
-		Engine:           &outputschema.StageReceiptEngine{Name: EngineName, Version: engineVersion},
+		Engine:           &outputschema.StageReceiptEngine{Name: engine.Name(), Version: engineVersion(engine)},
 		InputRevision:    "artifact@" + inputHash,
 		OutputDigest:     effects.StableDigest(parts...),
 		ResultClass:      outputschema.ReceiptResultCompleted,
 		StartedAt:        started.UTC().Format(time.RFC3339Nano),
 		EndedAt:          ended.UTC().Format(time.RFC3339Nano),
-		Provenance:       &proof.Provenance{Query: "spektacular " + status.Kind + " status " + status.Name},
+		Provenance:       &proof.Provenance{Query: engine.Name() + " " + status.Kind + " status " + status.Name},
 		Artifacts:        artifacts,
 	}
 }
 
-func isSpektacularFrontmatterDate(t time.Time) bool {
+// engineTitle is the engine name as it reads in an artifact description
+// ("spektacular" -> "Spektacular").
+func engineTitle(engine Engine) string {
+	name := engine.Name()
+	if name == "" {
+		return name
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// isFrontmatterDate reports whether t is a date-only frontmatter timestamp
+// (midnight UTC), which says nothing about the time of day a stage ran.
+func isFrontmatterDate(t time.Time) bool {
 	return !t.IsZero() && t.Location() == time.UTC && t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0
 }

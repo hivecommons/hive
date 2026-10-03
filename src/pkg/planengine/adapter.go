@@ -1,23 +1,21 @@
-package spektacular
+package planengine
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strconv"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // Attribute keys the adapter passes to the lease registry. pkg/dashboard
 // reads the same spellings without importing this package (the dashboard
-// import ratchet keeps it free of spektacular), so the two lists must match;
-// pkg/dashboard's tests assert that they do.
+// import ratchet keeps it free of the engine packages), so the two lists must
+// match; pkg/dashboard's tests assert that they do.
 const (
 	AttrRunKey         = "run_key"
 	AttrStage          = "stage"
@@ -30,7 +28,7 @@ const (
 	AttrReason         = "reason"
 )
 
-// LeaseRegistry is the primitives-only surface the runner needs from the
+// LeaseRegistry is the primitives-only surface the observer needs from the
 // dashboard's lease registry. *dashboard.Server satisfies it; the dashboard
 // never imports this package (its internal-import ratchet), so the interface
 // lives here and the concrete registry is passed in at boot.
@@ -49,7 +47,7 @@ type LeaseRegistry interface {
 	// RecordStageProgress records non-terminal activity for the run timeline.
 	RecordStageProgress(runKey, taskID string, attrs map[string]string, at time.Time)
 	// ResolveRunStageWorkDir returns the repo checkout or per-stage worktree that
-	// owns the Spektacular project for this stage. An empty result parks the lease.
+	// owns the engine's project for this stage. An empty result parks the lease.
 	ResolveRunStageWorkDir(runKey, stage, identity, repo string, gen uint64) (string, error)
 	// ImportRunPlan admits taskList (the planner's task-list text) as the
 	// run's DRAFT plan.
@@ -58,7 +56,8 @@ type LeaseRegistry interface {
 
 // leaseAdapter implements Registry over a LeaseRegistry.
 type leaseAdapter struct {
-	reg LeaseRegistry
+	reg    LeaseRegistry
+	engine Engine
 }
 
 type pendingStageIdentityRegistry interface {
@@ -66,9 +65,10 @@ type pendingStageIdentityRegistry interface {
 }
 
 // NewLeaseRegistryAdapter wraps the dashboard-side registry as the Registry
-// the poll loop drives.
-func NewLeaseRegistryAdapter(reg LeaseRegistry) Registry {
-	return &leaseAdapter{reg: reg}
+// the poll loop drives. engine supplies the artifact name a run key is polled
+// under.
+func NewLeaseRegistryAdapter(reg LeaseRegistry, engine Engine) Registry {
+	return &leaseAdapter{reg: reg, engine: engine}
 }
 
 func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
@@ -79,10 +79,7 @@ func (a *leaseAdapter) ActiveStages(time.Time) ([]Stage, error) {
 		if wdErr != nil && workDirErr == nil {
 			workDirErr = fmt.Errorf("resolving workdir for run %s stage %s: %w", runKey, stage, wdErr)
 		}
-		artifact := ArtifactKey(runKey)
-		if ref, ok := worksource.ParseKey(runKey); ok && ref.Repo != "" {
-			artifact = RunArtifactName(runKey)
-		}
+		artifact := artifactName(a.engine, runKey)
 		relayHeld := false
 		if checker, ok := a.reg.(pendingStageIdentityRegistry); ok {
 			relayHeld = !checker.IsPendingStageIdentity(identity)
@@ -161,38 +158,4 @@ func (a *leaseAdapter) RecordProgress(st Stage, attrs map[string]string, now tim
 		}
 	}
 	a.reg.RecordStageProgress(st.RunKey, st.TaskID, eventAttrs, now)
-}
-
-// HubRunner is the boot-time shape of the runner: it satisfies the
-// dashboard's StageRunner interface (Tick without a result) so the contribute
-// hub's cleanup loop can drive it without knowing this package.
-type HubRunner struct {
-	runner *Runner
-}
-
-// NewHubRunner builds the production runner from config against the
-// dashboard's lease registry.
-func NewHubRunner(cfg config.RunsConfig, reg LeaseRegistry, logger *slog.Logger) *HubRunner {
-	return &HubRunner{runner: &Runner{
-		Exec:     BinaryExec(cfg.Spektacular.BinaryOrDefault()),
-		Poll:     cfg.Spektacular.PollInterval(),
-		Registry: NewLeaseRegistryAdapter(reg),
-		Logger:   logger,
-	}}
-}
-
-// Tick runs one poll; the result is logged by the runner itself.
-func (h *HubRunner) Tick(ctx context.Context, now time.Time) {
-	if h == nil || h.runner == nil {
-		return
-	}
-	h.runner.Tick(ctx, now)
-}
-
-// Runner exposes the underlying poll loop (tests and diagnostics).
-func (h *HubRunner) Runner() *Runner {
-	if h == nil {
-		return nil
-	}
-	return h.runner
 }

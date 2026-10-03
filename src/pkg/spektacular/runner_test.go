@@ -17,9 +17,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agentparse"
-	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/outputschema"
-	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/planengine"
 )
 
 const (
@@ -89,18 +88,6 @@ func (s *scriptedExec) exec(_ context.Context, dir string, args []string) ([]byt
 		return []byte(strings.TrimPrefix(entry, "ERR:")), errors.New("exit status 2")
 	}
 	return []byte(entry), nil
-}
-
-func (s *scriptedExec) statusCalls() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, c := range s.calls {
-		if len(c) >= 2 && c[1] == verbStatus {
-			n++
-		}
-	}
-	return n
 }
 
 // statusJSON is the exact per-artifact status shape jumppad-labs/spektacular#45
@@ -205,28 +192,30 @@ func (f *fakeRegistry) RecordProgress(_ Stage, attrs map[string]string, _ time.T
 	f.progress = append(f.progress, cp)
 }
 
-func newRunner(reg Registry, ex *scriptedExec) *Runner {
-	return &Runner{
-		Exec:     ex.exec,
+// newRunner builds the Hive-owned stage observer (pkg/planengine) over this
+// package's engine, so the CLI-level tests below still drive a whole tick.
+func newRunner(reg Registry, ex *scriptedExec) *planengine.Runner {
+	return newExecRunner(reg, ex.exec)
+}
+
+func newExecRunner(reg Registry, exec ExecFunc) *planengine.Runner {
+	return &planengine.Runner{
+		Engine:   NewEngine("", exec),
 		Poll:     testPoll,
 		Registry: reg,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
-func validateReceipt(t *testing.T, r outputschema.StageReceipt) {
-	t.Helper()
-	raw, err := json.Marshal(outputschema.AgentReport{
-		Lane: "runs", Kind: outputschema.KindStageReceipt, Summary: "stage receipt",
-		Findings: []outputschema.Finding{}, PRsOpened: []outputschema.PROpened{}, BeadsFiled: []outputschema.BeadFiled{},
-		Receipt: &r,
-	})
-	if err != nil {
-		t.Fatalf("marshal receipt: %v", err)
+// nextStage mirrors the observer's stage ordering for the fake registry.
+func nextStage(stage string) string {
+	switch stage {
+	case StageSpec:
+		return StagePlan
+	case StagePlan:
+		return StageImplement
 	}
-	if _, err := outputschema.Validate(raw); err != nil {
-		t.Fatalf("receipt does not satisfy outputschema: %v\n%s", err, raw)
-	}
+	return ""
 }
 
 // --- Status: contract parsing --------------------------------------------
@@ -377,60 +366,12 @@ func TestTickResolvesTimestampedArtifactAfterNotFound(t *testing.T) {
 		}
 		return nil, fmt.Errorf("unexpected args: %v", args)
 	}
-	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, exec)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("tick = %+v", res)
 	}
 	if len(calls) < 3 || calls[2][2] != "20260925163042-kubestellar-console-23725" {
 		t.Fatalf("calls = %+v", calls)
-	}
-}
-
-func TestTickReresolvesArtifactAfterGenerationChange(t *testing.T) {
-	// Generation 1 resolves an older timestamped document that never goes
-	// final; the retry generation leaves a newer document in the same work
-	// dir. The runner must re-resolve rather than keep polling the old id.
-	const oldID = "20260925160000-kubestellar-console-23725"
-	const newID = "20260925163042-kubestellar-console-23725"
-	reg := newFakeRegistry(StageSpec)
-	reg.stage.RunKey = "kubestellar/console#23725"
-	reg.stage.Artifact = "kubestellar-console-23725"
-	var mu sync.Mutex
-	listing := `["` + oldID + `.md"]`
-	var statused []string
-	exec := func(_ context.Context, _ string, args []string) ([]byte, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if len(args) >= 3 && args[1] == verbFile && args[2] == "list" {
-			return []byte(listing), nil
-		}
-		if len(args) >= 3 && args[1] == verbStatus {
-			statused = append(statused, args[2])
-			switch args[2] {
-			case oldID:
-				return []byte(statusJSON(KindSpec, oldID, DocumentDraft)), nil
-			case newID:
-				return []byte(statusJSON(KindSpec, newID, DocumentFinal)), nil
-			}
-			return []byte(`{"error":true,"code":"artifact_not_found","message":"missing","resource":"` + args[2] + `"}`), errors.New("exit status 1")
-		}
-		return nil, fmt.Errorf("unexpected args: %v", args)
-	}
-	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Errors != 0 {
-		t.Fatalf("gen1 tick = %+v", res)
-	}
-	mu.Lock()
-	listing = `["` + oldID + `.md","` + newID + `.md"]`
-	mu.Unlock()
-	reg.mu.Lock()
-	reg.stage.Gen = 2
-	reg.mu.Unlock()
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Advanced != 1 || res.Errors != 0 {
-		t.Fatalf("gen2 tick = %+v (status calls %v)", res, statused)
-	}
-	if last := statused[len(statused)-1]; last != newID {
-		t.Fatalf("gen2 polled %q, want %q (status calls %v)", last, newID, statused)
 	}
 }
 
@@ -456,9 +397,10 @@ func TestStatus_JoinsByBareNameAcrossSpellings(t *testing.T) {
 			}
 		}
 	}
-	// Two leases spelled differently key the same stage state in the runner.
-	if stageKey(Stage{RunKey: ArtifactKey(bare + ".md"), Stage: StageSpec}) != stageKey(Stage{RunKey: ArtifactKey(bare), Stage: StageSpec}) {
-		t.Fatal("stage keys differ across spellings")
+	// Two leases spelled differently reduce to the same run key, so they key
+	// the same stage state in the observer.
+	if ArtifactKey(bare+".md") != ArtifactKey(bare) {
+		t.Fatal("artifact spellings differ after normalisation")
 	}
 }
 
@@ -624,118 +566,6 @@ document_status: final
 }
 
 // --- Tick: the poll loop --------------------------------------------------
-
-func TestTick_DraftThenFinalAdvancesOnceAndWritesOneReceipt(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{
-		statusJSON(KindSpec, testRunKey, DocumentDraft),
-		statusJSON(KindSpec, testRunKey, DocumentDraft),
-		statusJSON(KindSpec, testRunKey, DocumentFinal),
-	}}
-	r := newRunner(reg, ex)
-
-	now := t0
-	var total TickResult
-	for i := 0; i < 3; i++ {
-		res := r.Tick(context.Background(), now)
-		total.Advanced += res.Advanced
-		total.Polled += res.Polled
-		now = now.Add(testPoll)
-	}
-	if total.Advanced != 1 || total.Polled != 3 {
-		t.Fatalf("after draft, draft, final: %+v", total)
-	}
-	if len(reg.advances) != 1 || reg.advances[0].Stage != StageSpec || len(reg.receipts) != 1 {
-		t.Fatalf("advances = %+v receipts = %d", reg.advances, len(reg.receipts))
-	}
-	if reg.stage.Stage != StagePlan || reg.stage.Gen != 2 {
-		t.Fatalf("registry stage after advance = %+v", reg.stage)
-	}
-	if reg.plans[0] != nil {
-		t.Fatal("a spec advance must not carry a plan import")
-	}
-	receipt := reg.receipts[0]
-	validateReceipt(t, receipt)
-	if receipt.Stage != StageSpec || receipt.Generation != 1 || receipt.WorkKey != testRepo+"!"+testRunKey || receipt.AssignmentID != testTaskID {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-	if len(reg.refusals) != 0 {
-		t.Fatalf("unexpected refusals: %v", reg.refusals)
-	}
-	if len(reg.progress) == 0 || reg.progress[0][AttrDocumentStatus] != string(DocumentDraft) || reg.progress[0][AttrCurrentStep] != "authoring" {
-		t.Fatalf("status progress not recorded: %+v", reg.progress)
-	}
-
-	// The next tick polls the NEW stage (plan) under the new generation, and the
-	// old spec stage is never advanced twice.
-	ex.statuses = append(ex.statuses, statusJSON(KindPlan, testRunKey, DocumentDraft))
-	ex.idx = len(ex.statuses) - 1
-	res := r.Tick(context.Background(), now)
-	if res.Advanced != 0 || res.Polled != 1 || len(reg.advances) != 1 {
-		t.Fatalf("plan-stage tick = %+v advances=%d", res, len(reg.advances))
-	}
-	last := ex.calls[len(ex.calls)-1]
-	if last[0] != KindPlan {
-		t.Fatalf("next poll asked for %q, want plan", last[0])
-	}
-}
-
-func TestTick_PlanFinalImportsStructuredPlanAsDraft(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	r := newRunner(reg, ex)
-
-	if res := r.Tick(context.Background(), t0); res.Advanced != 1 {
-		t.Fatalf("plan final tick = %+v", res)
-	}
-	if len(reg.plans) != 1 || reg.plans[0] == nil || len(reg.plans[0].Tasks) != 3 {
-		t.Fatalf("plan import = %+v", reg.plans)
-	}
-	if reg.stage.Stage != StageImplement {
-		t.Fatalf("stage after plan final = %q, want implement", reg.stage.Stage)
-	}
-	// The implement stage has no Spektacular document: the runner never polls it.
-	before := ex.statusCalls()
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 || ex.statusCalls() != before {
-		t.Fatalf("implement stage was polled: %+v", res)
-	}
-
-	// The imported plan lands as a DRAFT (AutoApprove false): implement stays
-	// gated until ApprovePlan, and no model is asked to redecompose.
-	store, err := beads.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("bead store: %v", err)
-	}
-	epic, err := store.Create("hcl encoding helpers", beads.TypeEpic, beads.PriorityMedium, "architect", testRunKey)
-	if err != nil {
-		t.Fatalf("epic: %v", err)
-	}
-	result, err := planning.DecomposeFromOutput(store, epic, RenderTaskList(*reg.plans[0]), planning.Options{AutoApprove: false})
-	if err != nil {
-		t.Fatalf("DecomposeFromOutput: %v", err)
-	}
-	if len(result.Children) != 3 {
-		t.Fatalf("children = %d", len(result.Children))
-	}
-	first, err := store.Get(result.Children[0].ID)
-	if err != nil {
-		t.Fatalf("first child: %v", err)
-	}
-	if first.Meta(planning.MetaPlanRepo) != testRepo {
-		t.Fatalf("plan_repo = %q, want %s", first.Meta(planning.MetaPlanRepo), testRepo)
-	}
-	got, _ := store.Get(epic.ID)
-	if got.Meta(planning.MetaPlanStatus) != planning.PlanStatusDraft {
-		t.Fatalf("plan_status = %q, want draft until ApprovePlan", got.Meta(planning.MetaPlanStatus))
-	}
-	if err := planning.ApprovePlan(store, epic.ID); err != nil {
-		t.Fatalf("ApprovePlan: %v", err)
-	}
-	got, _ = store.Get(epic.ID)
-	if got.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved {
-		t.Fatal("ApprovePlan did not approve")
-	}
-}
 
 func TestTick_PlanFinalFallsBackWhenExportVerbIsMissing(t *testing.T) {
 	reg := newFakeRegistry(StagePlan)
@@ -906,7 +736,7 @@ func TestTick_PlanFallbackReadsResolvedArtifactID(t *testing.T) {
 		}
 		return nil, fmt.Errorf("unexpected args: %v", args)
 	}
-	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, exec)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("tick = %+v (reads %v)", res, reads)
 	}
@@ -938,7 +768,7 @@ func TestTick_ResolvesCounterArtifactID(t *testing.T) {
 		}
 		return nil, fmt.Errorf("unexpected args: %v", args)
 	}
-	r := &Runner{Exec: exec, Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, exec)
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("tick = %+v", res)
 	}
@@ -981,266 +811,7 @@ func TestStatus_AcceptsEveryCLIDocumentStatus(t *testing.T) {
 	}
 }
 
-func TestTick_SupersededOrArchivedDocumentParksLease(t *testing.T) {
-	cases := map[DocumentStatus]string{
-		DocumentSuperseded: RefuseReplacedDocument,
-		DocumentArchived:   RefuseArchivedDocument,
-	}
-	for status, reason := range cases {
-		t.Run(string(status), func(t *testing.T) {
-			reg := newFakeRegistry(StagePlan)
-			ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, status)}, exportJSON: exportJSON}
-			r := newRunner(reg, ex)
-			if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
-				t.Fatalf("tick = %+v", res)
-			}
-			if len(reg.refusals) != 1 || reg.refusals[0] != reason {
-				t.Fatalf("refusals = %v, want [%s]", reg.refusals, reason)
-			}
-			if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 || ex.statusCalls() != 1 {
-				t.Fatalf("parked tick = %+v status calls = %d", res, ex.statusCalls())
-			}
-		})
-	}
-}
-
-func TestTick_PlanFinalWithFailedExportRefusesAndParks(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportErr: errors.New("exit status 2")}
-	r := newRunner(reg, ex)
-	if res := r.Tick(context.Background(), t0); res.Advanced != 0 || res.Refused != 1 || res.Errors != 0 {
-		t.Fatalf("tick = %+v", res)
-	}
-	if len(reg.advances) != 0 {
-		t.Fatal("advanced without a plan export")
-	}
-	if len(reg.refusals) != 1 || reg.refusals[0] != RefusePlanImportFailed {
-		t.Fatalf("refusals = %v", reg.refusals)
-	}
-	// Parked: later polls neither call the CLI again nor re-refuse.
-	calls := len(ex.calls)
-	if res := r.Tick(context.Background(), t0.Add(3*testPoll)); res.Polled != 0 || res.Refused != 0 || len(ex.calls) != calls {
-		t.Fatalf("parked tick = %+v calls %d -> %d", res, calls, len(ex.calls))
-	}
-	// A new generation (operator reset or executor retry) looks again.
-	reg.stage.Gen = 2
-	ex.exportErr = nil
-	ex.exportJSON = exportJSON
-	if res := r.Tick(context.Background(), t0.Add(4*testPoll)); res.Advanced != 1 {
-		t.Fatalf("post-reset tick = %+v", res)
-	}
-}
-
-func TestTick_PlanImportRejectedByRegistryRefuses(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	reg.advanceErr = &PlanImportError{RunKey: testRunKey, Artifact: testRunKey, Err: errors.New("no bead store configured for plan import")}
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}, exportJSON: exportJSON}
-	r := newRunner(reg, ex)
-	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
-		t.Fatalf("tick = %+v", res)
-	}
-	if len(reg.refusals) != 1 || reg.refusals[0] != RefusePlanImportFailed {
-		t.Fatalf("refusals = %v", reg.refusals)
-	}
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 0 {
-		t.Fatalf("parked tick = %+v", res)
-	}
-}
-
-func TestTick_StalePlanStatusRefusesImplementAdvance(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindPlan, testRunKey, DocumentStale)}, exportJSON: exportJSON}
-	r := newRunner(reg, ex)
-
-	if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Advanced != 0 || res.Errors != 0 {
-		t.Fatalf("stale tick = %+v", res)
-	}
-	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseStalePlan {
-		t.Fatalf("refusals = %+v", reg.refusals)
-	}
-	if len(reg.advances) != 0 || len(reg.plans) != 0 {
-		t.Fatalf("stale plan advanced/imported: advances=%d plans=%d", len(reg.advances), len(reg.plans))
-	}
-}
-
-func TestTick_FinalThenDraftRefusesStalePlan(t *testing.T) {
-	reg := newFakeRegistry(StagePlan)
-	reg.advanceErr = errors.New("persist failed")
-	ex := &scriptedExec{statuses: []string{
-		statusJSON(KindPlan, testRunKey, DocumentFinal),
-		statusJSON(KindPlan, testRunKey, DocumentDraft),
-	}, exportJSON: exportJSON}
-	r := newRunner(reg, ex)
-
-	// final observed, but the registry could not persist the advance.
-	if res := r.Tick(context.Background(), t0); res.Errors != 1 || res.Advanced != 0 {
-		t.Fatalf("final tick = %+v", res)
-	}
-	reg.advanceErr = nil
-	// Same name flips back to draft: a stale plan. Refuse, never advance.
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Refused != 1 || res.Advanced != 0 {
-		t.Fatalf("draft-after-final tick = %+v", res)
-	}
-	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseStalePlan {
-		t.Fatalf("refusals = %v", reg.refusals)
-	}
-	// Refused stages are parked: not polled, even much later, until the
-	// generation changes.
-	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL*3)); res.Polled != 0 || res.Refused != 0 {
-		t.Fatalf("parked tick = %+v", res)
-	}
-	if len(reg.advances) != 0 {
-		t.Fatal("stale plan advanced")
-	}
-	// An operator reset (new generation) lets the runner look again.
-	reg.stage.Gen = 9
-	ex.statuses = []string{statusJSON(KindPlan, testRunKey, DocumentFinal)}
-	ex.idx = 0
-	if res := r.Tick(context.Background(), t0.Add(testLeaseTTL*3+testPoll)); res.Advanced != 1 {
-		t.Fatalf("post-reset tick = %+v", res)
-	}
-}
-
-func TestTick_VanishedAfterObservationRefusesRebind(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft), notFoundJSON}}
-	r := newRunner(reg, ex)
-	r.Tick(context.Background(), t0)
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Refused != 1 {
-		t.Fatalf("vanished tick = %+v", res)
-	}
-	if len(reg.refusals) != 1 || reg.refusals[0] != RefuseReplacedDocument {
-		t.Fatalf("refusals = %v", reg.refusals)
-	}
-	if len(reg.advances) != 0 || reg.stage.Gen != 1 {
-		t.Fatal("a replaced document must not advance or mint a generation on its own")
-	}
-}
-
-func TestTick_MissingFromTheStartIsAnError(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{notFoundJSON}}
-	r := newRunner(reg, ex)
-	if res := r.Tick(context.Background(), t0); res.Errors != 1 || res.Refused != 0 {
-		t.Fatalf("missing tick = %+v", res)
-	}
-	if len(reg.refusals) != 0 || len(reg.advances) != 0 {
-		t.Fatalf("refusals=%v advances=%d", reg.refusals, len(reg.advances))
-	}
-}
-
-func TestTick_PollIntervalAndHousekeeping(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
-	r := newRunner(reg, ex)
-	r.Tick(context.Background(), t0)
-	if res := r.Tick(context.Background(), t0.Add(testPoll/2)); res.Polled != 0 {
-		t.Fatalf("polled inside the interval: %+v", res)
-	}
-	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Polled != 1 {
-		t.Fatalf("not polled after the interval: %+v", res)
-	}
-	// A stage that disappears from the registry is forgotten.
-	reg.present = false
-	r.Tick(context.Background(), t0.Add(2*testPoll))
-	if len(r.stages) != 0 {
-		t.Fatalf("stale runner state kept: %d", len(r.stages))
-	}
-	// Registry errors are counted, not fatal.
-	reg.listErr = errors.New("registry down")
-	if res := r.Tick(context.Background(), t0.Add(3*testPoll)); res.Errors != 1 {
-		t.Fatalf("registry error tick = %+v", res)
-	}
-	// Nil receivers and a runner without a registry are inert.
-	var nilRunner *Runner
-	if res := nilRunner.Tick(context.Background(), t0); res != (TickResult{}) {
-		t.Fatalf("nil runner tick = %+v", res)
-	}
-	if res := (&Runner{}).Tick(context.Background(), t0); res != (TickResult{}) {
-		t.Fatalf("registry-less tick = %+v", res)
-	}
-	if (&Runner{}).logger() == nil {
-		t.Fatal("logger() returned nil")
-	}
-	if next := nextStage(StageImplement); next != "" {
-		t.Fatalf("nextStage(implement) = %q", next)
-	}
-}
-
-func TestRun_TicksUntilCancelled(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
-	r := newRunner(reg, ex)
-	r.Poll = 5 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		r.Run(ctx, func() time.Time { return t0 })
-	}()
-	deadline := time.After(2 * time.Second)
-	for {
-		reg.mu.Lock()
-		n := len(reg.advances)
-		reg.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("Run never advanced the stage")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	cancel()
-	<-done
-	// A zero Poll falls back to a positive ticker interval.
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	cancel2()
-	(&Runner{Registry: reg}).Run(ctx2, nil)
-}
-
-// --- Receipt ---------------------------------------------------------------
-
-func TestBuildReceipt_FallsBackWhenStatusLacksTimes(t *testing.T) {
-	st := Stage{RunKey: testRunKey, Artifact: testRunKey, Stage: StageSpec, TaskID: testTaskID, Gen: 3}
-	receipt := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal}, t0)
-	validateReceipt(t, receipt)
-	if receipt.WorkKey != testRunKey || receipt.StartedAt != t0.Format(time.RFC3339Nano) || receipt.EndedAt != receipt.StartedAt {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-	if receipt.Artifacts[0].Repo != testRunKey {
-		t.Fatalf("artifact repo fell back to %q", receipt.Artifacts[0].Repo)
-	}
-	// updated_at is a file mtime whenever no workflow state matches the
-	// artifact, so it never stands in for closed_at: without closed_at the
-	// receipt ends at the advance instant.
-	updated := t0.Add(time.Hour)
-	now := t0.Add(2 * time.Hour)
-	receipt = BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated}, now)
-	if receipt.EndedAt != now.UTC().Format(time.RFC3339Nano) {
-		t.Fatalf("EndedAt = %s, want the advance instant, never updated_at", receipt.EndedAt)
-	}
-	dateOnly := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
-	receipt = BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: dateOnly, ClosedAt: dateOnly}, now)
-	if receipt.StartedAt == dateOnly.Format(time.RFC3339Nano) || receipt.EndedAt == dateOnly.Format(time.RFC3339Nano) {
-		t.Fatalf("receipt used Spektacular date-only frontmatter timestamps: %+v", receipt)
-	}
-	// Two observations of the same final document that differ only in
-	// updated_at (a checkout or reformat moved the mtime) are the same input.
-	a := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, UpdatedAt: updated, ClosedAt: t0.Add(time.Hour)}, now)
-	b := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: testRunKey, DocumentStatus: DocumentFinal, CreatedAt: t0, ClosedAt: t0.Add(time.Hour)}, now)
-	if a.InputRevision != b.InputRevision {
-		t.Fatalf("InputRevision moved with updated_at: %s vs %s", a.InputRevision, b.InputRevision)
-	}
-	withID := BuildReceipt(st, ArtifactStatus{Kind: KindSpec, Name: "000057_old", ArtifactID: "20260922132517-a1b2c3d4-new", DocumentStatus: DocumentFinal, CreatedAt: t0, ClosedAt: t0.Add(time.Hour)}, now)
-	if withID.Artifacts[0].Path != "spec/20260922132517-a1b2c3d4-new" || withID.InputRevision == a.InputRevision {
-		t.Fatalf("artifact_id was not used as receipt join key: %+v", withID)
-	}
-	if !strings.Contains(a.Provenance.Query, "spektacular spec status "+testRunKey) || strings.Contains(a.Provenance.Query, "--json") {
-		t.Fatalf("provenance query = %q", a.Provenance.Query)
-	}
-}
+// --- Invariant: updated_at never decides ---------------------------------
 
 // TestUpdatedAtNeverDecides pins the contract answer from spektacular#45:
 // updated_at is a file mtime whenever no workflow state matches the artifact,
@@ -1416,7 +987,7 @@ func TestFixture_StaleNeedsAModernCLI(t *testing.T) {
 
 func TestFixture_DraftFinalThroughBinaryExec(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
-	r := &Runner{Exec: fixtureExec(t, "draft-final"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, fixtureExec(t, "draft-final"))
 	var advanced int
 	for i := 0; i < 3; i++ {
 		advanced += r.Tick(context.Background(), t0.Add(time.Duration(i)*testPoll)).Advanced
@@ -1448,7 +1019,7 @@ func TestFixture_FinalWithoutUpdatedAtAdvances(t *testing.T) {
 	// The fixture drops updated_at for a closed artifact with no matching
 	// workflow state; the advance is decided on document_status alone.
 	reg := newFakeRegistry(StageSpec)
-	r := &Runner{Exec: fixtureExec(t, "final-no-updated-at"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, fixtureExec(t, "final-no-updated-at"))
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("fixture final-no-updated-at: %+v", res)
 	}
@@ -1463,7 +1034,7 @@ func TestFixture_LeaseSpelledAsFileAddressPollsBareName(t *testing.T) {
 	reg := newFakeRegistry(StageSpec)
 	reg.stage.RunKey = testRunKey + ".md"
 	reg.stage.Artifact = ArtifactKey(reg.stage.RunKey)
-	r := &Runner{Exec: fixtureExec(t, "final-no-updated-at"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, fixtureExec(t, "final-no-updated-at"))
 	if res := r.Tick(context.Background(), t0); res.Advanced != 1 || res.Errors != 0 {
 		t.Fatalf("fixture .md lease: %+v", res)
 	}
@@ -1478,7 +1049,7 @@ func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
 	// final -> draft regression under test could ever be observed.
 	reg := newFakeRegistry(StageSpec)
 	reg.advanceErr = errors.New("persist failed")
-	r := &Runner{Exec: fixtureExec(t, "final-then-draft"), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := newExecRunner(reg, fixtureExec(t, "final-then-draft"))
 	r.Tick(context.Background(), t0)
 	reg.advanceErr = nil
 	if res := r.Tick(context.Background(), t0.Add(testPoll)); res.Refused != 1 {
@@ -1488,7 +1059,7 @@ func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
 	// A never-final document leaves the lease alone: no advance, no refusal,
 	// no new generation, however far past the lease window the runner ticks.
 	reg2 := newFakeRegistry(StageSpec)
-	r2 := &Runner{Exec: fixtureExec(t, "never-final"), Poll: testPoll, Registry: reg2, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r2 := newExecRunner(reg2, fixtureExec(t, "never-final"))
 	now := t0
 	for i := 0; i < 3; i++ {
 		res := r2.Tick(context.Background(), now)
@@ -1505,7 +1076,7 @@ func TestFixture_FinalThenDraftAndNeverFinal(t *testing.T) {
 func TestFixture_SupersededAndArchivedPark(t *testing.T) {
 	for scenario, reason := range map[string]string{"superseded": RefuseReplacedDocument, "archived": RefuseArchivedDocument} {
 		reg := newFakeRegistry(StagePlan)
-		r := &Runner{Exec: fixtureExec(t, scenario), Poll: testPoll, Registry: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		r := newExecRunner(reg, fixtureExec(t, scenario))
 		if res := r.Tick(context.Background(), t0); res.Refused != 1 || res.Errors != 0 || res.Advanced != 0 {
 			t.Fatalf("fixture %s: %+v", scenario, res)
 		}
@@ -1559,69 +1130,6 @@ func TestNoDirectFileAccess(t *testing.T) {
 
 // --- Unclaimed admission leases -------------------------------------------
 
-// An admission lease (owned by hive-triage, no relay yet) has no checkout by
-// construction. The runner must wait for a claim, not park it with
-// missing_workdir; once a relay claims the same generation and a checkout
-// exists, the stage is polled like any other.
-func TestTick_UnclaimedAdmissionWaitsForClaim(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	reg.stage.Identity = "hive-triage"
-	reg.stage.WorkDir = ""
-	reg.stage.Unclaimed = true
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentFinal)}}
-	r := newRunner(reg, ex)
-
-	res := r.Tick(context.Background(), t0)
-	if res.Unclaimed != 1 || res.Refused != 0 || res.Polled != 0 {
-		t.Fatalf("unclaimed tick = %+v, want Unclaimed=1 Refused=0 Polled=0", res)
-	}
-	if len(reg.refusals) != 0 {
-		t.Fatalf("unclaimed admission was refused: %v", reg.refusals)
-	}
-
-	// A relay claims the lease: same run key, stage and generation, new owner
-	// and a real checkout.
-	reg.mu.Lock()
-	reg.stage.Identity = testIdentity
-	reg.stage.WorkDir = testWorkDir
-	reg.stage.Unclaimed = false
-	reg.mu.Unlock()
-
-	res = r.Tick(context.Background(), t0.Add(testPoll))
-	if res.Polled != 1 || res.Unclaimed != 0 || res.Refused != 0 {
-		t.Fatalf("claimed tick = %+v, want Polled=1", res)
-	}
-}
-
-// A refusal recorded against one owner's checkout must not stick to the
-// stage when the same generation changes hands to a relay that has one.
-func TestTick_OwnerChangeReArmsRefusedStage(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	reg.stage.WorkDir = ""
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
-	r := newRunner(reg, ex)
-
-	res := r.Tick(context.Background(), t0)
-	if res.Refused != 1 || len(reg.refusals) != 1 || reg.refusals[0] != RefuseMissingWorkDir {
-		t.Fatalf("first tick = %+v refusals=%v", res, reg.refusals)
-	}
-	// Same owner, still no checkout: refusal is terminal, not repeated.
-	res = r.Tick(context.Background(), t0.Add(testPoll))
-	if res.Refused != 0 || res.Polled != 0 {
-		t.Fatalf("second tick = %+v, want nothing", res)
-	}
-
-	reg.mu.Lock()
-	reg.stage.Identity = "other-relay"
-	reg.stage.WorkDir = testWorkDir
-	reg.mu.Unlock()
-
-	res = r.Tick(context.Background(), t0.Add(2*testPoll))
-	if res.Polled != 1 || res.Refused != 0 {
-		t.Fatalf("re-armed tick = %+v, want Polled=1", res)
-	}
-}
-
 func TestBinaryExec_Deadline(t *testing.T) {
 	for _, tc := range []struct {
 		name                       string
@@ -1663,18 +1171,6 @@ func TestBinaryExec_BoundsInheritedOutputPipes(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("inherited output pipes blocked invocation")
-	}
-}
-
-func TestTick_CanceledContextSkipsPolling(t *testing.T) {
-	reg := newFakeRegistry(StageSpec)
-	ex := &scriptedExec{statuses: []string{statusJSON(KindSpec, testRunKey, DocumentDraft)}}
-	r := newRunner(reg, ex)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r.Tick(ctx, t0)
-	if ex.statusCalls() != 0 {
-		t.Fatal("canceled tick still polled a stage")
 	}
 }
 
