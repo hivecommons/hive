@@ -1000,7 +1000,7 @@ func (s *Server) handleGovernorWorkSourceGet(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	jsonResponse(w, workSourceSectionResponse(s.deps.Config))
+	jsonResponse(w, s.workSourceSectionResponse(s.deps.Config))
 }
 
 // handleGovernorWorkSourcePut updates the work_source config. The type and
@@ -1139,12 +1139,15 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	}
 	s.auditFromRequest(r, "config_governor_work_source", auditDetail("section", "work_source"), "")
 	s.refreshAndPersist()
-	jsonResponse(w, workSourceSectionResponse(cfg))
+	jsonResponse(w, s.workSourceSectionResponse(cfg))
 }
 
 // workSourceSectionResponse renders WorkSourceConfig for the dashboard's
-// Work Source tab and the governor config GET payload.
-func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
+// Work Source tab and the governor config GET payload. It is a method so the
+// external block can add this eval cycle's worksource.DisplaySource reading
+// (display_name badge fallback and dropped-item counter, ADR-0020 "Dashboard
+// terminology", #10174) without a second config lookup.
+func (s *Server) workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 	ws := cfg.Governor.WorkSource
 	return map[string]interface{}{
 		"type": ws.Type,
@@ -1187,16 +1190,31 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 		// safe — and necessary for a round-trip — only because validation
 		// rejects anything that is not a `${VAR}`/`$VAR` reference, so what is
 		// stored here is never the credential itself (ADR-0020, "Secrets").
-		"external": map[string]interface{}{
-			"name":            ws.External.Name,
-			"display_name":    ws.External.DisplayName,
-			"base_url":        ws.External.BaseURL,
-			"auth_token":      ws.External.AuthToken,
-			"ca_bundle":       ws.External.CABundle,
-			"repos":           ws.External.Repos,
-			"hold_labels":     ws.External.HoldLabels,
-			"timeout_seconds": ws.External.TimeoutSeconds,
-		},
+		"external": s.workSourceExternalSectionResponse(ws.External),
+	}
+}
+
+// workSourceExternalSectionResponse adds the live dropped-item counter (last
+// eval cycle's worksource.DisplaySource reading) to the stored external
+// config block. The counter reads 0/unset until the external source has run
+// at least one cycle, and is cleared whenever the configured primary source
+// is not external (ClearWorkSourceExternalStats), so it never shows a stale
+// reading from a source that is no longer selected.
+func (s *Server) workSourceExternalSectionResponse(e config.ExternalSourceConfig) map[string]interface{} {
+	dropped := int64(0)
+	if _, d, ok := s.workSourceExternalStatsSnapshot(); ok {
+		dropped = d
+	}
+	return map[string]interface{}{
+		"name":            e.Name,
+		"display_name":    e.DisplayName,
+		"base_url":        e.BaseURL,
+		"auth_token":      e.AuthToken,
+		"ca_bundle":       e.CABundle,
+		"repos":           e.Repos,
+		"hold_labels":     e.HoldLabels,
+		"timeout_seconds": e.TimeoutSeconds,
+		"dropped_items":   dropped,
 	}
 }
 

@@ -94,7 +94,7 @@ The Linear adapter is the best reference for a non-GitHub work source.
 
 ## Dashboard behavior
 
-Work-source configuration appears in Settings -> Work Source. The UI labels GitHub Issues as the default and lists GitHub Projects v2, Linear, and Jira as alternate sources (`src/pkg/dashboard/static/index.html:31330`). The Projects navigation label is intentionally neutral (`src/pkg/dashboard/static/index.html:3912`). Overview bands render source-neutral open/held item counts, while Change Throughput describes merged change requests "across tracked forges" (`src/pkg/dashboard/static/index.html:4204`).
+Work-source configuration appears in Settings -> Work Source. The UI labels GitHub Issues as the default and lists GitHub Projects v2, Linear, Jira, Gitea/Forgejo, GitLab, and External provider (HTTP) as alternate sources (`src/pkg/dashboard/static/index.html:34233`). The Projects navigation label is intentionally neutral (`src/pkg/dashboard/static/index.html:3912`). Overview bands render source-neutral open/held item counts, while Change Throughput describes merged change requests "across tracked forges" (`src/pkg/dashboard/static/index.html:4204`).
 
 ## Testing
 

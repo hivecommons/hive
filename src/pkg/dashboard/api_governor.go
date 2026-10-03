@@ -178,7 +178,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"project_observability": s.projectObservabilityResponse(cfg),
 		"replan":                replanSectionResponse(cfg),
 		"question_autoclose":    questionAutocloseSectionResponse(cfg),
-		"work_source":           workSourceSectionResponse(cfg),
+		"work_source":           s.workSourceSectionResponse(cfg),
 		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the
