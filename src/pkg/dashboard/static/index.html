@@ -109,8 +109,8 @@
     .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
     .git-version .git-behind { color: var(--yellow); font-weight: 600; white-space: nowrap; }
     /* Release channel + last upgrade attempt panel (#7092). */
-    #dashboard-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
-    #dashboard-notices:empty { display: none; }
+    #dash-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
+    #dash-notices:empty { display: none; }
     .release-status { margin: 6px 0 10px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.5; }
     .release-status-row { display: block; }
     .release-status-row + .release-status-row { margin-top: var(--sp-2); }
@@ -3947,6 +3947,69 @@
   </div>
 </div>
 <div id="hive-dashboard-root" class="hive-dashboard-root">
+  <!-- Dedicated pinned notices slot. It stays outside the dashboard section
+       order list so saved layouts cannot move it below a section. -->
+  <div id="dash-notices">
+    <div id="release-status" class="release-status" hidden></div>
+    <div id="planning-intro" hidden></div>
+  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">GitHub App Not Installed</div>
+      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
+    </div>
+    <!-- autocomplete=off + name-less: Firefox form history would otherwise
+         offer/refill a stored value and, on Linux, could clear the field on a
+         re-render. Enter also submits (onkeydown) so entry works even if the
+         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
+         Firefox — matching Safari, where the flow already worked instantly. -->
+    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      data-keydown-action="submitGitHubInstallationID" data-prevent="1" data-keys="Enter"
+      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
+      style="width:120px;padding:var(--sp-3) var(--sp-4);margin-right:var(--sp-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--text);font-size:0.8rem" />
+    <!-- Where-do-I-find-this hint. Content is injected by
+         renderGitHubAppInstallIdHint() because the GitHub host and org are only
+         known at runtime (a GHE hive must not be told to look at github.com).
+         The button is click/keyboard operable, not hover-only. -->
+    <span class="gh-idhint" id="gh-app-install-id-hint">
+      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
+        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
+        aria-label="Where do I find my Installation ID?"
+        data-action="toggleInstallIdHint" data-arg-types="e">?</button>
+      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
+    </span>
+    <!-- type=button is explicit: with no type a <button> defaults to
+         type=submit, and if this banner were ever wrapped in a form (or Firefox
+         treated an ancestor as one), the click would trigger an implicit submit
+         that navigates/resets the page and clears the input before the handler
+         ran — a Firefox-vs-Safari difference. type=button removes that path.
+         No inline ghost override: this button SUBMITS the typed ID, so it gets
+         the banner's solid primary recipe (.gh-app-btn). The old transparent
+         style made it read as static text — operators typed the ID and never
+         realized a click was required. -->
+    <button type="button" data-action="submitGitHubInstallationID" class="hv-btn btn-primary gh-app-btn" id="gh-app-set-id-btn">Save Installation ID</button>
+    <button type="button" data-action="recheckGitHubApp" class="hv-btn btn-primary gh-app-btn" id="gh-app-recheck-btn">Re-check</button>
+    <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="hv-btn btn-primary gh-app-btn">Install GitHub App</a>
+  </div>
+  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">Project Target Misconfigured</div>
+      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
+    </div>
+    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
+  </div>
+  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div class="gh-app-body">
+      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
+      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
+    </div>
+  </div>
+  <div id="hub-banner" style="display:none"></div>
+  <div id="system-alerts-banner" style="display:none"></div>
+  </div>
 <div id="toast-container"></div>
 <button type="button" class="hv-btn btn-primary feedback-fab" data-action="openFeedbackModal" title="Report a bug or request a feature">💬 Feedback</button>
 
@@ -4249,79 +4312,8 @@
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
   </h1>
 
-  <!-- Release channel + last upgrade attempt (#7092). Findable on the spoke's
-       own dashboard: which channel this hive follows, and what happened on the
-       last upgrade attempt — "succeeded" and "failed" are rendered as visually
-       distinct states so a blank panel can never masquerade as success. The
-       "never attempted" state renders nothing at all: the marker only records
-       upgrades driven through the hub, so a hive moved by any other means
-       (direct image bump, redeploy, spoke roll) reads as "never" no matter how
-       many times it has actually been upgraded, and asserting that to an
-       operator is worse than saying nothing. Populated by
-       renderReleaseStatus() from /api/version's releaseStatus object. -->
-  <div id="dashboard-notices">
-    <div id="release-status" class="release-status" hidden></div>
-    <div id="planning-intro" hidden></div>
-    <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
+  <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
 
-  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div style="flex:1">
-      <div class="gh-app-title">GitHub App Not Installed</div>
-      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
-    </div>
-    <!-- autocomplete=off + name-less: Firefox form history would otherwise
-         offer/refill a stored value and, on Linux, could clear the field on a
-         re-render. Enter also submits (onkeydown) so entry works even if the
-         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
-         Firefox — matching Safari, where the flow already worked instantly. -->
-    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
-      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-      data-keydown-action="submitGitHubInstallationID" data-prevent="1" data-keys="Enter"
-      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
-      style="width:120px;padding:var(--sp-3) var(--sp-4);margin-right:var(--sp-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--text);font-size:0.8rem" />
-    <!-- Where-do-I-find-this hint. Content is injected by
-         renderGitHubAppInstallIdHint() because the GitHub host and org are only
-         known at runtime (a GHE hive must not be told to look at github.com).
-         The button is click/keyboard operable, not hover-only. -->
-    <span class="gh-idhint" id="gh-app-install-id-hint">
-      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
-        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
-        aria-label="Where do I find my Installation ID?"
-        data-action="toggleInstallIdHint" data-arg-types="e">?</button>
-      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
-    </span>
-    <!-- type=button is explicit: with no type a <button> defaults to
-         type=submit, and if this banner were ever wrapped in a form (or Firefox
-         treated an ancestor as one), the click would trigger an implicit submit
-         that navigates/resets the page and clears the input before the handler
-         ran — a Firefox-vs-Safari difference. type=button removes that path.
-         No inline ghost override: this button SUBMITS the typed ID, so it gets
-         the banner's solid primary recipe (.gh-app-btn). The old transparent
-         style made it read as static text — operators typed the ID and never
-         realized a click was required. -->
-    <button type="button" data-action="submitGitHubInstallationID" class="hv-btn btn-primary gh-app-btn" id="gh-app-set-id-btn">Save Installation ID</button>
-    <button type="button" data-action="recheckGitHubApp" class="hv-btn btn-primary gh-app-btn" id="gh-app-recheck-btn">Re-check</button>
-    <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="hv-btn btn-primary gh-app-btn">Install GitHub App</a>
-  </div>
-  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div style="flex:1">
-      <div class="gh-app-title">Project Target Misconfigured</div>
-      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
-    </div>
-    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
-  </div>
-  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div class="gh-app-body">
-      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
-      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
-    </div>
-  </div>
-  <div id="hub-banner" style="display:none"></div>
-  <div id="system-alerts-banner" style="display:none"></div>
-  </div>
   <div class="repos" id="overview-section" data-dashboard-section="overview-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
     <div class="overview-settings-popover" id="overview-chart-settings" hidden></div>
@@ -5765,7 +5757,7 @@
     var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
-    var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
+    var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
     var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
     var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
     var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
@@ -5813,8 +5805,8 @@
     function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
     async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
     function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
-    function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);return anchor&&anchor.parentElement===region?anchor:null;}
-    function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});}
+    function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);if(!region||!anchor)return null;if(anchor.parentElement!==region||region.firstElementChild!==anchor)region.insertBefore(anchor,region.firstElementChild||null);return anchor;}
+    function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});dashboardTopAnchor(region);}
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
     function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
