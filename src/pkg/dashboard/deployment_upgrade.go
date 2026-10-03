@@ -52,7 +52,7 @@ func (s *Server) detectDeployment() deploymentInfo {
 	if s != nil && s.deps != nil {
 		cfg = s.deps.Config
 	}
-	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured"}
+	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured; if this is a Podman/Quadlet host, upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful), or rerun bin/hive-podman-setup.sh to add HIVE_DEPLOYMENT_RUNTIME"}
 	rawRuntime := firstNonEmpty(os.Getenv("HIVE_DEPLOYMENT_RUNTIME"), deploymentConfigValue(cfg, "runtime"))
 	if rawRuntime != "" {
 		switch normalizeDeploymentRuntime(rawRuntime) {
@@ -66,11 +66,11 @@ func (s *Server) detectDeployment() deploymentInfo {
 			info.Runtime = deploymentRuntimePodmanQuadlet
 			info.PodmanMode = normalizePodmanMode(firstNonEmpty(os.Getenv("HIVE_DEPLOYMENT_PODMAN_MODE"), deploymentConfigValue(cfg, "podman_mode")))
 			if info.PodmanMode == podmanModeUnknown {
-				info.Reason = "Podman/Quadlet mode is not explicitly configured as rootless or rootful"
+				info.Reason = "Podman/Quadlet mode is not explicitly configured as rootless or rootful; upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful)"
 				return info
 			}
 			if standaloneUpgradeHelper(cfg) == "" {
-				info.Reason = "standalone upgrade helper is not configured or executable"
+				info.Reason = "standalone upgrade helper is not available inside the container; upgrade from the host with `" + podmanHostUpgradeCommand(info.PodmanMode) + "` (as the hive user when rootless)"
 				return info
 			}
 			info.UpgradeSupported = true
@@ -100,6 +100,13 @@ func (s *Server) detectDeployment() deploymentInfo {
 		return info
 	}
 	return info
+}
+
+func podmanHostUpgradeCommand(mode string) string {
+	if mode == podmanModeRootless {
+		return "systemctl --user start podman-auto-update.service"
+	}
+	return "systemctl start podman-auto-update.service"
 }
 
 func normalizeDeploymentRuntime(runtime string) string {
