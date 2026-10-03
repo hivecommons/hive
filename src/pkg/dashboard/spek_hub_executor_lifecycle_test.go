@@ -479,6 +479,52 @@ func TestSpekHubExecutorMissingCredentialBacksOffWithoutLaunching(t *testing.T) 
 	assertSpekLeaseGens(t, hub, 1)
 }
 
+// A colliding run-worktree slug is permanent, not an infrastructure outage:
+// it must spend the generation instead of entering the retry/backoff loop.
+func TestSpekHubExecutorRunWorktreeSlugCollisionSpendsGeneration(t *testing.T) {
+	hub, s, _, _ := spekHub(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{MaxStageRetries: 1, Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	first := "foo/bar-baz#1"
+	second := "foo-bar/baz#1"
+	if sanitizeRunPromptPath(first) != sanitizeRunPromptPath(second) {
+		t.Fatalf("test fixture no longer collides: %q vs %q", sanitizeRunPromptPath(first), sanitizeRunPromptPath(second))
+	}
+	worktree := spekHubRunWorktreePath(e.Identity, second)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, spekHubRunKeyMarkerFile), []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskID := e.stageTaskID(spekHubStage{runKey: second, stage: StageSpec, gen: 1})
+	hub.leaseMu.Lock()
+	hub.leases[leaseKey(e.Identity, taskID)] = &taskLease{identity: e.Identity, taskID: taskID, repo: spekRepo, number: 1, key: spekRepo + "!" + second + ":" + StageSpec, stage: StageSpec, gen: 1, expiresAt: time.Now().Add(leaseTTL)}
+	hub.leaseMu.Unlock()
+	st := spekHubStage{runKey: second, key: spekRepo + "!" + second + ":" + StageSpec, stage: StageSpec, identity: e.Identity, taskID: taskID, repo: spekRepo, number: 1, gen: 1}
+
+	e.runStage(context.Background(), st, e.executionKey(st))
+
+	if msg := e.Status().LastError; !strings.Contains(msg, "collision") {
+		t.Fatalf("last error = %q, want slug collision", msg)
+	}
+	e.mu.Lock()
+	_, held := e.held[e.executionKey(st)]
+	_, backedOff := e.backoff[e.executionKey(st)]
+	e.mu.Unlock()
+	if !held {
+		t.Fatal("slug collision did not hold/spend the generation")
+	}
+	if backedOff {
+		t.Fatal("slug collision was treated as retryable infrastructure")
+	}
+	hub.leaseMu.Lock()
+	lease := hub.leases[leaseKey(e.Identity, taskID)]
+	hub.leaseMu.Unlock()
+	if lease == nil || lease.stageEscalatedAt.IsZero() {
+		t.Fatalf("slug collision did not escalate the spent generation: %#v", lease)
+	}
+}
+
 // A settlement that fails to persist is retried instead of leaving the
 // generation held in memory only (#10108).
 func TestSpekHubExecutorRetriesFailedSettlement(t *testing.T) {

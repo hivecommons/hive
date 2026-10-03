@@ -612,13 +612,18 @@ func (e *SpekHubExecutor) executeStage(parent context.Context, st spekHubStage) 
 		// Never succeeds on a retry, so it spends the generation.
 		return err
 	}
+	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
+	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
+		// A slug collision is permanent until an operator intervenes, so spend
+		// the generation instead of treating it like retryable infrastructure.
+		return err
+	}
 	if err := e.prepareWorkspace(ctx, st); err != nil {
 		return &spekHubInfraError{err: err}
 	}
 	if err := e.Server.contributeHub.renewLease(e.Identity, taskID, time.Now().UTC()); err != nil {
 		e.log().Warn("[spektacular] hub executor lease renew failed", "task", taskID, "error", err)
 	}
-	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if e.stageInterviewMode() != "auto" {
 		if req, _, pending, askedAt, ok := spekInterviewPending(worktree); ok {
 			e.recordInterviewWait(st, taskID, worktree, req, pending, askedAt)
@@ -1595,8 +1600,8 @@ func (e *SpekHubExecutor) prepareWorkspace(ctx context.Context, st spekHubStage)
 	}
 	worktree := spekHubRunWorktreePath(e.Identity, st.runKey)
 	if err := verifySpekHubRunWorktreeOwner(worktree, st.runKey); err != nil {
-		// Never succeeds on a retry without operator intervention, so it
-		// spends the generation like the repo path check above.
+		// executeStage checks this before wrapping prepare errors as
+		// infrastructure failures; keep direct prepareWorkspace callers safe too.
 		return err
 	}
 	authArgs, _, cleanup, err := e.cloneAuthArgs(ctx, st.repo, filepath.Dir(repoDir))

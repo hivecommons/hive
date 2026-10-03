@@ -87,6 +87,7 @@ func (e *spekExec) exec(_ context.Context, _ string, args []string) ([]byte, err
 
 func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCapture) {
 	t.Helper()
+	stubSpekHubExecutorCredential(t)
 	// The lifecycle timeline is a process-wide singleton and every test here
 	// drives the SAME lease key (spekRepo!spekRunKey:<stage>), so its
 	// per-(ref,kind) Stage.Count accumulates across tests and receipt
@@ -108,6 +109,11 @@ func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCaptur
 	capture := &hookCapture{}
 	s.deps.HookFire = capture.fire
 	return hub, s, store, capture
+}
+
+func stubSpekHubExecutorCredential(t *testing.T) {
+	t.Helper()
+	t.Setenv("COPILOT_GITHUB_TOKEN", "ghu_spek_hub_test")
 }
 
 func disableSpekHubExecutorForRelayTests(s *Server) {
