@@ -2,23 +2,79 @@ package dashboard
 
 import (
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 )
 
 var dashboardLayoutIDs9062 = []string{
-	"runs-section", "overview-section", "governor", "pr-throughput-section", "advisory-section", "token-panel", "cost-panel",
-	"repos-section", "acmm-eval-section", "approvals-section", "platform-section",
-	"audit-section", "review-queue-section", "nous-section", "inception-section", "knowledge-section", "contributors-section",
-	"debug-section", "logs-section", "agents-section", "faq-section",
+	"runs-section",
+	"overview-section",
+	"governor",
+	"pr-throughput-section",
+	"repos-section",
+	"knowledge-section",
+	"review-queue-section",
+	"contributors-section",
+	"advisory-section",
+	"token-panel",
+	"cost-panel",
+	"inception-section",
+	"acmm-eval-section",
+	"debug-section",
+	"audit-section",
+	"approvals-section",
+	"platform-section",
+	"nous-section",
+	"logs-section",
+	"agents-section",
+	"faq-section",
+}
+
+var dashboardDefaultNavOrder9062 = []string{
+	"runs-section",
+	"overview-section",
+	"governor",
+	"pr-throughput-section",
+	"repos-section",
+	"knowledge-section",
+	"review-queue-section",
+	"contributors-section",
+	"advisory-section",
+	"token-panel",
+	"cost-panel",
+	"inception-section",
+	"acmm-eval-section",
+	"debug-section",
+	"audit-section",
+	"faq-section",
+}
+
+var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
+
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']}`
+
+func jsArray9062(ids []string) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('\'')
+		b.WriteString(id)
+		b.WriteByte('\'')
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 func dashboardLayoutPreamble9062() string {
 	return `var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
 var DASHBOARD_LAYOUT_VERSION=1;
 var DASHBOARD_LAYOUT_REGIONS=['main'];
-var DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+var ` + dashboardDefaultLayoutTemplate9062 + `;
 var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
 var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
 var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -39,6 +95,19 @@ function dashboardFeatureSectionHidden(id){return id==='nous-section'&&!strategy
 `
 }
 
+func TestDashboardDefaultSectionOrderMatchesDashboardNav(t *testing.T) {
+	html := indexHTML(t)
+	got := dashboardLayoutTemplateIDs(t, html)
+	if !reflect.DeepEqual(got, dashboardDefaultLayoutOrder9062) {
+		t.Fatalf("dashboard default layout order mismatch:\n got: %#v\nwant: %#v", got, dashboardDefaultLayoutOrder9062)
+	}
+	for _, id := range dashboardDefaultNavOrder9062 {
+		if !strings.Contains(html, `data-section="`+id+`" data-action="ocNavigate"`) {
+			t.Fatalf("default dashboard nav section %q is not wired in the sidebar", id)
+		}
+	}
+}
+
 func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, id := range dashboardLayoutIDs9062 {
@@ -51,7 +120,7 @@ func TestDashboardSectionReorderStaticWiring(t *testing.T) {
 	}
 	for _, want := range []string{
 		`hive.dashboard.layout`,
-		`DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']}`,
+		dashboardDefaultLayoutTemplate9062,
 		`id="oc-gh-menu-layout-save"`,
 		`id="oc-gh-menu-layout-reset"`,
 		`id="oc-gh-menu-layout-export"`,
@@ -121,7 +190,7 @@ func TestDashboardLayoutNormalizeFutureUnknownAndMissing(t *testing.T) {
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:99, main:['faq-section','beads-section','unknown','governor','faq-section']});
-const want = ['faq-section','runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section'];
+const want = ` + jsArray9062(append([]string{"faq-section"}, dashboardDefaultLayoutOrder9062[:len(dashboardDefaultLayoutOrder9062)-1]...)) + `;
 if (got.v !== 1) throw new Error('version not normalized: '+got.v);
 if (got.main.includes('beads-section')) throw new Error('legacy beads section survived normalization: '+JSON.stringify(got.main));
 if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normalized order '+JSON.stringify(got.main));
@@ -223,10 +292,9 @@ if (layoutStatus.textContent !== 'Layout: default') throw new Error('reset statu
 	}
 }
 
-// #9426: a layout saved before newer sections existed must not push those
-// sections below the trailing FAQ — they slot in next to their template
-// neighbours and FAQ stays last unless the operator moved it.
-func TestDashboardLayoutNormalizeKeepsFAQLastForStaleSavedLayout(t *testing.T) {
+// #9426: a layout saved before newer sections existed slots newly added
+// sections next to their template neighbours while respecting operator moves.
+func TestDashboardLayoutNormalizeSlotsMissingSectionsForStaleSavedLayout(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not on PATH — dashboard layout normalization was NOT executed by this run")
@@ -235,9 +303,9 @@ func TestDashboardLayoutNormalizeKeepsFAQLastForStaleSavedLayout(t *testing.T) {
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const stale = {v:1, main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','faq-section']};
 const got = dashboardLayoutNormalize(stale).main;
-if (got[got.length-1] !== 'faq-section') throw new Error('FAQ not last: '+JSON.stringify(got));
-const tail = got.slice(-4).join(',');
-if (tail !== 'debug-section,logs-section,agents-section,faq-section') throw new Error('new sections not slotted before FAQ: '+tail);
+if (got[got.length-1] !== 'faq-section') throw new Error('persisted FAQ move not respected: '+JSON.stringify(got));
+const middle = got.slice(got.indexOf('nous-section'), got.indexOf('nous-section')+4).join(',');
+if (middle !== 'nous-section,logs-section,agents-section,inception-section') throw new Error('missing sections not slotted by neighbours: '+middle);
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));

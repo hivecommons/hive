@@ -170,6 +170,45 @@ func TestReArmReplacesSnapshotAndResetsCommented(t *testing.T) {
 	}
 }
 
+func TestAdvanceHygieneMovesBaselineAndClearsConflictNoted(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	// No snapshot exists yet: AdvanceHygiene must not plant one — advancing a
+	// baseline that was never pinned would invent a wrong one (#10437).
+	s.AdvanceHygiene("r", 1, "new", []Commit{{SHA: "c1", Author: "alice"}})
+	if _, ok := s.Recorded("r", 1); ok {
+		t.Fatal("AdvanceHygiene must not create an entry for an untracked PR")
+	}
+
+	s.Snapshot("r", 1, "old", []Commit{{SHA: "c1", Author: "alice"}})
+	s.MarkConflictNoted("r", 1)
+
+	s.AdvanceHygiene("r", 1, "", nil) // empty head: no-op
+	rec, _ := s.Recorded("r", 1)
+	if rec.HeadSHA != "old" || !rec.ConflictNoted {
+		t.Fatal("AdvanceHygiene with empty head must not change the snapshot")
+	}
+
+	s.AdvanceHygiene("r", 1, "new", []Commit{{SHA: "c1", Author: "alice"}, {SHA: "c2", Author: "alice"}})
+	rec, _ = s.Recorded("r", 1)
+	if rec.HeadSHA != "new" || rec.ConflictNoted {
+		t.Fatalf("AdvanceHygiene entry = %+v, want head=new and ConflictNoted cleared", rec)
+	}
+	if len(rec.CommitSHAs) != 2 {
+		t.Fatalf("AdvanceHygiene commit set = %v, want the refreshed list", rec.CommitSHAs)
+	}
+}
+
+func TestConflictCommentBodyNamesTheConflict(t *testing.T) {
+	body := ConflictCommentBody()
+	if !strings.Contains(body, "conflict") {
+		t.Fatalf("ConflictCommentBody = %q, want it to name the conflict", body)
+	}
+	if !strings.Contains(body, ReHoldLabel) {
+		t.Fatalf("ConflictCommentBody = %q, want it to mention the %q label", body, ReHoldLabel)
+	}
+}
+
 func TestPruneAgesOutStaleEntriesOnly(t *testing.T) {
 	s, clock := newTestStore(t)
 	s.Snapshot("r", 1, "h1", nil)
