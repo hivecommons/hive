@@ -38,6 +38,22 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			wantClosed: true,
 		},
 		{
+			name:       "human-filed bug with close-on-merge marker in body closes",
+			issue:      closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code\n\nhive: close-on-merge", []string{"kind/bug"}),
+			wantClosed: true,
+		},
+		{
+			name:       "human-filed bug with close-on-merge label closes",
+			issue:      closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code", []string{"kind/bug", "hive: close-on-merge"}),
+			wantClosed: true,
+		},
+		{
+			name:        "human-filed kind/bug without close-on-merge is still blocked",
+			issue:       closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code", []string{"kind/bug"}),
+			wantErr:     true,
+			wantComment: "please confirm",
+		},
+		{
 			name:           "override records reason and closes",
 			issue:          closeGateIssue("human", "User", "Bug: duplicate", "reported by a person", []string{"kind/bug"}),
 			overrideReason: "duplicate of #99; reporter asked us to consolidate there",
@@ -123,6 +139,18 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 		{
 			name:      "human bug with marker is human-filed but not gated",
 			issue:     closeGateIssue("human", "User", "Bug", "hive: reporter-confirmed", []string{"bug"}),
+			wantHuman: true,
+			wantGate:  false,
+		},
+		{
+			name:      "human bug with close-on-merge marker is human-filed but not gated",
+			issue:     closeGateIssue("human", "User", "Bug", "sweep finding\nhive: close-on-merge", []string{"kind/bug"}),
+			wantHuman: true,
+			wantGate:  false,
+		},
+		{
+			name:      "human bug with close-on-merge label is human-filed but not gated",
+			issue:     closeGateIssue("human", "User", "Bug", "plain body", []string{"kind/bug", "Hive: Close-On-Merge"}),
 			wantHuman: true,
 			wantGate:  false,
 		},

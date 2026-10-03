@@ -194,7 +194,7 @@ above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
 
 ## Policy gates that change or reject your request
 
-For the full operator-side label reference, including `hold`, `approved-direction`, and `hive: reporter-confirmed`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
+For the full operator-side label reference, including `hold`, `approved-direction`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 Beyond the empty-body and `--issues` checks above, the watcher applies three
 policy gates before opening the PR. Two can rewrite what you wrote; one rejects
@@ -233,7 +233,15 @@ unsafe:
   attribution trailer in the body (so agent-filed findings are unaffected), and
   a non-Bot author. The reporter or a maintainer opts back in to auto-close by
   adding `hive: reporter-confirmed` to the issue body or applying it as a
-  label; the downgrade then does not fire and `Closes #N` goes through. Once a
+  label; the downgrade then does not fire and `Closes #N` goes through. When
+  the merged fix is itself the only verification available — a code-sweep
+  finding with no observed symptom, or a timing, failure-path, or fleet-only
+  bug the reporter cannot reproduce on demand — the filer can say so up front
+  with `hive: close-on-merge` in the issue body or as a label
+  (`hive-open-issue --close-on-merge` adds it); the fix PR then keeps
+  `Closes #N` with no withheld-keyword note, and merging it closes the issue
+  ([#10304](https://github.com/hivecommons/hive/issues/10304)). Without either
+  marker the downgrade is unchanged. Once a
   downgraded `Refs #N` has merged, the reporter or a maintainer can instead
   reply `/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue): that
   applies the same label and closes the issue
