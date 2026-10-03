@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -57,11 +58,38 @@ type ClassificationConfig struct {
 //     human to close.
 type ReviewBotsConfig struct {
 	Logins []string `yaml:"logins,omitempty" json:"logins,omitempty"`
+	// MinPriority is P0-P3, with P0 most urgent. Empty or unrecognised
+	// values preserve routing of every finding; unknown badges always pass.
+	MinPriority string `yaml:"min_priority,omitempty" json:"min_priority,omitempty"`
 	// MaxAttemptsPerThread defaults to 1 when unset or non-positive.
 	MaxAttemptsPerThread int `yaml:"max_attempts_per_thread,omitempty" json:"max_attempts_per_thread,omitempty"`
 	// ResolveAfterFix is a *bool so "unset" (default true) is distinguishable
 	// from an explicit false.
 	ResolveAfterFix *bool `yaml:"resolve_after_fix,omitempty" json:"resolve_after_fix,omitempty"`
+}
+
+// ReviewBotPriorityPattern recognises Codex's Markdown priority badge.
+// Keep the reviewer jq predicate on this same pattern and first-match rule.
+const ReviewBotPriorityPattern = `!\[P([0-3]) Badge\]`
+
+var reviewBotPriorityRE = regexp.MustCompile(ReviewBotPriorityPattern)
+
+// PriorityThreshold returns the largest numeric priority to route, or -1
+// when no recognised threshold is configured (fail open on typos).
+func (r ReviewBotsConfig) PriorityThreshold() int {
+	p := strings.ToUpper(strings.TrimSpace(r.MinPriority))
+	if len(p) == 2 && p[0] == 'P' && p[1] >= '0' && p[1] <= '3' {
+		return int(p[1] - '0')
+	}
+	return -1
+}
+
+// IncludesPriority keeps unknown formats so a new bot cannot silently hide
+// findings. Only the first comment's first recognised badge sets priority.
+func (r ReviewBotsConfig) IncludesPriority(body string) bool {
+	threshold := r.PriorityThreshold()
+	badge := reviewBotPriorityRE.FindStringSubmatch(body)
+	return threshold < 0 || badge == nil || int(badge[1][0]-'0') <= threshold
 }
 
 // DefaultReviewBotMaxAttempts is the per-thread reply budget when

@@ -8915,6 +8915,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
+		ReviewBotMinPriority:  reviewBots.MinPriority,
 	})
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))

@@ -215,14 +215,14 @@ mechanism that already exists; none is new policy.
 3. **Rate limits, three keys.** Per user, per repo, and per thread. The
    per-thread cap reuses `classification.review_bots.max_attempts_per_thread`
    semantics exactly: the counter *is* the thread's list of App-authored
-   replies, no state file (`src/pkg/github/review_threads.go:131`,
+   replies, no state file (`src/pkg/github/review_threads.go:133`,
    `review_request_watcher.go:374`). Per user and per repo are sliding
    windows in memory, sized in config with conservative defaults (a user gets
    a handful of summons an hour; a repo a few dozen), and a global per-tick
    budget bounds the worst case at one API call per accepted mention.
 4. **Loop prevention.** A mention is ignored when its author is the App login
    itself, any `classification.review_bots.logins` entry
-   (`src/pkg/config/review_bots.go:32`), or any login ending in `[bot]`.
+   (`src/pkg/config/review_bots.go:33`), or any login ending in `[bot]`.
    Without this two hives, or a hive and a review bot, would mention each
    other forever.
 5. **Untrusted input.** The mention body is text a stranger wrote that becomes
@@ -348,7 +348,7 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/proxy/rules.go:152,170` — where `Converse` is enforced.
 - `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
 - `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
-- `src/pkg/config/review_bots.go:32` — `classification.review_bots`, the loop
+- `src/pkg/config/review_bots.go:33` — `classification.review_bots`, the loop
   list and the per-thread cap.
 - `src/pkg/github/review_request_watcher.go`, `review_threads.go` — the
   App-authored in-thread reply path and its attempt counter.

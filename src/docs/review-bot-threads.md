@@ -62,6 +62,7 @@ classification:
     logins:
       - "chatgpt-codex-connector[bot]"
       - "Copilot"
+    min_priority: P1            # optional: only P0/P1 plus unknown badges
     max_attempts_per_thread: 1   # default 1
     resolve_after_fix: true      # default true
 ```
@@ -82,6 +83,20 @@ key the Go side reads from the project file
   before leaving it for a human. The counter is the thread itself — replies
   authored by the App bot — so there is no state file to drift.
 - `resolve_after_fix: false` makes the agent reply but leave the thread open.
+- `min_priority` optionally limits routing to `P0` through `P3` (P0 is most
+  urgent). `P1` includes P0/P1 and excludes P2/P3. Unset or unrecognised
+  values preserve routing of every finding. Case and surrounding whitespace
+  in the threshold are ignored.
+  Only Codex's Markdown badge format, `![P0 Badge]` through `![P3 Badge]`,
+  is recognised today, using the first matching badge in the first comment.
+  Unknown formats (including unbadged Copilot/CodeRabbit findings) always
+  remain included. Filtered threads stay open for humans: they are omitted
+  from the FIX-BEFORE-NEW work list and are not auto-resolved.
+  Each PR in `review-threads.json` reports `excluded_by_priority`, counting
+  otherwise actionable threads excluded solely by this threshold (not
+  resolved, outdated, human-authored, or attempt-capped threads). The
+  reviewer's jq filter applies the same badge threshold, so it need not
+  answer the lower-priority threads in its review.
 
 `copilot_check` / `bin/copilot-comment-checker.sh` are untouched: they cover
 *merged* PRs; this covers *open* ones.
