@@ -12,8 +12,8 @@ package spektacular
 // SPEKTACULAR_REAL_CLI_BIN names, or the first `spektacular` on PATH, and is
 // skipped everywhere else: it needs the `integration` build tag AND a real
 // binary, so `go test ./...` (and every other package test) never depends on
-// it. The scheduled spektacular-real-cli-smoke workflow supplies the pinned
-// release from the contributor image.
+// it. The spektacular-real-cli-smoke workflow downloads the release pinned in
+// src/Dockerfile.contributor and sets SPEKTACULAR_EXPECTED_VERSION to it.
 
 import (
 	"context"
@@ -49,6 +49,13 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	}
 	if !strings.HasPrefix(probed.Version, "spektacular ") {
 		t.Fatalf("--version printed %q, want the documented `spektacular <version>` shape", probed.Version)
+	}
+	// The workflow exports the pin it downloaded, so the smoke fails loudly
+	// if it ever runs a binary other than the pinned release.
+	if want := strings.TrimSpace(os.Getenv("SPEKTACULAR_EXPECTED_VERSION")); want != "" {
+		if got := strings.TrimSpace(strings.TrimPrefix(probed.Version, "spektacular ")); got != want {
+			t.Fatalf("--version reported %q, want the pinned %q", got, want)
+		}
 	}
 
 	dir := t.TempDir()
