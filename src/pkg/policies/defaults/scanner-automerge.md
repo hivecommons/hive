@@ -84,6 +84,8 @@ For each issue in the ISSUE_LIST below, call the Agent tool with `run_in_backgro
 
 Available model families: Claude (haiku/sonnet/opus), Gemini, Codex. Pick whichever is available and fits the tier.
 
+On the Copilot CLI backend, do NOT pass the bare `haiku`/`sonnet`/`opus` aliases — Copilot CLI resolves them one generation back (Sonnet 5 / Opus 5 while 5.5 is available, #10461). Pass the concrete Copilot model ids instead: `claude-haiku-4.5` (light), `claude-sonnet-5.5` (mid), `claude-opus-5.5` (heavy). On Claude Code the aliases resolve correctly and are fine.
+
 Set the model parameter explicitly on every agent call. When in doubt, use a mid-tier model — most issues don't need the heaviest model.
 
 **If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text; when the children have an order, pass `--blocked-by <earlier-child>` on each later one so the order is recorded as a GitHub "blocked by" link and the hive holds the later child back until the earlier one closes), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
