@@ -20497,51 +20497,7 @@ function burnAreaChart() {
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
       // Update Light health badge with hover detail
-      const ocHealth = document.getElementById('oc-health');
-      if (ocHealth) {
-        const failing = [];
-        const warning = [];
-        const passing = [];
-        // Deep checks first — the spoke's own health (ready, github_auth,
-        // agents with "N down: names", …), the exact checks the heartbeat
-        // reports to the hub. These decide the pill's color: a pill that read
-        // only the repo-workflow map below showed "Health OK" while this
-        // spoke's own agents were down (#2465).
-        const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
-        const deepFailNames = [];
-        for (const c of deepChecks) {
-          const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
-          if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
-          else if (c.status === 'warn') warning.push(line);
-          else passing.push(line);
-        }
-        const hoverLines = [];
-        if (failing.length) hoverLines.push('FAILING:\n' + failing.map(f => '  ✗ ' + f).join('\n'));
-        if (warning.length) hoverLines.push('WARNINGS:\n' + warning.map(wl => '  ⚠ ' + wl).join('\n'));
-        if (passing.length) hoverLines.push('PASSING:\n' + passing.map(p => '  ✓ ' + p).join('\n'));
-        ocHealth.title = hoverLines.join('\n\n') || 'No health data';
-        if (deepFailNames.length > 0) {
-          // Any failing deep check ⇒ the spoke itself is degraded — same
-          // verdict the hub renders for this hive's row.
-          ocHealth.dataset.status = 'error';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        } else if (failing.length > 0) {
-          ocHealth.dataset.status = 'error';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">' + failing.length + ' Issue' + (failing.length > 1 ? 's' : '') + '</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        } else {
-          ocHealth.dataset.status = 'ok';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        }
-      }
+      renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -21627,6 +21583,52 @@ function burnAreaChart() {
         }
       } catch (e) { /* non-fatal */ }
     });
+
+    function navbarHealthGroups(data) {
+      const failing = [];
+      const warning = [];
+      const passing = [];
+      const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
+      const deepFailNames = [];
+      for (const c of deepChecks) {
+        const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+        if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
+        else if (c.status === 'warn') warning.push(line);
+        else passing.push(line);
+      }
+      return { failing, warning, passing, deepFailNames };
+    }
+
+    function navbarHealthTitle(data) {
+      const groups = navbarHealthGroups(data || {});
+      const hoverLines = [];
+      if (groups.failing.length) hoverLines.push('FAILING:\n' + groups.failing.map(f => '  ✗ ' + f).join('\n'));
+      if (groups.warning.length) hoverLines.push('WARNINGS:\n' + groups.warning.map(wl => '  ⚠ ' + wl).join('\n'));
+      if (groups.passing.length) hoverLines.push('PASSING:\n' + groups.passing.map(p => '  ✓ ' + p).join('\n'));
+      return hoverLines.join('\n\n') || 'No health data';
+    }
+
+    function renderNavbarHealthBadge(ocHealth, data) {
+      if (!ocHealth) return;
+      const groups = navbarHealthGroups(data || {});
+      ocHealth.title = navbarHealthTitle(data || {});
+      if (groups.deepFailNames.length > 0) {
+        // Any failing deep check ⇒ the spoke itself is degraded — same
+        // verdict the hub renders for this hive's row. Repo workflow stats are
+        // intentionally excluded: they are not this hive's runtime health.
+        ocHealth.dataset.status = 'error';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';
+      } else if (groups.failing.length > 0) {
+        ocHealth.dataset.status = 'error';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">' + groups.failing.length + ' Issue' + (groups.failing.length > 1 ? 's' : '') + '</span>';
+      } else {
+        ocHealth.dataset.status = 'ok';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span>';
+      }
+      ocHealth.style.color = '';
+      ocHealth.style.background = '';
+      ocHealth.style.borderColor = '';
+    }
 
     function qualityDiagnosticsAgent(agents) {
       return (agents || []).find(a => a && a.name === 'quality') || null;

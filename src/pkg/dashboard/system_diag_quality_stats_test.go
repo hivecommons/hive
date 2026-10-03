@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -82,5 +83,74 @@ func TestSystemDiagnosticsOldWorkflowNamesRemoved(t *testing.T) {
 		if strings.Contains(html, old) {
 			t.Fatalf("index.html still contains old hard-coded workflow stat %q", old)
 		}
+	}
+}
+
+func TestNavbarHealthDropdownExcludesWorkflowHealth(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: navbar health rendering was not executed")
+	}
+	html := indexHTML(t)
+	var script strings.Builder
+	for _, name := range []string{"navbarHealthGroups", "navbarHealthTitle", "renderNavbarHealthBadge"} {
+		script.WriteString(jsFunc(t, html, name))
+		script.WriteByte('\n')
+	}
+	script.WriteString(`
+const el = { dataset: {}, style: {}, innerHTML: '', title: '' };
+const workflowHealth = { brew: -1, ci: 100, helm: -1, hourly: 1, nightly: -1, weekly: -1 };
+workflowHealth['nightly' + 'Compliance'] = -1;
+workflowHealth['nightly' + 'Dashboard'] = -1;
+workflowHealth['nightly' + 'Ghaw'] = -1;
+workflowHealth['nightly' + 'Playwright'] = -1;
+workflowHealth['nightly' + 'Rel'] = -1;
+workflowHealth['weekly' + 'Rel'] = -1;
+workflowHealth['deploy_' + 'vllm_d'] = -1;
+workflowHealth['deploy_' + 'pok_prod'] = -1;
+renderNavbarHealthBadge(el, {
+  deepHealth: { checks: [
+    { name: 'ready', status: 'pass', detail: 'ok' },
+    { name: 'github_auth', status: 'pass', detail: 'app' },
+    { name: 'tokens', status: 'pass', detail: '10 total' }
+  ]},
+  health: workflowHealth
+});
+process.stdout.write(JSON.stringify(el));
+`)
+	out, err := exec.Command(node, "-e", script.String()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node navbar health render failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	got := string(out)
+	for _, want := range []string{"ready: ok", "github_auth: app", "tokens: 10 total", "Health OK"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("navbar health output missing %q in %s", want, got)
+		}
+	}
+	for _, old := range []string{
+		"Brew",
+		"CI",
+		"Pok" + "Prod",
+		"vLLM" + "-d",
+		"Helm",
+		"Hourly",
+		"Nightly" + " Tests",
+		"Compliance",
+		"Dashboard",
+		"gh-aw",
+		"Playwright",
+		"Nightly" + " Rel",
+		"Weekly",
+	} {
+		if strings.Contains(got, old) {
+			t.Fatalf("navbar health output still contains workflow stat %q in %s", old, got)
+		}
+	}
+}
+
+func TestNavbarHealthChangelogFragment(t *testing.T) {
+	if _, err := os.Stat("../../../changelog.d/fixed-navbar-real-health-checks.md"); err != nil {
+		t.Fatalf("expected navbar health changelog fragment: %v", err)
 	}
 }

@@ -1288,9 +1288,8 @@ func TestBuildHealth_NilClient_Boost(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil")
 	}
-	// With no cached health, should return default
-	if result["ci"] != 100 {
-		t.Errorf("ci = %v", result["ci"])
+	if len(result) != 0 {
+		t.Errorf("health = %v, want empty workflow-health payload", result)
 	}
 }
 

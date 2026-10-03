@@ -2127,33 +2127,28 @@ func copyHealthMap(m map[string]any) map[string]any {
 }
 
 func buildHealth(ghClient *github.Client, ctx context.Context) map[string]any {
-	if ghClient == nil || ctx == nil {
-		cachedHealthMu.RLock()
-		defer cachedHealthMu.RUnlock()
-		if cachedHealth != nil {
-			return copyHealthMap(cachedHealth)
-		}
-		return map[string]any{"ci": 100}
-	}
+	// The legacy repo-workflow health map was a KubeStellar-console-specific
+	// convenience (Brew, Helm, Nightly, deploy jobs, etc.). Those checks are not
+	// real hive health and should not feed the navbar health dropdown or System
+	// Diagnostics. Keep this payload empty; the real spoke health lives in
+	// DeepHealth, and the quality diagnostics card renders from the quality
+	// agent's configured stats.
+	health := map[string]any{}
 
-	health := ghClient.FetchWorkflowHealth(ctx)
+	if ghClient != nil && ctx != nil {
+		// Keep the ACMM green-CI streak refresh here because it is consumed by the
+		// advisor independently of the removed dashboard workflow-health payload.
+		if streak, measured := ghClient.GreenCIStreak(ctx); measured {
+			cachedGreenStreakMu.Lock()
+			cachedGreenStreak = streak
+			cachedGreenStreakOK = true
+			cachedGreenStreakMu.Unlock()
+		}
+	}
 
 	cachedHealthMu.Lock()
 	cachedHealth = health
 	cachedHealthMu.Unlock()
-
-	// Refresh the green-CI streak on the same pass that already talks to
-	// GitHub for workflow health (#5226). A failed or unmeasurable read leaves
-	// the previous cached value untouched rather than clobbering a real streak
-	// with an unknown — a transient API error must not make the advisor
-	// suddenly withdraw a recommendation it had legitimately earned.
-	if streak, measured := ghClient.GreenCIStreak(ctx); measured {
-		cachedGreenStreakMu.Lock()
-		cachedGreenStreak = streak
-		cachedGreenStreakOK = true
-		cachedGreenStreakMu.Unlock()
-	}
-
 	return copyHealthMap(health)
 }
 
