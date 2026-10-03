@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.124.0)
+
+### Added
+
+- upstream-watch: dashboard divergence view and /api/upstream-watch (#10361)
+
 ## 2026-10-03 (v5.123.0)
 
 ### Added

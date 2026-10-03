@@ -12,8 +12,8 @@ const (
 // UpstreamRef renders a stored ref in its upstream-qualified, human-readable
 // form: "owner/repo#123" for a PR and "owner/repo@<tag>" for a release. It is
 // MarkerRef's counterpart for a ref read back out of the store, where the
-// original Item is long gone. An empty upstream yields an empty string: a ref
-// alone names nothing a reader can follow.
+// original Item is long gone. An empty upstream, PR number or tag yields an
+// empty string: a partial ref names nothing a reader can follow.
 func UpstreamRef(upstream, ref string) string {
 	upstream = strings.TrimSpace(upstream)
 	if upstream == "" {
@@ -21,9 +21,17 @@ func UpstreamRef(upstream, ref string) string {
 	}
 	switch {
 	case strings.HasPrefix(ref, releaseRefPrefix):
-		return upstream + "@" + strings.TrimPrefix(ref, releaseRefPrefix)
+		tag := strings.TrimPrefix(ref, releaseRefPrefix)
+		if tag == "" {
+			return ""
+		}
+		return upstream + "@" + tag
 	case strings.HasPrefix(ref, prRefPrefix):
-		return upstream + "#" + strings.TrimPrefix(ref, prRefPrefix)
+		num := strings.TrimPrefix(ref, prRefPrefix)
+		if num == "" {
+			return ""
+		}
+		return upstream + "#" + num
 	default:
 		return ""
 	}
