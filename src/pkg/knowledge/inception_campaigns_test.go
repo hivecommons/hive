@@ -206,7 +206,7 @@ func TestCampaignArchiveExternalReviseAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviseExternalCampaign: %v", err)
 	}
-	if external.ID != "external-campaign" || external.RevisionOf != "" || external.Revision != 1 {
+	if external.ID != "External Campaign" || external.RevisionOf != "" || external.Revision != 1 {
 		t.Fatalf("external revision linkage = id:%q of:%q rev:%d", external.ID, external.RevisionOf, external.Revision)
 	}
 	if external.Engine != "Spektacular" || external.Type != "spektacular" || external.Lease == nil || external.Lease.Owner != "local" {
@@ -227,7 +227,7 @@ func TestCampaignArchiveExternalReviseAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second ReviseExternalCampaign: %v", err)
 	}
-	if second.ID != "external-campaign" || second.Revision != 2 || second.Engine != "Other" || second.Type != "custom" || second.Lease.Owner != "dana" {
+	if second.ID != "External Campaign" || second.Revision != 2 || second.Engine != "Other" || second.Type != "custom" || second.Lease.Owner != "dana" {
 		t.Fatalf("second external revision = %+v", second)
 	}
 	if _, err := e.ReviseExternalCampaign("../..", "bad", "", "", "", "", nil, now); err == nil {

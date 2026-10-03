@@ -101,7 +101,7 @@ func TestInceptionExternalCampaignRevisionDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("revise external campaign: %v", err)
 	}
-	if revision.ID != "ownerrepo8687" || revision.RevisionOf != "" || revision.Revision != 1 {
+	if revision.ID != "Owner/Repo#8687" || revision.RevisionOf != "" || revision.Revision != 1 {
 		t.Fatalf("external revision identity = %+v", revision)
 	}
 	if revision.Engine != "Spektacular" || revision.Type != "spektacular" {

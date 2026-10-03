@@ -184,7 +184,8 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 		if campaign.ID != id && campaign.RunKey != id {
 			continue
 		}
-		if campaign.RunKey != "" && campaign.Type == "spektacular" {
+		// A revised run has a separate archive lease, not a stage lease.
+		if campaign.RunKey != "" && campaign.Type == "spektacular" && campaign.Revision == 0 {
 			if s.contributeHub == nil {
 				jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
 				return
@@ -333,6 +334,15 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 		}
 		for _, run := range runs {
 			campaign := campaignFromRun(run)
+			if revision, ok := byID[campaign.ID]; ok && revision.Type == campaign.Type {
+				// Keep the live run's stage and artifacts while exposing its durable
+				// revision and the independently releasable revise lease.
+				campaign.Revision = revision.Revision
+				campaign.RevisionOf = revision.RevisionOf
+				if revision.Revision > 0 {
+					campaign.LeaseOwner = revision.LeaseOwner
+				}
+			}
 			byID[campaign.ID] = campaign
 		}
 	}
@@ -400,7 +410,6 @@ func campaignFromRun(run Run) Campaign {
 	if leaseKey := strings.TrimSpace(run.LeaseKey); leaseKey != "" {
 		id = runKeyOfLease(leaseKey, run.Repo)
 	}
-	id = campaignArtifactID(id)
 	prs := []string{}
 	for _, wave := range run.ReviewWaves {
 		for _, pr := range wave.PRs {
@@ -429,12 +438,10 @@ func campaignFromRun(run Run) Campaign {
 	}
 }
 
-// campaignArtifactID adjusts runKeyOfLease's output for issue-numbered runs
-// (worksource "owner/repo#N" keys), which carry no dedicated artifact slug:
-// Spektacular addresses them as the "owner-repo-n" ArtifactSlug spelling,
-// not the bare worksource key, so the resume command and id must match that
-// (hivecommons/hive#10091). Runs keyed by an embedded "!external" slug already
-// resolve to that slug above and are left untouched.
+// campaignArtifactID translates campaign identity only at the CLI boundary.
+// Issue-numbered worksource keys use Spektacular's artifact spelling for resume,
+// while campaign IDs remain lossless for archive lookup and revision deduplication.
+// Embedded external slugs have already been resolved by runKeyOfLease.
 func campaignArtifactID(id string) string {
 	if ref, ok := worksource.ParseKey(id); ok && ref.Number > 0 {
 		return ref.ArtifactSlug()
@@ -514,7 +521,7 @@ func spektacularResumeCommand(c Campaign) string {
 	if stage == "" || stage == StageImplement || stage == "completed" {
 		stage = StagePlan
 	}
-	return "spektacular " + stage + " status " + c.ID
+	return "spektacular " + stage + " status " + campaignArtifactID(c.ID)
 }
 
 func campaignMatchesSearch(c Campaign, q string) bool {

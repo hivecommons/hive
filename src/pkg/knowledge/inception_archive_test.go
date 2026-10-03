@@ -221,7 +221,7 @@ func TestCampaignArchiveErrorsAndExternalValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviseExternalCampaign() error = %v", err)
 	}
-	if external.ID != "external-campaign" || external.RevisionOf != "" || external.Revision != 1 {
+	if external.ID != "External Campaign" || external.RevisionOf != "" || external.Revision != 1 {
 		t.Fatalf("external identity = %#v", external)
 	}
 	if external.Engine != "Spektacular" || external.Type != "spektacular" || external.Title != "Title" || external.Source != "Source" {
@@ -233,11 +233,11 @@ func TestCampaignArchiveErrorsAndExternalValidation(t *testing.T) {
 	if !reflect.DeepEqual(external.Repos, []string{"org/repo"}) {
 		t.Fatalf("external repos = %#v", external.Repos)
 	}
-	second, err := e.ReviseExternalCampaign("external-campaign", "Next", "", "Custom", "research", "dana", nil, time.Time{})
+	second, err := e.ReviseExternalCampaign("External Campaign", "Next", "", "Custom", "research", "dana", nil, time.Time{})
 	if err != nil {
 		t.Fatalf("second ReviseExternalCampaign() error = %v", err)
 	}
-	if second.ID != "external-campaign" || second.Revision != 2 || second.Engine != "Custom" || second.Type != "research" || second.Lease.Owner != "dana" {
+	if second.ID != "External Campaign" || second.Revision != 2 || second.Engine != "Custom" || second.Type != "research" || second.Lease.Owner != "dana" {
 		t.Fatalf("second external = %#v", second)
 	}
 }
