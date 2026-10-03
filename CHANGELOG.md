@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.122.0)
+
+### Added
+
+- Add Overview KPI sparklines (#10317)
+
+### Fixed
+
+- Pin dashboard notices above sections (#10322)
+
 ## 2026-10-03 (v5.121.0)
 
 ### Added
