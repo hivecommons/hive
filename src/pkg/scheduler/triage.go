@@ -30,6 +30,10 @@ func (s *Scheduler) runTriageDeps() (RunAdmitter, TriageCommenter) {
 	return s.runAdmitter, s.triageCommenter
 }
 
+type runAbandonmentReader interface {
+	RunAbandoned(key string) bool
+}
+
 type runTriageFixRetirer interface {
 	RunTriageFixRetired(repo string, number int) bool
 }
@@ -43,6 +47,11 @@ func (s *Scheduler) applyRunTriage(ctx context.Context, issues []github.Issue) [
 	admitter, commenter := s.runTriageDeps()
 	out := make([]github.Issue, 0, len(issues))
 	for _, issue := range issues {
+		if retired, ok := admitter.(runAbandonmentReader); ok && retired.RunAbandoned(worksource.Ref{
+			SourceType: issue.SourceType, Repo: issue.Repo, Number: issue.Number, ExternalID: issue.ExternalID,
+		}.Key()) {
+			continue
+		}
 		c := classify.Classification{
 			Tier:  classify.Tier(issue.ComplexityTier),
 			Model: classify.ModelRecommendation(issue.ModelRec),

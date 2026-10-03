@@ -378,6 +378,9 @@ The decision is stored on the stage lease as `triage_verdict` and
 `triage_rationale`, surfaced by `GET /api/runs` and run detail, and copied into
 the first stage receipt timeline event. Owner reset with reason `triage_fix`
 retires a run in the `spec` stage so the issue can return to the direct-fix path.
+The retirement is persisted in the lease ledger; automatic design-label admission
+also respects it instead of minting a fresh run on the next governor cycle.
+An explicit `run/spec` override may re-admit a triaged direct-fix issue.
 
 ```yaml
 runs:
@@ -575,8 +578,19 @@ id is cached for the stage and used for subsequent status/export calls.
   `runs.wait_severity`) routes it to the configured escalation sinks. A
   generation is marked escalated only when at least one sink admits that
   severity: with the default `decision` and only push/chat sinks (floor
-  `page`), the sweep waits rather than spending the generation on nothing. The
-  executor never relaunches it; a person resets the stage or abandons the run.
+  `page`), the sweep waits rather than spending the generation on nothing.
+  The executor never relaunches it; an owner can reset the stage with
+  `POST /api/runs/{key}/reset {"to":"spec","reason":"resolved escalation"}`
+  (use the actual current stage), or abandon the run with
+  `POST /api/runs/{key}/abandon {"reason":"no longer needed"}`.
+  Same-stage reset is allowed only for an escalated lease and mints a fresh
+  generation with a fresh stage budget; non-escalated leases still require a
+  strictly earlier target. Abandonment removes the stage leases and persists a
+  non-expiring retirement in the same atomic ledger. Automatic run triage and
+  design admission do not restart an abandoned run, even with `run/spec`.
+  Abandonment is terminal for this run key, including explicit owner starts;
+  there is no reset, restart, or reversal operation for an abandoned key.
+  It does not close the source issue.
   The generations spent (`stage_retries`) and the escalation
   (`stage_escalated_at`) are persisted on the lease, so a restart neither
   refunds the budget nor relaunches an escalated stage.

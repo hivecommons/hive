@@ -445,6 +445,9 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 	h := s.contributeHub
 	h.leaseMu.Lock()
 	defer h.leaseMu.Unlock()
+	if h.retiredRuns[runKey] == runRetiredAbandoned {
+		return fmt.Errorf("run %s was abandoned", runKey)
+	}
 	if h.leases == nil {
 		h.leases = make(map[string]*taskLease)
 	}
@@ -509,6 +512,9 @@ func (s *Server) RunTriageFixRetired(repo string, number int) bool {
 	runKey := worksource.Ref{Repo: strings.TrimSpace(repo), Number: number}.Key()
 	if runKey == "" {
 		return false
+	}
+	if s.runRetirement(runKey) == runResetReasonTriageFix {
+		return true
 	}
 	issueRefs := []string{runKey, strings.TrimSpace(repo) + "!" + runKey + ":" + StageSpec}
 	for _, issueRef := range issueRefs {

@@ -23446,13 +23446,106 @@
         }
       }
     },
+    "/api/runs/{key}/abandon": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Terminally abandon a staged run",
+        "description": "Verified-owner only. Atomically removes all stage leases and persists a non-expiring admission tombstone for this run key. Old generations cannot resume, and automatic triage, design admission, and explicit owner starts cannot restart it. No reversal operation is provided. Records an owner audit and lifecycle event; retained timeline detail shows state=abandoned. Does not close the source issue.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Required non-empty reason for abandoning the run; recorded in the audit and lifecycle timeline."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run abandoned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "key",
+                    "state",
+                    "reason"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "abandoned"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing run key, or empty/missing reason."
+          },
+          "403": {
+            "description": "Verified owner required."
+          },
+          "404": {
+            "description": "No live staged lease holds the key."
+          },
+          "409": {
+            "description": "Concurrent lease generation change or lease expiry."
+          },
+          "500": {
+            "description": "Retirement could not be persisted; leases remain unchanged."
+          },
+          "503": {
+            "description": "Run lease registry unavailable."
+          }
+        }
+      }
+    },
     "/api/runs/{key}/reset": {
       "post": {
         "tags": [
           "Status"
         ],
-        "summary": "Reset a run to an earlier stage",
-        "description": "Owner-only. Moves the run's lease back to a strictly earlier stage (for example implement to plan after a rejected plan), mints a new generation so the relay holding the previous generation can no longer resume, persists before answering, and records the reason on the agent audit sink, the lifecycle timeline, and the stage_completed hook payload (attrs.reset = \"true\"). The same stage and any later stage are refused.",
+        "summary": "Reset or recover a staged run",
+        "description": "Owner-only. Moves a live run to a strictly earlier stage, or resets an escalated lease to its current stage with a fresh stage budget. Mints a fresh generation, persists before answering, and records the reason in the audit and lifecycle timeline. Non-escalated same-stage resets and later targets are refused. An abandoned run key cannot be reset or restarted.",
         "parameters": [
           {
             "name": "key",
@@ -23482,7 +23575,7 @@
                       "plan",
                       "implement"
                     ],
-                    "description": "Target stage; must be earlier than the run's current stage."
+                    "description": "Target stage; must be earlier than the current stage unless the live lease is escalated, when the current stage is also allowed."
                   },
                   "reason": {
                     "type": "string",
@@ -23545,7 +23638,7 @@
             }
           },
           "400": {
-            "description": "Target is the same or a later stage, an unknown stage, or the reason is missing."
+            "description": "Invalid target stage, non-escalated same-stage reset, later target, or missing reason."
           },
           "403": {
             "description": "Owner role required"
