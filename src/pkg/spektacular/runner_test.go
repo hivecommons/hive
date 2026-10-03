@@ -873,7 +873,7 @@ func fixtureStore(t *testing.T, kind, slug, version string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	run := fixtureExecVersion(t, "draft-final", version)
-	if _, err := run(context.Background(), dir, []string{"init", "copilot", "--name", "proj"}); err != nil {
+	if _, err := run(context.Background(), dir, []string{"init", "claude", "--name", "proj"}); err != nil {
 		t.Fatalf("fixture init: %v", err)
 	}
 	out, err := run(context.Background(), dir, []string{kind, "new", "--data", `{"name":"` + slug + `"}`})

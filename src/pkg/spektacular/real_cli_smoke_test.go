@@ -61,7 +61,7 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	run(t, ctx, bin, dir, "init", "copilot", "--name", "hive-real-cli-smoke")
+	run(t, ctx, bin, dir, "init", "claude", "--name", "hive-real-cli-smoke")
 
 	r := &Runner{Exec: BinaryExec(bin)}
 

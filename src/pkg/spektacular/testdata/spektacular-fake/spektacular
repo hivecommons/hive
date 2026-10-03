@@ -36,6 +36,9 @@
 #        artifact_not_found exactly as the real 0.22 store reports it, and
 #        the caller has to resolve the id through `file list` first.
 #   spektacular init <agent> --name <project>       (creates the store)
+#     -> <agent> must be one of bob|claude|codex; 0.22.0 rejects anything
+#        else with {"error":true,"code":"internal_error","message":"unknown
+#        agent \"<agent>\": must be one of bob, claude, codex"} and exit 1
 #   spektacular <spec|plan> new --data '{"name":"<slug>"}'
 #     -> creates the ID-prefixed artifact (`<timestamp>-<slug>`) and prints
 #        the same status envelope for it
@@ -108,6 +111,13 @@ store_dir() {
 
 # init creates the project store the other verbs read.
 if [ "$kind" = "init" ]; then
+  case "$verb" in
+    bob|claude|codex) ;;
+    *)
+      printf '{"error":true,"code":"internal_error","message":"unknown agent \\"%s\\": must be one of bob, claude, codex","next_action":""}\n' "$verb"
+      exit 1
+      ;;
+  esac
   if [ "$name" != "--name" ] || [ -z "$extra" ]; then
     usage_error "init requires --name"
   fi
