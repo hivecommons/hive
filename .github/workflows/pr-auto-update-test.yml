@@ -1,0 +1,25 @@
+name: PR Auto-update Regression Tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/pr-auto-update.sh'
+      - '.github/scripts/test_pr-auto-update.sh'
+      - '.github/workflows/pr-auto-update*.yml'
+  push:
+    branches: [v5, v6]
+    paths:
+      - '.github/scripts/pr-auto-update.sh'
+      - '.github/scripts/test_pr-auto-update.sh'
+      - '.github/workflows/pr-auto-update*.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Exercise push and shared-CI incident recovery with mocked APIs
+        run: bash .github/scripts/test_pr-auto-update.sh
