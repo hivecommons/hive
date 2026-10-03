@@ -1,1 +1,0 @@
-- upstream-watch: the dashboard divergence view no longer renders a dangling `owner/repo#` / `owner/repo@` for a stored ref with an empty PR number or tag, and its Features-tab panel now styles through shared `components.css` token classes instead of inline styles, restoring the green v5 build after #10361.
