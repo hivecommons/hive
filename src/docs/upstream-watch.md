@@ -62,6 +62,12 @@ repo under `upstream_watch.repos`, in key order, one pass:
    Mentions copied from upstream are neutralised so nobody upstream is pinged.
 5. Advances the watermark past every item that was filed, skipped or
    deduplicated.
+6. Reconciles every previously filed ref against its fork issue: still open
+   leaves it `filed` (surfaced), closed as completed becomes `ported`, closed
+   as *not planned* or labelled `upstream/dismissed` becomes `dismissed`. A
+   ref filed earlier in the very same pass is left alone — it was just
+   opened, so it is certainly still open. The watermark is not touched by
+   this step; it already moved past a ref when the ref was first filed.
 
 `max_issues_per_run` stops a repo's pass after that many issues; the remaining
 items stay behind the watermark and are picked up next pass. A GitHub error
@@ -80,6 +86,27 @@ Each upstream item has a ref: `upstream#<pr>` or `release:<tag>`.
 - **Dismissal.** If the matching fork issue was closed as *not planned* or
   carries the `upstream/dismissed` label, the ref is recorded as `dismissed`
   and never resurfaced.
+
+## Reconciliation
+
+Filing an issue is not the end of a ref's story: the fork issue it opened can
+later be closed. Every pass, after filing new items, the watch looks up each
+previously filed ref's fork issue (skipping any ref it just filed in this same
+pass) and updates the recorded status from what it finds:
+
+| Fork issue | Recorded status |
+|---|---|
+| still open | `filed` (surfaced) |
+| closed, `state_reason: completed` | `ported` |
+| closed, `state_reason: not_planned`, or labelled `upstream/dismissed` | `dismissed` |
+| closed for any other reason | left unchanged |
+
+This is the only place `ported` is ever recorded: nothing marks a ref ported
+at filing time, since the fork issue has only just been opened. A lookup
+failure (for instance a rate limit) stops the reconciliation pass the same way
+a filing error stops the filing pass — the rest is retried next run — and
+never moves the watermark, which already advanced past the ref when it was
+first filed.
 
 ## Dashboard and API
 

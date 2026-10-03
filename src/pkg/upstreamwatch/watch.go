@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -20,15 +21,32 @@ type Existing struct {
 	Dismissed bool
 }
 
+// IssueOutcome is what a reconciliation pass learns about a previously filed
+// fork issue's current state.
+type IssueOutcome struct {
+	// Open is true while the issue is still open: there is nothing to
+	// reconcile yet, the ref stays surfaced.
+	Open bool
+	// Ported is true when the issue was closed as completed.
+	Ported bool
+	// Dismissed is true when the issue was closed as "not planned" or
+	// carries DismissedLabel.
+	Dismissed bool
+}
+
 // Filer is the write side of the watch against the fork: a marker search
-// (the second dedupe guard) and issue creation. It only ever opens issues,
-// never PRs. A GitHub-backed implementation is in github_filer.go; tests
-// substitute a fake.
+// (the second dedupe guard), issue creation, and the issue lookup a
+// reconciliation pass uses to learn whether a previously filed issue has
+// since been closed. It only ever opens issues, never PRs. A GitHub-backed
+// implementation is in github_filer.go; tests substitute a fake.
 type Filer interface {
 	// FindMarker returns the fork issue whose body carries marker, if any.
 	FindMarker(ctx context.Context, marker string) (Existing, bool, error)
 	// File opens issue on the fork and returns its number.
 	File(ctx context.Context, issue Issue) (int, error)
+	// GetIssue returns the current state of the fork issue numbered number.
+	// found is false when the issue no longer exists.
+	GetIssue(ctx context.Context, number int) (IssueOutcome, bool, error)
 }
 
 // Options configures one repo's Watch.
@@ -62,8 +80,13 @@ type Result struct {
 	// Deduped are refs already recorded in state or found on the fork by
 	// their marker.
 	Deduped []string
-	// Dismissed are refs passed over because they were dismissed.
+	// Dismissed are refs passed over because they were dismissed, including
+	// ones a reconciliation pass found closed as "not planned" or labelled
+	// DismissedLabel after having been filed in an earlier run.
 	Dismissed []string
+	// Ported are previously filed refs a reconciliation pass found closed
+	// as completed in this run.
+	Ported []string
 	// Capped is true when MaxIssuesPerRun stopped the run with items left;
 	// Remaining counts them. They stay behind the watermark for next run.
 	Capped    bool
@@ -86,9 +109,12 @@ func New(opts Options, source Source, contents ForkContents, store Store, filer 
 	return &Watch{opts: opts, source: source, contents: contents, store: store, filer: filer}
 }
 
-// Run performs one pass. The state is saved even when the pass stops early,
-// so every item handled before an error stays handled; the watermark never
-// moves past an item that was not filed, skipped or deduped.
+// Run performs one pass: it lists and files new upstream items, then
+// reconciles every previously filed ref against its fork issue (ported once
+// the issue is completed, dismissed once it is closed as "not planned" or
+// labelled DismissedLabel). The state is saved even when either half stops
+// early, so every item handled before an error stays handled; the watermark
+// never moves past an item that was not filed, skipped or deduped.
 func (w *Watch) Run(ctx context.Context) (Result, error) {
 	var res Result
 	state, err := w.store.Load()
@@ -101,14 +127,20 @@ func (w *Watch) Run(ctx context.Context) (Result, error) {
 	}
 	rs.LastRunAt = w.opts.now()
 
-	runErr := w.process(ctx, rs, &res)
+	justFiled := make(map[string]bool)
+	runErr := w.process(ctx, rs, &res, justFiled)
+	if ctx.Err() == nil {
+		if err := w.reconcile(ctx, rs, &res, justFiled); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("reconcile filed issues: %w", err))
+		}
+	}
 	if err := w.store.Save(state); err != nil {
 		return res, errors.Join(runErr, fmt.Errorf("save upstream watch state: %w", err))
 	}
 	return res, runErr
 }
 
-func (w *Watch) process(ctx context.Context, rs *RepoState, res *Result) error {
+func (w *Watch) process(ctx context.Context, rs *RepoState, res *Result, justFiled map[string]bool) error {
 	items, err := w.source.List(ctx, rs.Watermark)
 	if err != nil {
 		return fmt.Errorf("list upstream items: %w", err)
@@ -135,7 +167,7 @@ func (w *Watch) process(ctx context.Context, rs *RepoState, res *Result) error {
 			holdBehind(rs, item)
 			return nil
 		}
-		if err := w.handle(ctx, rs, res, item, &filed); err != nil {
+		if err := w.handle(ctx, rs, res, item, &filed, justFiled); err != nil {
 			holdBehind(rs, item)
 			return fmt.Errorf("%s: %w", item.Ref, err)
 		}
@@ -144,7 +176,7 @@ func (w *Watch) process(ctx context.Context, rs *RepoState, res *Result) error {
 }
 
 // handle judges one unseen item and files, skips or dedupes it.
-func (w *Watch) handle(ctx context.Context, rs *RepoState, res *Result, item Item, filed *int) error {
+func (w *Watch) handle(ctx context.Context, rs *RepoState, res *Result, item Item, filed *int, justFiled map[string]bool) error {
 	now := w.opts.now()
 	j, err := Judge(ctx, w.contents, item)
 	if err != nil {
@@ -177,7 +209,53 @@ func (w *Watch) handle(ctx context.Context, rs *RepoState, res *Result, item Ite
 	}
 	rs.Put(Outcome{Ref: item.Ref, Status: StatusFiled, ItemTime: item.Timestamp, IssueNumber: number}, now)
 	res.Filed = append(res.Filed, item.Ref)
+	justFiled[item.Ref] = true
 	*filed++
+	return nil
+}
+
+// reconcile checks every previously filed ref against its fork issue and
+// updates the ones the fork has since closed: completed becomes ported,
+// not-planned or DismissedLabel becomes dismissed. It skips refs filed
+// earlier in this very call to process, since a freshly opened issue is
+// certainly still open, and stops at the first error so the rest are
+// retried next run; the watermark is left alone, since it already moved
+// past these refs when they were first filed.
+func (w *Watch) reconcile(ctx context.Context, rs *RepoState, res *Result, justFiled map[string]bool) error {
+	refs := make([]string, 0, len(rs.Refs))
+	for ref, rec := range rs.Refs {
+		if rec == nil || rec.Status != StatusFiled || rec.IssueNumber == 0 || justFiled[ref] {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	now := w.opts.now()
+	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rec, ok := rs.Record(ref)
+		if !ok {
+			continue
+		}
+		outcome, found, err := w.filer.GetIssue(ctx, rec.IssueNumber)
+		if err != nil {
+			return fmt.Errorf("%s (issue #%d): %w", ref, rec.IssueNumber, err)
+		}
+		if !found || outcome.Open {
+			continue
+		}
+		switch {
+		case outcome.Dismissed:
+			rs.Put(Outcome{Ref: ref, Status: StatusDismissed, IssueNumber: rec.IssueNumber,
+				Reason: fmt.Sprintf("fork issue #%d was dismissed", rec.IssueNumber)}, now)
+			res.Dismissed = append(res.Dismissed, ref)
+		case outcome.Ported:
+			rs.Put(Outcome{Ref: ref, Status: StatusPorted, IssueNumber: rec.IssueNumber}, now)
+			res.Ported = append(res.Ported, ref)
+		}
+	}
 	return nil
 }
 
