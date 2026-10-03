@@ -71,6 +71,10 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// TaskStatusPush controls the separate task-status push loop, not the core
+	// heartbeat or hub-managed upgrade/config delivery. Nil defaults to true.
+	// HIVE_HUB_TASK_STATUS_PUSH overrides it; resolve with TaskStatusPushEnabled.
+	TaskStatusPush *bool `yaml:"task_status_push,omitempty" json:"task_status_push,omitempty"`
 	// HeartbeatOmit lists sensitive-identifier classes withheld from the hub
 	// heartbeat and task-status push: repos, users, task_titles,
 	// dashboard_urls. Upgrade/config delivery is unaffected. See

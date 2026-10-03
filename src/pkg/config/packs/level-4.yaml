@@ -1,9 +1,6 @@
 level: 4
 name: Security-Aware
-description: 'Closed-loop feedback (formerly ''Adaptive''). Existing delivery agents open GitHub issues — not just quality.
-  Scanner files bug reports, guide files documentation gaps, ci-maintainer files workflow
-  issues, sec-check files vulnerabilities. No PRs yet — issues only. Adds security
-  agent (+sec-check). Seven agents total.
+description: 'Security-aware feedback. Scanner and guide may file GitHub issues, while quality, ci-maintainer, and sec-check may open hold-gated PRs for quality, workflow, and security fixes. Supervisor and brainstorm stay advisory; no agent merges.
 
   '
 governor:

@@ -197,6 +197,7 @@ the spec revision changes.
 
 ```yaml
 runs:
+  engine: spektacular         # default; selects the registered planning engine
   max_stage_retries: 2        # default; generations one hub-executed stage may spend
   spektacular:
     enabled: true             # default false
@@ -204,6 +205,32 @@ runs:
     poll_interval_s: 30       # default
     interview: human          # default; "auto" lets the headless agent self-answer
 ```
+
+### Selecting a planning engine
+
+`runs.engine` names the planning engine that observes `spec` and `plan`
+documents (ADR-0021, #10293). It is the only engine-selection knob:
+
+- **Unset means `spektacular`.** `EngineOrDefault` lower-cases and trims the
+  configured name and falls back to `DefaultRunsEngine`
+  (`src/pkg/config/runs_config.go:192`), so every existing `runs.spektacular`
+  config keeps working untouched.
+- **Each engine reads its own `runs.<engine>` block.** The selector does not
+  move settings: the `spektacular` engine is still built from
+  `runs.spektacular.binary` (`src/pkg/spektacular/register.go:17`), and the
+  selected engine's `enabled` switch still decides whether a stage runner is
+  installed at all (`src/cmd/hive/spektacularwire.go:114`).
+- **An unknown name fails config validation.** `ValidateEngine` rejects any
+  name no engine registered and lists the registered ones
+  (`src/pkg/config/runs_config.go:201`). Hive never falls back to another
+  engine: if an unregistered name reaches boot anyway, `wirePlanningEngine`
+  installs no stage runner and logs the registered names
+  (`src/cmd/hive/spektacularwire.go:56`).
+- **The engine name is recorded.** It is published on the dashboard status
+  card as `spektacular.engine`, stamped on every stage receipt as
+  `Engine.Name` with the engine's `ContractRevision`, and stamped as the
+  imported epic's `MetaSource` (`src/pkg/dashboard/stage_leases.go:812`), so
+  an epic planned by one engine is never adopted by another.
 
 As of v6, the Hive hub/spoke image, hub image, and contributor-agent image
 ship a pinned `spektacular` release binary in `/usr/local/bin`, verified against
@@ -214,7 +241,9 @@ its spec/plan agent prompts. Use an absolute path for an executable outside PATH
 At boot, when
 `runs.spektacular.enabled` is true, Hive probes `<binary> --version`, logs the
 found or missing binary, and exposes
-`spektacular: {present, version, binary, hub_executor}` in `/api/status`.
+`spektacular: {engine, present, version, binary, hub_executor}` in `/api/status`,
+where `engine` is the selected planning engine's name
+(`src/pkg/dashboard/server.go:546`).
 
 Hosted hives with no config file can set this from **Settings → Extensions →
 Spektacular**. That card exposes the toggle, binary path, poll interval, stage
@@ -810,9 +839,115 @@ member absent), `superseded`, `archived`, `stale-plan` (refused unless
 answers `artifact_not_found` for a name spelled with an extension or a
 document path, as the real store does, and a usage error for `--json`.
 
+## Writing a planning engine
+
+A planning engine is a Go package that implements `planengine.Engine`
+(`src/pkg/planengine/engine.go:18`) and registers a builder for it. The
+interface is deliberately small: an engine answers questions about documents
+and nothing else.
+
+```go
+package myengine
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/planengine"
+)
+
+type engine struct{ /* engine-owned settings */ }
+
+func (e *engine) Name() string             { return "myengine" }
+func (e *engine) ContractRevision() string { return "myengine-status/v1" }
+
+func (e *engine) Probe(ctx context.Context) (planengine.ProbeResult, error) { /* ... */ }
+func (e *engine) Status(ctx context.Context, dir, kind, artifact string) (planengine.ArtifactStatus, error) { /* ... */ }
+func (e *engine) ResolveArtifact(ctx context.Context, dir, kind, slug string) (string, error) { /* ... */ }
+func (e *engine) ExportPlan(ctx context.Context, dir, artifact string) (planengine.Plan, error) { /* ... */ }
+func (e *engine) ReadSpec(ctx context.Context, dir, artifact string) (string, error) { /* ... */ }
+
+// Registering the same name twice panics, so an engine registers itself once,
+// from init(), and cmd/hive links the package.
+func init() {
+	planengine.Register("myengine", func(cfg config.RunsConfig, logger *slog.Logger) (planengine.Engine, error) {
+		return &engine{}, nil
+	})
+}
+```
+
+- `kind` is `planengine.KindSpec` or `planengine.KindPlan`, and `dir` is the
+  stage's already-resolved `WorkDir`; the engine never resolves one itself.
+- A missing artifact must be reported as `*planengine.NotFoundError`
+  (`src/pkg/planengine/errors.go:15`) so the observer can re-resolve it rather
+  than park the run.
+- Implement `ArtifactNamer` (`src/pkg/planengine/engine.go:47`) only if your
+  artifacts are not named by the run key, and `VersionedEngine`
+  (`src/pkg/planengine/engine.go:54`) to stamp a version other than the engine
+  name on receipts.
+- Register the builder once, from `init()`, and link the package from
+  `cmd/hive`; `Register` panics on a duplicate name because two builders for
+  one name would make the selected engine depend on link order
+  (`src/pkg/planengine/registry.go:24`). Then operators select it with
+  `runs.engine: myengine`.
+- Engine-specific settings belong in that engine's own `runs.<engine>` block;
+  the `Builder` receives the whole `RunsConfig`
+  (`src/pkg/planengine/registry.go:13`).
+
+### Invariants Hive keeps, not the engine
+
+These are the properties the registry exists to preserve (ADR-0021). An engine
+cannot opt out of them, and new engines should not try to re-implement them.
+
+1. **Lease ownership.** The engine never sees lease identity, task ID,
+   generation, or a registry handle, and it never advances a lease. Only the
+   observer calls `Advance` / `Refuse` / `RecordStageProgress`
+   (`src/pkg/planengine/observer.go:113`). `Unclaimed` admission leases are
+   left to the relay, `RelayHeld` leases are left to the contribute websocket
+   (`src/pkg/planengine/observer.go:53`), and a stage with an empty `WorkDir`
+   is refused as `missing_workdir` before any engine call
+   (`src/pkg/planengine/observer.go:102`).
+2. **Receipts.** Hive builds the `StageReceipt` from the engine's
+   `ArtifactStatus` and the lease (`src/pkg/planengine/receipt.go:18`). The
+   engine cannot supply receipt bytes, the input digest, or the
+   `ExecutionKey`; it contributes only its `Name`, its version, and its
+   `ContractRevision`. The input hash still excludes `updated_at`, so two
+   observations of one final document hash the same.
+3. **Plan import.** The engine returns a `Plan`
+   (`src/pkg/planengine/types.go:85`); Hive renders it with `RenderTaskList`
+   (`src/pkg/planengine/tasklist.go:11`) and imports it through the unchanged
+   `ImportRunPlan` (`src/pkg/planengine/adapter.go:54`): the epic is created
+   DRAFT with `AutoApprove: false`, the import is idempotent by task-list
+   digest, a regenerated plan replaces the previous one and returns the epic
+   to draft, and there is no work fan-out until a human approves. Only a
+   `final` plan is ever exported, and the epic's `MetaSource` is the engine's
+   name, so an epic planned by another engine is left alone.
+4. **Retries.** Retries are not part of the engine interface. The retry budget
+   `runs.max_stage_retries` stays with the hub executor; an engine error is
+   counted and retried on the next poll, not turned into a refusal.
+
+The failure mapping an engine's return values produce — which outcomes are
+refusals (`stale_plan`, `replaced_document`, `archived_document`,
+`plan_import_failed`, `missing_workdir`) and which are counted errors retried
+on the next tick — is the table in
+[ADR-0021](adr/0021-planning-engine-boundary.md#failure-mapping). Every row of
+it, plus the "engine never sees an unclaimed lease" cases and a second
+registered engine appearing in `Receipt.Engine.Name`, `ContractRevision` and
+`MetaSource`, is exercised against a fake engine in
+`src/pkg/planengine/engine_conformance_test.go:1` — the cheapest way to check a
+new engine is to add it there.
+
+Authoring is out of scope: the hub executor and design-mode paths write
+documents rather than observe them and remain Spektacular-specific.
+
 ## Related
 
 - [work-sources.md](work-sources.md): run stages as work items
   (`run_stages: true`) and the `<repo>!<runKey>:<stage>` key.
 - [hooks.md](hooks.md): the `stage_completed` transition.
 - [design/run-artifacts.md](design/run-artifacts.md): multi-repo waves.
+- [adr/0021-planning-engine-boundary.md](adr/0021-planning-engine-boundary.md):
+  the named planning-engine boundary behind `runs.engine`.
+- [integrations/spektacular.md](integrations/spektacular.md): the CLI contract
+  the baseline `spektacular` engine speaks.

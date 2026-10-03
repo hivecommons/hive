@@ -337,7 +337,7 @@ func TestStaticDashboardLayoutUserMenuWiring(t *testing.T) {
 	}
 }
 
-func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
+func TestStaticDashboardDefaultLayoutOrder(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -351,23 +351,9 @@ func TestStaticDashboardFAQDefaultsAfterOperationalSections(t *testing.T) {
 	}
 	html := rec.Body.String()
 
-	agentsMarker := `id="agents-section" data-dashboard-section="agents-section"`
-	faqMarker := `id="faq-section" data-dashboard-section="faq-section"`
-	agentsIdx := strings.Index(html, agentsMarker)
-	if agentsIdx < 0 {
-		t.Fatalf("served dashboard missing last operational section marker %q", agentsMarker)
-	}
-	faqIdx := strings.Index(html, faqMarker)
-	if faqIdx < 0 {
-		t.Fatalf("served dashboard missing FAQ section marker %q", faqMarker)
-	}
-	if faqIdx < agentsIdx {
-		t.Fatalf("FAQ section renders before the last operational section by default: faq=%d agents=%d", faqIdx, agentsIdx)
-	}
-
-	defaultOrderTail := "'logs-section','agents-section','faq-section']"
-	if !strings.Contains(html, defaultOrderTail) {
-		t.Fatalf("dashboard default layout/reset order no longer leaves FAQ last; missing %q", defaultOrderTail)
+	defaultOrder := "'overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section'"
+	if !strings.Contains(html, defaultOrder) {
+		t.Fatalf("dashboard default layout/reset order no longer matches sidebar nav; missing %q", defaultOrder)
 	}
 }
 
@@ -550,7 +536,7 @@ func TestStaticTopbarACMMAndSidebarVersionPlacement(t *testing.T) {
 	}
 	topbar := html[topbarStart : topbarStart+topbarEnd]
 	for _, want := range []string{
-		`id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="ocNavigate" data-arg0="acmm-eval-section"`,
+		`id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay"`,
 		`id="oc-version-chip"`,
 		`id="oc-version-menu"`,
 		`aria-expanded="false" aria-controls="oc-version-menu"`,

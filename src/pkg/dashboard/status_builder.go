@@ -677,14 +677,15 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agentCfg.Enabled {
-				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonDisabled})
-				seen[name] = true
-				continue
-			}
 			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
+				seen[name] = true
+				continue
+			}
+			if packAllowed != nil && !packAllowed[name] && !activeOutsidePack(cfg, name, nil) && !agentCfg.Enabled {
+				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonPackInactive})
+				slog.Debug("agent card omitted: config-only disabled agent outside ACMM pack", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
 				continue
 			}
@@ -1069,7 +1070,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		cadenceValue = lookupCadenceValue(name, cfg)
 	}
 	onDemand := agentCfg.OnDemand || onDemandSet[name]
-	noCadence := !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
+	noCadence := agentCfg.Enabled && !onDemand && agentCfg.UsesGovernorKick() && !cfg.HasAnyCadence(name)
 	unscheduledInMode, cadenceModes := agentUnscheduledInMode(cfg, name, currentMode, agentCfg.Enabled, onDemand, agentCfg.UsesGovernorKick())
 
 	acmmLevel := 0
@@ -1093,9 +1094,12 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			model = gw.DefaultModel
 		}
 	}
-	evidence := fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
-	if err := cfg.Governor.ValidateBackend(cli); err != nil {
-		evidence = err.Error()
+	evidence := ""
+	if agentCfg.Enabled {
+		evidence = fmt.Sprintf("configured and enabled, but no runtime agent process was registered for %s %q", backendKind, cli)
+		if err := cfg.Governor.ValidateBackend(cli); err != nil {
+			evidence = err.Error()
+		}
 	}
 
 	return FrontendAgent{
@@ -1134,17 +1138,22 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			}(),
 			ContinuousModes: cfg.ContinuousModes(name),
 		},
-		GovBackend:       cli,
-		GovModel:         model,
-		StatsConfig:      resolveStatsSources(loadStatsConfig(name), cfg),
-		Mode:             mode.String(),
-		ModeEmoji:        mode.Emoji(),
-		DefaultMode:      defaultMode.String(),
-		IsCustomMode:     mode != defaultMode,
-		StructuredStatus: "BLOCKED",
-		StatusEvidence:   evidence,
-		LastError:        evidence,
-		Enabled:          true,
+		GovBackend:   cli,
+		GovModel:     model,
+		StatsConfig:  resolveStatsSources(loadStatsConfig(name), cfg),
+		Mode:         mode.String(),
+		ModeEmoji:    mode.Emoji(),
+		DefaultMode:  defaultMode.String(),
+		IsCustomMode: mode != defaultMode,
+		StructuredStatus: func() string {
+			if evidence == "" {
+				return ""
+			}
+			return "BLOCKED"
+		}(),
+		StatusEvidence: evidence,
+		LastError:      evidence,
+		Enabled:        agentCfg.Enabled,
 
 		UnscheduledInMode: unscheduledInMode,
 		CadenceModes:      cadenceModes,
@@ -1317,6 +1326,9 @@ func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
 				"key": s.Key, "label": s.Label,
 				"source": s.Source, "field": s.Field, "style": s.Style,
 			}
+			if s.Icon != "" {
+				entry["icon"] = s.Icon
+			}
 			if s.TrendField != "" {
 				entry["trendField"] = s.TrendField
 			}
@@ -1341,23 +1353,7 @@ func defaultStatsConfig(name string) []any {
 			map[string]any{"key": "mergeable", "label": "Mergeable", "source": "status", "field": "mergeableCount", "style": "spark", "trendField": "mergeable"},
 		},
 		"ci-maintainer": {
-			// desc strings explain what each health check verifies (see
-			// pkg/github/health.go); the dashboard renders them as hover
-			// tooltips on the HEALTH CHECKS rows and agent stat chips.
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
-			map[string]any{"key": "brew", "label": "Brew", "source": "health", "field": "brew", "style": "dot", "desc": "Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)"},
-			map[string]any{"key": "helm", "label": "Helm", "source": "health", "field": "helm", "style": "dot", "desc": "Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo"},
-			map[string]any{"key": "ci", "label": "CI", "source": "health", "field": "ci", "style": "pct", "desc": "Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)"},
-			map[string]any{"key": "weekly", "label": "Weekly", "source": "health", "field": "weekly", "style": "dot", "desc": "Most recent 'Weekly Coverage Review' workflow run did not fail"},
-			map[string]any{"key": "nightly", "label": "Nightly Tests", "source": "health", "field": "nightly", "style": "dot", "desc": "Most recent 'Nightly Test Suite' workflow run did not fail"},
-			map[string]any{"key": "nightlyCompliance", "label": "Compliance", "source": "health", "field": "nightlyCompliance", "style": "dot", "desc": "Most recent 'Nightly Compliance & Perf' workflow run did not fail"},
-			map[string]any{"key": "nightlyDashboard", "label": "Dashboard", "source": "health", "field": "nightlyDashboard", "style": "dot", "desc": "Most recent 'Nightly Dashboard Health' workflow run did not fail"},
-			map[string]any{"key": "nightlyGhaw", "label": "gh-aw", "source": "health", "field": "nightlyGhaw", "style": "dot", "desc": "Most recent 'Nightly gh-aw Version Check' workflow run did not fail"},
-			map[string]any{"key": "nightlyPlaywright", "label": "Playwright", "source": "health", "field": "nightlyPlaywright", "style": "dot", "desc": "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail"},
-			map[string]any{"key": "nightlyRel", "label": "Nightly Rel", "source": "health", "field": "nightlyRel", "style": "dot", "desc": "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)"},
-			map[string]any{"key": "weeklyRel", "label": "Weekly Rel", "source": "health", "field": "weeklyRel", "style": "dot", "desc": "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)"},
-			map[string]any{"key": "deploy_vllm_d", "label": "vLLM-d", "source": "health", "field": "deploy_vllm_d", "style": "dot", "desc": "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail"},
-			map[string]any{"key": "deploy_pok_prod", "label": "PokProd", "source": "health", "field": "deploy_pok_prod", "style": "dot", "desc": "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail"},
 		},
 		"outreach": {
 			map[string]any{"key": "stars", "label": "Stars", "source": "agentMetrics", "field": "stars", "style": "spark", "trendField": "stars"},
@@ -2199,33 +2195,28 @@ func copyHealthMap(m map[string]any) map[string]any {
 }
 
 func buildHealth(ghClient *github.Client, ctx context.Context) map[string]any {
-	if ghClient == nil || ctx == nil {
-		cachedHealthMu.RLock()
-		defer cachedHealthMu.RUnlock()
-		if cachedHealth != nil {
-			return copyHealthMap(cachedHealth)
-		}
-		return map[string]any{"ci": 100}
-	}
+	// The legacy repo-workflow health map was a KubeStellar-console-specific
+	// convenience (Brew, Helm, Nightly, deploy jobs, etc.). Those checks are not
+	// real hive health and should not feed the navbar health dropdown or System
+	// Diagnostics. Keep this payload empty; the real spoke health lives in
+	// DeepHealth, and the quality diagnostics card renders from the quality
+	// agent's configured stats.
+	health := map[string]any{}
 
-	health := ghClient.FetchWorkflowHealth(ctx)
+	if ghClient != nil && ctx != nil {
+		// Keep the ACMM green-CI streak refresh here because it is consumed by the
+		// advisor independently of the removed dashboard workflow-health payload.
+		if streak, measured := ghClient.GreenCIStreak(ctx); measured {
+			cachedGreenStreakMu.Lock()
+			cachedGreenStreak = streak
+			cachedGreenStreakOK = true
+			cachedGreenStreakMu.Unlock()
+		}
+	}
 
 	cachedHealthMu.Lock()
 	cachedHealth = health
 	cachedHealthMu.Unlock()
-
-	// Refresh the green-CI streak on the same pass that already talks to
-	// GitHub for workflow health (#5226). A failed or unmeasurable read leaves
-	// the previous cached value untouched rather than clobbering a real streak
-	// with an unknown — a transient API error must not make the advisor
-	// suddenly withdraw a recommendation it had legitimately earned.
-	if streak, measured := ghClient.GreenCIStreak(ctx); measured {
-		cachedGreenStreakMu.Lock()
-		cachedGreenStreak = streak
-		cachedGreenStreakOK = true
-		cachedGreenStreakMu.Unlock()
-	}
-
 	return copyHealthMap(health)
 }
 

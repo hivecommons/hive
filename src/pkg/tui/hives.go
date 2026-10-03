@@ -235,6 +235,13 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.runHivesAction(m.hivesID, action)
+	case "e":
+		next, action, ok := m.hives.ToggleEnabled()
+		m.hives = &next
+		if !ok {
+			return m, nil
+		}
+		return m, m.runHivesAction(m.hivesID, action)
 	case "s":
 		next, action, ok := m.hives.CycleStrategy()
 		m.hives = &next
@@ -339,6 +346,7 @@ func hiveRows(set *hivectl.ProfileSet) []panes.HiveRow {
 	rows := make([]panes.HiveRow, 0, len(ordered))
 	for _, p := range ordered {
 		rows = append(rows, panes.HiveRow{
+			Disabled:      p.Disabled,
 			Name:          p.Name,
 			Hub:           p.Hub,
 			ContributorID: p.ContributorID,
@@ -427,12 +435,15 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 }
 
 func hivesActionSignalsRelay(kind panes.HivesActionKind) bool {
-	return kind == panes.HivesActionUse || kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown || kind == panes.HivesActionStrategy
+	return kind == panes.HivesActionEnable || kind == panes.HivesActionDisable || kind == panes.HivesActionUse || kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown || kind == panes.HivesActionStrategy
 }
 
 func hivesSwitchNote(note, name string, kind panes.HivesActionKind, result hivectl.RelaySwitchResult) string {
 	if result.Running {
 		return fmt.Sprintf("%s; running relay signaled (%s), in-flight work finishes on its original hive", note, result.Target)
+	}
+	if kind == panes.HivesActionEnable || kind == panes.HivesActionDisable {
+		return note + "; no running relay found, applies on next start"
 	}
 	if kind == panes.HivesActionStrategy {
 		return fmt.Sprintf("%s; no running relay found, the next relay start will use this strategy", note)
@@ -451,6 +462,16 @@ func hivesSwitchNote(note, name string, kind panes.HivesActionKind, result hivec
 // remember.
 func applyHivesAction(env hivesEnv, set *hivectl.ProfileSet, action panes.HivesAction) (string, error) {
 	switch action.Kind {
+	case panes.HivesActionEnable, panes.HivesActionDisable:
+		disabled := action.Kind == panes.HivesActionDisable
+		if err := set.SetDisabled(action.Name, disabled); err != nil {
+			return "", err
+		}
+		state := "enabled"
+		if disabled {
+			state = "disabled"
+		}
+		return fmt.Sprintf("✓ %q %s; credentials retained", action.Name, state), nil
 	case panes.HivesActionUse:
 		profile, already, err := set.Use(action.Name)
 		if err != nil {

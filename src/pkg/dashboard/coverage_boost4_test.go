@@ -374,17 +374,16 @@ func TestHandleKnowledgeCreate_MissingFields_Boost(t *testing.T) {
 	}
 }
 
-// --- buildHealth with cached health ---
+// --- buildHealth ignores legacy cached workflow health ---
 
 func TestBuildHealth_Cached(t *testing.T) {
-	// Seed cached health first; the shared hook restores the pre-test cache
-	// state in t.Cleanup (#5570).
+	// Seed cached workflow health first; the shared hook restores the pre-test
+	// cache state in t.Cleanup (#5570).
 	setCachedHealth(t, map[string]any{"ci": 95, "nightly": 100})
 
-	// Call with nil client to get cached
 	result := buildHealth(nil, nil)
-	if result["ci"] != 95 {
-		t.Errorf("ci = %v, want 95", result["ci"])
+	if len(result) != 0 {
+		t.Errorf("health = %v, want empty workflow-health payload", result)
 	}
 }
 

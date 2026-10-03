@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,9 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		"hive · human · other",
 		"function prtTrendSvg",
 		`<svg class="prt-trend-svg"`,
-		`stroke-width="1.5"`,
+		`class="area ${key}"`,
+		"100% stacked area trend",
+		"non-hive bots (dependabot, renovate, GitHub Actions, …)",
 		"function prtTrendCaption",
 		"No attribution data yet — counters start now.",
 		"setSectionSummary('pr-throughput-section'",
@@ -44,7 +47,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		"dto.recorded_since",
 		"of recorded history",
 		"fetchPRThroughput(); fetchApprovals();",
-		"'governor','pr-throughput-section','advisory-section',",
+		"'governor','runs-section','pr-throughput-section','repos-section',",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("Change Throughput card missing snippet %q", snippet)
@@ -57,7 +60,7 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	for _, snippet := range []string{
 		`<div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>`,
 		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span>`,
-		`DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section'`,
+		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section'`,
 		`h === 'throughput' || h.startsWith('section-')`,
 		`if (h === 'throughput') return 'pr-throughput-section';`,
 	} {
@@ -76,5 +79,72 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	}
 	if !(gov < throughput && throughput < advisory) {
 		t.Fatalf("Change Throughput must be a top-level sibling after Governor and before Advisory: gov=%d throughput=%d advisory=%d", gov, throughput, advisory)
+	}
+}
+
+func TestPRThroughputCollapsedHeadlineKeepsWindowPill(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Change Throughput headline window controls were not executed")
+	}
+	html := indexHTML(t)
+	render := jsFunc(t, html, "renderPRThroughput")
+	for _, snippet := range []string{
+		`<div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>`,
+		"${prtWindowControls()}",
+	} {
+		if !strings.Contains(render, snippet) {
+			t.Fatalf("Change Throughput render missing collapsed-headline window control snippet %q", snippet)
+		}
+	}
+	script := `const assert = require('node:assert/strict');
+const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h'], [168, '7d'], [0, 'all']];
+let prtHours = 168;
+` + jsFunc(t, html, "prtWindowControls") + `
+const out = prtWindowControls();
+assert.match(out, /class="gov-pr-models-toggle prt-window-controls"/);
+assert.match(out, /data-stop="1"/);
+assert.match(out, /data-action="setPRThroughputHours"/);
+assert.match(out, /data-arg0="168"[^>]*>7d<\/button>/);
+assert.match(out, /class="active"[^>]*data-action="setPRThroughputHours"[^>]*data-arg0="168"/);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node Change Throughput window controls failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestPRThroughputTrendStackedAreaAndLegendTooltip(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Change Throughput actor trend helpers were not executed")
+	}
+	html := indexHTML(t)
+	script := `const assert = require('node:assert/strict');
+let prtRole = 'merged';
+function escapeHtml(v) { return String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+function prtTrendCaption() { return 'caption'; }
+` + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" + jsFunc(t, html, "prtActorTrend") + `
+const series = [
+  { hive: 4, human: 0, other: 6 },
+  { hive: 5, human: 0, other: 5 },
+  { hive: 7, human: 0, other: 3 },
+];
+const svg = prtTrendSvg(series);
+assert.match(svg, /class="area hive"/);
+assert.match(svg, /class="area other"/);
+assert.doesNotMatch(svg, /class="area human"/);
+assert.doesNotMatch(svg, /class="series /);
+assert.doesNotMatch(svg, /class="baseline"/);
+const paths = Array.from(svg.matchAll(/<path class="area ([^"]+)" d="([^"]+)"/g));
+assert.equal(paths.length, 2, svg);
+assert.notEqual(paths[0][2], paths[1][2], 'stacked bands must not render duplicate line paths');
+const trend = prtActorTrend({ series });
+assert.match(trend, /title="non-hive bots \(dependabot, renovate, GitHub Actions, …\)"/);
+assert.match(trend, /human · 0/);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node Change Throughput actor trend failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }

@@ -1,0 +1,1 @@
+- Show disabled/powered-off agents in the dashboard Agents card grid with the same enable affordance as the sidebar.

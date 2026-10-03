@@ -1,0 +1,1 @@
+- Document the `runs.engine` planning-engine selector and add a "Writing a planning engine" guide covering the lease, receipt, plan-import and retry invariants Hive keeps; ADR-0021 is now Accepted.

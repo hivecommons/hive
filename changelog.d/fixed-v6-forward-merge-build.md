@@ -1,0 +1,1 @@
+- Fixed the v6 build after the v5 forward-merge: restored `HubConfig.TaskStatusPush` and `StatsDisplayEntry.Icon` in the split config files and gave the planengine adapter a default engine name.

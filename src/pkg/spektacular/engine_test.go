@@ -101,7 +101,7 @@ func (*fakeLeaseRegistry) ResolveRunStageWorkDir(string, string, string, string,
 	return "/workspace", nil
 }
 
-func (*fakeLeaseRegistry) ImportRunPlan(string, string, string) error { return nil }
+func (*fakeLeaseRegistry) ImportRunPlan(string, string, string, ...string) error { return nil }
 
 // TestEngine_ReceiptGolden pins the receipt the stage observer builds for
 // this engine (#10353): the move off ExecFunc onto the Engine interface may

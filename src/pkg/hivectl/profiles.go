@@ -77,6 +77,8 @@ var ErrProfileNotFound = errors.New("no such hive profile")
 // json/yaml `-o` on `hives list` must not spray live tokens across a terminal
 // or a CI log. Redacted() is what the commands print.
 type Profile struct {
+	// Disabled pauses new work without forgetting credentials. Omitted means enabled.
+	Disabled          bool      `yaml:"disabled,omitempty" json:"disabled"`
 	Name              string    `yaml:"name" json:"name"`
 	Hub               string    `yaml:"hub" json:"hub"`
 	ContributorID     string    `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
@@ -567,10 +569,12 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 	hubs := make([]string, 0, len(ordered))
 	tokens := make([]string, 0, len(ordered))
 	ids := make([]string, 0, len(ordered))
+	disabled := make([]string, 0, len(ordered))
 	for _, p := range ordered {
 		hubs = append(hubs, p.Hub)
 		tokens = append(tokens, p.RegistrationToken)
 		ids = append(ids, p.ContributorID)
+		disabled = append(disabled, fmt.Sprint(p.Disabled))
 	}
 
 	env, err := readEnvFile(s.EnvPath())
@@ -583,6 +587,8 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 	env.set("HIVE_REGISTRATION_TOKEN", strings.Join(tokens, ","))
 	env.set("HIVE_HUB", strings.Join(hubs, ","))
 	env.set("CONTRIBUTOR_ID", strings.Join(ids, ","))
+	// Keep the credential lists intact and aligned, even when every hive is disabled.
+	env.set("HIVE_HUB_DISABLED", strings.Join(disabled, ","))
 	// The session label is per-profile from here on; project the active one so
 	// a single-session contributor keeps the behaviour they had.
 	if active := set.ActiveProfile(); active != nil && active.Session != "" {

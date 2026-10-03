@@ -201,7 +201,10 @@ func TestPRThroughputActorAttribution(t *testing.T) {
 		{"hive created PR", AuditEntry{Action: ghpkg.AuditActionAgentPRCreated, Detail: "repo=o/r, number=1, agent=scanner"}, prThroughputKindPR, prThroughputRoleCreated, prThroughputActorHive},
 		{"hive created issue", AuditEntry{Action: ghpkg.AuditActionAgentIssueCreated, Detail: "repo=o/r, number=2"}, prThroughputKindIssue, prThroughputRoleCreated, prThroughputActorHive},
 		{"human merged PR", AuditEntry{Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=3, path=human, actor=alice"}, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorHuman},
+		{"admin merge by maintainer is human", AuditEntry{Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=33, path=human, actor=clubanderson"}, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorHuman},
 		{"other automation merged PR", AuditEntry{Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=4, path=other_automation, actor=renovate[bot]"}, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorOtherAutomation},
+		{"hive identity merged PR without audit", AuditEntry{Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=44, path=hive, actor=hive-app[bot]"}, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorHive},
+		{"blank observed actor is unknown", AuditEntry{Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=45, path=unknown, actor="}, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorUnknown},
 		{"hive reviewed PR", AuditEntry{Action: ghpkg.AuditActionPRReviewed, Detail: "repo=o/r, number=5, state=approved, agent=reviewer"}, prThroughputKindPR, prThroughputRoleReviewed, prThroughputActorHive},
 		{"bot co-authored still hive", AuditEntry{Action: ghpkg.AuditActionPRReviewed, Detail: "repo=o/r, number=6, state=commented, agent=reviewer, actor=hive"}, prThroughputKindPR, prThroughputRoleReviewed, prThroughputActorHive},
 		{"issue commented by agent is review", AuditEntry{Action: ghpkg.AuditActionAgentCommentCreated, Detail: "repo=o/r, number=7, agent=scanner"}, prThroughputKindIssue, prThroughputRoleReviewed, prThroughputActorHive},
@@ -239,6 +242,38 @@ func TestPRThroughputSweepThenObservedMergeDedupes(t *testing.T) {
 	window := buildPRThroughputWindow(a.RecentWithPrefixSince(time.Time{}, ""), time.Date(2026, 10, 2, 13, 0, 0, 0, time.UTC), 24, "", prThroughputRoleMerged)
 	if window.Merged != 1 || window.MergedByPath["sweep"] != 1 {
 		t.Fatalf("deduped window = %+v, want one sweep merge", window)
+	}
+}
+
+func TestPRThroughputUnknownActorIsExcludedFromShareSeries(t *testing.T) {
+	buckets := map[string]PRThroughputActorMatrix{
+		"2026-10-03T00:00:00Z": {
+			prThroughputKindPR: {
+				prThroughputRoleMerged: {
+					prThroughputActorHive:    2,
+					prThroughputActorUnknown: 5,
+				},
+			},
+		},
+		"2026-10-03T01:00:00Z": {
+			prThroughputKindPR: {
+				prThroughputRoleMerged: {
+					prThroughputActorHuman:           1,
+					prThroughputActorOtherAutomation: 1,
+					prThroughputActorUnknown:         9,
+				},
+			},
+		},
+	}
+	series := prThroughputActorSeriesFromBuckets(buckets, prThroughputRoleMerged)
+	if len(series) != 2 {
+		t.Fatalf("series len = %d, want 2: %+v", len(series), series)
+	}
+	if series[0].Hive != 2 || series[0].Human != 0 || series[0].Other != 0 {
+		t.Fatalf("first series point = %+v, want only hive counts; unknown excluded", series[0])
+	}
+	if series[1].Hive != 0 || series[1].Human != 1 || series[1].Other != 1 {
+		t.Fatalf("second series point = %+v, want human and other only; unknown excluded", series[1])
 	}
 }
 

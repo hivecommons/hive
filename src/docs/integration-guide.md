@@ -21,7 +21,7 @@ flowchart LR
 | --- | --- | --- |
 | Work sources | Add or configure an adapter that turns source-native items into `worksource.Issue` values. The linked primary adapters are GitHub Issues, GitHub Projects, Linear, Jira, Gitea, and GitLab; `external` connects a provider-operated HTTPS shim with no Hive PR; run stages and Wavefront are additive sources. | [Work source providers](integrations/work-source-providers.md) |
 | ClankeR + Flue-style external execution | Use the contributor relay as the transport and the `pkg/extwork` contract as the engine-neutral admission/observation seam. Flue is the reference HTTP adapter. | [ClankeR and Flue-style external execution](integrations/clanker-flue.md) |
-| Spektacular | Let Hive poll a Spektacular-compatible CLI for `spec`/`plan` status and import final plan tasks into Hive's run flow. | [Spektacular and Project Inception](integrations/spektacular.md) |
+| Spektacular | Let Hive poll a Spektacular-compatible CLI for `spec`/`plan` status and import final plan tasks into Hive's run flow, or select another registered planning engine with `runs.engine`. | [Spektacular and Project Inception](integrations/spektacular.md) |
 
 Related surfaces that are not redefined here: [agent configuration](agent-configuration.md), [CLI/backend setup](../../docs/backend-setup.md), [MCP write policy](security-model.md), [hub API](api-reference.md), [contributor relay](contributor-relay.md), [work sources](work-sources.md), [long-running runs](runs.md), and [Spektacular runner](spektacular.md).
 
@@ -32,4 +32,11 @@ Use source-neutral words in generic integration docs: **work source**, **project
 ## Gaps tracked from this guide
 
 - Work source enumeration can now be external: `work_source.type: external` reads a provider-operated HTTPS shim over `hive.worksource/v1` ([External provider](integrations/work-source-providers.md#external-provider)). Write-back across that boundary is still unavailable: [#10174](https://github.com/hivecommons/hive/issues/10174).
-- Project Inception only wires a Spektacular-compatible CLI boundary; there is no generic named planning-engine registry: [#10175](https://github.com/hivecommons/hive/issues/10175).
+- Project Inception now has a named planning-engine registry: `runs.engine`
+  selects a registered engine (default `spektacular`) behind the engine-neutral
+  `pkg/planengine` boundary, so a planning engine no longer has to emulate the
+  Spektacular CLI byte for byte. What remains open in
+  [#10175](https://github.com/hivecommons/hive/issues/10175) is an
+  out-of-process engine: the boundary is compile-time, so a new engine is a
+  registered Go package ([Writing a planning
+  engine](spektacular.md#writing-a-planning-engine)).

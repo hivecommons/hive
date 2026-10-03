@@ -31,6 +31,10 @@
       /* Radii / shadows / fonts — defined in Phase 0, applied in later phases. */
       --radius-sm: var(--r-sm); --radius: var(--r); --radius-lg: var(--r-lg);
       --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+      --modal-gap: var(--sp-8);
+      --modal-scrim: rgba(0, 0, 0, 0.55);
+      --modal-scrim-strong: rgba(0, 0, 0, 0.78);
+      --overlay-scrim: var(--modal-scrim);
       --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.45); /* toasts / floating chrome */
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
@@ -111,16 +115,17 @@
     /* Release channel + last upgrade attempt panel (#7092). */
     #dash-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
     #dash-notices:empty { display: none; }
-    .release-status { margin: 6px 0 10px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.5; }
-    .release-status-row { display: block; }
-    .release-status-row + .release-status-row { margin-top: var(--sp-2); }
-    .release-status-row--selector { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .release-status { margin: 6px 0 10px; padding: var(--sp-3) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.35; display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+    .release-status-row { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .release-status-row + .release-status-row { margin-top: var(--sp-0); }
+    .release-status-row--selector { display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
     .release-status-row--info { color: var(--accent); }
     .release-status-row--warn { color: var(--yellow, #d4a017); }
     .release-status-row--success { color: var(--green); font-weight: 600; }
     .release-status-row--danger { color: var(--red); font-weight: 600; }
     .release-status-row--muted { color: var(--muted); font-weight: 600; }
-    .release-status-detail { margin-top: var(--sp-1); color: var(--muted); line-height: 1.4; }
+    .release-status-detail { color: var(--muted); line-height: 1.35; }
+    .release-status-hint { color: var(--muted); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-2); font-size: var(--fs-xs); cursor: help; }
     .release-channel-select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 8px; }
     .release-status code { font-family: var(--font-mono); font-size: 0.9em; }
     .dashboard-notice { border-radius: 8px; padding: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-4); display: flex; align-items: center; gap: 10px; font-size: var(--fs-base); }
@@ -372,6 +377,15 @@
     .oc-version-progress-status { color: var(--muted); margin-top: var(--sp-1); overflow-wrap: anywhere; }
     .oc-version-progress-status a { color: var(--accent); }
     .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
+    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); }
+    .oc-version-navbar-upgrade { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; }
+    .oc-version-navbar-upgrade .oc-version-hive { width: 24px; height: 24px; }
+    .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
+    .oc-version-navbar-upgrade .oc-version-bee { font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
+    .oc-version-navbar-upgrade .oc-version-progress-copy { line-height: 1.1; overflow: hidden; white-space: nowrap; }
+    .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
       from { transform: rotate(0deg) translateX(17px) rotate(0deg); }
       to { transform: rotate(360deg) translateX(17px) rotate(-360deg); }
@@ -875,6 +889,8 @@
     .agent-card.idle { border-left-color: var(--line); }
     .agent-card.stopped { border-left-color: var(--red); }
     .agent-card.needs-login { border-left-color: var(--red); }
+    .agent-card.disabled-agent { border-left-color: var(--status-neutral); opacity: 0.68; }
+    .agent-card.disabled-agent .agent-state { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
     .terminal-copy-hint {
       display: flex; align-items: center; gap: var(--sp-4);
       margin: var(--sp-4) var(--sp-0) var(--sp-5); padding: 6px 10px;
@@ -1104,7 +1120,7 @@
     .gh-auth-modal .gh-verify-link:hover { background: color-mix(in srgb, var(--green) 85%, #fff); }
     .gh-auth-modal .gh-poll-status { color: var(--muted); font-size: 0.8rem; margin-top: var(--sp-5); }
     .gh-auth-modal .gh-cancel { margin-top: var(--sp-5); } /* ghost button (system recipe) */
-    .gh-setup-modal { padding: var(--sp-9); max-width: 560px; width: 92%; text-align: left; max-height: 85vh; overflow-y: auto; } /* modal panel recipe */
+    .gh-setup-modal { padding: var(--sp-9); max-width: 560px; width: 92%; text-align: left; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow-y: auto; } /* modal panel recipe */
     .claude-auth-btn { background: #d97706; color: #fff; border: none; padding: var(--sp-3) var(--sp-6); border-radius: var(--r); cursor: pointer; font-weight: 600; font-size: 0.85rem; }
     .claude-auth-btn:hover { background: #f59e0b; }
     .claude-auth-status { font-size: 0.8rem; color: var(--muted); }
@@ -1252,24 +1268,6 @@
     .off-badge { margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe (default muted) */
     .on-demand-badge { --component-status: var(--status-info); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
 
-    /* Health status panel */
-    .health { margin-bottom: var(--sp-8); }
-    .health h2 { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); margin-bottom: var(--sp-4); }
-    .health-grid { display: flex; flex-wrap: wrap; gap: var(--sp-5); }
-    .health-item {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--r); padding: 10px 16px; display: flex; align-items: center; gap: var(--sp-4);
-      font-size: 0.8rem;
-    }
-    .health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-    .health-dot.ok { background: var(--green); }
-    .health-dot.fail { background: var(--red); }
-    .health-dot.unknown { background: var(--muted); }
-    .health-label { color: var(--text); }
-    .health-ci { font-weight: 700; }
-    .health-ci.good { color: var(--green); }
-    .health-ci.warn { color: var(--yellow); }
-    .health-ci.bad { color: var(--red); }
     /* .btn / .terminal-link / .restart-btn — button system recipes at end of style block */
     /* .backend-select — shared input recipe (end of style block) */
     .backend-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
@@ -1404,6 +1402,8 @@
     .prt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--dash-card-inner-padding, var(--sp-6)); }
     .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
     .prt-controls { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .prt-headline { position: relative; padding-top: var(--sp-6); }
+    .prt-window-controls { position: absolute; top: 0; right: 0; }
     .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
@@ -1432,12 +1432,10 @@
     .prt-legend .hive { background:var(--prt-actor-hive); }
     .prt-legend .human { background:var(--prt-actor-human); }
     .prt-legend .other { background:var(--prt-actor-other); }
-    .prt-trend-svg .baseline { stroke:var(--border); }
-    .prt-trend-svg .halo { fill:none; stroke:var(--bg); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; opacity:.95; }
-    .prt-trend-svg .series { fill:none; stroke-linecap:round; stroke-linejoin:round; }
-    .prt-trend-svg .series.other { stroke:var(--prt-actor-other); stroke-width:1.1; }
-    .prt-trend-svg .series.human { stroke:var(--prt-actor-human); stroke-width:1.3; }
-    .prt-trend-svg .series.hive { stroke:var(--prt-actor-hive); stroke-width:1.6; }
+    .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
+    .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
+    .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
+    .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
     .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
@@ -1908,11 +1906,6 @@
     }
     .spark-row { display: flex; align-items: center; gap: var(--sp-3); overflow: hidden; }
 
-    /* Beads */
-    .beads { display: flex; gap: var(--sp-8); font-size: 0.85rem; }
-    .bead-stat .num { font-weight: 700; font-size: 1.1rem; }
-    .bead-stat .label { color: var(--muted); font-size: var(--fs-sm); }
-
     .contributors-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr)); gap:var(--sp-5); }
     .contrib-card {
       --contrib-accent: #5aa7ff;
@@ -2320,6 +2313,15 @@
     .health-ci { font-weight: 700; font-size: 0.7rem; }
     .health-ci.good { color: var(--green); }
     .health-ci.warn { color: var(--yellow); }
+    .quality-stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); }
+    .quality-stat-title { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
+    .quality-stat-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-4); padding-block: var(--sp-1); font-size: var(--fs-sm); }
+    .quality-stat-empty { color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .quality-stat-value { font-weight: 600; }
+    .quality-stat-value.ok { color: var(--green); }
+    .quality-stat-value.fail { color: var(--red); }
+    .quality-stat-value.skip, .quality-stat-value.unknown { color: var(--muted); }
+
     .health-ci.bad { color: var(--red); }
 
     /* GitHub API rate limit alert bar */
@@ -2422,11 +2424,10 @@
     .toast-action { margin-left: 10px; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .feedback-fab { position: fixed; right: 18px; bottom: 86px; z-index: 9002; box-shadow: var(--shadow-raised); }
     .feedback-bug-btn { position:relative; min-width:34px; }
     .feedback-pill { position:absolute; top:-7px; right:-7px; min-width:16px; height:16px; padding:var(--sp-0) var(--sp-1); border-radius:var(--r-pill); background:var(--red); color:var(--text); font-size:var(--fs-2xs); font-weight:800; line-height:16px; text-align:center; box-shadow:var(--shadow-raised); }
     .feedback-pill[hidden] { display:none; }
-    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: auto; max-height: 90vh; overflow: hidden; padding: var(--sp-0); }
+    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: hidden; padding: var(--sp-0); }
     .feedback-header { position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
     .feedback-header h2 { margin:0 0 var(--sp-2); }
     .feedback-intro { color:var(--muted); margin:0; line-height:1.45; }
@@ -2500,8 +2501,8 @@
     @keyframes config-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .hive-dialog-overlay { z-index: 20000; }
     .acmm-dialog-overlay { z-index: 10000; } /* JS toggles inline display flex/none */
-    .acmm-dialog { padding: var(--sp-7); max-width: 600px; width: 92%; max-height: 80vh; overflow-y: auto; }
-    .hive-dialog { width: 460px; max-width: 92vw; padding: var(--sp-8); } /* modal panel recipe */
+    .acmm-dialog { padding: var(--sp-7); max-width: 600px; width: 92%; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow-y: auto; }
+    .hive-dialog { width: 460px; max-width: 92vw; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: auto; padding: var(--sp-8); } /* modal panel recipe */
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
     .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
@@ -2518,8 +2519,8 @@
     .level-automerge-toggle { flex: 0 0 auto; }
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
-      width: 1200px; max-width: 96vw;
-      height: 85vh; display: flex; flex-direction: column;
+      width: 1200px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));
+      height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
       font-family: var(--font-ui); font-size: var(--fs-base);
       contain: layout;
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -3076,7 +3077,8 @@
     .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: var(--sp-2); max-height: 200px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .hive-chat-shortcuts {
       display:none; position:fixed; z-index:20001; inset:0; background:var(--overlay-scrim);
-      align-items:center; justify-content:center;
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      align-items:center; justify-content:center; padding: var(--modal-gap);
     }
     .hive-chat-shortcuts.open { display:flex; }
     .hive-chat-shortcut-card { width:min(460px, calc(100vw - 32px)); background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-6); box-shadow:var(--shadow-lg); }
@@ -3137,7 +3139,7 @@
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
        (also reused by the kb modals via className); z-index stays. */
     .nous-config-overlay { z-index: 1000; }
-    .nous-config-dialog { width: 900px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; padding: var(--sp-0); }
+    .nous-config-dialog { width: 900px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
     .nous-config-dialog > h2 { flex-shrink: 0; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
     .nous-config-dialog > .nous-config-body { flex: 1; overflow-y: auto; padding: var(--sp-6) var(--sp-8); }
     .nous-config-dialog > .nous-config-footer { flex-shrink: 0; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
@@ -3362,6 +3364,20 @@
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
+    .agents-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(720px, 52vw); max-width: 720px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
+    .agent-collapsed-tile { flex: 0 0 108px; min-width: 90px; max-width: 120px; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; gap: 0 var(--sp-2); align-items: center; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; text-align: left; }
+    .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-collapsed-tile.disabled { opacity: 0.58; }
+    .agent-collapsed-tile.needs-login { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
+    .agent-collapsed-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
+    .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-tile-name { font-weight: 800; color: var(--text); }
+    .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
+    .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
+    .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
+    .agent-collapsed-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-collapsed-tile.disabled .agent-tile-dot { background: var(--muted); box-shadow: none; }
+    @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
     .mini-gauge-track { stroke: var(--line-subtle); }
@@ -3376,8 +3392,30 @@
     .mini-health-dot.warn { fill: var(--yellow); }
     .mini-health-dot.bad { fill: var(--red); }
     .mini-health-dot.unknown { fill: var(--muted); }
+    .debug-quota-strip { gap: var(--sp-2); width: auto; max-width: min(360px, 40vw); }
+    .debug-quota-chip { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; height: 24px; padding: 0 var(--sp-2); border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; text-transform: none; }
+    .debug-quota-label { color: var(--text); max-width: 5.6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .debug-quota-frac { font-variant-numeric: tabular-nums; color: currentColor; }
+    .debug-quota-gauge { width: 54px; height: 10px; flex: 0 0 auto; }
+    .debug-quota-gauge-track { fill: var(--surface-1); stroke: var(--line-subtle); stroke-width: 1; }
+    .debug-quota-gauge-fill { fill: var(--green); }
+    .debug-quota-chip.warn .debug-quota-gauge-fill { fill: var(--yellow); }
+    .debug-quota-chip.bad .debug-quota-gauge-fill { fill: var(--red); }
+    .debug-quota-chip.warn { color: var(--yellow); }
+    .debug-quota-chip.bad { color: var(--red); }
     @keyframes mini-spark-draw { to { stroke-dashoffset: 0; } }
     @media (prefers-reduced-motion: reduce) { .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { animation: none; stroke-dashoffset: 0; } }
+    .debug-headline { display: none; grid-column: 1 / -1; align-items: center; gap: var(--sp-3); min-width: 0; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); overflow: hidden; }
+    .collapsed-with-headline .debug-headline { display: flex; }
+    .debug-headline-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    .debug-headline-api, .debug-headline-tokens { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); }
+    .debug-headline-api { flex: 0 1 auto; font-weight: 700; }
+    .debug-headline-tokens { flex: 1 3 auto; color: var(--muted); }
+    .debug-headline-mini { flex: 0 0 auto; margin-left: auto; }
+    .debug-quota-ok { color: var(--green); }
+    .debug-quota-warn { color: var(--yellow); }
+    .debug-quota-bad { color: var(--red); }
+    @media (max-width: 640px) { .debug-headline-tokens { display: none; } .prt-headline { padding-top: var(--sp-7); } }
     .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
@@ -3506,9 +3544,16 @@
     .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: var(--overlay-scrim);
-      -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
       display: flex; align-items: center; justify-content: center;
+      padding: var(--modal-gap); overflow: auto;
       animation: config-fade-in 0.15s ease-out;
+    }
+    @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts {
+        background: var(--modal-scrim-strong);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+      }
     }
     /* Glass panel — hub recipe linear-gradient(#17212deb,#0c1219eb) +
        border #ffffff1a, expressed in tokens so the light-mode remap
@@ -3520,12 +3565,16 @@
       border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-modal);
+      max-height: calc(100vh - var(--modal-gap) - var(--modal-gap));
+      overflow: auto;
     }
+    .config-modal, .feedback-modal, .nous-config-dialog { overflow: hidden; }
     @media (max-width: 600px) {
       /* .config-modal already goes fullscreen (incl. border-radius:0) in the
          600px block above; the duplicate rule that used to live here was dead.
          The Strategy Lab dialog never got the same treatment — at 900px wide
          with only max-width:95vw it is cramped on a phone. */
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
       .nous-config-dialog {
         width: 100vw; max-width: 100vw;
         height: 100vh; max-height: 100vh;
@@ -3654,10 +3703,9 @@
     .row-card { cursor: pointer; padding: var(--sp-5); margin-bottom: var(--sp-2); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); transition: border-color var(--duration-fast); }
     .error-note { color: var(--red); font-size: var(--fs-base); }
     .repo-chip-btn { padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
-    /* ACMM level badges share level tinting. The sidebar/main badges open the
-       level selector; the topbar badge is display-only and jumps to ACMM Eval. */
-    #acmm-badge, #acmm-main-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
-    #acmm-main-badge:hover, #acmm-sidebar-badge:hover {
+    /* ACMM level badges share level tinting and open the level selector. */
+    #acmm-badge, #acmm-main-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-badge:hover, #acmm-main-badge:hover {
       background: color-mix(in srgb, var(--amber) 26%, transparent);
       border-color: var(--amber);
       text-decoration: underline;
@@ -4157,8 +4205,6 @@
   <div id="system-alerts-banner" style="display:none"></div>
   </div>
 <div id="toast-container"></div>
-<button type="button" class="hv-btn btn-primary feedback-fab" data-action="openFeedbackModal" title="Report a bug or request a feature">💬 Feedback</button>
-
 <!-- Hive Chat FAB + Panel -->
 <button type="button" class="hive-chat-fab" id="hiveChatFab" title="Ask Hive" aria-label="Ask Hive chat assistant">💬</button>
 <div class="hive-chat-panel" id="hiveChatPanel">
@@ -4263,14 +4309,12 @@
         <div class="oc-logo-sub">GATEWAY DASHBOARD</div>
       </div>
     </div>
-    <div style="padding:var(--sp-2) var(--sp-6) var(--sp-4);text-align:center">
-      <span id="acmm-sidebar-badge" title="Click to change maturity level" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" data-action="openACMMDialog"></span>
-    </div>
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
       <a class="oc-nav-item" data-section="runs-section" data-action="ocNavigate" data-arg0="runs-section"><span class="oc-nav-emoji">🏃</span><span class="oc-nav-text">Runs</span><span id="runs-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
+      <a class="oc-nav-item" data-section="platform-section" data-action="ocNavigate" data-arg0="platform-section"><span class="oc-nav-emoji">🧩</span><span class="oc-nav-text">Platform</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
@@ -4292,7 +4336,6 @@
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="beads-section" data-action="ocNavigate" data-arg0="beads-section"><span class="oc-nav-emoji">🔮</span><span class="oc-nav-text">Beads</span><span id="beads-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
     </div>
     <div class="oc-nav-group">
@@ -4363,7 +4406,7 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name" class="oc-project-title"></span>
       <span class="nav-chip-group" aria-label="Hive status">
-        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level" aria-label="View ACMM autonomy level"></button>
+        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay" title="Change the current ACMM autonomy level" aria-label="Change ACMM autonomy level"></button>
         <span id="background-activity" class="background-activity" role="status" aria-live="polite" aria-label="No background Spek activity"><span class="run-live-dot" aria-hidden="true"></span><span id="background-activity-text">idle</span></span>
       <!-- Fleet breaker status chip. Kept in .oc-topbar-left, the shortest group,
            so it cannot wrap the topbar to a third row. State + owner-gating are
@@ -4545,13 +4588,6 @@
       <div id="repos-issue-filter" style="display:none;font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)"></div>
       <div id="swarm-panel" class="swarm-panel"></div>
       <div class="repo-grid" id="repos"></div>
-    </div>
-  </div>
-
-  <div class="mt-6 mb-8" id="beads-section" data-dashboard-section="beads-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="beads-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Beads section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Beads</h2>
-    <div class="section-body">
-      <div class="beads" id="beads"></div>
     </div>
   </div>
 
@@ -5196,7 +5232,7 @@
       ['feedback-submit-tab','feedback-reports-tab'].forEach(function(id) { const el = document.getElementById(id); if (!el) return; const active = (id === 'feedback-submit-tab') === (tab === 'submit'); el.classList.toggle('active', active); el.setAttribute('aria-selected', active ? 'true' : 'false'); });
       if (tab === 'reports') await loadFeedbackReports(true);
     }
-    function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); document.body.classList.remove('modal-open'); document.documentElement.classList.remove('modal-open'); }
+    function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); }
     async function feedbackAddFiles(files) {
       if (!files) return;
       for (const f of Array.from(files)) {
@@ -5373,7 +5409,6 @@
       'token-panel': { title: '🪙 Token Usage', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
       'repos-section': { title: '📦 Repositories', summary: '0 repos' },
-      'beads-section': { title: '🔮 Beads', summary: '0 beads' },
       'acmm-eval-section': { title: '🎯 ACMM Evaluation', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'platform-section': { title: '🧩 Platform', summary: 'standalone' },
@@ -5616,7 +5651,7 @@
         const open = nums[1] || 0, issues = nums[2] || 0;
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
         inner = miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
-      } else if (sectionId === 'beads-section' || sectionId === 'knowledge-section' || sectionId === 'audit-section') {
+      } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
         inner = miniSpark(hist('count', n0), sectionId === 'audit-section' ? 'var(--yellow)' : 'var(--cyan)', text);
       } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
@@ -5627,20 +5662,17 @@
       } else if (sectionId === 'contributors-section') {
         inner = miniAvatarDots((typeof _cachedContributors === 'undefined' ? [] : _cachedContributors), n0, text);
       } else if (sectionId === 'debug-section') {
-        const warnings = /healthy/i.test(text) ? 0 : n0;
-        const state = warnings ? 'warn' : 'ok';
-        inner = `<svg class="mini-health" width="28" height="24" viewBox="0 0 28 24" role="img" aria-label="${escapeHtml(text)}">${miniTitleTag(text)}<circle class="mini-health-dot ${state}" cx="14" cy="12" r="6"/></svg>` + miniSpark(hist('warnings', warnings), warnings ? 'var(--yellow)' : 'var(--green)', text);
+        return (typeof debugQuotaWidgetHtml === 'function' && debugQuotaWidgetHtml(data)) || miniWrap(sectionId, title || text, miniText(text, text));
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        const total = Array.isArray(agents) ? agents.length : n0;
-        const off = Array.isArray(agents) ? agents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length : (nums[2] || 0);
-        inner = miniBar([{ label: 'on', value: Math.max(0, total - off), color: 'var(--green)' }, { label: 'off', value: off, color: 'var(--muted)' }, { label: 'paused', value: nums[3] || 0, color: 'var(--yellow)' }], text);
+        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now()) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
         const series = hist('headline', n0);
         inner = miniDelta(n0, series.length > 1 ? series[series.length - 2] : n0, text);
       }
+      if (sectionId === 'agents-section' && inner) return inner;
       return miniWrap(sectionId, title || text, inner || miniDelta(n0, n0, text));
     }
 
@@ -5668,9 +5700,100 @@
     }
     function agentsSectionSummary(agents) {
       agents = Array.isArray(agents) ? agents : [];
-      const off = agents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
-      const on = Math.max(0, agents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off`;
+      const disabled = agents.filter(agentIsDisabled).length;
+      const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
+      const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
+      const on = Math.max(0, activeAgents.length - off);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
+    }
+    function agentCollapsedParseNextKick(value, nowMs) {
+      const raw = String(value == null ? '' : value).trim();
+      if (!raw) return null;
+      const lower = raw.toLowerCase();
+      if (lower === '—' || lower === '-' || lower === 'continuous' || lower === 'paused' || lower === 'off' || lower === 'on demand' || lower === 'no cadence') return null;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      if (/^(due|now|overdue)/.test(lower)) return now;
+      const rel = lower.match(/^(?:in\s+)?(?:(\d+)\s*(?:h|hr|hrs|hour|hours)(?:\s+(\d+)\s*(?:m|min|mins|minute|minutes))?|(\d+)\s*(?:m|min|mins|minute|minutes)|(\d+)\s*(?:s|sec|secs|second|seconds))$/);
+      if (rel) {
+        const hours = parseInt(rel[1] || '0', 10);
+        const mins = parseInt(rel[2] || rel[3] || '0', 10);
+        const secs = parseInt(rel[4] || '0', 10);
+        return now + hours * 3600000 + mins * 60000 + secs * 1000;
+      }
+      const monthDay = raw.match(/^\d{1,2}\/\d{1,2}\s+/);
+      if (monthDay) {
+        const year = new Date(now).getFullYear();
+        let stamped = Date.parse(`${year}/${raw}`);
+        if (Number.isFinite(stamped) && stamped < now - 86400000) stamped = Date.parse(`${year + 1}/${raw}`);
+        if (Number.isFinite(stamped)) return stamped;
+      }
+      const direct = Date.parse(raw);
+      if (Number.isFinite(direct)) return direct;
+      const clock = raw.match(/^(\d{1,2}):(\d{2})(?:\s*([ap])\.?m\.?)?$/i);
+      if (clock) {
+        const d = new Date(now);
+        let h = parseInt(clock[1], 10);
+        const m = parseInt(clock[2], 10);
+        const meridiem = clock[3] && clock[3].toLowerCase();
+        if (meridiem === 'p' && h < 12) h += 12;
+        if (meridiem === 'a' && h === 12) h = 0;
+        d.setHours(h, m, 0, 0);
+        if (d.getTime() < now - 60000) d.setDate(d.getDate() + 1);
+        return d.getTime();
+      }
+      return null;
+    }
+    function agentCollapsedNextLabel(a, nowMs) {
+      if (!a || agentIsDisabled(a)) return '—';
+      if (a.continuous === true) return 'continuous';
+      const ms = agentCollapsedParseNextKick(a.nextKickIn || a.nextKick, nowMs);
+      if (!Number.isFinite(ms)) return '—';
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const delta = ms - now;
+      if (delta <= 60000) return 'due now';
+      if (delta < 3600000) return `in ${Math.max(1, Math.round(delta / 60000))}m`;
+      return 'next ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    function agentCollapsedSortKey(a, index, nowMs) {
+      const disabled = !a || agentIsDisabled(a);
+      const active = !!a && !disabled && a.busy === 'working';
+      const next = !disabled ? agentCollapsedParseNextKick(a.nextKickIn || a.nextKick, nowMs) : null;
+      const continuous = !!a && !disabled && a.continuous === true;
+      let group = 4;
+      if (active) group = 0;
+      else if (continuous) group = 2;
+      else if (Number.isFinite(next)) group = 1;
+      else if (!disabled) group = 3;
+      return { group, next: Number.isFinite(next) ? next : Number.POSITIVE_INFINITY, index };
+    }
+    function sortAgentsForCollapsedTiles(agents, nowMs) {
+      return (Array.isArray(agents) ? agents : []).map((agent, index) => ({ agent, key: agentCollapsedSortKey(agent, index, nowMs) }))
+        .sort((a, b) => (a.key.group - b.key.group) || (a.key.next - b.key.next) || (a.key.index - b.key.index))
+        .map(item => item.agent);
+    }
+    function agentCollapsedAuthInfo(a, isDown) {
+      const text = String((a && (a.backendAuthStatus || a.backendAuthLastError || a.statusEvidence)) || '').toLowerCase();
+      if (text.includes('expired') || text.includes('token_expired')) return { label: 'token expired', status: 'error', needsLogin: true };
+      if (_agentNeedsLogin(a || {}, isDown)) return { label: 'needs login', status: 'error', needsLogin: true };
+      return { label: 'authenticated', status: 'ok', needsLogin: false };
+    }
+    function agentCollapsedTileHtml(a, nowMs) {
+      const name = (a && (a.displayName || a.name)) || 'agent';
+      const key = (a && a.name) || name;
+      const disabled = agentIsDisabled(a);
+      const isDown = a && a.state !== 'running';
+      const active = !!a && !disabled && a.busy === 'working';
+      const auth = agentCollapsedAuthInfo(a || {}, isDown);
+      const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
+      const next = agentCollapsedNextLabel(a, nowMs);
+      const classes = ['agent-collapsed-tile', active ? 'active' : '', disabled ? 'disabled' : '', auth.needsLogin ? 'needs-login' : ''].filter(Boolean).join(' ');
+      const title = `${name} · ${power} · ${auth.label} · next ${next}`;
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next">${esc(power)} · ${esc(auth.label)} · ${esc(next)}</span></button>`;
+    }
+    function agentsCollapsedTilesHtml(agents, nowMs) {
+      const list = sortAgentsForCollapsedTiles(agents, nowMs);
+      if (!list.length) return '';
+      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(a => agentCollapsedTileHtml(a, nowMs)).join('')}</span>`;
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
@@ -5702,10 +5825,6 @@
       const openPrs = repos.reduce((n, r) => n + ((r.openPrs || r.prs || []).length || Number(r.open_prs || r.openPRs || 0) || 0), 0);
       const issues = repos.reduce((n, r) => n + ((r.actionableIssues || r.issues || []).length || Number(r.openIssues || r.open_issues || 0) || 0), 0);
       setSectionSummary('repos-section', `${repos.length} repos · ${openPrs} open PRs · ${issues} issues`);
-      const beads = data.beads || {};
-      const beadTotal = Number(beads.total || beads.count || 0) || ((Number(beads.workers) || 0) + (Number(beads.supervisor) || 0));
-      const beadOpen = Number(beads.open || beads.open_count || beads.pending || 0) || 0;
-      setSectionSummary('beads-section', `${beadTotal} beads${beadOpen ? ' · ' + beadOpen + ' open' : ''}`);
       const adv = data.advisoryDigest || {};
       const advCount = Number(adv.open || adv.openAdvisories || adv.total || adv.count || 0) || ((adv.items || adv.advisories || []).length || 0);
       const advWhen = relativeTimeShort(adv.generatedAt || adv.updatedAt || adv.latest || data.timestamp);
@@ -5951,7 +6070,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -6192,7 +6311,7 @@
     // hive-dialog, nous) and any added later; per-modal open/close handlers
     // no longer need to touch body.style.overflow.
     (function installModalScrollLock() {
-      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts, #oc-drawer-backdrop';
       function anyOverlayOpen() {
         var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
         for (var i = 0; i < overlays.length; i++) {
@@ -6352,6 +6471,34 @@
       el.classList.remove('anchor-highlight');
       void el.offsetWidth;
       el.classList.add('anchor-highlight');
+    }
+    function scrollToAgentCard(name, behavior) {
+      const safeName = (window.CSS && CSS.escape) ? CSS.escape(name || '') : String(name || '').replace(/["\\]/g, '\\$&');
+      const selector = `.agent-card[data-agent="${safeName}"]`;
+      const card = document.querySelector(selector);
+      if (!card) return false;
+      card.scrollIntoView({ block: 'center', behavior: behavior || 'smooth' });
+      card.classList.remove('anchor-highlight');
+      void card.offsetWidth;
+      card.classList.add('anchor-highlight', 'oc-focused');
+      setTimeout(() => card.classList.remove('oc-focused'), 1800);
+      return true;
+    }
+    function openAgentCollapsedTile(name) {
+      if (!name) return;
+      _ocSelectedAgent = name;
+      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#' + name) : '#' + name);
+      ocStopPanePoll();
+      document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
+      const active = document.querySelector(`.oc-nav-item[data-agent-nav="${(window.CSS && CSS.escape) ? CSS.escape(name) : String(name).replace(/["\\]/g, '\\$&')}"]`);
+      if (active) active.classList.add('active');
+      navPeekRestore('agents-section', { instant: true });
+      const expanded = navPeekExpand('agents-section');
+      if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
+      if (window._lastAgents) renderAgents(window._lastAgents);
+      ocUpdateFocusedState();
+      const after = () => scrollToAgentCard(name, 'smooth');
+      ocAfterNavLayoutSettles(['agents-section'], after);
     }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
@@ -7166,7 +7313,11 @@
     function _sidebarBuildGroups(agents) {
       let groups;
       if (!_sidebarLayout || !_sidebarLayout.groups) {
-        const sorted = [...agents].sort((a, b) => (a.sortOrder || 100) - (b.sortOrder || 100));
+        const sorted = [...agents].sort((a, b) => {
+          const disabled = (agentIsDisabled(a) ? 1 : 0) - (agentIsDisabled(b) ? 1 : 0);
+          if (disabled !== 0) return disabled;
+          return (a.sortOrder || 100) - (b.sortOrder || 100);
+        });
         groups = [{ name: null, agents: sorted.map(a => a.name) }];
       } else {
         groups = _sidebarLayout.groups.map(g => ({ ...g }));
@@ -7648,7 +7799,7 @@
       const runtimeNames = new Set(runtime.map(a => a.name));
       for (const configured of (window._configuredAgents || [])) {
         if (!configured.enabled && !runtimeNames.has(configured.name)) {
-          runtime.push({ ...configured, configDisabled: true });
+          runtime.push({ ...configured, enabled: false, configDisabled: true, state: 'stopped', busy: 'idle' });
         }
       }
       return runtime;
@@ -7725,7 +7876,7 @@
     }
     function renderSparkline(el, series, opts) {
       opts = opts || {};
-      if (!Array.isArray(series) || series.length < 2) return '';
+      if (!Array.isArray(series) || series.length < 1) return '';
       const values = series.map(v => {
         const n = Number(v);
         return Number.isFinite(n) ? n : 0;
@@ -7738,11 +7889,16 @@
       const padY = opts.padY != null ? opts.padY : 1;
       const plotW = opts.plotW != null ? opts.plotW : (W - padX * 2);
       const plotH = opts.plotH != null ? opts.plotH : (H - padY * 2);
-      const points = opts.points || values.map((v, i) => {
-        const x = padX + (i / (values.length - 1)) * plotW;
-        const y = padY + plotH - ((v - min) / range) * plotH;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      });
+      const points = opts.points || (values.length === 1
+        ? (() => {
+            const y = padY + plotH - ((values[0] - min) / range) * plotH;
+            return [`${padX.toFixed(1)},${y.toFixed(1)}`, `${(padX + plotW).toFixed(1)},${y.toFixed(1)}`];
+          })()
+        : values.map((v, i) => {
+            const x = padX + (i / (values.length - 1)) * plotW;
+            const y = padY + plotH - ((v - min) / range) * plotH;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          }));
       const lastPt = String(opts.lastPoint || points[points.length - 1]).split(',');
       const latest = values[values.length - 1];
       const scaleText = `range ${fmtSparkVal(min)}–${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
@@ -7860,8 +8016,6 @@
       govPrs: 'var(--purple)',
       govTotal: 'var(--green)',
       govHold: 'var(--muted)', // sparkline tint only — the count itself is neutral
-      beadsWorkers: 'var(--cyan)',
-      beadsSupervisor: 'var(--yellow)',
       tokenTotal: 'var(--cyan)',
       tokenInput: 'var(--blue)',
       tokenOutput: 'var(--purple)',
@@ -7956,16 +8110,16 @@
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
 
-    // ── Governor / repo / beads / system trend history (server-persisted) ──
+    // ── Governor / repo / system trend history (server-persisted) ──
     // These trends used to live only in the browser's localStorage
     // (hive_sparkline_history), so they were blank after a pod restart or for a
     // brand-new viewer. The server now persists ~30 days of snapshots to
     // /data/trend-history.json (same ring-buffer treatment as fact/cost). We
     // fetch them and merge into historyData by timestamp so the governor / repo
-    // / beads / system-gauge sparklines render immediately instead of blank.
+    // / system-gauge sparklines render immediately instead of blank.
     // Field names in the server entry mirror the client snapshot shape
-    // (govIssues, govPrs, govTotal, govHold, beadsWorkers, beadsSupervisor,
-    // repos[name].{issues,prs}) so no per-field translation is needed.
+    // (govIssues, govPrs, govTotal, govHold, repos[name].{issues,prs}) so no
+    // per-field translation is needed.
     let _serverTrendHistory = [];
     const TREND_MERGE_DELTA_MS = 60000;
     async function fetchTrendHistory() {
@@ -8007,8 +8161,6 @@
           govPrs: e.govPrs || 0,
           govTotal: e.govTotal || 0,
           govHold: e.govHold || 0,
-          beadsWorkers: e.beadsWorkers || 0,
-          beadsSupervisor: e.beadsSupervisor || 0,
           repos,
           agents: {},
           _fromTrend: true,
@@ -8652,15 +8804,20 @@
     const SPARK_COLORS = { stars: '#e3b341', outreachOpen: 'var(--blue)', outreachMerged: 'var(--green)', actionable: 'var(--red)', openPrs: 'var(--purple)', mergeable: 'var(--green)' };
     const DEFAULT_SPARK_COLOR = 'var(--blue)';
 
+    function statTargetHref(stat) {
+      const target = stat && stat.target;
+      if (typeof target !== 'string') return '';
+      const href = target.trim();
+      return /^(https?:\/\/|\/|#)/.test(href) ? href : '';
+    }
+
     function renderStatHtml(stat, name) {
       const v = resolveStatValue(stat, name);
       const style = stat.style;
       const label = escapeHtml(stat.label || stat.key);
       const icon = stat.icon ? escapeHtml(stat.icon) + ' ' : '';
 
-      // Health-check stats carry a desc (what the check verifies) —
-      // surface it as a hover tooltip on the chip.
-      const desc = stat.desc || (stat.source === 'health' && HEALTH_DESC_DEFAULTS[stat.field]) || '';
+      const desc = stat.desc || '';
       const tipAttr = desc ? ` title="${escapeHtml(desc)}" style="cursor:help"` : '';
 
       if (style === 'dot') {
@@ -9598,6 +9755,13 @@
         + `</div>`;
     }
     function renderAgents(agents) {
+      agents = (typeof _sidebarAgents === 'function') ? (() => {
+        const prev = window._lastAgents;
+        window._lastAgents = Array.isArray(agents) ? agents : [];
+        const merged = _sidebarAgents();
+        window._lastAgents = prev;
+        return merged;
+      })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
       const el = document.getElementById('agents');
@@ -9618,6 +9782,8 @@
       const orderedAgents = agentLayoutApplyOrder(sortedAgents);
       agentCardLayoutUpdateResetButton(sortedAgents);
       const cards = agentsFocusedFirst(orderedAgents).map(a => {
+        const isDisabled = agentIsDisabled(a);
+        const isPoweredOff = isDisabled && a.state !== 'running';
         const isOnDemand = a.onDemand === true;
         // Manual/persisted pause wins over offByCadence — see the agent-detail
         // renderer for the incident this ordering prevents.
@@ -9635,10 +9801,10 @@
         else if (a.structuredStatus === 'NEEDS_CONTEXT') statusCls = 'status-needs-context';
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
-        const cls = needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
+        const cls = isDisabled ? 'disabled-agent' : needsLogin ? 'needs-login' : isStarting ? 'starting' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
         // Down + unauthenticated CLI = attention-token needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
-        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        const dotCls = isPoweredOff ? 'off' : (isStopped && needsLogin) ? 'needs-login' : isStarting ? 'starting' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
@@ -9696,12 +9862,20 @@
         const agentOrderHandle = `<button type="button" class="dashboard-grip agent-card-order-handle" draggable="true" data-agent-order-grip data-agent="${esc(a.name)}" data-stop="1" aria-label="Drag to reorder ${esc(a.displayName || a.name)}" title="Drag to reorder" aria-pressed="false">⠿</button>`;
         const agentSpanTip = `Drag or use ← / → to set ${a.displayName || a.name} to span 1, 2, or 3 columns; Esc resets width`;
         const agentSpanHandle = `<button type="button" class="agent-card-resize-col" data-agent-resize-col data-agent="${esc(a.name)}" data-stop="1" aria-label="${esc(agentSpanTip)}" title="${esc(agentSpanTip)}" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${layoutSize.span || 1}"></button>`;
+        const disabledEnableBtn = isDisabled ? `<button class="hv-btn btn-primary btn-sm oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General" title="Configure ${esc(a.displayName || a.name)} — review its settings and enable it from the General tab">⚙ Enable…</button>` : '';
+        const historyLink = `<a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a>`;
+        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} ${historyLink}`;
+        const sessionActions = isPoweredOff
+          ? `${historyLink}`
+          : isDisabled
+          ? liveSessionActions
+          : `${liveSessionActions} <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button>`;
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}" data-agent-order-key="${esc(a.name)}" data-agent-span="${layoutSize.span || 1}">
           ${agentSpanHandle}
           <span class="working-indicator"></span>
-          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
-          <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
@@ -9737,7 +9911,7 @@
           ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
           ${watchdogConditionsRow(a)}
-          <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${(() => {
+          <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${isDisabled ? '—' : (() => {
             const isClaude = a.cli === 'claude';
             const isCopilot = a.cli === 'copilot';
             const claudeIcon = '<span class="cli-icon claude-icon"></span>';
@@ -9752,7 +9926,7 @@
             return '<button class="hv-btn btn-secondary btn-sm cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
           })()}</span></div>
           ${summaryEl}${indEl}
-          <div class="agent-actions">
+          ${isDisabled ? '' : `<div class="agent-actions">
             <input type="text" class="kick-prompt" id="kick-prompt-${esc(a.name)}" placeholder="custom instruction (optional)" data-enter-action="kick" data-agent="${esc(a.name)}" title="Type a custom prompt to send to this agent instead of its default kick dialog. Press Enter to send." />
             <button class="hv-btn btn-secondary btn" data-action="kick" data-agent="${esc(a.name)}" title="Send the custom prompt above to this agent immediately, bypassing the governor cadence timer">send</button>
             <button class="hv-btn btn-secondary btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
@@ -9765,7 +9939,7 @@
               ${modelOptionsHtml(a.cli, a.model)}
             </select>
             ${effortSelectHtml(a)}
-          </div>
+          </div>`}
           </div>
         </div>`;
       });
@@ -10196,14 +10370,6 @@
       if (wrap && e.target && wrap.contains(e.target)) return;
       btn.setAttribute('aria-expanded', 'false');
     });
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      var btn = document.getElementById('gh-app-install-id-hint-btn');
-      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
-      btn.setAttribute('aria-expanded', 'false');
-      btn.focus();
-    });
-
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
@@ -11033,30 +11199,7 @@
       }).join('');
     }
 
-    function renderHealth(health, runs) {
-      const el = document.getElementById('health');
-      if (!health || Object.keys(health).length === 0) { setIfChanged(el, '<span style="color:var(--muted);font-size:0.8rem">Loading…</span>'); return; }
-      const items = [
-        { key: 'ci', label: 'CI Pass Rate', type: 'pct' },
-        { key: 'brew', label: 'Brew Formula' },
-        { key: 'helm', label: 'Helm Chart' },
-        { key: 'nightly', label: 'Nightly Tests' },
-        { key: 'nightlyRel', label: 'Nightly Release' },
-        { key: 'weekly', label: 'Weekly Tests' },
-        { key: 'weeklyRel', label: 'Weekly Rel' },
-        { key: 'vllm', label: 'vLLM-d Deploy' },
-        { key: 'pokprod', label: 'PokProd Deploy' },
-      ];
-      setIfChanged(el, items.map(it => {
-        const v = health[it.key];
-        if (it.type === 'pct') {
-          const cls = v >= 90 ? 'good' : v >= 70 ? 'warn' : 'bad';
-          return `<div class="health-item"><span class="health-ci ${cls}">${v}%</span><span class="health-label">${it.label}</span></div>`;
-        }
-        const dotCls = v === 1 ? 'ok' : v === 0 ? 'fail' : 'unknown';
-        return `<div class="health-item"><span class="health-dot ${dotCls}"></span><span class="health-label">${it.label}</span></div>`;
-      }).join('') + stalledRunHealthRows(runs));
-    }
+
 
     function formatFixTime(minutes) {
       if (!minutes || minutes <= 0) return '—';
@@ -13061,7 +13204,10 @@
     }
     function overviewKPICurrentSample(cards) {
       const sample = { t: Date.now() };
-      (cards || []).forEach(card => { sample[card.field] = Number(card.rawValue); });
+      (cards || []).forEach(card => {
+        const value = Number(card.rawValue);
+        if (Number.isFinite(value)) sample[card.field] = value;
+      });
       return sample;
     }
     function overviewKPISparkTitle(values, fmt) {
@@ -13075,7 +13221,7 @@
     function overviewKPISpark(card, useServer) {
       const entries = overviewKPIHistoryEntries(useServer);
       const values = entries.map(e => Number(e[card.field])).filter(Number.isFinite);
-      if (values.length < 2) return '';
+      if (!values.length) return '';
       const title = overviewKPISparkTitle(values, card.sparkFmt || fmtSparkVal);
       return `<span class="overview-kpi-spark">${renderSparkline(null, values, {
         width: 92, height: 24, color: card.color, title, ariaLabel: `${card.label}: ${title}`,
@@ -13326,9 +13472,9 @@
       if (typeof _overviewKPILocalScope !== 'undefined') _overviewKPILocalScope = kpiScope;
       const useServerHistory = kpiScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
         { key: 'median-age', field: 'overviewMedianAgeSec', label: 'Median age', value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: 'Median selected actionable item age by the configured time basis.' }
@@ -14151,25 +14297,6 @@
         `<h3><span class="empty-state-icon">${icon}</span> ${title}</h3>` +
         `<p>${bodyHtml}</p>` +
       '</div>';
-    }
-
-    function renderBeads(beads) {
-      refreshSectionCardShell('beads-section');
-      const el = document.getElementById('beads');
-      const workers = beads.workers >= 0 ? beads.workers : 0;
-      const supervisor = beads.supervisor >= 0 ? beads.supervisor : 0;
-      if (workers === 0 && supervisor === 0) {
-        setIfChanged(el, emptyStateCard('🔮', 'Beads — your hive’s shared work ledger',
-          'Beads are the findings and work items agents file for each other — bugs, tasks, decisions, and advisories, each with a status and priority. ' +
-          'Worker agents open beads as they discover issues; the supervisor triages the ledger and dispatches follow-up work. ' +
-          'Counts appear here as soon as agents start filing beads — kick an agent, or let the governor cadence run, and check back.'));
-        return;
-      }
-      const wSpark = sparkline('beadsWorkers');
-      const sSpark = sparkline('beadsSupervisor');
-      setIfChanged(el, `
-        <div class="bead-stat"><div class="spark-row"><span class="num">${workers}</span>${wSpark}</div><div class="label">workers</div></div>
-        <div class="bead-stat"><div class="spark-row"><span class="num">${supervisor}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
     }
 
     function fmtTokens(n) {
@@ -17066,17 +17193,31 @@ function burnAreaChart() {
     function prtTrendSvg(series) {
       if (!Array.isArray(series) || series.length < 2) return '';
       const w = 360, h = 120, pad = 10;
+      const innerH = h - pad*2;
       const pts = series.map((p, i) => {
-        const hive = Number(p.hive) || 0;
-        const human = Number(p.human) || 0;
-        const other = Number(p.other) || 0;
+        const hive = Math.max(0, Number(p.hive) || 0);
+        const human = Math.max(0, Number(p.human) || 0);
+        const other = Math.max(0, Number(p.other) || 0);
         const total = hive + human + other;
         const x = pad + (i * (w - pad*2) / Math.max(1, series.length - 1));
-        return { x, hive: total ? hive / total : 0, human: total ? human / total : 0, other: total ? other / total : 0 };
+        const shares = total ? { hive: hive / total, human: human / total, other: other / total } : { hive: 0, human: 0, other: 0 };
+        let acc = 0;
+        const bands = {};
+        ['hive','human','other'].forEach(key => {
+          const y0 = h - pad - (acc * innerH);
+          acc += shares[key];
+          const y1 = h - pad - (acc * innerH);
+          bands[key] = { y0, y1 };
+        });
+        return { x, bands };
       });
-      const path = key => pts.map((p,i) => `${i?'L':'M'}${p.x.toFixed(1)},${(h-pad-(p[key]*(h-pad*2))).toFixed(1)}`).join(' ');
-      const line = key => `<path class="halo" d="${path(key)}"/><path class="series ${key}" d="${path(key)}"/>`;
-      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="hive, human, and other automation actor share trend"><line class="baseline" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/>${['other','human','hive'].map(line).join('')}</svg>`;
+      const area = key => {
+        if (prtSeriesAllZero(series, key)) return '';
+        const top = pts.map((p,i) => `${i?'L':'M'}${p.x.toFixed(1)},${p.bands[key].y1.toFixed(1)}`).join(' ');
+        const bottom = pts.slice().reverse().map(p => `L${p.x.toFixed(1)},${p.bands[key].y0.toFixed(1)}`).join(' ');
+        return `<path class="area ${key}" d="${top}${bottom}Z"><title>${key === 'other' ? 'other automation' : key} share</title></path>`;
+      };
+      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="100% stacked area trend for hive, human, and other automation actor shares">${['other','human','hive'].map(area).join('')}</svg>`;
     }
     function prtTrendCaption(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
@@ -17093,8 +17234,12 @@ function burnAreaChart() {
     function prtActorTrend(dto) {
       const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
-      const legend = [['hive', 'hive'], ['human', 'human'], ['other', 'other automation']].map(([key, label]) => `<span><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
+      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
       return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+    }
+    function prtWindowControls() {
+      const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
+      return `<div class="gov-pr-models-toggle prt-window-controls" data-stop="1">${buttons}</div>`;
     }
 
     function renderPRThroughput(dto) {
@@ -17105,7 +17250,6 @@ function burnAreaChart() {
       dto = dto || {};
       section.hidden = false;
 
-      const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
       const opened = Number(dto.opened) || 0;
       const merged = Number(dto.merged) || 0;
       const closed = Number(dto.closed) || 0;
@@ -17116,7 +17260,7 @@ function burnAreaChart() {
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
       const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})`;
       setSectionSummary('pr-throughput-section', summary, `Merged and opened PRs in the selected window; ${hiveMergedPct}% hive-attributed merged share`);
-      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
@@ -17134,8 +17278,9 @@ function burnAreaChart() {
       </div>`;
       const breakdowns = [prtTopList('Merged by agent', dto.merged_by_agent), prtTopList('Top repos', dto.top_repos), prtTopList('Close reasons', dto.closed_reasons)].filter(Boolean).join('');
       const label = prtWindowLabel(dto);
-      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls collapsed-control" data-collapsed-control><div class="gov-pr-models-toggle">${buttons}</div>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
-        <div class="lc-fleet sec-headline" data-collapsed-keep>
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls collapsed-control" data-collapsed-control>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
+        <div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>
+          ${prtWindowControls()}
           <div class="lc-fleet-stat" title="Pull/merge requests opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
@@ -21312,67 +21457,7 @@ function burnAreaChart() {
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
       // Update Light health badge with hover detail
-      const ocHealth = document.getElementById('oc-health');
-      if (ocHealth) {
-        const h = data.health || {};
-        const CI_PASS_THRESHOLD = 70;
-        const HEALTH_LABELS = _buildHealthLabels(data.agents || []);
-        const failing = [];
-        const warning = [];
-        const passing = [];
-        // Deep checks first — the spoke's own health (ready, github_auth,
-        // agents with "N down: names", …), the exact checks the heartbeat
-        // reports to the hub. These decide the pill's color: a pill that read
-        // only the repo-workflow map below showed "Health OK" while this
-        // spoke's own agents were down (#2465).
-        const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
-        const deepFailNames = [];
-        for (const c of deepChecks) {
-          const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
-          if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
-          else if (c.status === 'warn') warning.push(line);
-          else passing.push(line);
-        }
-        for (const [k, v] of Object.entries(h)) {
-          const label = HEALTH_LABELS[k] || k;
-          if (k === 'ci') {
-            if (v < CI_PASS_THRESHOLD) failing.push(`${label}: ${v}% (threshold: ${CI_PASS_THRESHOLD}%)`);
-            else passing.push(`${label}: ${v}%`);
-          } else if (v === false || v === 0) {
-            failing.push(`${label}: failing`);
-          } else if (v === -1) {
-            passing.push(`${label}: skipped`);
-          } else {
-            passing.push(`${label}: passing`);
-          }
-        }
-        const hoverLines = [];
-        if (failing.length) hoverLines.push('FAILING:\n' + failing.map(f => '  ✗ ' + f).join('\n'));
-        if (warning.length) hoverLines.push('WARNINGS:\n' + warning.map(wl => '  ⚠ ' + wl).join('\n'));
-        if (passing.length) hoverLines.push('PASSING:\n' + passing.map(p => '  ✓ ' + p).join('\n'));
-        ocHealth.title = hoverLines.join('\n\n') || 'No health data';
-        if (deepFailNames.length > 0) {
-          // Any failing deep check ⇒ the spoke itself is degraded — same
-          // verdict the hub renders for this hive's row.
-          ocHealth.dataset.status = 'error';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        } else if (failing.length > 0) {
-          ocHealth.dataset.status = 'error';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">' + failing.length + ' Issue' + (failing.length > 1 ? 's' : '') + '</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        } else {
-          ocHealth.dataset.status = 'ok';
-          ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span>';
-          ocHealth.style.color = '';
-          ocHealth.style.background = '';
-          ocHealth.style.borderColor = '';
-        }
-      }
+      renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -21396,14 +21481,6 @@ function burnAreaChart() {
       renderSwarm(data.swarm || {});
       var reposBadge = document.getElementById('repos-sidebar-badge');
       if (reposBadge) setSidebarCountBadge(reposBadge, (data.repos || []).length, (data.repos || []).length + ' repositories');
-      renderBeads(data.beads || {});
-      var beadsBadge = document.getElementById('beads-sidebar-badge');
-      if (beadsBadge) {
-        var bWorkers = (data.beads && data.beads.workers >= 0) ? data.beads.workers : 0;
-        var bSupervisor = (data.beads && data.beads.supervisor >= 0) ? data.beads.supervisor : 0;
-        var bTotal = bWorkers + bSupervisor;
-        setSidebarCountBadge(beadsBadge, bTotal, bWorkers + ' worker / ' + bSupervisor + ' supervisor beads');
-      }
       updateContributorBadge(data.contributorPool || null);
       renderPlatform(data.platform || null);
       renderHiveAdvice(data.hiveAdvice || null);
@@ -21416,7 +21493,7 @@ function burnAreaChart() {
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
-        'runs-section', 'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'beads-section', 'acmm-eval-section',
+        'runs-section', 'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
         'agents-section', 'faq-section'
@@ -21454,56 +21531,6 @@ function burnAreaChart() {
       } else {
         if (!_hashScrollPending) window.scrollTo(0, scrollY);
       }
-    }
-
-    const HEALTH_LABEL_DEFAULTS = {
-      ci: 'CI Pass Rate', brew: 'Homebrew', helm: 'Helm', nightly: 'Nightly',
-      nightlyCompliance: 'Compliance', nightlyDashboard: 'Dashboard', nightlyGhaw: 'GHAW',
-      nightlyPlaywright: 'Playwright', nightlyRel: 'Release', weekly: 'Weekly',
-      weeklyRel: 'Weekly Rel', hourly: 'Hourly', deploy_vllm_d: 'vLLM-d', deploy_pok_prod: 'POK'
-    };
-    function _buildHealthLabels(agents) {
-      const labels = { ...HEALTH_LABEL_DEFAULTS };
-      for (const a of agents || []) {
-        for (const s of a.statsConfig || []) {
-          if (s.source === 'health' && s.field && s.label) {
-            labels[s.field] = s.label;
-          }
-        }
-      }
-      return labels;
-    }
-
-    // One-line explanations of what each health check verifies (mirrors
-    // pkg/github/health.go). Used as tooltip fallback when the stats config
-    // entry carries no desc of its own. The health payload holds only ints,
-    // so no last-run timestamp is available to show.
-    const HEALTH_DESC_DEFAULTS = {
-      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)',
-      brew: 'Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)',
-      helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
-      nightly: "Most recent 'Nightly Test Suite' workflow run did not fail",
-      nightlyCompliance: "Most recent 'Nightly Compliance & Perf' workflow run did not fail",
-      nightlyDashboard: "Most recent 'Nightly Dashboard Health' workflow run did not fail",
-      nightlyGhaw: "Most recent 'Nightly gh-aw Version Check' workflow run did not fail",
-      nightlyPlaywright: "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail",
-      nightlyRel: "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)",
-      weeklyRel: "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)",
-      weekly: "Most recent 'Weekly Coverage Review' workflow run did not fail",
-      hourly: 'Latest runs of the perf workflows (React commits per navigation, TTFI gate) did not fail',
-      deploy_vllm_d: "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail",
-      deploy_pok_prod: "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail",
-    };
-    function _buildHealthDescs(agents) {
-      const descs = { ...HEALTH_DESC_DEFAULTS };
-      for (const a of agents || []) {
-        for (const s of a.statsConfig || []) {
-          if (s.source === 'health' && s.field && s.desc) {
-            descs[s.field] = s.desc;
-          }
-        }
-      }
-      return descs;
     }
 
     // ── Inception section ──
@@ -22705,8 +22732,252 @@ function burnAreaChart() {
       } catch (e) { /* non-fatal */ }
     });
 
+    function navbarHealthGroups(data) {
+      const failing = [];
+      const warning = [];
+      const passing = [];
+      const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
+      const deepFailNames = [];
+      for (const c of deepChecks) {
+        const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+        if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
+        else if (c.status === 'warn') warning.push(line);
+        else passing.push(line);
+      }
+      return { failing, warning, passing, deepFailNames };
+    }
+
+    function navbarHealthTitle(data) {
+      const groups = navbarHealthGroups(data || {});
+      const hoverLines = [];
+      if (groups.failing.length) hoverLines.push('FAILING:\n' + groups.failing.map(f => '  ✗ ' + f).join('\n'));
+      if (groups.warning.length) hoverLines.push('WARNINGS:\n' + groups.warning.map(wl => '  ⚠ ' + wl).join('\n'));
+      if (groups.passing.length) hoverLines.push('PASSING:\n' + groups.passing.map(p => '  ✓ ' + p).join('\n'));
+      return hoverLines.join('\n\n') || 'No health data';
+    }
+
+    function renderNavbarHealthBadge(ocHealth, data) {
+      if (!ocHealth) return;
+      const groups = navbarHealthGroups(data || {});
+      ocHealth.title = navbarHealthTitle(data || {});
+      if (groups.deepFailNames.length > 0) {
+        // Any failing deep check ⇒ the spoke itself is degraded — same
+        // verdict the hub renders for this hive's row. Repo workflow stats are
+        // intentionally excluded: they are not this hive's runtime health.
+        ocHealth.dataset.status = 'error';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Degraded</span>';
+      } else if (groups.failing.length > 0) {
+        ocHealth.dataset.status = 'error';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">' + groups.failing.length + ' Issue' + (groups.failing.length > 1 ? 's' : '') + '</span>';
+      } else {
+        ocHealth.dataset.status = 'ok';
+        ocHealth.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span>';
+      }
+      ocHealth.style.color = '';
+      ocHealth.style.background = '';
+      ocHealth.style.borderColor = '';
+    }
+
+    function qualityDiagnosticsAgent(agents) {
+      return (agents || []).find(a => a && a.name === 'quality') || null;
+    }
+
+    function renderQualityStatValue(stat, agentName) {
+      const v = resolveStatValue(stat, agentName);
+      const style = stat.style || 'number';
+      const hasValue = v !== undefined && v !== null && v !== '';
+      const icon = stat.icon ? escapeHtml(stat.icon) + ' ' : '';
+
+      if (style === 'dot') {
+        const skip = v === -1;
+        const ok = v === true || v === 1;
+        const dot = skip ? '⊘' : ok ? '✓' : hasValue ? '✗' : '—';
+        const label = skip ? 'skipped' : ok ? 'ok' : hasValue ? 'fail' : 'unknown';
+        const cls = skip ? 'skip' : ok ? 'ok' : hasValue ? 'fail' : 'unknown';
+        return `<span class="quality-stat-value ${cls}">${dot} ${label}</span>`;
+      }
+
+      if (style === 'pct') {
+        const PCT_GOOD = 90;
+        const PCT_WARN = 70;
+        const cls = !hasValue ? 'unknown' : Number(v) >= PCT_GOOD ? 'good' : Number(v) >= PCT_WARN ? 'warn' : 'bad';
+        return `<span class="health-ci ${cls}">${hasValue ? escapeHtml(String(v)) + '%' : '—'}</span>`;
+      }
+
+      if (style === 'pct-bar') {
+        const numericTarget = typeof stat.target === 'number' ? stat.target : 100;
+        const pct = hasValue ? Number(v) : 0;
+        const TARGET_WARN_OFFSET = 10;
+        const covCls = !hasValue ? '' : pct >= numericTarget ? 'ind-ok' : pct >= numericTarget - TARGET_WARN_OFFSET ? 'ind-warn' : 'ind-err';
+        return `<span class="ind-num ${covCls}">${hasValue ? escapeHtml(String(v)) + '%' : '—'}</span> <span class="ind-dlabel">goal: ${numericTarget}%</span>`;
+      }
+
+      if (style === 'spark') {
+        const statKey = stat.key || stat.field;
+        const trendField = stat.trendField || stat.field;
+        const color = SPARK_COLORS[trendField] || DEFAULT_SPARK_COLOR;
+        const histSeries = historyData.map(s => s.agentStats?.[agentName]?.[statKey] ?? 0);
+        const hasHistData = histSeries.some(v => v > 0);
+        const trendSeries = hasHistData ? histSeries : (window._trendData || []).map(s => s[trendField] || 0);
+        const trendTimes = hasHistData ? getHistoryTimes() : (window._trendData || []).map(s => s.t ?? s.timestamp);
+        return `<span class="ind-num">${icon}${hasValue ? escapeHtml(String(v)) : '0'}</span> ${sparkSvg(trendSeries, color, trendTimes, `agent-stat:${agentName}:${statKey}`)}`;
+      }
+
+      return `<span class="ind-num">${icon}${hasValue ? escapeHtml(String(v)) : '0'}</span>`;
+    }
+
+    function renderQualityStatsCard(agents) {
+      const quality = qualityDiagnosticsAgent(agents);
+      const stats = (quality && Array.isArray(quality.statsConfig)) ? quality.statsConfig : [];
+      const emptyAction = '<button class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-config-type="agent" data-agent="quality" data-tab="Stats">Configure quality stats</button>';
+      if (!quality || stats.length === 0) {
+        return `<div class="quality-stat-card"><div class="quality-stat-title">Quality stats</div><div class="quality-stat-empty">No stats configured — add them under quality → Configuration → Stats.</div>${emptyAction}</div>`;
+      }
+      const rows = stats.map(stat => {
+        const labelText = stat.label || stat.key || stat.field || 'Stat';
+        const icon = stat.icon ? `${escapeHtml(stat.icon)} ` : '';
+        const desc = stat.desc ? ` title="${escapeHtml(stat.desc)}"` : '';
+        const href = statTargetHref(stat);
+        const labelHtml = href
+          ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener"${desc}>${icon}${escapeHtml(labelText)}</a>`
+          : `<span${desc}>${icon}${escapeHtml(labelText)}</span>`;
+        return `<div class="quality-stat-row">${labelHtml}<span>${renderQualityStatValue(stat, quality.name)}</span></div>`;
+      }).join('');
+      return `<div class="quality-stat-card"><div class="quality-stat-title">Quality stats</div>${rows}</div>`;
+    }
+
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;
+    function debugQuotaClass(pct) {
+      const n = Number(pct) || 0;
+      if (n > 85) return 'debug-quota-bad';
+      if (n > 60) return 'debug-quota-warn';
+      return 'debug-quota-ok';
+    }
+    function debugQuotaChipClass(pct) {
+      const n = Number(pct) || 0;
+      if (n > 85) return 'bad';
+      if (n > 60) return 'warn';
+      return 'ok';
+    }
+    function debugCompactNum(n) {
+      const v = Math.max(0, Number(n) || 0);
+      const trim = s => s.replace(/\.0$/, '');
+      if (v >= 1e9) return trim((v / 1e9).toFixed(v >= 10e9 ? 0 : 1)) + 'B';
+      if (v >= 1e6) return trim((v / 1e6).toFixed(v >= 10e6 ? 0 : 1)) + 'M';
+      if (v >= 1e3) return trim((v / 1e3).toFixed(v >= 10e3 ? 0 : 1)) + 'K';
+      return String(Math.round(v));
+    }
+    function debugQuotaResetLabel(raw) {
+      if (!raw) return '—';
+      const d = new Date(typeof raw === 'number' ? raw * 1000 : raw);
+      if (Number.isNaN(d.getTime())) return '—';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    function debugQuotaNormalize(source, quota, fallbackLabel) {
+      quota = quota || {};
+      const limit = Number(quota.limit ?? quota.max ?? quota.quota ?? quota.total) || 0;
+      const remaining = Number(quota.remaining ?? quota.left ?? quota.available);
+      const used = Number(quota.used ?? quota.consumed ?? (limit > 0 && Number.isFinite(remaining) ? limit - remaining : 0)) || 0;
+      if (limit <= 0) return null;
+      const safeUsed = Math.max(0, Math.min(limit, used));
+      const pct = Math.round((safeUsed / limit) * 100);
+      const label = source || quota.source || quota.provider || fallbackLabel || 'Source';
+      const bucket = quota.bucket || quota.name || quota.resource || quota.type || '';
+      const reset = quota.reset ?? quota.reset_at ?? quota.resetAt;
+      const resetAt = debugQuotaResetLabel(reset);
+      return { label, bucket, limit, used: safeUsed, pct, resetAt };
+    }
+    function debugQuotaFromWorkSources(data) {
+      const out = [];
+      const containers = [
+        data && data.quotaSources,
+        data && data.workSources,
+        data && data.diagnostics && data.diagnostics.quotaSources,
+        data && data.diagnostics && data.diagnostics.workSources,
+      ].filter(Array.isArray);
+      containers.forEach(list => list.forEach(src => {
+        const sourceLabel = src && (src.label || src.name || src.source || src.provider);
+        const quotas = src && (src.quotas || src.limits || src.rateLimits || src.buckets);
+        const items = Array.isArray(quotas) ? quotas : (quotas && typeof quotas === 'object' ? Object.keys(quotas).map(k => Object.assign({ bucket: k }, quotas[k])) : [src]);
+        items.forEach(item => {
+          const q = debugQuotaNormalize(sourceLabel, item, sourceLabel);
+          if (q) out.push(q);
+        });
+      }));
+      return out;
+    }
+    function debugGitHubQuotaSources(data) {
+      const ghRate = (data && data.ghRateLimits) || {};
+      const buckets = Object.keys(ghRate).filter(k => {
+        const v = ghRate[k];
+        return v && typeof v === 'object' && Number(v.limit || v.max || v.quota || 0) > 0;
+      });
+      return buckets.map(k => {
+        const quota = Object.assign({ bucket: buckets.length === 1 && k === 'core' ? 'API' : k }, ghRate[k]);
+        return debugQuotaNormalize('GitHub', quota, 'GitHub');
+      }).filter(Boolean);
+    }
+    function debugQuotaWidgetHtml(data) {
+      const quotas = debugQuotaFromWorkSources(data || {}).concat(debugGitHubQuotaSources(data || {}));
+      if (!quotas.length) return '';
+      const chips = quotas.map(q => {
+        const cls = debugQuotaChipClass(q.pct);
+        const label = q.bucket ? `${q.label} ${q.bucket}` : q.label;
+        const title = `${label}: ${q.used}/${q.limit} used (${q.pct}%). Resets ${q.resetAt}`;
+        const fill = Math.max(0, Math.min(50, Math.round(q.pct / 2)));
+        return `<span class="debug-quota-chip ${cls}" title="${escapeHtml(title)}"><span class="debug-quota-label">${escapeHtml(label)}</span><svg class="debug-quota-gauge" width="54" height="10" viewBox="0 0 54 10" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect class="debug-quota-gauge-track" x="1" y="2" width="50" height="6" rx="3"/><rect class="debug-quota-gauge-fill" x="1" y="2" width="${fill}" height="6" rx="3"/></svg><span class="debug-quota-frac">${q.used}/${q.limit}</span></span>`;
+      }).join('');
+      const label = quotas.map(q => `${q.label} ${q.used}/${q.limit}`).join(', ');
+      return `<span class="mini-summary-strip debug-quota-strip" role="group" aria-label="${escapeHtml(label)}">${chips}</span>`;
+    }
+    function debugDiagnosticsHeadlineHtml(data, summaryText) {
+      const status = data || {};
+      const ghRate = status.ghRateLimits || {};
+      const tokens = status.tokens || {};
+      const core = ghRate.core || {};
+      const limit = Number(core.limit) || 0;
+      const remaining = Number(core.remaining) || 0;
+      const used = limit > 0 ? Math.max(0, limit - remaining) : 0;
+      const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+      const resetRaw = core.reset;
+      const resetAt = resetRaw ? new Date(typeof resetRaw === 'number' ? resetRaw * 1000 : resetRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const totals = tokens.totals || {};
+      const apiText = `GitHub API ${used}/${limit || '—'} (${pct}%) · resets ${resetAt}`;
+      const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
+      const mini = debugQuotaWidgetHtml(status);
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${debugQuotaClass(pct)}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
+    }
+    const HEALTH_LABEL_DEFAULTS = {
+      ci: 'CI Pass Rate', helm: 'Helm'
+    };
+    function _buildHealthLabels(agents) {
+      const labels = { ...HEALTH_LABEL_DEFAULTS };
+      for (const a of agents || []) {
+        for (const s of a.statsConfig || []) {
+          if (s.source === 'health' && s.field && s.label) {
+            labels[s.field] = s.label;
+          }
+        }
+      }
+      return labels;
+    }
+
+    const HEALTH_DESC_DEFAULTS = {
+      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)',
+      helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
+    };
+    function _buildHealthDescs(agents) {
+      const descs = { ...HEALTH_DESC_DEFAULTS };
+      for (const a of agents || []) {
+        for (const s of a.statsConfig || []) {
+          if (s.source === 'health' && s.field && s.desc) {
+            descs[s.field] = s.desc;
+          }
+        }
+      }
+      return descs;
+    }
     function renderDebugSection() {
       refreshSectionCardShell('debug-section');
       const grid = document.getElementById('debug-grid');
@@ -22814,12 +23085,15 @@ function burnAreaChart() {
       const budgetPct = budgetLimit > 0 ? Math.round((budgetUsed / budgetLimit) * 100) : 0;
 
       const platform = _platformStatus || data.platform || null;
-      const warningCount = Object.entries(health).filter(([k, v]) => k === 'ci' ? Number(v) < CI_PASS_THRESHOLD && Number(v) !== -1 : !(v === true || v === 1 || v === -1)).length;
       const version = platform && (platform.version || platform.hiveVersion || platform.gitVersion || platform.commit);
-      setSectionSummary('debug-section', warningCount ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : `healthy${version ? ' · ' + version : ''}`);
+      const warningCount = Object.entries(health).filter(([k, v]) => k === 'ci' ? Number(v) < CI_PASS_THRESHOLD && Number(v) !== -1 : !(v === true || v === 1 || v === -1)).length;
+      const debugSummary = warningCount ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : `healthy${version ? ' · ' + version : ''}`;
+      setSectionSummary('debug-section', debugSummary);
       grid.innerHTML = `
+        ${debugDiagnosticsHeadlineHtml(data, debugSummary)}
         <div style="${cardStyle}" class="platform-diagnostics"><div style="${labelStyle}">Platform</div>${platformFactTiles(platform)}</div>
         <div style="${cardStyle}"><div style="${labelStyle}">Health Checks</div>${healthRows || '<div style="color:var(--muted);font-size:0.8rem">No data</div>'}</div>
+        ${renderQualityStatsCard(agents)}
         <div style="${cardStyle}"><div style="${labelStyle}">Agent States</div>${agentRows || '<div style="color:var(--muted);font-size:0.8rem">No agents</div>'}</div>
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>
@@ -22839,6 +23113,7 @@ function burnAreaChart() {
           ${budgetLimit > 0 ? `<div style="margin-top:var(--sp-4);${labelStyle}">Budget</div><div style="${rowStyle}"><span>Used</span><span style="font-weight:600">$${budgetUsed.toFixed(2)} / $${budgetLimit.toFixed(2)} (${budgetPct}%)</span></div>` : ''}
         </div>
       `;
+      applySectionCollapse('debug-section');
     }
     setInterval(renderDebugSection, DEBUG_REFRESH_MS);
 
@@ -23044,6 +23319,7 @@ function burnAreaChart() {
         case 'openConfigDialog': { const ct = el.dataset.configType || el.dataset.arg0 || 'agent'; const tab = el.dataset.tab || el.dataset.arg2 || null; if (el.classList.contains('agent-link')) { closeConfigDialog(); setTimeout(() => openConfigDialog(ct, agent, tab), 100); } else { openConfigDialog(ct, agent || null, tab); } } break;
         case 'ocSendKick': ocSendKick(agent); break;
         case 'ocSelectAgent': { if (!e.target.closest('.oc-nav-actions')) ocSelectAgent(agent); } break;
+        case 'openAgentCollapsedTile': openAgentCollapsedTile(agent); break;
         case 'kick': kick(agent); break;
         case 'kickEmpty': { const inp = document.getElementById('kick-prompt-' + agent); if (inp) inp.value = ''; kick(agent); } break;
         case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;
@@ -23080,11 +23356,6 @@ function burnAreaChart() {
       }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && repoPillFilterActive() && e.target && e.target.closest && e.target.closest('#repos-section')) {
-        e.preventDefault();
-        clearRepoPillFilter();
-        return;
-      }
       if (e.key === 'Enter') {
         const el = e.target.closest('[data-enter-action]');
         if (el) {
@@ -23153,6 +23424,7 @@ function burnAreaChart() {
         overlay.remove();
         resolve(val);
       };
+      overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
         if (e.key === 'Enter') {
@@ -25511,16 +25783,18 @@ function burnAreaChart() {
     }
 
     function versionScheduleUpgradePoll(state) {
-      if (_versionUpgradePollTimer) {
-        clearTimeout(_versionUpgradePollTimer);
-        _versionUpgradePollTimer = null;
+      const root = typeof window !== 'undefined' ? window : globalThis;
+      if (root._versionUpgradePollTimer) {
+        (root.clearTimeout || clearTimeout)(root._versionUpgradePollTimer);
+        root._versionUpgradePollTimer = null;
       }
       if (!state) return;
+      if (typeof root.setTimeout !== 'function') return;
       let delay = VERSION_UPGRADE_POLL_MS;
       if (state !== true && state.completedAt) {
         delay = Math.max(500, VERSION_UPGRADE_DONE_MS - (versionNowMs() - Number(state.completedAt)) + 100);
       }
-      _versionUpgradePollTimer = setTimeout(function() { fetchGitVersion(); }, delay);
+      root._versionUpgradePollTimer = root.setTimeout(function() { fetchGitVersion(); }, delay);
     }
 
     function versionDeliveryLabel(v) {
@@ -25683,11 +25957,25 @@ function burnAreaChart() {
       if (!st) return '';
       const title = st.completedAt ? 'Upgrade complete' : 'Upgrading…';
       return '<div class="oc-version-upgrade-progress" role="status" aria-live="polite">' +
-        '<div class="oc-version-hive" aria-hidden="true">' +
+        versionUpgradeHiveHTML() + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
+        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+    }
+
+    function versionUpgradeHiveHTML() {
+      return '<span class="oc-version-hive" aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
         '<span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-honey-dot"></span>' +
-        '</div><div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
-        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+        '</span>';
+    }
+
+    function versionNavbarUpgradeHTML(st, v) {
+      if (!st || st.completedAt) return '';
+      const target = st.targetShort || versionShortSHA(st.target || '');
+      const elapsed = versionElapsedText(st.startedAt);
+      const status = (target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : '');
+      return '<span class="oc-version-navbar-upgrade" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">Upgrading… </span>' +
+        '<span class="oc-version-progress-status">' + escapeHtml(status) + '</span></span></span>';
     }
 
     function versionButtonHTML(label, title, targetHash, enabled) {
@@ -25795,11 +26083,14 @@ function burnAreaChart() {
       const channel = ctx.deliveryLabel || (v.branch && v.branch !== 'unknown' ? String(v.branch) : 'unknown');
       const progress = ctx.upgradeProgress || null;
       const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
-      const progressGlyph = progress && !progress.completedAt ? '<span class="oc-version-bee-chip" title="Upgrade in progress">🐝</span>' : (progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '');
-      chip.innerHTML = '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
+      const upgrading = progress && !progress.completedAt;
+      const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
+      if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
+      chip.innerHTML = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
+        '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
         (channel ? '<span class="oc-version-channel">' + escapeHtml(channel) + '</span>' : '') + progressGlyph + updateDot + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>';
       chip.title = progress && !progress.completedAt ? 'Upgrade in progress — Version & upgrade details' : 'Version & upgrade details';
-      chip.setAttribute('aria-label', 'Version & upgrade details');
+      chip.setAttribute('aria-label', upgrading ? 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version & upgrade details' : 'Version & upgrade details');
     }
 
     async function fetchGitVersion() {
@@ -25966,49 +26257,52 @@ function burnAreaChart() {
       var chTone, chIcon, chLabel;
       if (ch.resolved && ch.channel) {
         chTone = 'info'; chIcon = '📡';
-        chLabel = 'Channel: <strong>' + escapeHtml(ch.channel) + '</strong>';
+        chLabel = 'Channel <strong>' + escapeHtml(ch.channel) + '</strong>';
         if (ch.pendingChannel && ch.pendingChannel !== ch.channel) {
-          chLabel += ' <span class="release-status-row--warn">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested; waiting for rollout/heartbeat)</span>';
+          chLabel += ' <span class="release-status-row--warn">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested)</span>';
         }
       } else {
         chTone = 'warn'; chIcon = '❔';
-        chLabel = 'Channel: <strong>unknown</strong>' +
+        chLabel = 'Channel <strong>unknown</strong>' +
           (ch.imageTag ? ' <span class="text-muted">(image tag <code>' + escapeHtml(ch.imageTag) + '</code> is not a release channel)</span>' :
           (ch.imageRef ? ' <span class="text-muted">(image <code>' + escapeHtml(ch.imageRef) + '</code> has no release-channel tag)</span>' : ' <span class="text-muted">(image reference unavailable)</span>'));
       }
-      var selectorHtml = '';
+      var channelHelp = ch.selectorDetail || 'Choose stable, candidate, or edge. The hub records your intent and applies it on rollout or heartbeat.';
+      var channelHtml = '<div class="release-status-row release-status-row--' + chTone + '" title="' + escapeHtml(channelHelp) + '">' + chIcon + ' ' + chLabel + '</div>';
       if (ch.selectorEnabled) {
-        selectorHtml = '<div class="release-status-row release-status-row--selector">' +
-          '<label class="text-muted" for="release-channel-select">Follow channel</label>' +
+        channelHtml = '<div class="release-status-row release-status-row--selector release-status-row--' + chTone + '" title="' + escapeHtml(channelHelp) + '">' +
+          chIcon + ' <label for="release-channel-select">Channel</label>' +
           '<select id="release-channel-select" class="release-channel-select" data-current="' + escapeHtml(ch.channel || '') + '" data-change-action="switchReleaseChannel" data-arg-types="t">' +
           ['stable','candidate','edge'].map(function(c) { return '<option value="' + c + '"' + (c === ch.channel ? ' selected' : '') + '>' + c + '</option>'; }).join('') +
           '</select>' +
-          '<span class="text-muted" id="release-channel-switch-msg">' + escapeHtml(ch.selectorDetail || '') + '</span>' +
+          (ch.pendingChannel && ch.pendingChannel !== ch.channel ? '<span class="release-status-row--warn">switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> pending</span>' : '') +
+          '<span class="release-status-hint" id="release-channel-switch-msg" title="' + escapeHtml(channelHelp) + '">?</span>' +
           '</div>';
       } else if (ch.selectorDetail) {
-        selectorHtml = '<div class="release-status-row mt-2 text-muted">Selection unavailable: ' + escapeHtml(ch.selectorDetail) + '</div>';
+        channelHtml += '<div class="release-status-row text-muted">Selection unavailable <span class="release-status-hint" title="' + escapeHtml(ch.selectorDetail) + '">?</span></div>';
       }
 
       // --- Last upgrade attempt (three distinct states) ---
       var at = rs.attempt || {};
       var aTone = 'muted', aIcon = 'ⓘ', aLabel = '';
       var hideAttemptRow = false;
+      var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
           aTone = 'success'; aIcon = '✅';
-          aLabel = 'Last upgrade: <strong>completed' + (at.target ? ' → ' + escapeHtml(versionShortSHA(at.target)) : '') + '</strong>';
+          aLabel = 'Last upgrade <strong>' + (targetShort ? escapeHtml(targetShort) : 'completed') + '</strong>';
           break;
         case 'failed':
           aTone = 'danger'; aIcon = '⚠';
-          aLabel = 'Last upgrade: <strong>FAILED</strong>';
+          aLabel = 'Last upgrade <strong>FAILED</strong>';
           break;
         case 'in_progress':
           aTone = 'warn'; aIcon = '⟳';
-          aLabel = 'Last upgrade: <strong>in progress</strong>';
+          aLabel = 'Last upgrade <strong>in progress' + (targetShort ? ' → ' + escapeHtml(targetShort) : '') + '</strong>';
           break;
         case 'superseded':
           aTone = 'muted'; aIcon = '↷';
-          aLabel = 'Last upgrade: <strong>superseded' + (at.target ? ' → ' + escapeHtml(versionShortSHA(at.target)) : '') + '</strong>';
+          aLabel = 'Last upgrade <strong>superseded' + (targetShort ? ' → ' + escapeHtml(targetShort) : '') + '</strong>';
           break;
         case 'never':
         default:
@@ -26021,15 +26315,15 @@ function burnAreaChart() {
           hideAttemptRow = true;
           break;
       }
-      // Timestamp — absolute always, relative age as a bonus so staleness is
-      // obvious at a glance.
+      // Timestamp — relative at a glance, absolute in the tooltip.
       var when = at.completedAt || at.at || '';
       var whenHtml = '';
       if (when) {
-        whenHtml = ' <span class="text-muted" title="' + escapeHtml(when) + '">at ' +
-          escapeHtml(when) + ' (' + escapeHtml(relativeAge(when)) + ')</span>';
+        whenHtml = ' · <span class="text-muted" title="' + escapeHtml(when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
       }
-      var detailHtml = at.detail ? '<div class="release-status-detail">' + escapeHtml(at.detail) + '</div>' : '';
+      var detail = at.detail || '';
+      if (targetShort && /hive is running/i.test(detail) && detail.toLowerCase().indexOf(targetShort.toLowerCase()) >= 0) detail = '';
+      var detailHtml = detail ? '<div class="release-status-detail">' + escapeHtml(detail) + '</div>' : '';
 
       // --- Staleness warning: never present stale data as current truth. ---
       var staleHtml = '';
@@ -26039,8 +26333,7 @@ function burnAreaChart() {
       }
 
       el.innerHTML =
-        '<div class="release-status-row release-status-row--' + chTone + '">' + chIcon + ' ' + chLabel + '</div>' +
-        selectorHtml +
+        channelHtml +
         (hideAttemptRow ? '' :
           '<div class="release-status-row release-status-row--' + aTone + '">' + aIcon + ' ' + aLabel + whenHtml + '</div>' +
           detailHtml) +
@@ -26167,8 +26460,6 @@ function burnAreaChart() {
             govTotal: (data.governor?.issues || 0) + (data.governor?.prs || 0),
             govHold: data.hold?.total || 0,
             govActive: data.governor?.active ? 1 : 0,
-            beadsWorkers: Math.max(data.beads?.workers ?? 0, 0),
-            beadsSupervisor: Math.max(data.beads?.supervisor ?? 0, 0),
             repos: {},
             agents: {},
           };
@@ -26488,23 +26779,75 @@ function burnAreaChart() {
     window.addEventListener('hashchange', () => { if (location.hash.startsWith('#plan=')) handlePlanHash(); });
     setTimeout(() => { if (location.hash.startsWith('#plan=')) handlePlanHash(); }, 1000);
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      const acmmOverlay = document.getElementById('acmm-dialog-overlay');
-      if (acmmOverlay && acmmOverlay.style.display === 'flex') { acmmCloseDialog(); return; }
-      const welcomeOverlay = document.getElementById('welcome-overlay');
-      if (welcomeOverlay && !welcomeOverlay.classList.contains('hidden')) { closeWelcomeDialog(); return; }
-      const feedbackOverlay = document.getElementById('feedback-overlay');
-      if (feedbackOverlay) { closeFeedbackModal(); return; }
-      if (_configModalOpen) { closeConfigDialog(); return; }
-      if (_acmmOpen) { closeACMMDialog(); return; }
+    function hiveOverlayIsOpen(el) {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.classList && el.classList.contains('hidden')) return false;
+      if (el.classList && el.classList.contains('hive-chat-shortcuts') && !el.classList.contains('open')) return false;
+      if (el.id === 'oc-drawer-backdrop') return el.classList && el.classList.contains('open');
+      const disp = el.style.display || getComputedStyle(el).display;
+      return disp !== 'none';
+    }
+    function hiveOverlayRank(el, fallback) {
+      if (!el) return fallback || 0;
+      const z = parseInt(getComputedStyle(el).zIndex || '', 10);
+      return Number.isFinite(z) ? z : (fallback || 0);
+    }
+    function hiveCloseGHUserMenu() {
+      const menu = document.getElementById('oc-gh-user-menu');
+      if (menu) menu.hidden = true;
+    }
+    function hiveDismissTopOverlay() {
+      const candidates = [];
+      function add(el, close, fallbackRank) {
+        if (!hiveOverlayIsOpen(el)) return;
+        candidates.push({ el: el, close: close, rank: hiveOverlayRank(el, fallbackRank), order: candidates.length });
+      }
+      const installHintBtn = document.getElementById('gh-app-install-id-hint-btn');
+      if (installHintBtn && installHintBtn.getAttribute('aria-expanded') === 'true') {
+        candidates.push({ el: installHintBtn, close: function() { installHintBtn.setAttribute('aria-expanded', 'false'); installHintBtn.focus(); }, rank: 30000, order: candidates.length });
+      }
+      if (repoPillFilterActive() && document.activeElement && document.activeElement.closest && document.activeElement.closest('#repos-section')) {
+        candidates.push({ el: document.activeElement, close: clearRepoPillFilter, rank: 30000, order: candidates.length });
+      }
+      const versionMenu = document.getElementById('oc-version-menu');
+      add(versionMenu, function() { closeVersionMenu(); const chip = document.getElementById('oc-version-chip'); if (chip) chip.focus(); }, 30000);
+      const avatarMenu = document.getElementById('oc-gh-user-menu');
+      add(avatarMenu, hiveCloseGHUserMenu, 30000);
+      add(document.getElementById('nps-survey-card'), dismissNPSSurvey, 30000);
+      add(document.getElementById('hiveChatShortcuts'), function() { document.getElementById('hiveChatShortcuts').classList.remove('open'); }, 20001);
+      document.querySelectorAll('.hive-dialog-overlay').forEach(function(el) { add(el, function() { if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose(); else el.remove(); }, 20000); });
+      add(document.getElementById('acmm-dialog-overlay'), acmmCloseDialog, 10000);
+      add(document.getElementById('feedback-overlay'), closeFeedbackModal, 10000);
+      add(document.getElementById('welcome-overlay'), closeWelcomeDialog, 10000);
+      add(document.getElementById('config-overlay'), closeConfigDialog, 10000);
+      add(document.getElementById('acmm-overlay'), closeACMMDialog, 10000);
       const nousOverlay = document.getElementById('nous-config-overlay');
-      if (nousOverlay && nousOverlay.style.display !== 'none') { nousOverlay.style.display = 'none'; return; }
+      add(nousOverlay, function() { if (typeof closeNousConfig === 'function') closeNousConfig(); else nousOverlay.style.display = 'none'; }, 1000);
       const ghAuth = document.getElementById('gh-auth-modal-overlay');
-      if (ghAuth && ghAuth.style.display === 'flex') { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; return; }
+      add(ghAuth, function() { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; }, 9999);
       const ghSetup = document.getElementById('gh-setup-overlay');
-      if (ghSetup && ghSetup.style.display === 'flex') { ghSetup.style.display = 'none'; return; }
-    });
+      add(ghSetup, function() { ghSetup.style.display = 'none'; }, 9999);
+      add(document.getElementById('oc-drawer-backdrop'), function() { if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer(); }, 100);
+      const chatPanel = document.getElementById('hiveChatPanel');
+      if (chatPanel && chatPanel.classList.contains('open')) {
+        candidates.push({ el: chatPanel, close: function() { chatPanel.classList.remove('open'); const fab = document.getElementById('hiveChatFab'); if (fab) fab.classList.remove('open'); }, rank: 50, order: candidates.length });
+      }
+      if (!candidates.length) return false;
+      candidates.sort(function(a, b) { return (b.rank - a.rank) || (b.order - a.order); });
+      candidates[0].close();
+      return true;
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      if (e.isComposing) return;
+      const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'select') return;
+      if (!hiveDismissTopOverlay()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
 
     function openAddAgentDialog() {
       openConfigDialog('agent', null);
@@ -26637,7 +26980,6 @@ function burnAreaChart() {
             <div style="text-align:right;min-width:80px">
               <div style="font-size:0.7rem;color:var(--muted)">${p.agentCount} agent${p.agentCount !== 1 ? 's' : ''}</div>
               ${!isCurrent && p.level > 0 ? '<button class="hv-btn btn-primary btn-sm" data-action="applyACMMPack" data-arg0="' + p.level + '" data-arg-types="j" style="margin-top:var(--sp-2);padding:6px 14px;background:' + color + ';color:#fff;border:none;border-radius:var(--r);font-size:var(--fs-sm);font-weight:600;cursor:pointer">Apply</button>' : ''}
-              ${!isCurrent ? '<button class="hv-btn btn-primary" data-action="setACMMLevel" data-arg0="' + p.level + '" data-arg-types="j" style="margin-top:var(--sp-2);padding:5px 10px;background:transparent;color:' + color + ';border:1px solid ' + color + ';border-radius:var(--r);font-size:var(--fs-xs);font-weight:600;cursor:pointer" title="Preview this level — changes the display without affecting running agents">Preview</button>' : ''}
             </div>
           </div>
           ${p.governor ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-3)"><span style="font-weight:600">Governor:</span> ' + esc(p.governor.modes || 'none') + ' · <span style="font-weight:600">Merge:</span> ' + esc(p.governor.mergePolicy || 'manual') + '</div>' : ''}
@@ -26696,46 +27038,6 @@ function burnAreaChart() {
       }
     }
 
-    async function setACMMLevel(level) {
-      const errEl = document.getElementById('acmm-apply-error');
-      errEl.style.display = 'none';
-
-      const levelNames = ['', 'Inception', 'Advisory', 'Quality-Gated', 'Security-Aware', 'Semi-Autonomous', 'Fully Autonomous'];
-      const name = levelNames[level] || 'Level ' + level;
-      if (!(await hiveConfirm(`Preview ACMM Level ${level} (${name})?\n\nThis changes the dashboard display to show what this level looks like. Running agents are not affected — use Apply to create agents and change their state.`))) return;
-
-      showACMMLoading('Switching to Level ' + level + '…');
-      try {
-        const res = await fetch('/api/packs/level', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ level }) });
-        const data = await res.json();
-        hideACMMLoading();
-        if (!res.ok) {
-          errEl.textContent = data.error || 'Failed to set level';
-          errEl.style.display = 'block';
-          return;
-        }
-        const governorChanges = formatGovernorChanges(data.governor_changes);
-        closeACMMDialog();
-        // Server-confirmed level only — see applyACMMPack above (#5492).
-        const confirmedLevel = (data && Number.isFinite(Number(data.level))) ? Number(data.level) : level;
-        noteStatusMutation(data.minStatusSeq);
-        window._acmmOverride = { level: confirmedLevel, packAgents: data.packAgents || [] };
-        if (window._lastStatus) {
-          window._lastStatus.acmmLevel = confirmedLevel;
-          window._lastStatus.acmmLevelConfigured = true;
-          window._lastStatus.acmmPackAgents = data.packAgents || [];
-          render(window._lastStatus);
-        }
-        showToast(`ACMM level set to L${confirmedLevel} (${name})` + (governorChanges ? ' — governor settings changed' : ''), governorChanges ? 'info' : 'success');
-        if (governorChanges) await hiveAlert(governorChanges, 'Governor settings changed');
-        await maybeShowLevelAutoMergeActiveModal(data);
-        _acmmPacks = null;
-      } catch (err) {
-        hideACMMLoading();
-        errEl.textContent = 'Network error: ' + err.message;
-        errEl.style.display = 'block';
-      }
-    }
 
     // Packs reconcile scheduling as part of an explicit level apply. Show the
     // exact mutation instead of leaving an operator to discover it after restart.
@@ -26777,13 +27079,11 @@ function burnAreaChart() {
       const topbarBadge = document.getElementById('acmm-badge');
       if (topbarBadge) {
         topbarBadge.innerHTML = escapeHtml(acmmLevelLabel(level).replace(' ', ' · '));
-        topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to view ACMM Evaluation';
+        topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to change maturity level';
         tint(topbarBadge);
       }
       const badge = document.getElementById('acmm-main-badge');
       if (badge) { badge.innerHTML = html; tint(badge); }
-      const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) { sbBadge.innerHTML = html; tint(sbBadge); }
       applyACMMVisibility(level, packAgents);
     }
 
@@ -26795,7 +27095,6 @@ function burnAreaChart() {
       const advisorySection = document.getElementById('advisory-section');
       const tokenPanel = document.getElementById('token-panel');
       const reposSection = document.getElementById('repos-section');
-      const beadsSection = document.getElementById('beads-section');
       const contributorsSection = document.getElementById('contributors-section');
       const leaderboardSection = document.getElementById('leaderboard-section');
       const nousSection = document.getElementById('nous-section');
@@ -26811,7 +27110,6 @@ function burnAreaChart() {
       const ACMM_GOVERNOR_MIN_LEVEL = 2;
       const ACMM_ADVISORY_MIN_LEVEL = 2;
       const ACMM_TOKENS_MIN_LEVEL = 3;
-      const ACMM_BEADS_MIN_LEVEL = 2;
       const ACMM_REPOS_MIN_LEVEL = 2;
       const ACMM_NOUS_MIN_LEVEL = 4;
       const ACMM_CONTRIBUTORS_MIN_LEVEL = 2;
@@ -26827,7 +27125,6 @@ function burnAreaChart() {
         level >= ACMM_GOVERNOR_MIN_LEVEL ? show(governor, '') : hide(governor);
         level >= ACMM_ADVISORY_MIN_LEVEL ? show(advisorySection, '') : hide(advisorySection);
         level >= ACMM_TOKENS_MIN_LEVEL ? show(tokenPanel, '') : hide(tokenPanel);
-        level >= ACMM_BEADS_MIN_LEVEL ? show(beadsSection, '') : hide(beadsSection);
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
@@ -26847,7 +27144,6 @@ function burnAreaChart() {
           if (section === 'advisory-section' && level < ACMM_ADVISORY_MIN_LEVEL) hide(item);
           if (section === 'token-panel' && level < ACMM_TOKENS_MIN_LEVEL) hide(item);
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
-          if (section === 'beads-section' && level < ACMM_BEADS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
           if (section === 'nous-section' && (!strategyLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
@@ -36264,8 +36560,6 @@ function burnAreaChart() {
     document.addEventListener('keydown', (e) => {
       const inEditable = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
       if (e.key === '?' && !inEditable) { e.preventDefault(); if (chatShortcuts) chatShortcuts.classList.add('open'); return; }
-      if (e.key === 'Escape' && chatShortcuts && chatShortcuts.classList.contains('open')) { chatShortcuts.classList.remove('open'); return; }
-      if (e.key === 'Escape' && chatPanel.classList.contains('open')) { chatPanel.classList.remove('open'); chatFab.classList.remove('open'); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); chatPanel.classList.add('open'); chatFab.classList.add('open'); chatInput.focus(); }
     });
 
@@ -36296,9 +36590,6 @@ function burnAreaChart() {
         setOpen(!isOpen());
       });
       backdrop.addEventListener('click', closeDrawer);
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeDrawer();
-      });
       // Rotating to landscape (or resizing past the breakpoint) must not strand
       // the drawer open — above 768px the sidebar is a normal static column and
       // a leftover .open would leave the backdrop covering the page.
@@ -36628,7 +36919,6 @@ function burnAreaChart() {
       const menu = document.getElementById('oc-version-menu');
       const chip = document.getElementById('oc-version-chip');
       if (!menu || menu.hidden) return;
-      if (e.key === 'Escape') { e.preventDefault(); closeVersionMenu(); if (chip) chip.focus(); return; }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       const items = Array.from(menu.querySelectorAll('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'));
       if (!items.length) return;
@@ -37726,6 +38016,7 @@ function burnAreaChart() {
       let selected = null;
 
       const card = npsText('div', 'nps-card');
+      card.id = 'nps-survey-card';
       card.setAttribute('role', 'dialog');
       card.setAttribute('aria-label', 'Feedback');
       const head = npsText('div', 'nps-card-head');
@@ -37842,10 +38133,6 @@ function burnAreaChart() {
         }
       });
 
-      _npsKeyHandler = (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); dismissNPSSurvey(); }
-      };
-      document.addEventListener('keydown', _npsKeyHandler);
       _npsCard = card;
       document.body.appendChild(card);
       npsTrack(status, 'hive_nps_survey_shown', {});

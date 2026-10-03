@@ -1,8 +1,18 @@
 # ADR-0021: Named planning-engine boundary for Project Inception runs
 
-Status: Proposed
+Status: Accepted
 
 Tracked in #10175. Implementation in #10293.
+
+Implemented on `v6` through the ordered children of #10293: #10352
+(`pkg/planengine` neutral types, `Engine`, `Register`/`Lookup`), #10353 (the
+stage observer ported off `ExecFunc`), #10354 (the CLI engine registered as
+`spektacular`), #10355 (the `runs.engine` selector), #10356
+(`wirePlanningEngine`), #10357 (engine-named `MetaSource`), #10358 (fake-engine
+conformance tests) and #10359 (these docs). Operator-facing documentation is
+[Spektacular runner](../spektacular.md) ("Selecting a planning engine" and
+"Writing a planning engine") and
+[Spektacular and Project Inception](../integrations/spektacular.md).
 
 ## Context
 

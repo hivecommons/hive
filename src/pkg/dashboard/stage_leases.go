@@ -814,23 +814,41 @@ func (s *Server) findRunEpic(runKey string) (*beads.Store, *beads.Bead) {
 }
 
 // runPlanSource is the MetaSource value stamped on epics minted from a
-// Spektacular plan.
+// plan when no engine name is supplied.
 const runPlanSource = "spektacular"
 
-// ImportRunPlan admits a final Spektacular plan as a DRAFT Hive plan: the
+// ImportRunPlan admits a final engine plan as a DRAFT Hive plan: the
 // task-list text the runner rendered from Spektacular's export is decomposed
 // with AutoApprove false, so children stay gated until ApprovePlan and no
 // model is asked to redecompose an already-structured plan. The epic is found
 // by its run_key metadata (or created bound to the run key). Importing the
 // same plan again is a no-op (idempotent across ticks) apart from retrying
 // the Wavefront fan-out of an approved plan that has none yet; a regenerated plan
-// replaces the previously imported one and returns the epic to draft. An epic
-// that already carries children from some other planner is left alone.
-func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
+// replaces the previously imported one and returns the epic to draft. The
+// optional engine name stamps MetaSource; omitted names retain the Spektacular
+// default. An epic that already carries children from some other planner is
+// left alone.
+func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...string) error {
 	if s == nil {
 		return errors.New("no server")
 	}
+	source := runPlanSource
+	if len(engineName) > 1 {
+		return errors.New("at most one planning engine name is required")
+	}
+	if len(engineName) == 1 {
+		source = strings.TrimSpace(engineName[0])
+		if source == "" {
+			return errors.New("planning engine name is required")
+		}
+	}
 	store, epic := s.findRunEpic(runKey)
+	designPlanImport := epic != nil && epic.Meta(planning.MetaDesignVia) == planning.DesignViaSpektacular && epic.Meta(planning.MetaRunKey) == runKey
+	// Never take over a run epic owned by another planner, even when its
+	// plan-status marker is absent. Keep lookup shared with approval/reset.
+	if epic != nil && epic.Meta(planning.MetaSource) != "" && epic.Meta(planning.MetaSource) != source && !designPlanImport {
+		return nil
+	}
 	if epic == nil {
 		var name string
 		store, name = s.planEpicStore()
@@ -844,7 +862,7 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		for key, value := range map[string]string{
 			planning.MetaRunKey:    runKey,
 			planning.MetaIssueRepo: repo,
-			planning.MetaSource:    runPlanSource,
+			planning.MetaSource:    source,
 		} {
 			if value == "" {
 				continue
@@ -863,11 +881,19 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
 	}
 	previous := runPlanChildren(store, epic.ID)
-	if imported == "" && len(previous) > 0 {
+	if imported == "" && len(previous) > 0 && !designPlanImport {
 		return nil
 	}
-	if _, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false}); err != nil {
-		return fmt.Errorf("importing spektacular plan: %w", err)
+	// Epics bound by external ref may predate run metadata. Record their
+	// producing engine too, without retagging an already imported plan.
+	if epic.Meta(planning.MetaSource) == "" {
+		if err := store.SetMetadata(epic.ID, planning.MetaSource, source); err != nil {
+			return fmt.Errorf("tagging run epic: %w", err)
+		}
+	}
+	_, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
+	if err != nil {
+		return fmt.Errorf("importing %s plan: %w", source, err)
 	}
 	for _, child := range previous {
 		if child.Status == beads.StatusClosed || child.Status == beads.StatusDone {
