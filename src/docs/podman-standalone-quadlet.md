@@ -34,6 +34,33 @@ else. The instance label is the contract's default (`default`); a second Hive
 deployment on the same host needs its own unit files with their own instance
 value.
 
+## Upgrading an existing install for dashboard upgrades
+
+From a current `v5` checkout containing the host upgrade request bridge, run
+one command for your install's manager:
+
+```sh
+# Rootless, as the installing user (no sudo):
+bin/hive-podman-update.sh reconcile migrate --rootless
+
+# Rootful, using the system manager through sudo:
+bin/hive-podman-update.sh reconcile migrate --rootful
+```
+
+This repairs deployment metadata without changing tokens or unrelated env
+lines, reconciles repo-owned files, installs the host bridge and its helpers,
+sets the request directory's ownership/mode, enables only `hive-upgrade.path`,
+and recreates Hive to activate the new environment and mount. **Expect a brief
+service interruption on the first run.** Repeating it is a no-op with exit 0;
+failed activation is retried by the same command. `hive.yaml` and `secrets/`
+are never rewritten. Setup owns fresh provisioning; the update script owns
+this in-place migration, reusing `reconcile apply` for file reconciliation.
+The image must separately have dashboard request-bridge support; migration
+does not change the image pin. See
+[dashboard-standalone-upgrades.md](dashboard-standalone-upgrades.md#upgrading-an-existing-podman-install)
+for the full contract. Ordinary `reconcile apply` still does not recreate Hive
+or rewrite `hive.env`.
+
 ## The published-port boundary
 
 This is the property the gateway unit exists for, and it is the one thing in

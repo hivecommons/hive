@@ -1,0 +1,1 @@
+- Existing Podman installs can run `hive-podman-update.sh reconcile migrate` to repair deployment metadata and activate the dashboard upgrade request bridge without replacing operator configuration, tokens, or secrets; repeated runs are no-ops ([#10419](https://github.com/hivecommons/hive/issues/10419)).

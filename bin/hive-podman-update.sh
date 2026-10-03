@@ -42,7 +42,11 @@
 #                   bad update, when the top of the history is the bad pin.
 #   unpin           remove the drop-in, returning the unit to the floating tag
 #                   in hive.container, and restart.
-#   reconcile [check|apply]
+#   reconcile [check|apply|migrate]
+#                   `migrate` also repairs deployment metadata, installs the
+#                   dashboard upgrade bridge and recreates Hive if needed.
+#                   This explicit migration can interrupt service; check/apply
+#                   retain their existing no-Hive-restart semantics.
 #                   Compare the repo-owned files this host RUNS FROM against
 #                   the checkout, and with `apply` re-copy the ones that have
 #                   fallen behind (#6078). Covers the gateway config and the
@@ -163,6 +167,7 @@ if [ "$ROOTFUL" -eq 1 ]; then
   # %E in the shipped units, which Quadlet expands to /etc for a system unit.
   CONF_DIR="${HIVE_UPDATE_CONF_DIR:-/etc/hive}"
   SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+  BIN_DIR="${HIVE_UPDATE_BIN_DIR:-/usr/local/bin}"
   sctl() { sudo systemctl "$@"; }
   pod()  { sudo podman "$@"; }
   as_owner() { sudo "$@"; }
@@ -174,6 +179,7 @@ else
   # %E expands to ~/.config for a user unit; both match bin/hive-podman-setup.sh.
   CONF_DIR="${HIVE_UPDATE_CONF_DIR:-$HOME/.config/hive}"
   SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-$HOME/.config/systemd/user}"
+  BIN_DIR="${HIVE_UPDATE_BIN_DIR:-$HOME/.local/bin}"
   sctl() { systemctl --user "$@"; }
   pod()  { podman "$@"; }
   as_owner() { "$@"; }
@@ -550,6 +556,18 @@ managed_files() {
     printf '%s\t%s\t%s\n' \
       "${SRC_ROOT}/src/deploy/systemd/${name}" "${SYSTEMD_UNIT_DIR}/${name}" "boot unit"
   done
+  # Bridge assets are introduced by #10416. Older checkouts still support
+  # check/apply; migrate below requires the complete bridge before writing.
+  if [ -f "${SRC_ROOT}/src/deploy/systemd/hive-upgrade.path" ]; then
+    for name in hive-upgrade.path hive-upgrade.service; do
+      printf '%s\t%s\t%s\n' \
+        "${SRC_ROOT}/src/deploy/systemd/${name}" "${SYSTEMD_UNIT_DIR}/${name}" "bridge unit"
+    done
+    for name in hive-upgrade-request.sh hive-podman-update.sh; do
+      printf '%s\t%s\t%s\n' \
+        "${SRC_ROOT}/bin/${name}" "${BIN_DIR}/${name}" "bridge helper"
+    done
+  fi
 }
 
 # Whether this script was run from somewhere that has the files to compare
@@ -563,7 +581,11 @@ managed_state() {
   local src="$1" dest="$2"
   [ -f "$src" ]  || { printf 'nosrc\n';  return 0; }
   [ -f "$dest" ] || { printf 'absent\n'; return 0; }
-  if cmp -s "$src" "$dest"; then printf 'same\n'; else printf 'drift\n'; fi
+  if cmp -s "$src" "$dest" && { [ ! -x "$src" ] || as_owner test -x "$dest"; }; then
+    printf 'same\n'
+  else
+    printf 'drift\n'
+  fi
 }
 
 # Report every managed file. With verbose=1 the matching ones are printed too,
@@ -691,11 +713,131 @@ restart_gateway_onto_new_config() {
   return 0
 }
 
+# Setup owns fresh provisioning; update owns in-place migration. In particular
+# this never runs setup --force, which would replace tokens and hive.yaml.
+do_migrate() {
+  local name mount mode=rootless gid="${HIVE_SETUP_LAUNCH_GID:-1002}"
+  local request_dir="${CONF_DIR}/upgrade-requests" changed=0 env_changed=0
+  local tmp out expected ownership mode_bits
+  local pending="${CONF_DIR}/.upgrade-bridge-migration-pending"
+  local mode_arg=--rootless
+  [ "$ROOTFUL" -eq 1 ] && mode_arg=--rootful
+  [ "$ROOTFUL" -eq 1 ] && mode=rootful
+  for name in src/deploy/systemd/hive-upgrade.path src/deploy/systemd/hive-upgrade.service \
+      bin/hive-upgrade-request.sh bin/hive-podman-update.sh; do
+    if [ ! -f "${SRC_ROOT}/${name}" ]; then
+      bad "migration needs the host bridge checkout (#10416): missing ${name}"
+      return "$EX_CONFIG"
+    fi
+  done
+  mount="$(sed -n 's|^Volume=%E/hive/upgrade-requests:\([^:]*\):.*|\1|p' "${SRC_ROOT}/src/deploy/quadlet/hive.container" | head -n1)"
+  if [ -z "$mount" ]; then
+    bad "migration needs the upgrade-requests mount in hive.container"
+    return "$EX_CONFIG"
+  fi
+  if as_owner test -L "$request_dir" || as_owner test -L "$pending"; then
+    bad "migration refuses symlinked request directory or pending marker"
+    return "$EX_CONFIG"
+  fi
+  # Refuse to manufacture a fresh configuration under a mistaken path.
+  if ! as_owner test -f "${CONF_DIR}/hive.env"; then
+    bad "migration needs an existing ${CONF_DIR}/hive.env; use setup for a new install"
+    return "$EX_CONFIG"
+  fi
+  tmp="$(mktemp)" || return "$EX_CONFIG"
+  out="$(mktemp)" || { rm -f "$tmp"; return "$EX_CONFIG"; }
+  # These files contain secrets; mktemp creates them 0600. No env is sourced.
+  if ! as_owner cat "${CONF_DIR}/hive.env" >"$tmp"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  awk -v mode="$mode" -v mount="$mount" '
+    BEGIN {
+      keys[1]="HIVE_DEPLOYMENT_RUNTIME"; values[1]="podman-quadlet"
+      keys[2]="HIVE_DEPLOYMENT_PODMAN_MODE"; values[2]=mode
+      keys[3]="HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR"; values[3]=mount
+    }
+    {
+      for (i=1; i<=3; i++) {
+        if ($0 ~ "^[[:space:]]*" keys[i] "=") {
+          if (!seen[i]++) print keys[i] "=" values[i]
+          next
+        }
+      }
+      print
+    }
+    END { for (i=1; i<=3; i++) if (!seen[i]) print keys[i] "=" values[i] }
+  ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return "$EX_CONFIG"; }
+  cmp -s "$tmp" "$out" || env_changed=1
+
+  # Only the directory itself is repaired: never chown pending request files
+  # or archives. Rootless ownership must be inspected in the user namespace.
+  if [ "$ROOTFUL" -eq 1 ]; then
+    ownership="$(as_owner stat -c %g "$request_dir" 2>/dev/null)"
+    expected="$gid"
+  else
+    ownership="$(pod unshare stat -c %u:%g "$request_dir" 2>/dev/null)"
+    expected="0:$gid"
+  fi
+  mode_bits="$(as_owner stat -c %a "$request_dir" 2>/dev/null)"
+  if [ "$ownership" != "$expected" ] || [ "$mode_bits" != 770 ]; then
+    if ! as_owner mkdir -p "$request_dir" || ! as_owner chmod 770 "$request_dir"; then
+      rm -f "$tmp" "$out"; return "$EX_CONFIG"
+    fi
+    if [ "$ROOTFUL" -eq 1 ]; then
+      as_owner chgrp "$gid" "$request_dir"
+    else
+      pod unshare chown "0:$gid" "$request_dir"
+    fi || { rm -f "$tmp" "$out"; return "$EX_CONFIG"; }
+    changed=1
+  fi
+  managed_report 0 || changed=1
+  [ "$env_changed" -eq 1 ] && changed=1
+  as_owner test -f "$pending" && changed=1
+  # Keep retrying a failed recreate even after all files match the checkout.
+  if [ "$changed" -eq 1 ] && ! as_owner touch "$pending"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  # Reuse the existing unit/config reconciliation, not a second file copier.
+  if ! "$0" reconcile apply "$mode_arg"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  if [ "$env_changed" -eq 1 ]; then
+    if ! as_owner install -m600 "$out" "${CONF_DIR}/hive.env"; then
+      rm -f "$tmp" "$out"; return "$EX_CONFIG"
+    fi
+    changed=1
+  fi
+  rm -f "$tmp" "$out"
+  if ! sctl is-enabled hive-upgrade.path >/dev/null 2>&1 || \
+      ! sctl is-active hive-upgrade.path >/dev/null 2>&1; then
+    as_owner touch "$pending" || return "$EX_CONFIG"
+    sctl enable --now hive-upgrade.path || return "$EX_CONFIG"
+    changed=1
+  fi
+  if [ "$changed" -eq 0 ]; then
+    ok "already current -- deployment metadata and upgrade bridge unchanged"
+    return 0
+  fi
+  # Also retries reload/path activation after a partially failed migration.
+  sctl daemon-reload || return "$EX_CONFIG"
+  sctl restart hive-upgrade.path || return "$EX_CONFIG"
+  # The existing container has neither the new env nor the bind mount until
+  # recreated. Restart only on migration, never on ordinary reconcile apply.
+  sctl restart "$UNIT" || return "$EX_CONFIG"
+  ensure_gateway_serving || return "$EX_CONFIG"
+  as_owner rm -f "$pending" || return "$EX_CONFIG"
+  ok "migration complete -- deployment metadata and upgrade bridge are live"
+}
+
 do_reconcile() {
   local action="${REF:-check}"
+  if [ "$action" = migrate ]; then
+    do_migrate
+    exit $?
+  fi
   case "$action" in
     check|apply) : ;;
-    *) printf 'reconcile takes check or apply (got %s)\n' "$action" >&2; usage ;;
+    *) printf 'reconcile takes check or apply or migrate (got %s)\n' "$action" >&2; usage ;;
   esac
 
   head1 "Managed files -- $MODE_LABEL"
@@ -748,7 +890,9 @@ do_reconcile() {
       failed=1
       continue
     fi
-    if ! as_owner install -Dm644 "$src" "$dest"; then
+    local file_mode=644
+    [ "$label" = "bridge helper" ] && file_mode=755
+    if ! as_owner install -Dm"$file_mode" "$src" "$dest"; then
       bad "could not write ${dest}"
       failed=1
       continue
@@ -761,8 +905,11 @@ do_reconcile() {
   done < <(managed_files)
 
   if [ "$units_changed" -eq 1 ]; then
-    sctl daemon-reload
-    ok "daemon-reload: the Quadlet generator has re-read the units"
+    if ! sctl daemon-reload; then
+      bad "daemon-reload failed -- the installed units are not yet live"
+      failed=1
+    fi
+    [ "$failed" -eq 0 ] && ok "daemon-reload: the Quadlet generator has re-read the units"
     # The measured trap behind the second half of #6078. A rewritten
     # hive.container can carry a NEW Image= -- the registry org moved from
     # ghcr.io/kubestellar to ghcr.io/hivecommons -- and the generated unit
