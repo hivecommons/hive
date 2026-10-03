@@ -17,7 +17,7 @@ import (
 const (
 	EndpointPath = "/api/contribute/mcp"
 	// TokenQueryParam is the query key carrying a bearer when the client
-	// cannot set an Authorization header (CLI --mcp-server URLs).
+	// cannot set an Authorization header (the server URL in a CLI --mcp-config document).
 	TokenQueryParam = "token"
 
 	ProtocolVersion = "2025-03-26"

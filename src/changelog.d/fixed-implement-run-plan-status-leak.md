@@ -1,0 +1,1 @@
+- Campaigns and Runs no longer show the plan document's artifact, `final` status and `finished` step under an implement-stage run; implement has no Spektacular document, so the any-stage fallback is skipped for it (#10121).

@@ -1,0 +1,1 @@
+- Jam GitHub Projects sync now publishes items to the default `api.github.com` endpoint through the real Projects v2 `addProjectV2DraftIssue` mutation (requires a `PVT_…` project id) instead of a non-GitHub `hiveJamProjectSync` mutation, and no longer overwrites inbound status items.

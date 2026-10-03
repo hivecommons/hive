@@ -3968,14 +3968,19 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// re-minted a credential.
 			if completedTask != nil {
 				h.completeWavefrontTask(completedTask, completedLabels, taskAssignedAt)
-				if !h.completeImplementStage(identityOf(s.contributor), completedTask.TaskID, time.Now()) {
-					h.revokeLease(identityOf(s.contributor), completedTask.TaskID)
-				}
 			}
 			verifiedPR := ""
 			var prDetail ghpkg.PRVerification
 			if completedTask != nil {
 				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
+			}
+			// The run only reaches `completed` once the reported PR verified
+			// (#10090); an unverified completion still drops the lease and its
+			// worktree but leaves the run open.
+			if completedTask != nil {
+				if !prDetail.Verified || !h.completeImplementStage(identityOf(s.contributor), completedTask.TaskID, time.Now()) {
+					h.releaseImplementStageUnverified(identityOf(s.contributor), completedTask.TaskID)
+				}
 			}
 			if prDetail.Verified {
 				verifiedPR = msg.PRURL

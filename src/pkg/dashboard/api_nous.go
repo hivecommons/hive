@@ -53,13 +53,19 @@ func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runLink, admitted, err := s.approveNousSpektacularRun()
+	approval, err := s.approveNousSpektacularRun()
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		s.auditFromRequest(r, "nous_approve_failed", auditDetail("error", err.Error()), "")
+		jsonError(w, err.Error(), nousRunApprovalStatus(err))
 		return
 	}
 	s.auditFromRequest(r, "nous_approve", "", "")
-	if admitted {
+	if approval.handled {
+		runLink := approval.link
+		if approval.existing {
+			jsonResponse(w, map[string]interface{}{"ok": true, "status": "already_approved", "run": runLink})
+			return
+		}
 		s.auditFromRequest(r, "nous_run_admitted", auditDetail("run", runLink["key"], "stage", runLink["stage"]), "")
 		jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "run": runLink})
 		return

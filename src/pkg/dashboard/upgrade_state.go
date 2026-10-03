@@ -8,19 +8,21 @@ import (
 )
 
 const (
-	dashboardUpgradeStateStarted = "started"
-	dashboardUpgradeStateFailed  = "failed"
-	dashboardUpgradeStateDone    = "done"
+	dashboardUpgradeStateStarted    = "started"
+	dashboardUpgradeStateFailed     = "failed"
+	dashboardUpgradeStateDone       = "done"
+	dashboardUpgradeStateSuperseded = "superseded"
 )
 
 var dashboardUpgradeStatePath = "/data/dashboard-upgrade-state.json"
 
 type dashboardUpgradeState struct {
-	State     string    `json:"state"`
-	Target    string    `json:"target,omitempty"`
-	StartedAt time.Time `json:"startedAt,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Reason    string    `json:"reason,omitempty"`
+	State       string    `json:"state"`
+	Target      string    `json:"target,omitempty"`
+	StartedFrom string    `json:"startedFrom,omitempty"`
+	StartedAt   time.Time `json:"startedAt,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	Reason      string    `json:"reason,omitempty"`
 }
 
 func readDashboardUpgradeState() *dashboardUpgradeState {
@@ -80,7 +82,18 @@ func upgradeAttemptFromDashboardState(st *dashboardUpgradeState) *UpgradeAttempt
 	case dashboardUpgradeStateDone:
 		out.State = upgradeAttemptSucceeded
 		out.CompletedAt = formatUpgradeTime(st.UpdatedAt)
-		out.Detail = "Last upgrade SUCCEEDED — the hive is running the requested target."
+		if out.Target != "" {
+			out.Detail = "Last upgrade completed — the hive is running " + shortSHADashboard(out.Target) + "."
+		} else {
+			out.Detail = "Last upgrade completed."
+		}
+	case dashboardUpgradeStateSuperseded:
+		out.State = upgradeAttemptSuperseded
+		out.CompletedAt = formatUpgradeTime(st.UpdatedAt)
+		if out.Reason == "" {
+			out.Reason = "upgrade request was superseded before completion could be observed"
+		}
+		out.Detail = "Last upgrade superseded: " + out.Reason
 	default:
 		return nil
 	}

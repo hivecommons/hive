@@ -1,0 +1,113 @@
+name: Spektacular real-CLI smoke
+
+# Scheduled canary for hivecommons/hive#10074's last confirmed gap: "nothing
+# in the repo exercises the pinned release binary". Every pkg/spektacular
+# test drives the Runner through the in-tree shell fake
+# (testdata/spektacular-fake/spektacular) or a scripted Exec stub, so a
+# mismatch between those stand-ins and the real 0.22.0 release could pass
+# `go test ./pkg/spektacular/...` indefinitely. This workflow runs
+# TestRealSpektacularCLISmoke (build tag `integration`) against the pinned
+# binary the contributor image ships (src/Dockerfile.contributor,
+# `ARG SPEKTACULAR_VERSION`), the same image backend-smoke.yml's pinned lane
+# uses, so no separate download/checksum step is needed here.
+#
+# It also runs on pull requests that touch the Spektacular contract surface
+# (the package, its fake, the pinned version in the contributor Dockerfile,
+# or this workflow), so a change that only the fake agrees with cannot merge
+# green on fake-backed tests alone; the nightly schedule still catches a
+# drift from a re-published contributor image.
+#
+# This is a read-only smoke against a throwaway `.spektacular` store the test
+# creates under its own temp dir; it needs no secrets and nothing it does
+# persists past the job.
+
+on:
+  schedule:
+    - cron: '48 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/pkg/spektacular/**'
+      - 'src/Dockerfile.contributor'
+      - '.github/workflows/spektacular-real-cli-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spektacular-real-cli-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require a container engine
+        run: |
+          if command -v podman >/dev/null 2>&1; then
+            podman --version
+            exit 0
+          fi
+          echo "::error::spektacular-real-cli-smoke needs podman to run inside ghcr.io/hivecommons/hive-contributor:latest"
+          exit 1
+
+      - name: Pull the contributor image
+        # Owner-derived, same convention docker.yml/backend-smoke.yml use for
+        # their image targets: a fork publishes its own
+        # ghcr.io/<fork-org>/hive-contributor, so that is the pinned binary
+        # its smoke should exercise, falling back (loudly) to the upstream
+        # image when the owner-scoped one has not been published yet.
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          OWNER="$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
+          OWNER_IMAGE="ghcr.io/${OWNER}/hive-contributor:latest"
+          UPSTREAM_IMAGE="ghcr.io/hivecommons/hive-contributor:latest"
+          if podman pull "$OWNER_IMAGE"; then
+            IMAGE="$OWNER_IMAGE"
+          else
+            echo "::warning::${OWNER_IMAGE} is not pullable — falling back to ${UPSTREAM_IMAGE}. This smoke is exercising UPSTREAM's pinned spektacular binary, not this repository's own contributor image."
+            podman pull "$UPSTREAM_IMAGE"
+            IMAGE="$UPSTREAM_IMAGE"
+          fi
+          echo "spektacular-real-cli-smoke image: $IMAGE"
+          echo "CONTRIBUTOR_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Real-CLI smoke (in-container)
+        run: |
+          podman run --rm --entrypoint /bin/bash \
+            -v "${GITHUB_WORKSPACE}:/opt/hive-src:ro,Z" \
+            "${CONTRIBUTOR_IMAGE}" \
+            -lc 'git config --global --add safe.directory /opt/hive-src && cd /opt/hive-src/src && go test -tags integration ./pkg/spektacular -run TestRealSpektacularCLISmoke -v -count=1' |& tee smoke.log
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spektacular-real-cli-smoke
+          path: smoke.log
+          if-no-files-found: ignore
+
+  create-issue-on-failure:
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    needs: [smoke]
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `[spektacular-real-cli-smoke] failure on ${context.sha.substring(0, 7)}`;
+            const existing = await github.rest.issues.listForRepo({owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'spektacular-real-cli-smoke', per_page: 20});
+            const dup = existing.data.find(i => i.title.startsWith('[spektacular-real-cli-smoke]'));
+            const body = `Scheduled spektacular real-CLI smoke failed on ${context.sha}.\n\nRun: ${runUrl}\n\nPart of #10074.`;
+            if (dup) await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: dup.number, body});
+            else await github.rest.issues.create({owner: context.repo.owner, repo: context.repo.repo, title, body, labels: ['spektacular-real-cli-smoke', 'ci-failure', 'kind/bug']});

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // TestBuildAutoUpdateStatusStates pins the classifier's state machine and the
@@ -275,5 +276,36 @@ func TestIndexHTMLHasAutoUpdateSection(t *testing.T) {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html missing %q — the Auto-update section the reporter searched for is gone (#6962)", snippet)
 		}
+	}
+}
+
+// #10257: the hub's next-update ETA is relayed additively, and stays absent
+// when unknown or when updates are disabled or paused.
+func TestBuildAutoUpdateStatusNextUpdateAt(t *testing.T) {
+	behind := 2
+	const eta = "2026-10-03T13:00:00Z"
+	policy := func(p spoke.HeartbeatUpgradePolicy) autoUpdateInputs {
+		p.NextUpdateAt = eta
+		return autoUpdateInputs{Policy: &p, CommitsBehind: &behind}
+	}
+
+	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Channel: "stable", TargetResolved: true})); got.NextUpdateAt != eta {
+		t.Fatalf("nextUpdateAt = %q, want %q", got.NextUpdateAt, eta)
+	}
+	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Paused: true})); got.NextUpdateAt != "" {
+		t.Fatalf("paused nextUpdateAt = %q, want empty", got.NextUpdateAt)
+	}
+	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{})); got.NextUpdateAt != "" {
+		t.Fatalf("disabled nextUpdateAt = %q, want empty", got.NextUpdateAt)
+	}
+	if got := buildAutoUpdateStatus(autoUpdateInputs{Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true}, CommitsBehind: &behind}); got.NextUpdateAt != "" {
+		t.Fatalf("older hub nextUpdateAt = %q, want empty", got.NextUpdateAt)
+	}
+	raw, err := json.Marshal(buildAutoUpdateStatus(autoUpdateInputs{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "nextUpdateAt") {
+		t.Fatalf("nextUpdateAt serialized while unknown: %s", raw)
 	}
 }

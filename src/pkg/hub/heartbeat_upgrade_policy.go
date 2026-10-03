@@ -28,7 +28,7 @@ func (s *HubServer) heartbeatUpgradePolicy(payload *HeartbeatPayload, saasHive *
 		schedule = AutoUpgradeModeInstant
 	}
 	reach := s.reachableUpgradeTarget(branch, payload.ImageRef, trackedChannel)
-	return &HeartbeatUpgradePolicy{
+	policy := &HeartbeatUpgradePolicy{
 		HubManaged:     hubManaged,
 		SpokeManaged:   spokeManaged,
 		Schedule:       schedule,
@@ -39,4 +39,15 @@ func (s *HubServer) heartbeatUpgradePolicy(payload *HeartbeatPayload, saasHive *
 		TargetResolved: reach.Resolved,
 		ArmedTarget:    armedTarget,
 	}
+	if reach.Channel == ReleaseChannelStable && reach.Resolved {
+		policy.NextUpdateAt = stableNextPromotionAt(peekChannelTargets())
+	}
+	if schedule == AutoUpgradeModeDaily || schedule == AutoUpgradeModeWeekly {
+		policy.ScheduleHour = autoUpgradeDailyHour
+		policy.ScheduleTimezone = autoUpgradeTimezone
+	}
+	if schedule == AutoUpgradeModeWeekly {
+		policy.ScheduleWeekday = autoUpgradeWeeklyDay.String()
+	}
+	return policy
 }

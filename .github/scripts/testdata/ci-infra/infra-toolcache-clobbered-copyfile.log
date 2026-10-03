@@ -1,0 +1,26 @@
+##[group]Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+with:
+  cache: false
+  go-version-file: src/go.mod
+  check-latest: false
+  token: ***
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: job
+##[endgroup]
+Setup go version spec 1.26.6
+Attempting to download 1.26.6...
+matching 1.26.6...
+Acquiring 1.26.6 from https://github.com/actions/go-versions/releases/download/1.26.6-31764261251/go-1.26.6-linux-x64.tar.gz
+Extracting Go...
+[command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/_temp/987a4a87-7b5d-49aa-a018-15665804d321 -f /home/runner/_temp/12dd4e8a-8587-43de-b4a4-37a35da47ec4
+Successfully extracted go to /home/runner/_temp/987a4a87-7b5d-49aa-a018-15665804d321
+Adding to the cache ...
+EISDIR: illegal operation on a directory, copyfile '/home/runner/_temp/987a4a87-7b5d-49aa-a018-15665804d321/CONTRIBUTING.md' -> '/mnt/toolcache/hostedtoolcache/go/1.26.6/x64'
+Falling back to download directly from Go
+Install from dist
+Acquiring go1.26.6 from https://go.dev/dl/go1.26.6.linux-amd64.tar.gz
+Extracting Go...
+[command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/_temp/5b6faaa6-e75d-418d-94a8-7a616cdf11a3 -f /home/runner/_temp/0d07ac48-70f0-4273-b7ed-38f433bcd013
+Successfully extracted go to /home/runner/_temp/5b6faaa6-e75d-418d-94a8-7a616cdf11a3
+Adding to the cache ...
+##[error]Failed to download version 1.26.6: Error: ENOENT: no such file or directory, copyfile '/home/runner/_temp/5b6faaa6-e75d-418d-94a8-7a616cdf11a3/go/api/go1.10.txt' -> '/mnt/toolcache/hostedtoolcache/go/1.26.6/x64/api/go1.10.txt'

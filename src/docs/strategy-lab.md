@@ -45,8 +45,10 @@ configuration after a restart if you rely on non-default values.
    that has a governor state writes a baseline snapshot
    (`/data/nous/snapshots/<epoch-ms>.json`) with queue depth, MTTR, SLA
    violations, agents kicked, and token totals. The `NousBaselineTarget`
-   constant (672 snapshots) is treated as "enough baseline" by the dashboard
-   progress bar and the `baseline_pct` status field.
+   constant (672 snapshots) is treated as "enough baseline". The `baseline_pct` status
+   field is `snapshotCount / NousBaselineTarget` capped at 100; the dashboard
+   progress bar computes its own clamped value from `snapshotCount` and
+   `snapshotTarget` rather than reading `baseline_pct`.
 2. **Observing** — once at least one snapshot exists, phase auto-advances to
    `observing` (`refreshStatus()` in `pkg/dashboard/deps.go`).
 3. **Framing → Design → Design Review → Executing → Analysis → Findings
@@ -101,7 +103,7 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
 | `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). |
-| `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), or `issue+pr` (issue and PR pair); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
+| `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), `issue+pr` (issue and PR pair), or `spektacular-run` (approving a proposal admits its org-qualified `owner/repo#number` target as a Spektacular run at `spec`; a repeated approve returns the admitted run instead of admitting it again — see [Spektacular](spektacular.md)); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
 | `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible targets for repo-scope experiments. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
 | `PUT /api/nous/config/schedule` | `schedule` | `experiment_duration_hours` (default 4), `baseline_hours` (default 4), `cooldown_hours` (default 2). |

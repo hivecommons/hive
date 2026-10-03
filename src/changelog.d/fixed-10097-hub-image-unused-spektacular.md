@@ -1,0 +1,1 @@
+- `src/Dockerfile.hub` no longer installs the Spektacular binary: `HIVE_MODE=hub` returns before `bootDashboardAPIWith` (the only place the Spektacular runner is wired up), so the hub image never invoked it. `src/docs/hub-deployment.md` now documents this (#10097)

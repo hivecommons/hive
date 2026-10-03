@@ -1528,6 +1528,7 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 // handling — including hub-instructed upgrades. A separate ad-hoc POST would
 // drift from this one over time and silently lose those behaviours.
 func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
+	payload = redactHeartbeat(payload)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -2563,6 +2564,13 @@ type HeartbeatUpgradePolicy struct {
 	SpokeManaged bool `json:"spoke_managed"`
 	// Schedule is the hub-side cadence: "instant", "daily" or "weekly".
 	Schedule string `json:"schedule,omitempty"`
+	// ScheduleHour is the 24h local hour at/after which scheduled daily/weekly
+	// auto-upgrades may fire. Omitted for instant/manual policies.
+	ScheduleHour int `json:"schedule_hour,omitempty"`
+	// ScheduleTimezone is the IANA timezone for ScheduleHour.
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
+	// ScheduleWeekday is the weekly window's opening day, e.g. "Tuesday".
+	ScheduleWeekday string `json:"schedule_weekday,omitempty"`
 	// Paused is the fleet-wide spoke-upgrade kill switch state.
 	Paused bool `json:"paused"`
 	// Branch is the git line the spoke reports running (its target line).
@@ -2578,6 +2586,10 @@ type HeartbeatUpgradePolicy struct {
 	TargetResolved bool `json:"target_resolved"`
 	// ArmedTarget is the SHA the hub currently has armed for this hive, "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
+	// NextUpdateAt is when the hub expects the next promotion into Channel
+	// (RFC3339 UTC). Empty means unknown — including older hubs that do not
+	// send it — and must not be rendered as "no update coming".
+	NextUpdateAt string `json:"next_update_at,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror
@@ -2619,7 +2631,7 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			payload := collect()
+			payload := redactTaskStatus(collect())
 			if payload == nil {
 				continue
 			}

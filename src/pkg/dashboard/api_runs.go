@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -421,6 +423,9 @@ func (s *Server) runLogPath(key, stage string, gen uint64) (string, error) {
 	return cleanPath, nil
 }
 
+// runLogReadMaxBytes bounds how much of a run log one /log request reads.
+const runLogReadMaxBytes = 4 * 1024 * 1024
+
 func readRunLogFile(path string) ([]byte, error) {
 	rootInfo, err := os.Lstat(filepath.Dir(path))
 	if err != nil {
@@ -449,7 +454,20 @@ func readRunLogFile(path string) ([]byte, error) {
 	if !openedInfo.Mode().IsRegular() {
 		return nil, errInvalidRunLog
 	}
-	return io.ReadAll(file)
+	// Only the tail is served, so read at most runLogReadMaxBytes from the end.
+	size := openedInfo.Size()
+	if size <= runLogReadMaxBytes {
+		return io.ReadAll(file)
+	}
+	data := make([]byte, runLogReadMaxBytes)
+	if _, err := file.ReadAt(data, size-runLogReadMaxBytes); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	// Drop the partial first line the window cut through.
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		data = data[i+1:]
+	}
+	return data, nil
 }
 
 func tailTextLines(text string, lines int) string {
@@ -470,7 +488,11 @@ func (s *Server) populateRunBurndown(r *http.Request, run *Run) error {
 	if s == nil || s.deps == nil || s.deps.RunBurndown == nil || run == nil {
 		return nil
 	}
-	burndown, err := s.deps.RunBurndown(r.Context(), run.Key)
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+	}
+	burndown, err := s.deps.RunBurndown(ctx, run.Key)
 	if err != nil {
 		return err
 	}
@@ -734,6 +756,18 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), runResetErrorStatus(err))
 		return
 	}
+	if leaseStageIndex(lease.stage) <= leaseStageIndex(StagePlan) {
+		if err := s.resetRunPlanForReplan(key); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if lease.stage == StageSpec {
+		if err := s.resetRunDesignForRespec(key); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	s.auditFromRequest(r, auditActionRunStageReset, auditDetail(
 		"run", key, "stage_from", held.stage, "stage_to", lease.stage,
 		"reason", body.Reason, "gen", strconv.FormatUint(lease.gen, 10)), "")
@@ -965,7 +999,7 @@ func (s *Server) activeRunLeaseSnapshots(now time.Time) ([]runLeaseSnapshot, err
 		out = append(out, runLeaseSnapshot{
 			identity: l.identity, taskID: l.taskID, repo: repo, number: l.number,
 			key: key, leaseKey: stageLeaseKey, stageRunKey: stageRunKey, stage: l.stage, gen: l.gen, expiresAt: l.expiresAt,
-			title: title, stageStarted: info.startedAt, leaseHeartbeat: l.expiresAt.Add(-leaseTTL), serverSideLease: h.isPendingStageIdentity(l.identity),
+			title: title, stageStarted: info.startedAt, leaseHeartbeat: leaseHeartbeatAt(l.expiresAt, now), serverSideLease: h.isPendingStageIdentity(l.identity),
 			claimedBy: l.claimedBy, claimExpiresAt: l.claimExpiresAt, claimPosted: l.claimPosted,
 			triageVerdict: l.triageVerdict, triageRationale: l.triageRationale,
 			workItem:         l.workItem.Normalized(),
@@ -1274,6 +1308,11 @@ func applyRunArtifactStatus(run *Run, events []timeline.Event) {
 	if run.ArtifactName != "" && run.ArtifactID != "" && run.DocumentStatus != "" && run.CurrentStep != "" {
 		return
 	}
+	// The implement stage has no Spektacular document; falling back to any
+	// stage would report the plan document's status as implement's (#10121).
+	if preferredStage == StageImplement {
+		return
+	}
 	preferredStage = ""
 	for _, ev := range events {
 		if apply(ev) {
@@ -1381,13 +1420,15 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 		if store == nil {
 			continue
 		}
-		for _, b := range store.List(beads.ListFilter{}) {
+		// Read under the store lock: List hands out live *Bead pointers that
+		// a concurrent checkpoint approve mutates in place (ApprovePlan).
+		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
 			if b.Type != beads.TypeEpic || b.Meta(planning.MetaPlanStatus) == "" {
-				continue
+				return
 			}
 			repo, number, runKey := b.Meta(planning.MetaIssueRepo), b.Meta(planning.MetaIssueNumber), b.Meta(planning.MetaRunKey)
 			if repo == "" || (number == "" && runKey == "") {
-				continue
+				return
 			}
 			key := s.canonicalRunKey(repo, atoiOrZero(number), runKey, "")
 			if number == "" {
@@ -1423,7 +1464,7 @@ func (s *Server) runPlanSnapshots() map[string]runPlanSnapshot {
 					out[canonical] = snap
 				}
 			}
-		}
+		})
 	}
 	return out
 }
@@ -1747,4 +1788,15 @@ func (s *Server) stageCompletionsByIdentity() map[string]int {
 		out[st.Agent] += st.Count
 	}
 	return out
+}
+
+// leaseHeartbeatAt derives the last renewal from the expiry, clamped to now: a
+// checkpoint hold extends expiry past leaseTTL, which would otherwise put the
+// derived heartbeat in the future.
+func leaseHeartbeatAt(expiresAt, now time.Time) time.Time {
+	hb := expiresAt.Add(-leaseTTL)
+	if hb.After(now) {
+		return now
+	}
+	return hb
 }

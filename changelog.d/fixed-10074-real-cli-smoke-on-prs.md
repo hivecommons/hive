@@ -1,0 +1,1 @@
+- spektacular: the real-CLI smoke against the pinned Spektacular binary now also runs on pull requests that touch `src/pkg/spektacular/`, the contributor Dockerfile's pinned version, or the workflow itself, so a change that only the in-tree fake CLI agrees with can no longer merge green ([#10074](https://github.com/hivecommons/hive/issues/10074)).

@@ -1,0 +1,221 @@
+name: CI runner canary
+
+# Every 20 minutes: prove the self-hosted runner pool can still run a job
+# end to end, and raise ONE tracking issue when it cannot. Nothing in this
+# repository merges without that pool, and on 2026-10-02 it was silently
+# broken for ~40 minutes twice (#10234: a fixed-size pool with the autoscaler
+# off, then freshly autoscaled nodes whose shared tool cache was clobbered by
+# concurrent setup-go/setup-node steps) before anyone noticed from PR reds.
+#
+# Two halves, on purpose:
+#   watchdog  GitHub-hosted. Must not depend on the thing it is checking.
+#             Fails if the canary jobs below are not picked up within
+#             CANARY_PICKUP_MINUTES, or if the repository already has runs
+#             queued for longer than QUEUE_STALL_MINUTES.
+#   canary    Self-hosted, PARALLEL copies so they spread across nodes. Each
+#             exercises exactly what has broken before: actions/setup-go and
+#             setup-node against the node-local tool cache, tool-cache
+#             integrity (a `.complete` marker with no binary), the dind
+#             socket, and free disk.
+# Both report into one deduplicated issue labelled `ci-runner-canary`, which
+# is closed again automatically on the next green run.
+#
+# Set the repository variable HIVE_CI_RUNNER_CANARY=off to pause it.
+
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-runner-canary
+  cancel-in-progress: false
+
+env:
+  CANARY_PICKUP_MINUTES: "10"
+  QUEUE_STALL_MINUTES: "15"
+  # Older than this and still queued is a GitHub-side zombie (runs from
+  # 2026-08-06 were found queued on 2026-10-02, uncancellable), not a pool
+  # outage; the pool cannot have been dead that long unnoticed.
+  QUEUE_ZOMBIE_HOURS: "6"
+  MIN_FREE_DISK_GB: "20"
+
+jobs:
+  canary:
+    if: vars.HIVE_CI_RUNNER_CANARY != 'off'
+    strategy:
+      fail-fast: false
+      matrix:
+        copy: [1, 2, 3, 4]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: src/go.mod
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6.3.0
+        with:
+          go-version-file: src/go.mod
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.3.0
+        with:
+          node-version: "22"
+      - name: Toolchains resolve on PATH
+        run: |
+          set -u
+          echo "node=$(hostname) runner=$RUNNER_NAME"
+          go version
+          node --version
+          npm --version
+      - name: Tool cache integrity
+        # A `.complete` marker whose directory lacks bin/ makes setup-* report
+        # "Found in cache" and then fail every job on that node (#10234).
+        run: |
+          set -u
+          bad=0
+          for marker in "$RUNNER_TOOL_CACHE"/*/*/x64.complete; do
+            [ -e "$marker" ] || continue
+            dir="${marker%.complete}"
+            tool=$(basename "$(dirname "$(dirname "$dir")")")
+            if [ ! -x "$dir/bin/$tool" ]; then
+              echo "::error::tool cache entry $dir has a .complete marker but no bin/$tool"
+              bad=1
+            fi
+          done
+          exit $bad
+      - name: Docker daemon reachable
+        run: timeout 60 docker info --format '{{.ServerVersion}}'
+      - name: Free disk
+        run: |
+          set -u
+          for p in "$RUNNER_TEMP" "$GOMODCACHE" "$RUNNER_TOOL_CACHE"; do
+            [ -d "$p" ] || continue
+            free_gb=$(df -BG --output=avail "$p" | tail -1 | tr -dc '0-9')
+            echo "$p: ${free_gb}G free"
+            if [ "$free_gb" -lt "$MIN_FREE_DISK_GB" ]; then
+              echo "::error::$p has ${free_gb}G free, below ${MIN_FREE_DISK_GB}G"
+              exit 1
+            fi
+          done
+
+  watchdog:
+    if: vars.HIVE_CI_RUNNER_CANARY != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+    steps:
+      - name: Canary jobs are picked up and no runs are stalled in queue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CANARY_PICKUP_MINUTES: ${{ env.CANARY_PICKUP_MINUTES }}
+          QUEUE_STALL_MINUTES: ${{ env.QUEUE_STALL_MINUTES }}
+          QUEUE_ZOMBIE_HOURS: ${{ env.QUEUE_ZOMBIE_HOURS }}
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const pickupMs = Number(process.env.CANARY_PICKUP_MINUTES) * 60_000;
+            const stallMs = Number(process.env.QUEUE_STALL_MINUTES) * 60_000;
+            const zombieMs = Number(process.env.QUEUE_ZOMBIE_HOURS) * 3_600_000;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+            const failures = [];
+
+            // 1. Repository-wide queue: anything waiting longer than the stall
+            //    threshold means the pool is not draining.
+            const queued = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
+              {owner, repo, status: 'queued', per_page: 100});
+            const age = r => Date.now() - Date.parse(r.created_at);
+            const zombies = queued.filter(r => age(r) > zombieMs);
+            const stalled = queued.filter(r => age(r) > stallMs && age(r) <= zombieMs);
+            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
+            for (const z of zombies) core.warning(`ignoring zombie queued run ${z.html_url} (${z.name}, created ${z.created_at})`);
+            if (stalled.length > 0) {
+              const oldest = Math.min(...stalled.map(r => Date.parse(r.created_at)));
+              failures.push(`${stalled.length} workflow run(s) queued for more than ${process.env.QUEUE_STALL_MINUTES} minutes (oldest ${Math.round((Date.now() - oldest) / 60_000)}m): ${stalled.slice(0, 5).map(r => r.html_url).join(' ')}`);
+            }
+
+            // 2. This run's own canary jobs must start on a self-hosted runner.
+            const deadline = Date.now() + pickupMs;
+            let canaries = [];
+            while (Date.now() < deadline) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+                {owner, repo, run_id: context.runId, per_page: 100});
+              canaries = jobs.filter(j => j.name.startsWith('canary'));
+              if (canaries.length > 0 && canaries.every(j => j.status !== 'queued')) break;
+              await sleep(30_000);
+            }
+            const stuck = canaries.filter(j => j.status === 'queued');
+            core.info(`canary jobs: ${canaries.length}, still queued after ${process.env.CANARY_PICKUP_MINUTES}m: ${stuck.length}`);
+            if (canaries.length === 0) failures.push('no canary jobs found in this run');
+            if (stuck.length > 0) failures.push(`${stuck.length}/${canaries.length} canary job(s) not picked up by a runner within ${process.env.CANARY_PICKUP_MINUTES} minutes`);
+
+            core.setOutput('failures', JSON.stringify(failures));
+            if (failures.length > 0) core.setFailed(failures.join('\n'));
+
+  report:
+    if: always() && vars.HIVE_CI_RUNNER_CANARY != 'off'
+    needs: [canary, watchdog]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CANARY_RESULT: ${{ needs.canary.result }}
+          WATCHDOG_RESULT: ${{ needs.watchdog.result }}
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const label = 'ci-runner-canary';
+            const marker = '<!-- hive-ci-runner-canary -->';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const healthy = process.env.CANARY_RESULT === 'success' && process.env.WATCHDOG_RESULT === 'success';
+
+            const open = (await github.rest.issues.listForRepo({owner, repo, state: 'open', labels: label, per_page: 10}))
+              .data.find(i => (i.body || '').includes(marker));
+
+            if (healthy) {
+              if (open) {
+                await github.rest.issues.createComment({owner, repo, issue_number: open.number,
+                  body: `Canary green again: ${runUrl}. Closing.`});
+                await github.rest.issues.update({owner, repo, issue_number: open.number, state: 'closed', state_reason: 'completed'});
+              }
+              return;
+            }
+
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+              {owner, repo, run_id: context.runId, per_page: 100});
+            const failedSteps = jobs
+              .filter(j => j.conclusion === 'failure' || j.conclusion === 'timed_out' || j.conclusion === 'cancelled')
+              .map(j => `- **${j.name}** (${j.conclusion}, runner \`${j.runner_name || 'none'}\`): ${(j.steps || []).filter(s => s.conclusion === 'failure').map(s => s.name).join(', ') || 'no step reached'}`)
+              .join('\n');
+            const body = [
+              marker,
+              `The self-hosted CI runner pool failed its canary at ${new Date().toISOString()}.`,
+              '',
+              `Run: ${runUrl}`,
+              '',
+              failedSteps || '_(no failed jobs recorded — the watchdog alone failed; see its log for stalled queue details)_',
+              '',
+              'Nothing merges while this is red. Runbook: `src/deploy/ci-runners/lke/README.md` section 3b',
+              '(pool autoscaler/labels, tool-cache race). Check `kubectl --context hive-ci -n arc-hive get autoscalingrunnersets,pods`',
+              'and `kubectl --context hive-ci get nodes -l hive-ci-runner=true`.',
+              '',
+              'This issue is updated on every red run and closed automatically on the next green one.',
+            ].join('\n');
+
+            if (open) {
+              await github.rest.issues.createComment({owner, repo, issue_number: open.number, body: `Still failing: ${runUrl}\n\n${failedSteps}`});
+            } else {
+              await github.rest.issues.create({owner, repo,
+                title: `[CI runner canary] self-hosted runner pool unhealthy`,
+                body, labels: [label, 'ci-failure', 'ci', 'kind/bug', 'priority/critical-urgent']});
+            }

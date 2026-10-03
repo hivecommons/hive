@@ -1448,24 +1448,44 @@ func (m *Manager) SetProbers(probers []Prober) {
 // Start begins the headroom polling loop. It probes once immediately and
 // then every pollInterval until ctx is cancelled.
 func (m *Manager) Start(ctx context.Context) {
+	go m.pollLoop(ctx)
+}
+
+// StartPublishing is Start for a caller that must know when the loop has
+// stopped: it returns a channel closed after the loop's last write. The
+// standalone contributor publisher (hivecommons/hive#10299) needs that — its
+// process must not exit, and its tests must not tear down the pool directory,
+// while a publish is still in flight. Cancelling ctx alone does not say the
+// last atomic rename has landed.
+func (m *Manager) StartPublishing(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
-		// Declare publisher presence for every guard-supported pool BEFORE the
-		// first probe (kubestellar/hive#6987, condition (b)): the relay holds
-		// through the "publisher expected, no reading yet" startup window
-		// instead of admitting blind.
-		m.announceContributorPublisher()
-		m.probeAll(ctx)
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				m.probeAll(ctx)
-			}
-		}
+		defer close(done)
+		m.pollLoop(ctx)
 	}()
+	return done
+}
+
+// pollLoop probes once immediately and then every pollInterval until ctx is
+// cancelled. It runs on the caller's goroutine; Start and StartPublishing are
+// the two ways to launch it.
+func (m *Manager) pollLoop(ctx context.Context) {
+	// Declare publisher presence for every guard-supported pool BEFORE the
+	// first probe (kubestellar/hive#6987, condition (b)): the relay holds
+	// through the "publisher expected, no reading yet" startup window
+	// instead of admitting blind.
+	m.announceContributorPublisher()
+	m.probeAll(ctx)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.probeAll(ctx)
+		}
+	}
 }
 
 func (m *Manager) probeAll(ctx context.Context) {

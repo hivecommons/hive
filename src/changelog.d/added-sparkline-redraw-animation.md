@@ -1,0 +1,1 @@
+- Add a staggered draw-on animation for dashboard sparklines when cards expand or their data changes.

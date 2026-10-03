@@ -33,6 +33,10 @@ func jsFunc(t *testing.T, html, name string) string {
 	if start < 0 {
 		t.Fatalf("index.html does not define %s()", name)
 	}
+	declStart := start
+	if start >= len("async ") && html[start-len("async "):start] == "async " {
+		declStart -= len("async ")
+	}
 	depth := 0
 	for i := strings.Index(html[start:], "{") + start; i < len(html); i++ {
 		switch html[i] {
@@ -41,7 +45,7 @@ func jsFunc(t *testing.T, html, name string) string {
 		case '}':
 			depth--
 			if depth == 0 {
-				return html[start : i+1]
+				return html[declStart : i+1]
 			}
 		}
 	}

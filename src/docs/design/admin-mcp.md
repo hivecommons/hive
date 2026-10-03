@@ -302,6 +302,8 @@ one.
 | knowledge | `GET /api/knowledge`, `GET /api/knowledge/search`, `GET /api/knowledge/{layer}/{slug}` | Reads only. Writes are excluded — see below. |
 | hive advisor | `POST /api/chat`, `GET /api/chat/messages` | The one path where Hive input-scans the operator's text *for* the client rather than the reverse: `handleDashboardChat` calls `ioscan.EnforceInput` and refuses a blocked message with `chat.dashboard.refused`. |
 | issue/PR bands | `GET /api/overview/issues.json` (`issues_by_band`), `GET /api/overview/prs.json` (`prs_by_band`) | Thin wrappers over #9102's band classifier — see below. |
+| review queue | `GET /api/overview/issues.json` + `GET /api/overview/prs.json` (`review_queue`) | The one read tool that makes two GETs; the queue is computed in `pkg/adminmcp` — see below. |
+| governor setup | `GET /api/config/governor` (`governor_setup_proposal`) | Proposal computed in `pkg/adminmcp` from the settings read; writes nothing — see below. |
 | breaker, backup | `GET /api/breaker`, `GET /api/backup/status` | |
 
 **Leases and claims are not the same thing, and an operator wants both.** A `taskLease`
@@ -319,18 +321,58 @@ falls back to the queued-run snapshot, so an operator can paste either identifie
 
 **`issues_by_band` / `prs_by_band`** (hive#9106) let an agent ask "which issues are ready to
 close?" without re-implementing the Overview donut's label rules. Both take an optional
-`repo` (`owner/name`), `band`, and `stale`, plus the usual `limit`. `bands[]` — the key,
-human label, rule sentence, and real count for every band — is always returned in full, even
-when `band` filters `rows[]` to one of them, so a caller can map "Confirm & close" to
-`band=done` without knowing the `hive/*` label names. An unknown `band` gets the same
-`{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys. The tool never
-forwards `band` or `limit` to the Overview endpoint itself — that would compute `bands[]`
-counts and `rows[]` over only the already-filtered subset — so it fetches every band and
-filters/caps `rows[]` itself, disclosing `rows_truncated` and `_admin_mcp.total` the same way
-other capped list fields do. `band=done` includes issues an agent labelled
-`hive/covered-by-pr`, which only means an agent found an *open* PR that references the
-issue, not that it merged: a caller closing "ready" issues from this band must still verify
-the referenced work landed before closing, exactly as the worked example in hive#9106 does.
+`repo` (`owner/name`), `band`, `stale`, `held` (hive#10018), and `offset` (hive#10018), plus
+the usual `limit`.
+`bands[]` — the key, human label, rule sentence, and real count for every band — is always
+returned in full, even when `band` or `held` filters `rows[]` down, so a caller can map
+"Confirm & close" to `band=done` without knowing the `hive/*` label names. An unknown `band`
+gets the same `{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys.
+The tool never forwards `band`, `held`, `offset`, or `limit` to the Overview endpoint itself —
+that would compute `bands[]` counts and `rows[]` over only the already-filtered subset — so it
+fetches every band and row and filters/pages `rows[]` itself, disclosing `rows_truncated` and
+`_admin_mcp.total` the same way other capped list fields do. Filtering `held` ahead of the
+cap (rather than leaving a caller to inspect `held` on an already-capped page) means a hive
+with more open issues/PRs than the cap does not silently lose held rows when asking "what is
+on hold?" (hive#10018). `offset`, applied after the `band`/`held` filters and before `limit`
+the same way `review_queue`'s does, pages past the cap: the answer carries `next_offset` when
+more filtered rows remain, so a band or `held` selection with more rows than `limit` is fully
+readable a page at a time instead of only ever showing the first page (hive#10018). `band=done`
+includes issues an agent labelled `hive/covered-by-pr`,
+which only means an agent found an *open* PR that references the issue, not that it merged: a
+caller closing "ready" issues from this band must still verify the referenced work landed
+before closing, exactly as the worked example in hive#9106 does.
+Overview rows carry the band's display label ("Confirm & close"), not its key; the tool maps
+each row back to the key through `bands[]` inside `pkg/adminmcp`, so `band=<key>` matches on
+both the dashboard endpoint and stdio (hive#10018).
+
+**`review_queue`** (hive#10019) answers "give me things to review": one list merged across
+issues and pull requests of what needs a human now, each row carrying `reason_code` and a
+one-line `reason`. It reads both Overview exports unfiltered (only `repo` is forwarded) and
+selects rows in priority order: `hold` (held, waiting on a maintainer to release it),
+`needs_human` (the `waiting` band — labelled for a human decision), `sweep_outstanding` (a PR
+in review whose merge-sweep verdict is outstanding), `confirm_close` (the issue `done` band)
+and `agent_filed` (the issue `agent-filed` band). Within a reason, the oldest `updated_at`
+comes first, then pull requests before issues, then repo and number, so the order is
+deterministic; the answer repeats it in `ordering`. Everything else — unclaimed, claimed,
+merge-eligible, blocked, draft, ordinary open — needs no human yet and is left out. Pages are
+`limit` rows (cap 50) from `offset`; a capped page sets `rows_truncated`,
+`_admin_mcp.total` and `next_offset`, and `counts` gives the per-reason totals for the
+whole queue. It is read-only: `queue-automerge` stays excluded.
+
+**`governor_setup_proposal`** (hive#10034) answers "set up these governors for me" for a new
+hive. It reads `GET /api/config/governor`, which already carries the repo count, cadence
+scope, scaling curve, effective and operator-pinned thresholds and budget, and returns one
+recommendation per setting in apply order — `threshold_scaling`, `thresholds`, `budget` —
+each with `current`, `recommended`, `change`, a one-line `reason`, and the registered write
+`operation` and `args` to pass to `write_preview`. Rules: `sqrt` scaling from 10 repos (linear
+would multiply every base by the repo count and rarely engage the busier modes), linear
+below that, and no curve change for one repo or `per_repo` cadence. Thresholds are proposed
+only when the operator has already pinned them and they differ from the scaled defaults;
+otherwise the proposal is to leave them unset, because a `governor.thresholds` write makes the
+whole set operator-owned absolutes that repo-count scaling no longer adjusts (#4037), and the
+entry's `disclosure` says so. A hive with no token budget gets a `budget.update` entry whose
+`owner_input` names `totalTokens`, since only the owner can pick that number. Autonomy level,
+queue depth and feature toggles are out of scope and named in `not_considered`.
 
 ### Write
 

@@ -285,7 +285,11 @@ func TestSandboxCommand_BackendInvocations(t *testing.T) {
 		{"claude with model", configSnapshot{Backend: "claude", Model: "opus"}, "claude --model 'opus' --dangerously-skip-permissions"},
 		{"goose without model", configSnapshot{Backend: "goose"}, "goose run -s"},
 		{"goose with model", configSnapshot{Backend: "goose", Model: "gpt"}, "goose run -s --model 'gpt'"},
-		{"pi uses goose binary", configSnapshot{Backend: "pi"}, "goose run -s"},
+		{"pi uses its own binary", configSnapshot{Backend: "pi"}, "pi"},
+		{"codex runs exec unattended", configSnapshot{Backend: "codex", Model: "gpt-5"}, "codex exec --dangerously-bypass-approvals-and-sandbox -c features.daemon_auto_start=false --model 'gpt-5'"},
+		{"aider uses its own binary", configSnapshot{Backend: "aider"}, "aider"},
+		{"opencode uses its own binary", configSnapshot{Backend: "opencode"}, "opencode"},
+		{"litellm runs claude", configSnapshot{Backend: "litellm"}, "claude --dangerously-skip-permissions"},
 		{"copilot without model", configSnapshot{Backend: "copilot"}, "copilot --no-auto-update --allow-all"},
 		{"copilot with model", configSnapshot{Backend: "copilot", Model: "gpt-5"}, "copilot --no-auto-update --allow-all --model 'gpt-5'"},
 		{"launch_cmd wins over backend", configSnapshot{Backend: "copilot", LaunchCmd: "/usr/bin/custom --flag"}, "/usr/bin/custom --flag"},
@@ -311,19 +315,95 @@ func TestSandboxCommand_BackendInvocations(t *testing.T) {
 
 func TestSandboxBackendBinary(t *testing.T) {
 	cases := map[string]string{
-		"copilot": "copilot",
-		"gemini":  "gemini",
-		"goose":   "goose",
-		"pi":      "goose",
-		"bob":     "bob",
-		"claude":  "claude",
-		"litellm": "claude", // inference backends run through the claude CLI
-		"":        "claude",
+		"copilot":  "copilot",
+		"gemini":   "gemini",
+		"goose":    "goose",
+		"pi":       "pi",
+		"bob":      "bob",
+		"codex":    "codex",
+		"aider":    "aider",
+		"opencode": "opencode",
+		"kilo":     "kilo",
+		"claude":   "claude",
+		"litellm":  "claude", // inference backends run through the claude CLI
+		"":         "claude",
 	}
 	for backend, want := range cases {
-		if got := sandboxBackendBinary(backend); got != want {
-			t.Errorf("sandboxBackendBinary(%q) = %q, want %q", backend, got, want)
+		got, err := sandboxBackendBinary(backend)
+		if err != nil || got != want {
+			t.Errorf("sandboxBackendBinary(%q) = %q, %v, want %q", backend, got, err, want)
 		}
+	}
+	for _, backend := range config.CLIBackends {
+		want, err := backendBinaryName(backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := HeadlessBackendBinary(backend); err != nil || got != want {
+			t.Errorf("HeadlessBackendBinary(%q) = %q, %v, want launcher binary %q", backend, got, err, want)
+		}
+	}
+	if _, err := sandboxBackendBinary("not-a-backend"); err == nil {
+		t.Error("sandboxBackendBinary accepted an unknown backend")
+	}
+	if _, err := sandboxCommand(configSnapshot{Backend: "not-a-backend"}, sandboxPromptRelPath); err == nil {
+		t.Error("sandboxCommand accepted an unknown backend")
+	}
+}
+
+// TestSandboxCommand_DeniesGitHubWriteToolsAndHostState pins #10054: an
+// unattended launch pre-approves every tool (`--allow-all`,
+// `--dangerously-skip-permissions`), so it carries the same deny flags the
+// tmux launch path applies in every agent mode.
+func TestSandboxCommand_DeniesGitHubWriteToolsAndHostState(t *testing.T) {
+	copilotCmd, err := sandboxCommand(configSnapshot{Backend: "copilot", Model: "gpt-5"}, sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"create_pull_request", "merge_pull_request", "create_issue", "update_issue", "add_issue_comment"} {
+		if want := "--deny-tool='github-mcp-server(" + tool + ")'"; !strings.Contains(copilotCmd[2], want) {
+			t.Errorf("copilot headless command %q is missing %q", copilotCmd[2], want)
+		}
+	}
+	claudeCmd, err := HeadlessPromptCommand("claude", "opus", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"mcp__github__create_pull_request", "mcp__github__merge_pull_request", "mcp__github__create_issue"} {
+		if want := "--disallowed-tools '" + tool + "'"; !strings.Contains(claudeCmd[2], want) {
+			t.Errorf("claude headless command %q is missing %q", claudeCmd[2], want)
+		}
+	}
+	if !strings.Contains(claudeCmd[2], claudeHostStateDenyTools) {
+		t.Errorf("claude headless command %q is missing the host-state denies", claudeCmd[2])
+	}
+	// The documented opt-out drops the host-state denies only; the GitHub MCP
+	// write denies are not negotiable.
+	t.Setenv(hostStateBypassEnv, "1")
+	bypassed, err := HeadlessPromptCommand("claude", "opus", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(bypassed[2], claudeHostStateDenyTools) {
+		t.Errorf("host-state bypass ignored: %q", bypassed[2])
+	}
+	if !strings.Contains(bypassed[2], "--disallowed-tools 'mcp__github__create_issue'") {
+		t.Errorf("GitHub MCP write denies dropped with the host-state bypass: %q", bypassed[2])
+	}
+}
+
+func TestHeadlessPromptCommandRefusesInferenceBackends(t *testing.T) {
+	for _, backend := range config.InferenceBackends {
+		if _, err := HeadlessPromptCommand(backend, "", sandboxPromptRelPath); err == nil {
+			t.Errorf("HeadlessPromptCommand(%q) launched without inference routing", backend)
+		}
+	}
+	cmd, err := HeadlessPromptCommand("codex", "", sandboxPromptRelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(cmd[2], "codex exec ") {
+		t.Fatalf("codex headless command = %q", cmd[2])
 	}
 }
 

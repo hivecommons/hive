@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	CadenceModeInterval  = "interval"
-	CadenceModeTimes     = "times"
-	CadenceModeCron      = "cron"
-	CadenceCatchUpWindow = 10 * time.Minute
+	CadenceModeInterval   = "interval"
+	CadenceModeTimes      = "times"
+	CadenceModeCron       = "cron"
+	CadenceModeContinuous = "continuous"
+	CadenceCatchUpWindow  = 10 * time.Minute
 )
 
 const cadenceObjectPrefix = "tod:"
@@ -56,6 +57,9 @@ func (c Cadence) Mode() string {
 	if len(obj.Times) > 0 {
 		return CadenceModeTimes
 	}
+	if strings.EqualFold(strings.TrimSpace(obj.Interval), CadenceModeContinuous) {
+		return CadenceModeContinuous
+	}
 	return CadenceModeInterval
 }
 
@@ -73,8 +77,10 @@ func (c Cadence) IsPaused() bool {
 	}
 }
 
+func (c Cadence) IsContinuous() bool { return c.Mode() == CadenceModeContinuous }
+
 func (c Cadence) String() string {
-	if c.Mode() == CadenceModeInterval {
+	if c.Mode() == CadenceModeInterval || c.Mode() == CadenceModeContinuous {
 		return c.Interval()
 	}
 	b, err := yaml.Marshal(c.object())
@@ -85,7 +91,7 @@ func (c Cadence) String() string {
 }
 
 func (c Cadence) MarshalYAML() (interface{}, error) {
-	if c.Mode() == CadenceModeInterval {
+	if c.Mode() == CadenceModeInterval || c.Mode() == CadenceModeContinuous {
 		return c.Interval(), nil
 	}
 	return c.object(), nil
@@ -109,7 +115,7 @@ func (c *Cadence) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func (c Cadence) MarshalJSON() ([]byte, error) {
-	if c.Mode() == CadenceModeInterval {
+	if c.Mode() == CadenceModeInterval || c.Mode() == CadenceModeContinuous {
 		return json.Marshal(c.Interval())
 	}
 	return json.Marshal(c.object())
@@ -163,6 +169,9 @@ func (c Cadence) Validate() error {
 	if modes > 1 {
 		return fmt.Errorf("cadence must set exactly one of interval, times, or cron")
 	}
+	if strings.EqualFold(obj.Interval, CadenceModeContinuous) && strings.HasPrefix(string(c), cadenceObjectPrefix) {
+		return fmt.Errorf("cadence continuous must be the literal string %q", CadenceModeContinuous)
+	}
 	if modes == 0 && (strings.HasPrefix(string(c), cadenceObjectPrefix) || obj.TZ != "" || len(obj.Days) > 0) {
 		return fmt.Errorf("cadence object must set interval, non-empty times, or cron")
 	}
@@ -201,6 +210,9 @@ func (c Cadence) NextAfter(after time.Time) (time.Time, bool) {
 	if err := c.Validate(); err != nil {
 		return time.Time{}, false
 	}
+	if c.Mode() == CadenceModeContinuous {
+		return time.Time{}, false
+	}
 	if c.Mode() == CadenceModeInterval {
 		d, err := time.ParseDuration(c.Interval())
 		if err != nil || d <= 0 {
@@ -223,6 +235,9 @@ func (c Cadence) NextAfter(after time.Time) (time.Time, bool) {
 }
 
 func (c Cadence) DueOccurrence(lastKick time.Time, now time.Time, catchUpWindow time.Duration) (time.Time, bool) {
+	if c.Mode() == CadenceModeContinuous {
+		return time.Time{}, false
+	}
 	if c.Mode() == CadenceModeInterval {
 		next, ok := c.NextAfter(lastKick)
 		if lastKick.IsZero() {
@@ -249,6 +264,8 @@ func (c Cadence) DueOccurrence(lastKick time.Time, now time.Time, catchUpWindow 
 func (c Cadence) HumanSummary() string {
 	obj := c.object()
 	switch c.Mode() {
+	case CadenceModeContinuous:
+		return "continuous"
 	case CadenceModeTimes:
 		parts := make([]string, 0, len(obj.Times))
 		for _, tod := range obj.Times {
@@ -270,6 +287,8 @@ func (c Cadence) HumanSummary() string {
 func (c Cadence) ShortLabel(after time.Time) string {
 	obj := c.object()
 	switch c.Mode() {
+	case CadenceModeContinuous:
+		return "continuous"
 	case CadenceModeTimes:
 		tz := c.TimezoneAbbrev(after)
 		if tz == "" {

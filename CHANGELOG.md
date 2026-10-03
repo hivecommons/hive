@@ -11,6 +11,189 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.126.0)
+
+### Added
+
+- upstream-watch: reconcile ported/dismissed state from fork issues (#10376)
+
+## 2026-10-03 (v5.125.0)
+
+### Added
+
+- **Human-filed bugs can opt in to close-on-merge with `hive: close-on-merge`** ([#10304](https://github.com/hivecommons/hive/issues/10304)). Code-sweep findings and bugs the reporter cannot reproduce on demand have no symptom to re-check, so the reporter-confirmation gate left them open as `hive/likely-done` after their fix merged. Put `hive: close-on-merge` in the issue body or apply it as a label when filing, and the fix PR keeps `Closes #N` (no `Refs` downgrade, no "closing keyword withheld" note) and the issue-close path accepts the merge. `hive-open-issue --close-on-merge` adds the marker. Human-filed bugs without the marker still wait for reporter confirmation, as before ([#6781](https://github.com/hivecommons/hive/issues/6781)).
+
+### Fixed
+
+- hive-merge relay: `MergePR` now upgrades squash to a merge commit for forward-merge PRs (`sync/v*-to-v*` heads or "forward-merge" titles), sharing the sweep's guard so the relay no longer re-breaks v6 Top-up (#10265)
+- upstream-watch: the dashboard divergence view no longer renders a dangling `owner/repo#` / `owner/repo@` for a stored ref with an empty PR number or tag, and its Features-tab panel now styles through shared `components.css` token classes instead of inline styles, restoring the green v5 build after #10361.
+
+## 2026-10-03 (v5.124.0)
+
+### Added
+
+- upstream-watch: dashboard divergence view and /api/upstream-watch (#10361)
+
+## 2026-10-03 (v5.123.0)
+
+### Added
+
+- contribute: publish quota readings automatically for standalone contributors (#10360)
+
+## 2026-10-03 (v5.122.1)
+
+### Fixed
+
+- release: require current candidate soak before stable promotion (#10341)
+- dashboard: name the host `podman-auto-update.service` command in the disabled Upgrade reason when the Podman/Quadlet upgrade helper is unreachable or the runtime is unconfigured (#10344)
+
+## 2026-10-03 (v5.122.0)
+
+### Added
+
+- Add Overview KPI sparklines (#10317)
+
+### Fixed
+
+- Pin dashboard notices above sections (#10322)
+
+## 2026-10-03 (v5.121.0)
+
+### Added
+
+- Keep collapsed dashboard headline rows (#10325)
+
+### Fixed
+
+- Stable promotion now holds (instead of failing the workflow run) when the candidate is superseded between the initial read and the tag move, matching the in-flight-candidate race handling (#10042)
+- dashboard: let per-mode cadence override legacy continuous shorthand (#10328)
+
+## 2026-10-03 (v5.120.1)
+
+### Fixed
+
+- Fix dashboard nav peek scroll settling (#10319)
+
+## 2026-10-02 (v5.120.0)
+
+### Added
+
+- heartbeat: hub.heartbeat_omit classes and Hub tab telemetry display (#10295)
+- dashboard: `/api/version`'s `autoUpdate` object carries `nextUpdateAt` (the hub's expected next-update time, omitted when unknown) and the version menu and Hub tab show it as "Next update" (#10257, #10258)
+
+## 2026-10-02 (v5.119.0)
+
+### Added
+
+- hub: heartbeat upgrade policy carries `next_update_at`, the expected time of the next promotion into the `stable` channel (#10256)
+
+### Changed
+
+- Move continuous cadence editing into the agent settings Cadences form and render read-only `∞ continuous` chips in the Governor cadence table.
+
+### Fixed
+
+- CI runner canary: queued runs older than 6h are reported as GitHub-side zombies and no longer fail the watchdog (uncancellable August runs tripped the first run, #10273).
+
+## 2026-10-02 (v5.118.0)
+
+### Added
+
+- Dashboard collapsed summaries visual strips (#10262)
+
+### Fixed
+
+- Fix lifecycle timeline rendering (#10250)
+- Make dashboard version rendering tests self-contained so shuffle order does not change their JavaScript fixtures.
+
+## 2026-10-02 (v5.117.0)
+
+### Added
+
+- dashboard: sparklines draw on with a staggered animation when a card expands (#10192)
+- dashboard: sidebar nav peeks collapsed sections open and restores them on the next jump (#10199)
+- dashboard: add throughput stat sparklines (#10208)
+- Add collapsed dashboard section summaries (#10211)
+- Filter repository cards by pill kind (#10224)
+- Promote throughput to top-level dashboard section (#10254)
+- CI: `ci-runner-canary.yml` proves the self-hosted runner pool can run a job every 20 minutes (setup-go/setup-node, tool-cache integrity, dind, disk) with a GitHub-hosted watchdog for pickup and queue stalls, opening one auto-closing `ci-runner-canary` issue when red; the infra classifier gains a `toolcache-clobbered` class so those failures are rerun once instead of read as code breaks (#10234).
+- Add per-mode continuous cadence values so agents can run continuously only in selected governor modes.
+- Dashboard sidebar items now have drag handles that keep the left menu, dashboard sections, and agent cards in the same saved order.
+- upstream watch: when `upstream_watch.enabled` is set, the hive polls each configured upstream and files a labelled `upstream:` issue in the fork for every merged PR or release that still applies, with a durable watermark, marker-based dedupe, dismissal and `max_issues_per_run` cap (#9967, #10002)
+
+### Changed
+
+- Document telemetry data collection (#10203)
+- `ci-runners/lke`: documented the pool-level autoscaler (4–12) and `hive-ci-runner` label that the hand-built `hive-ci` cluster was missing, so autoscaled runner nodes schedule runners; Terraform default floor now matches the live pool; runner pods now pre-warm the node-local Go/Node tool cache under a lock so fresh nodes no longer fail the first wave of `setup-go`/`setup-node` steps (#10234).
+- Animate Overview chart transitions.
+
+### Fixed
+
+- `src/docs/backup-restore.md` now cites the right `src/deploy/entrypoint.sh` lines for the config files read at boot, `hive_harden_runtime_config`, and the beads symlinks and per-agent chown ([#10151](https://github.com/hivecommons/hive/issues/10151)).
+- `src/deploy/README.md` now describes `k8s/` correctly and lists the `kustomize/`, `ci-runners/`, `legacy-redirect/`, `dibs-domain-cutover/`, `systemd/` and `data/` directories ([#10153](https://github.com/hivecommons/hive/issues/10153)).
+- dashboard: keep sidebar version upgrade action visible and clear stale progress (#10183)
+- dashboard: keep Knowledge Base stats in one row (#10209)
+- Fix Governor cadence table disabled and continuous agents (#10210)
+- Restore governor metrics after restart (#10213)
+- Fix Governor card chrome and Overview chart polish (#10216)
+- The dashboard no longer rewrites the saved agent-card layout in browser storage on every render; it now writes only when the order or sizes actually change, so focusing an agent never touches the persisted layout ([#10223](https://github.com/hivecommons/hive/issues/10223)).
+- copilot: offer dotted claude 5.5 ids in static fallback list (#10227)
+- Distinguish Change Throughput actor colors (#10244)
+- Polish weekly advice card metadata (#10248)
+- Arm continuous mode when it is enabled on an idle agent so the first continuous kick is scheduled after one cooldown.
+- Fix dashboard top notices and stale version upgrade state.
+
+### Security
+
+- The `hive-error-pages` and legacy-redirect nginx Deployments now pin `nginx:1.31.6-alpine` by digest instead of the floating `nginx:1-alpine` tag ([#10154](https://github.com/hivecommons/hive/issues/10154)).
+- The inference `model-download` init container now pins `curlimages/curl:8.13.0` by digest, matching the main container ([#10155](https://github.com/hivecommons/hive/issues/10155)).
+
+## 2026-10-02 (v5.116.0)
+
+### Added
+
+- dashboard: unified navbar chip system  one shape, one height, one baseline (#10140)
+- dashboard: contributor cards tinted from avatar colours (album-cover effect) (#10145)
+- dashboard: agent cards in a 3-up grid with drag-to-reorder and resizable cards (#10146)
+- dashboard: shared power switch for agent on/off and continuous in cadence table and settings (#10180)
+
+### Changed
+
+- docs: integration guide  work source providers, clanker (Flue-style), spektacular (#10176)
+- Pinned the CI scripts' transitive minimatch dependency to the ISC-licensed 9.x line for CNCF license allowlist compatibility.
+
+### Fixed
+
+- dashboard: feedback modal layout rework + full disclosure of collected diagnostics (#10141)
+- dashboard: card polish batch  governor chrome, advisory sub-sections, timeline, spacing, repo headers, audit log sizing, Spektacular badge, knowledge facts, notices on top; drop Platform section (#10143)
+- dashboard: overview tiles show their counts again; larger chart stats text (#10144)
+- dashboard: continuous toggle uses the shared agent-power switch (was rendering as a bare bar + knob) (#10149)
+- `docs/HUB_DISASTER_RECOVERY.md` now cites `src/deploy/entrypoint.sh:989-992`, where the entrypoint writes `hive.yaml.runtime` after the merge ([#10152](https://github.com/hivecommons/hive/issues/10152)).
+- issue-template: fix contributor story form schema (#10182)
+
+## 2026-10-02 (v5.115.1)
+
+### Fixed
+
+- dashboard: sidebar version panel fits the sidebar, shows cadence/tracking/status and an upgrade action (#10134)
+
+## 2026-10-02 (v5.115.0)
+
+### Added
+
+- dashboard: Change Throughput  hive vs human attribution for created/reviewed/merged PRs and issues, with trend chart (#10021)
+- agents: show continuous mode in cadence table (#10041)
+- feat(autoupdate): surface when the hive was last updated (#10118)
+- Upstream watch now judges each candidate: it classifies an upstream change as security, bugfix, feature or chore (upstream labels first, then the conventional-commit title prefix, with security winning), checks fork applicability cheaply via the contents API (skipping an item when none of its touched files exist on the fork's default branch) and estimates port difficulty (easy/moderate/hard) from the files and lines changed.
+
+### Changed
+
+- Reference CNCF Code of Conduct in READMEs (#10039)
+
+### Fixed
+
+- fix(relay): enter quota hold on headless Codex usage-limit exits (#10068)
+
 ## 2026-10-02 (v5.114.0)
 
 ### Added

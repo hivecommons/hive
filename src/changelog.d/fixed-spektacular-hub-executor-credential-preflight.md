@@ -1,0 +1,1 @@
+- Spektacular hub executor: a missing backend credential (e.g. no Copilot login) now backs off and retries like a clone/fetch failure instead of only logging a warning and launching the agent anyway, so a brief credential outage no longer burns the stage retry budget ([#10077](https://github.com/hivecommons/hive/issues/10077)).

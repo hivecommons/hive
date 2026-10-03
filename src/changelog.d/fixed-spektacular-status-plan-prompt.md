@@ -1,0 +1,1 @@
+- spektacular: the runner accepts `superseded`, `archived` and blank `document_status` values and parks those leases instead of failing every poll, a final plan whose task list cannot be imported is refused with reason `plan_import_failed` instead of being retried every poll, and hub spec/plan prompts no longer tell the agent to run `gh issue view` (#10073, #10072, #10075)

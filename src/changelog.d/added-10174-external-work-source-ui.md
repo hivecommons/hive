@@ -1,0 +1,1 @@
+- Dashboard: Settings → Work source now offers "External provider (HTTP)", editable end-to-end (name, display name, base URL, auth token/CA bundle as environment references, source repositories, hold labels, timeout); its display name is shown as the source badge, and its per-source dropped-item count is surfaced in the Work Source tab.

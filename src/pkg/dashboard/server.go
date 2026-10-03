@@ -323,6 +323,11 @@ type Server struct {
 	stageRunnerMu   sync.Mutex
 	stageExecutor   StageExecutor
 	stageExecutorMu sync.Mutex
+	// planCheckpointApproveMu serializes a plan checkpoint's approve, lease
+	// advance and rollback so a concurrent approval refused by the generation
+	// fence cannot roll back the plan another approval already advanced
+	// (hivecommons/hive#10119).
+	planCheckpointApproveMu sync.Mutex
 
 	spektacularMu     sync.RWMutex
 	spektacularStatus *FrontendSpektacular
@@ -391,6 +396,16 @@ type Server struct {
 
 	hubBannerMu sync.RWMutex
 	hubBanner   *HubBannerState
+
+	// workSourceExternalStatsMu guards the last eval cycle's reading of the
+	// configured work_source.external adapter's worksource.DisplaySource
+	// (ADR-0020, "Dashboard terminology", #10174). nil when the configured
+	// primary source does not implement DisplaySource (every built-in source
+	// today), so the Settings → Work Source badge and dropped-item counter
+	// fall back to the configured name/zero rather than showing a stale
+	// external reading.
+	workSourceExternalStatsMu sync.RWMutex
+	workSourceExternalStats   *workSourceExternalStats
 
 	hiveAdviceMu     sync.RWMutex
 	hiveAdviceEpoch  *hiveadvisor.Epoch
@@ -1092,6 +1107,15 @@ type TrendHistoryEntry struct {
 	GovPrs    int `json:"govPrs"`
 	GovTotal  int `json:"govTotal"`
 	GovHold   int `json:"govHold"`
+	// Overview KPI row counts. These are sampled with the same persisted ring as
+	// the governor pressure history so the Admin overview tiles have restart-safe
+	// sparkline data without a second PVC file.
+	OverviewOpenIssues   int `json:"overviewOpenIssues,omitempty"`
+	OverviewOpenPRs      int `json:"overviewOpenPrs,omitempty"`
+	OverviewActionable   int `json:"overviewActionable,omitempty"`
+	OverviewHeld         int `json:"overviewHeld,omitempty"`
+	OverviewBlockedHuman int `json:"overviewBlockedHuman,omitempty"`
+	OverviewMedianAgeSec int `json:"overviewMedianAgeSec,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -1122,6 +1146,8 @@ const trendHistoryMaxEntries = 8640
 // trendHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms),
 // mirroring factHistoryMinIntervalMs / costHistoryMinIntervalMs.
 const trendHistoryMinIntervalMs = 300_000
+
+const overviewKPIHistoryMaxPoints = 96
 
 const sseRetryMs = 3000
 
@@ -2377,6 +2403,53 @@ func (s *Server) ClearHubBanner() {
 	s.hubBanner = nil
 }
 
+// workSourceExternalStats is one eval cycle's worksource.DisplaySource
+// reading of the configured external work source (ADR-0020, "Dashboard
+// terminology", #10174).
+type workSourceExternalStats struct {
+	DisplayName  string
+	DroppedItems int64
+}
+
+// SetWorkSourceExternalStats records this eval cycle's display_name and
+// dropped-item tally for the configured work_source.external adapter, read by
+// workSourceSectionResponse for the Settings → Work Source badge and counter.
+func (s *Server) SetWorkSourceExternalStats(displayName string, dropped int64) {
+	if s == nil {
+		return
+	}
+	s.workSourceExternalStatsMu.Lock()
+	defer s.workSourceExternalStatsMu.Unlock()
+	s.workSourceExternalStats = &workSourceExternalStats{DisplayName: displayName, DroppedItems: dropped}
+}
+
+// ClearWorkSourceExternalStats drops the last reading. Called whenever the
+// configured primary work source is not an external adapter, so switching
+// back to GitHub/Linear/Jira/etc. never leaves a stale external counter
+// showing.
+func (s *Server) ClearWorkSourceExternalStats() {
+	if s == nil {
+		return
+	}
+	s.workSourceExternalStatsMu.Lock()
+	defer s.workSourceExternalStatsMu.Unlock()
+	s.workSourceExternalStats = nil
+}
+
+// workSourceExternalStatsSnapshot reads the last recorded external work-source
+// stats, if any.
+func (s *Server) workSourceExternalStatsSnapshot() (displayName string, dropped int64, ok bool) {
+	if s == nil {
+		return "", 0, false
+	}
+	s.workSourceExternalStatsMu.RLock()
+	defer s.workSourceExternalStatsMu.RUnlock()
+	if s.workSourceExternalStats == nil {
+		return "", 0, false
+	}
+	return s.workSourceExternalStats.DisplayName, s.workSourceExternalStats.DroppedItems, true
+}
+
 // handleBannerDismissed records that an authenticated user dismissed the hub
 // banner. Dismissal remains a client-side action (the banner stays in the hub
 // and re-appears for other viewers) — this endpoint only produces an audit line
@@ -3478,7 +3551,17 @@ func (s *Server) AppendTrendHistory(status *StatusPayload) {
 	if status == nil {
 		return
 	}
-	now := time.Now().UnixMilli()
+	s.appendTrendHistoryAt(status, time.Now())
+}
+
+func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
+	if status == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	now := at.UnixMilli()
 
 	s.trendHistoryMu.Lock()
 	defer s.trendHistoryMu.Unlock()
@@ -3499,6 +3582,7 @@ func (s *Server) AppendTrendHistory(status *StatusPayload) {
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
 	}
+	s.attachOverviewKPI(&entry, status, at)
 	if len(status.Repos) > 0 {
 		repos := make(map[string]TrendRepoSnap, len(status.Repos))
 		for _, r := range status.Repos {
@@ -3520,12 +3604,197 @@ func (s *Server) AppendTrendHistory(status *StatusPayload) {
 	}
 }
 
+func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {
+	if e == nil || status == nil {
+		return
+	}
+	cfg := config.DashboardIssueBandsConfig{}
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		cfg = s.deps.Config.Dashboard.IssueBands
+	}
+	var ages []int
+	for _, r := range status.Repos {
+		repoName := overviewRepoName(r)
+		e.OverviewOpenIssues += r.Issues
+		e.OverviewOpenPRs += r.PRs
+		e.OverviewHeld += len(r.HeldIssues) + len(r.HeldPrs)
+		for _, item := range r.ActionableIssues {
+			issue, ok := frontendIssue(item)
+			band := ""
+			if ok {
+				issue.Repo = nonEmpty(issue.Repo, repoName)
+				band = IssueBand(issue, false, cfg, now, s.selfAuthorizationHoldActiveForRepo).Band
+			}
+			if !overviewKPIExcludedBand(band) {
+				e.OverviewActionable++
+				if sec, ok := overviewItemAgeSec(item, now); ok {
+					ages = append(ages, sec)
+				}
+			}
+			if band == "waiting" || band == "blocked" || overviewItemNeedsHumanBlocked(item) {
+				e.OverviewBlockedHuman++
+			}
+		}
+		for _, item := range r.OpenPrs {
+			entry, ok := frontendPullRequest(item)
+			band := ""
+			if ok {
+				band = prBand(entry.pr, entry.verdict, false, cfg, now, s.autoMergeLabel(), status.HiveID).Band
+			}
+			if !overviewKPIExcludedBand(band) {
+				e.OverviewActionable++
+				if sec, ok := overviewItemAgeSec(item, now); ok {
+					ages = append(ages, sec)
+				}
+			}
+			if band == "waiting" || band == "blocked" || overviewItemNeedsHumanBlocked(item) {
+				e.OverviewBlockedHuman++
+			}
+		}
+		for _, item := range r.HeldIssues {
+			if overviewItemNeedsHumanBlocked(item) {
+				e.OverviewBlockedHuman++
+			}
+		}
+		for _, item := range r.HeldPrs {
+			if overviewItemNeedsHumanBlocked(item) {
+				e.OverviewBlockedHuman++
+			}
+		}
+	}
+	if e.OverviewHeld == 0 {
+		e.OverviewHeld = status.Hold.Total
+	}
+	if len(ages) > 0 {
+		sort.Ints(ages)
+		e.OverviewMedianAgeSec = ages[len(ages)/2]
+	}
+}
+
+func overviewKPIExcludedBand(band string) bool {
+	switch strings.ToLower(band) {
+	case "waiting", "done", "draft", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func overviewItemAgeSec(item any, now time.Time) (int, bool) {
+	var created, updated time.Time
+	switch v := item.(type) {
+	case github.Issue:
+		created, updated = v.CreatedAt, v.UpdatedAt
+	case *github.Issue:
+		if v != nil {
+			created, updated = v.CreatedAt, v.UpdatedAt
+		}
+	case github.PullRequest:
+		created, updated = v.CreatedAt, v.UpdatedAt
+	case *github.PullRequest:
+		if v != nil {
+			created, updated = v.CreatedAt, v.UpdatedAt
+		}
+	case FrontendPR:
+		created, updated = v.CreatedAt, v.UpdatedAt
+	case *FrontendPR:
+		if v != nil {
+			created, updated = v.CreatedAt, v.UpdatedAt
+		}
+	case github.HoldItem:
+		created = v.CreatedAt
+	case *github.HoldItem:
+		if v != nil {
+			created = v.CreatedAt
+		}
+	}
+	basis := updated
+	if basis.IsZero() {
+		basis = created
+	}
+	if basis.IsZero() || now.Before(basis) {
+		return 0, false
+	}
+	return int(now.Sub(basis).Seconds()), true
+}
+
+func overviewItemHasLabel(item any, want string) bool {
+	want = strings.ToLower(want)
+	var labels []string
+	switch v := item.(type) {
+	case github.Issue:
+		labels = v.Labels
+	case *github.Issue:
+		if v != nil {
+			labels = v.Labels
+		}
+	case github.PullRequest:
+		labels = v.Labels
+	case *github.PullRequest:
+		if v != nil {
+			labels = v.Labels
+		}
+	case FrontendPR:
+		labels = v.Labels
+	case *FrontendPR:
+		if v != nil {
+			labels = v.Labels
+		}
+	case github.HoldItem:
+		labels = v.Labels
+	case *github.HoldItem:
+		if v != nil {
+			labels = v.Labels
+		}
+	}
+	for _, label := range labels {
+		if strings.EqualFold(label, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func overviewItemNeedsHumanBlocked(item any) bool {
+	for _, label := range []string{"needs-human", "blocked", "waiting", "needs-decision"} {
+		if overviewItemHasLabel(item, label) {
+			return true
+		}
+	}
+	return false
+}
+
 // TrendHistory returns a copy of the trend history.
 func (s *Server) TrendHistory() []TrendHistoryEntry {
 	s.trendHistoryMu.RLock()
 	defer s.trendHistoryMu.RUnlock()
 	out := make([]TrendHistoryEntry, len(s.trendHistory))
 	copy(out, s.trendHistory)
+	return out
+}
+
+// OverviewKPIHistory returns the recent overview KPI samples downsampled to a
+// sparkline-sized payload. sinceUnixMs <= 0 reads from the beginning.
+func (s *Server) OverviewKPIHistory(sinceUnixMs int64) []TrendHistoryEntry {
+	return downsampleOverviewKPIHistory(s.TrendHistory(), sinceUnixMs, overviewKPIHistoryMaxPoints)
+}
+
+func downsampleOverviewKPIHistory(entries []TrendHistoryEntry, sinceUnixMs int64, maxPoints int) []TrendHistoryEntry {
+	filtered := make([]TrendHistoryEntry, 0, len(entries))
+	for _, e := range entries {
+		if sinceUnixMs > 0 && e.Timestamp < sinceUnixMs {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	if maxPoints <= 0 || len(filtered) <= maxPoints {
+		return filtered
+	}
+	out := make([]TrendHistoryEntry, 0, maxPoints)
+	for i := 0; i < maxPoints; i++ {
+		idx := i * (len(filtered) - 1) / (maxPoints - 1)
+		out = append(out, filtered[idx])
+	}
 	return out
 }
 

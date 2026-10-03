@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -219,6 +220,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "run wait timeout must be positive", http.StatusBadRequest)
 		return
 	}
+	if body.SpektacularInterview != nil && !validSpektacularInterview(*body.SpektacularInterview) {
+		jsonError(w, "spektacular interview must be auto or human", http.StatusBadRequest)
+		return
+	}
 	if body.RunWaitSeverity != nil {
 		if !validRunWaitSeverity(*body.RunWaitSeverity) {
 			jsonError(w, "run wait severity must be info, decision, or page", http.StatusBadRequest)
@@ -305,6 +310,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// (#9172). The apply below replaces pointer and slice fields rather than
 	// writing through them, so a shallow copy is a faithful "before".
 	runsBefore := cfg.Runs
+	// Struct copy of the whole config, restored if the save fails so a 500
+	// does not leave unsaved, unwired changes live (#10122).
+	cfgBefore := *cfg
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -517,6 +525,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if err := s.saveConfig(); err != nil {
 		// A 200 here told the operator a read-only config volume had saved
 		// their change (#9172).
+		*cfg = cfgBefore
 		s.logger.Error("failed to persist config after features update", "error", err)
 		jsonError(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -638,7 +647,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"spektacularBinary":                   cfg.Runs.Spektacular.Binary,
 		"spektacularPollS":                    int(cfg.Runs.Spektacular.PollInterval().Seconds()),
 		"spektacularHubExecutor":              cfg.Runs.Spektacular.HubExecutorEnabled(),
-		"spektacularHubExecutorBackend":       cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(""),
+		"spektacularHubExecutorBackend":       cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultHubExecutorBackend(cfg)),
 		"spektacularHubExecutorModel":         cfg.Runs.Spektacular.HubExecutor.Model,
 		"spektacularHubExecutorTimeoutS":      int(cfg.Runs.Spektacular.HubExecutor.Timeout().Seconds()),
 		"spektacularHubExecutorMaxConcurrent": cfg.Runs.Spektacular.HubExecutor.MaxConcurrentOrDefault(),
@@ -682,6 +691,15 @@ func trimStringSlice(in []string) []string {
 func validRotationTier(tier string) bool {
 	switch tier {
 	case "T1", "T2", "T3":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSpektacularInterview(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto", "human":
 		return true
 	default:
 		return false
@@ -982,7 +1000,7 @@ func (s *Server) handleGovernorWorkSourceGet(w http.ResponseWriter, r *http.Requ
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	jsonResponse(w, workSourceSectionResponse(s.deps.Config))
+	jsonResponse(w, s.workSourceSectionResponse(s.deps.Config))
 }
 
 // handleGovernorWorkSourcePut updates the work_source config. The type and
@@ -1016,9 +1034,10 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			AssignedOnly *bool                           `json:"assigned_only"`
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
-		Jira   *workSourceJiraPatch  `json:"jira"`
-		Gitea  *workSourceForgePatch `json:"gitea"`
-		GitLab *workSourceForgePatch `json:"gitlab"`
+		Jira     *workSourceJiraPatch     `json:"jira"`
+		Gitea    *workSourceForgePatch    `json:"gitea"`
+		GitLab   *workSourceForgePatch    `json:"gitlab"`
+		External *workSourceExternalPatch `json:"external"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -1028,9 +1047,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	// --- validate before mutating anything ---
 	if body.Type != nil {
 		switch *body.Type {
-		case "", "github", "github_projects", "linear", "jira", "gitea", "gitlab":
+		case "", "github", "github_projects", "linear", "jira", "gitea", "gitlab", "external":
 		default:
-			jsonError(w, "type must be one of: github, github_projects, linear, jira, gitea, gitlab", http.StatusBadRequest)
+			jsonError(w, "type must be one of: github, github_projects, linear, jira, gitea, gitlab, external", http.StatusBadRequest)
 			return
 		}
 	}
@@ -1045,6 +1064,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 		candidate := cfg.Governor.WorkSource.Jira
 		applyJiraWorkSourcePatch(&candidate, body.Jira)
 		if err := validateJiraWorkSourceTLSPatch(candidate); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.External != nil {
+		candidate := cfg.Governor.WorkSource.External
+		applyExternalWorkSourcePatch(&candidate, body.External)
+		if err := validateExternalWorkSourcePatch(candidate, effectiveWorkSourceType(cfg, body.Type)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1103,18 +1130,24 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	if body.GitLab != nil {
 		applyForgeWorkSourcePatch(&ws.GitLab, body.GitLab)
 	}
+	if body.External != nil {
+		applyExternalWorkSourcePatch(&ws.External, body.External)
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after work-source update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_work_source", auditDetail("section", "work_source"), "")
 	s.refreshAndPersist()
-	jsonResponse(w, workSourceSectionResponse(cfg))
+	jsonResponse(w, s.workSourceSectionResponse(cfg))
 }
 
 // workSourceSectionResponse renders WorkSourceConfig for the dashboard's
-// Work Source tab and the governor config GET payload.
-func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
+// Work Source tab and the governor config GET payload. It is a method so the
+// external block can add this eval cycle's worksource.DisplaySource reading
+// (display_name badge fallback and dropped-item counter, ADR-0020 "Dashboard
+// terminology", #10174) without a second config lookup.
+func (s *Server) workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 	ws := cfg.Governor.WorkSource
 	return map[string]interface{}{
 		"type": ws.Type,
@@ -1153,7 +1186,98 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 		},
 		"gitea":  forgeWorkSourceResponse(ws.Gitea),
 		"gitlab": forgeWorkSourceResponse(ws.GitLab),
+		// The external block echoes auth_token and ca_bundle verbatim. That is
+		// safe — and necessary for a round-trip — only because validation
+		// rejects anything that is not a `${VAR}`/`$VAR` reference, so what is
+		// stored here is never the credential itself (ADR-0020, "Secrets").
+		"external": s.workSourceExternalSectionResponse(ws.External),
 	}
+}
+
+// workSourceExternalSectionResponse adds the live dropped-item counter (last
+// eval cycle's worksource.DisplaySource reading) to the stored external
+// config block. The counter reads 0/unset until the external source has run
+// at least one cycle, and is cleared whenever the configured primary source
+// is not external (ClearWorkSourceExternalStats), so it never shows a stale
+// reading from a source that is no longer selected.
+func (s *Server) workSourceExternalSectionResponse(e config.ExternalSourceConfig) map[string]interface{} {
+	dropped := int64(0)
+	if _, d, ok := s.workSourceExternalStatsSnapshot(); ok {
+		dropped = d
+	}
+	return map[string]interface{}{
+		"name":            e.Name,
+		"display_name":    e.DisplayName,
+		"base_url":        e.BaseURL,
+		"auth_token":      e.AuthToken,
+		"ca_bundle":       e.CABundle,
+		"repos":           e.Repos,
+		"hold_labels":     e.HoldLabels,
+		"timeout_seconds": e.TimeoutSeconds,
+		"dropped_items":   dropped,
+	}
+}
+
+// workSourceExternalPatch is the PUT shape of the external work-source block.
+// Every scalar is a pointer so an absent key leaves the stored value alone.
+type workSourceExternalPatch struct {
+	Name           *string  `json:"name"`
+	DisplayName    *string  `json:"display_name"`
+	BaseURL        *string  `json:"base_url"`
+	AuthToken      *string  `json:"auth_token"`
+	CABundle       *string  `json:"ca_bundle"`
+	Repos          []string `json:"repos"`
+	HoldLabels     []string `json:"hold_labels"`
+	TimeoutSeconds *int     `json:"timeout_seconds"`
+}
+
+func applyExternalWorkSourcePatch(e *config.ExternalSourceConfig, patch *workSourceExternalPatch) {
+	if patch.Name != nil {
+		e.Name = strings.TrimSpace(*patch.Name)
+	}
+	if patch.DisplayName != nil {
+		e.DisplayName = strings.TrimSpace(*patch.DisplayName)
+	}
+	if patch.BaseURL != nil {
+		e.BaseURL = strings.TrimSpace(*patch.BaseURL)
+	}
+	if patch.AuthToken != nil {
+		e.AuthToken = strings.TrimSpace(*patch.AuthToken)
+	}
+	if patch.CABundle != nil {
+		e.CABundle = strings.TrimSpace(*patch.CABundle)
+	}
+	if patch.Repos != nil {
+		e.Repos = patch.Repos
+	}
+	if patch.HoldLabels != nil {
+		e.HoldLabels = patch.HoldLabels
+	}
+	if patch.TimeoutSeconds != nil {
+		e.TimeoutSeconds = *patch.TimeoutSeconds
+	}
+}
+
+// validateExternalWorkSourcePatch gates what may be persisted.
+//
+// A block that is about to become the active source must satisfy every rule.
+// A block the operator is still staging only has to keep its credentials as
+// environment references — that is the rule which, if skipped, would write a
+// real provider token into the dashboard overlay on disk.
+func validateExternalWorkSourcePatch(candidate config.ExternalSourceConfig, effectiveType string) error {
+	if effectiveType == "external" {
+		return candidate.Validate()
+	}
+	return candidate.ValidateSecretRefs()
+}
+
+// effectiveWorkSourceType is the type this request leaves configured: the
+// patched value when the body carries one, otherwise the stored value.
+func effectiveWorkSourceType(cfg *config.Config, patched *string) string {
+	if patched != nil {
+		return strings.TrimSpace(*patched)
+	}
+	return strings.TrimSpace(cfg.Governor.WorkSource.Type)
 }
 
 type workSourceForgePatch struct {
@@ -1445,4 +1569,21 @@ func (s *Server) linearStoredViewerID() func() (string, string) {
 		return nil
 	}
 	return s.deps.LinearStoredViewerID
+}
+
+// defaultHubExecutorBackend mirrors cmd/hive's defaultAgentBackend so the
+// card shows the backend the executor is actually built with (#10126).
+func defaultHubExecutorBackend(cfg *config.Config) string {
+	names := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		a := cfg.Agents[name]
+		if a.Enabled && strings.TrimSpace(a.Backend) != "" {
+			return strings.TrimSpace(a.Backend)
+		}
+	}
+	return config.DefaultSpektacularHubExecutorBackend
 }

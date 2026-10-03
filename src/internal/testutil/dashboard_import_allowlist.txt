@@ -52,5 +52,6 @@ github.com/hivecommons/hive/pkg/timeline
 github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/toolapprove
 github.com/hivecommons/hive/pkg/turn
+github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/watchdog
 github.com/hivecommons/hive/pkg/worksource

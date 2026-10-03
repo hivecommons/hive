@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -414,6 +416,9 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 	if ref.Repo == "" || (ref.Number <= 0 && ref.ExternalID == "") {
 		return errors.New("repo and issue number or external id are required")
 	}
+	if err := validateSpekHubRepoPath(ref.Repo); err != nil {
+		return err
+	}
 	ctx = ctx.Normalized()
 	if ctx.Repo == "" {
 		ctx.Repo = ref.Repo
@@ -457,7 +462,7 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 		title:           ctx.Title,
 		tier:            "triage",
 		stage:           StageSpec,
-		gen:             1,
+		gen:             nextRunAdmissionGen(runKey),
 		triageVerdict:   strings.TrimSpace(verdict),
 		triageRationale: strings.TrimSpace(rationale),
 		workItem:        ctx,
@@ -468,6 +473,30 @@ func (s *Server) AdmitTriagedRunRefWithContext(ref worksource.Ref, ctx worksourc
 		return fmt.Errorf("persisting admitted run lease for %s: %w", taskID, err)
 	}
 	return nil
+}
+
+// nextRunAdmissionGen returns the generation a freshly admitted spec lease
+// starts at. Generations increase monotonically across a run's stages and key
+// its receipts, so a re-admitted run key must start past every generation an
+// earlier run already wrote; otherwise a stale receipt makes the new stage look
+// finished and parked at its checkpoint before any work.
+func nextRunAdmissionGen(runKey string) uint64 {
+	entries, err := os.ReadDir(filepath.Join(runReceiptsDir, sanitizeReceiptSegment(runKey)))
+	if err != nil {
+		return 1
+	}
+	var maxGen uint64
+	for _, entry := range entries {
+		_, rest, ok := strings.Cut(entry.Name(), "-gen")
+		if !ok {
+			continue
+		}
+		raw, _, _ := strings.Cut(rest, ".")
+		if gen, err := strconv.ParseUint(raw, 10, 64); err == nil && gen > maxGen {
+			maxGen = gen
+		}
+	}
+	return maxGen + 1
 }
 
 // RunTriageFixRetired reports whether an owner reset retired this triaged run
@@ -585,8 +614,11 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 				if strings.TrimSpace(body) != "" {
 					digest = designArtifactDigest(body)
 				}
+				// Best-effort: the digest is stored only on success, so a failed
+				// forge write is retried on the next advance without blocking it.
 				if err := s.postDesignArtifact(context.Background(), store, epic, digest, body); err != nil {
-					return err
+					s.logger.Warn("[runs] design artifact comment failed", "run", runKey, "epic", epic.ID, "error", err)
+					s.recordDesignArtifactFailed(runKey, epic.ID, l.identity, err, now)
 				}
 			}
 		}
@@ -783,8 +815,11 @@ const runPlanSource = "spektacular"
 // task-list text the runner rendered from Spektacular's export is decomposed
 // with AutoApprove false, so children stay gated until ApprovePlan and no
 // model is asked to redecompose an already-structured plan. The epic is found
-// by its run_key metadata (or created bound to the run key). A run whose epic
-// already carries a plan is left alone (idempotent across ticks).
+// by its run_key metadata (or created bound to the run key). Importing the
+// same plan again is a no-op (idempotent across ticks) apart from retrying
+// the Wavefront fan-out of an approved plan that has none yet; a regenerated plan
+// replaces the previously imported one and returns the epic to draft. An epic
+// that already carries children from some other planner is left alone.
 func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 	if s == nil {
 		return errors.New("no server")
@@ -814,12 +849,37 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 		}
 		epic, _ = store.Get(created.ID)
 	}
-	if epic.Meta(planning.MetaPlanStatus) != "" {
+	digest := runPlanDigest(taskList)
+	imported := epic.Meta(runPlanDigestMeta)
+	if imported == digest {
+		// A fan-out that failed after the import is retried here, or the
+		// remaining waves are never created (hivecommons/hive#10089).
+		return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
+	}
+	previous := runPlanChildren(store, epic.ID)
+	if imported == "" && len(previous) > 0 {
 		return nil
 	}
-	result, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false})
-	if err != nil {
+	if _, err := planning.DecomposeFromOutput(store, epic, taskList, planning.Options{AutoApprove: false}); err != nil {
 		return fmt.Errorf("importing spektacular plan: %w", err)
+	}
+	for _, child := range previous {
+		if child.Status == beads.StatusClosed || child.Status == beads.StatusDone {
+			continue
+		}
+		if err := planning.RemoveChild(store, epic.ID, child.ID); err != nil {
+			return fmt.Errorf("retiring superseded run plan: %w", err)
+		}
+	}
+	if err := store.SetMetadata(epic.ID, runPlanDigestMeta, digest); err != nil {
+		return fmt.Errorf("recording run plan digest: %w", err)
+	}
+	// The replaced plan's waves are not this plan's; it fans out afresh once
+	// approved.
+	if epic.Meta(planning.MetaRunWaveIDs) != "" {
+		if err := store.UnsetMetadata(epic.ID, planning.MetaRunWaveIDs); err != nil {
+			return fmt.Errorf("clearing superseded run wave ids: %w", err)
+		}
 	}
 	if updated, err := store.Get(epic.ID); err == nil {
 		epic = updated
@@ -831,14 +891,93 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string) error {
 			return err
 		}
 	}
-	if err := s.fanOutImportedRunPlan(context.Background(), store, epic.ID, runKey, result.Children); err != nil {
-		return err
-	}
-	return nil
+	return s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey)
 }
 
-func (s *Server) fanOutImportedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string, children []*beads.Bead) error {
-	if s == nil || s.deps == nil || s.deps.RunFanout == nil || store == nil || len(children) == 0 {
+// runPlanDigestMeta records which Spektacular task list a run epic's plan was
+// imported from, so a regenerated plan is re-imported and a repeat is not.
+const runPlanDigestMeta = "run_plan_digest"
+
+// runPlanDigestReplan marks an imported plan as superseded by an owner reset;
+// it never equals a real digest, so the next import replaces the plan.
+const runPlanDigestReplan = "replan"
+
+func runPlanDigest(taskList string) string {
+	sum := sha256.Sum256([]byte(taskList))
+	return hex.EncodeToString(sum[:])
+}
+
+func runPlanChildren(store *beads.Store, epicID string) []*beads.Bead {
+	var out []*beads.Bead
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Meta(planning.MetaParentEpic) == epicID {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// resetRunPlanForReplan runs when an owner resets a run back to the plan stage
+// (or earlier): the old plan goes back to draft so the re-run plan stage is
+// held for review again, and the import digest is invalidated so the
+// regenerated plan replaces the old one even when its text is unchanged.
+func (s *Server) resetRunPlanForReplan(runKey string) error {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil {
+		return nil
+	}
+	if epic.Meta(planning.MetaPlanStatus) == planning.PlanStatusApproved {
+		if err := planning.RejectPlan(store, epic.ID); err != nil {
+			return err
+		}
+	}
+	return supersedeRunPlanImport(store, epic)
+}
+
+// resetRunDesignForRespec runs when an owner resets a run back to the spec
+// stage: the rejected design artifact digest is forgotten so the spec the
+// re-run Spec stage drafts is posted to the work item again even when its text
+// is unchanged, as rejecting the Spec checkpoint already does - otherwise the
+// reset silently leaves the owner reading the superseded artifact
+// (hivecommons/hive#10062).
+func (s *Server) resetRunDesignForRespec(runKey string) error {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil || epic.Meta(planning.MetaDesignVia) != planning.DesignViaSpektacular {
+		return nil
+	}
+	return clearDesignArtifactDigest(store, epic.ID)
+}
+
+// supersedeRunPlanImport invalidates a run epic's import digest so the next
+// plan ImportRunPlan receives replaces the superseded one even when its text
+// is unchanged. An epic with no imported plan is left alone.
+func supersedeRunPlanImport(store *beads.Store, epic *beads.Bead) error {
+	if store == nil || epic == nil || epic.Meta(runPlanDigestMeta) == "" {
+		return nil
+	}
+	return store.SetMetadata(epic.ID, runPlanDigestMeta, runPlanDigestReplan)
+}
+
+// fanOutApprovedRunPlan fans an approved, not yet fanned-out run plan out
+// into implementation leases. A draft plan is left alone: its implement
+// leases would outrank the plan lease parked at the checkpoint and mask it
+// from the owner (hivecommons/hive#10089). Recorded wave ids mark a plan
+// already fanned out.
+func (s *Server) fanOutApprovedRunPlan(ctx context.Context, store *beads.Store, epicID, runKey string) error {
+	if s == nil || s.deps == nil || s.deps.RunFanout == nil || store == nil || epicID == "" || strings.TrimSpace(runKey) == "" {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil || epic.Meta(planning.MetaPlanStatus) != planning.PlanStatusApproved || epic.Meta(planning.MetaRunWaveIDs) != "" {
+		return nil
+	}
+	var children []*beads.Bead
+	for _, child := range runPlanChildren(store, epicID) {
+		if child.Status != beads.StatusClosed && child.Status != beads.StatusDone {
+			children = append(children, child)
+		}
+	}
+	if len(children) == 0 {
 		return nil
 	}
 	repos := reposFromPlanChildren(store, children)
@@ -1086,6 +1225,9 @@ func (s *Server) autoApproveRunCheckpointWithGen(store *beads.Store, epic *beads
 		return fmt.Errorf("auto-approving %s checkpoint for %s: %w", stage, runKey, err)
 	}
 	s.recordRunCheckpointAutoApproval(runKey, epic.ID, stage, gen, time.Now(), decision)
+	if err := s.fanOutApprovedRunPlan(context.Background(), store, epic.ID, runKey); err != nil {
+		s.logger.Warn("[runs] fanning out auto-approved run plan failed", "run", runKey, "epic", epic.ID, "error", err)
+	}
 	return nil
 }
 
@@ -1221,6 +1363,40 @@ func (s *Server) advanceCheckpointLease(runKey, epicID, fromStage, toStage strin
 	return leaseRunKey, nil
 }
 
+// retryCheckpointLease is the reject counterpart of advanceCheckpointLease: it
+// finds the run's live stage lease at the reviewed generation and, when that
+// generation's receipt has parked it at the checkpoint, re-mints it so the
+// stage is drafted again. A stage still drafting (no receipt) is left alone
+// and reports false. With no matching live lease it returns
+// errRunCheckpointNotHeld, so a reject never answers success for a run whose
+// lease it could not find (hivecommons/hive#10063).
+func (s *Server) retryCheckpointLease(runKey, stage string, gen uint64, now time.Time) (bool, error) {
+	if s == nil || s.contributeHub == nil || runKey == "" {
+		return false, errRunCheckpointNotHeld
+	}
+	var identity, taskID, leaseRunKey string
+	found := false
+	err := s.VisitActiveStageLeases(func(rk, key, st, id, task, repo string, g uint64, expiresAt time.Time) {
+		if found || (key != runKey && !s.sameRunKey(runKey, rk, repo)) || st != stage || now.After(expiresAt) || g != gen {
+			return
+		}
+		identity, taskID, leaseRunKey, found = id, task, rk, true
+	})
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, fmt.Errorf("%w: no live %s lease for %s at gen %d", errRunCheckpointNotHeld, stage, runKey, gen)
+	}
+	if !s.runCheckpointStageHeld(leaseRunKey, stage, gen) {
+		return false, nil
+	}
+	if _, err := s.contributeHub.retryLeaseStage(identity, taskID, gen, now); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // approveRunDesign records a crossed Spec checkpoint on the run's Spektacular
 // design epic. It is idempotent. The lease move that precedes it is the
 // authoritative transition, so the forge signal (approved label / status) is
@@ -1260,6 +1436,36 @@ func (s *Server) approveRunDesign(ctx context.Context, store *beads.Store, epicI
 		})
 	}
 	return nil
+}
+
+// recordDesignArtifactFailed puts a dropped design artifact comment where an
+// owner can see it, exactly as a failed design signal already is: the advance
+// stands and the next one retries the comment, but without an audit entry and
+// a timeline note the only trace of a work item that never received the spec
+// is a log line (hivecommons/hive#10094).
+func (s *Server) recordDesignArtifactFailed(runKey, epicID, actor string, cause error, at time.Time) {
+	if s == nil || cause == nil {
+		return
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	s.audit.Log(actor, "design_artifact_failed", auditDetail("epic", epicID, "run", runKey, "error", cause.Error()), planning.ArchitectAgentName)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindProgress,
+		Agent:    actor,
+		At:       at.UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrRunKey: runKey,
+			stageAttrStage:  StageSpec,
+			stageAttrReason: "design_artifact_failed",
+			"error":         cause.Error(),
+		},
+	})
 }
 
 func (s *Server) activeRunStage(runKey string) string {

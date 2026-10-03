@@ -1,0 +1,1 @@
+- Admin MCP `issues_by_band`/`prs_by_band` gain a `held` argument that filters rows before the result's limit cap, so held issues/PRs beyond the cap are no longer silently dropped when asking "what is on hold?" (#10018).

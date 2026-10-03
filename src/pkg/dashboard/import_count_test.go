@@ -8,7 +8,7 @@ import (
 )
 
 func TestDashboardInternalImportCountRatchet(t *testing.T) {
-	// 42 = the v5 baseline of 34 plus pkg/fleetreport and pkg/hiveadvisor,
+	// 43 = the v5 baseline of 34 plus pkg/fleetreport and pkg/hiveadvisor,
 	// which the v4 fleet self-report and hive-owner-advice features import,
 	// plus pkg/scheduler for the kick_template provenance type the
 	// SchedulerControl seam now carries (hivecommons/hive#7390), plus
@@ -25,8 +25,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// the /api/claims routes expose (hivecommons/hive#8380), plus pkg/adminmcp for
 	// the phase 1 admin MCP endpoint (hivecommons/hive#8699), plus pkg/logscrub
 	// for Spektacular run output scrubbing, plus pkg/advisor for the advisor
-	// lane record listing the /api/advisor routes serve (hivecommons/hive#9722).
-	const maxDashboardInternalImports = 49
+	// lane record listing the /api/advisor routes serve (hivecommons/hive#9722),
+	// plus pkg/upstreamwatch for the divergence view and /api/upstream-watch route
+	// (hivecommons/hive#10361).
+	const maxDashboardInternalImports = 50
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

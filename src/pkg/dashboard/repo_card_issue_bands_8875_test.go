@@ -91,6 +91,9 @@ function issueBandSpec(band) {
   return { label: 'Label ' + band, short: 'band-' + band, rule: 'rule ' + band };
 }
 function issueBandTip(band) { return 'tip ' + band; }
+function repoPillFilterAttrs() { return ''; }
+function repoPillFilterState() { return { mode: 'any', kinds: [] }; }
+function repoPillFilterActive() { return false; }
 `)
 	for _, name := range funcs {
 		script.WriteString(jsFunc(t, html, name))

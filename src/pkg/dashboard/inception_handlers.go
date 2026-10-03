@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 const maxInceptionBodyBytes = 64 * 1024
@@ -276,26 +277,41 @@ func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if err := s.deps.Inception.AdvanceToComplete(); err != nil {
+	// Validate the phase before admitting so a rejected approve never leaves
+	// an admitted run behind, and admit before completing so an admission
+	// failure never leaves the inception complete (#10114).
+	if err := s.deps.Inception.CanAdvanceToComplete(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	runKey := ""
 	if admitRun {
 		if target.ok {
+			if s.contributeHub == nil {
+				jsonError(w, "run lease registry unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			if err := s.AdmitRun(target.repo, target.issueNumber, target.title, time.Now()); err != nil {
 				jsonError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			runKey = worksource.Ref{Repo: target.repo, Number: target.issueNumber}.Key()
 			s.logger.Info("inception complete admitted run",
 				"repo", target.repo,
 				"issue", target.issueNumber,
+				"run_key", runKey,
 			)
 			s.auditFromRequest(r, "inception_run_admitted",
 				auditDetail("repo", target.repo, "issue", strconv.Itoa(target.issueNumber)), "")
 		} else {
 			s.logger.Info("inception complete did not admit run: no issue target supplied")
 		}
+	}
+
+	if err := s.deps.Inception.AdvanceToCompleteWithRun(runKey); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Re-pause brainstorm so the governor doesn't kick it with generic
@@ -305,7 +321,11 @@ func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.auditFromRequest(r, "inception_approve", "", "")
-	jsonResponse(w, map[string]interface{}{"ok": true})
+	resp := map[string]interface{}{"ok": true, "admitted": runKey != ""}
+	if runKey != "" {
+		resp["run_key"] = runKey
+	}
+	jsonResponse(w, resp)
 }
 
 type inceptionRunTarget struct {
@@ -362,10 +382,14 @@ func (s *Server) inceptionRunAdmissionTarget(r *http.Request) (inceptionRunTarge
 	if s.deps.Config != nil {
 		repo = config.QualifyRepo(s.deps.Config.Project.Org, repo)
 	}
-	if strings.TrimSpace(repo) == "" {
-		return inceptionRunTarget{}, nil
+	if issueNumber < 0 {
+		return inceptionRunTarget{}, fmt.Errorf("issue_number must be positive")
 	}
-	if issueNumber <= 0 {
+	hasRepo, hasIssue := strings.TrimSpace(repo) != "", issueNumber > 0
+	if hasRepo != hasIssue {
+		return inceptionRunTarget{}, fmt.Errorf("repo and issue_number must be supplied together (or use issue_url)")
+	}
+	if !hasRepo {
 		return inceptionRunTarget{}, nil
 	}
 

@@ -10,6 +10,34 @@
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
 #     https://registry-1.docker.io/v2/library/debian/manifests/bookworm-slim | grep -i docker-content-digest
 # and swap it in below, keeping the tag for readability.
+
+# --- quota publisher (hivecommons/hive#10299) ---------------------------------
+# A standalone contributor has no `hive` process, so nothing published the quota
+# readings the relay's guard evaluates and the guard admitted work blind. This
+# stage builds the small publish-only command that feeds it. It is a static
+# CGO_ENABLED=0 binary copied into the runtime stage below, so the Go toolchain
+# never ships in the contributor image.
+#
+# Pinned to the SAME golang:1.27-alpine index digest as src/Dockerfile and
+# src/Dockerfile.hub — refresh all three together, with the recipe documented in
+# src/Dockerfile.
+#
+# The stage runs on the BUILD platform and cross-compiles with GOARCH=$TARGETARCH:
+# this image is built for linux/amd64 and linux/arm64, and compiling Go under
+# QEMU emulation for the foreign arch costs minutes per build for no benefit —
+# a pure-Go static binary cross-compiles exactly.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS quota-publisher-builder
+ARG TARGETARCH
+WORKDIR /src
+COPY src/go.mod src/go.sum ./
+RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    go mod download
+COPY src/ .
+RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
+    --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -o /hive-quota-publisher ./cmd/hive-quota-publisher
+
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
 ARG NODE_MAJOR=24
@@ -170,8 +198,7 @@ RUN (ARCH="${TARGETARCH:-$(uname -m)}" && \
     tar -xzf "/tmp/${SPEKTACULAR_ASSET}" -C /tmp spektacular && \
     install -m 0755 /tmp/spektacular /usr/local/bin/spektacular && \
     rm -f "/tmp/${SPEKTACULAR_ASSET}" /tmp/spektacular-checksums.txt /tmp/spektacular.sha256 /tmp/spektacular && \
-    spektacular --version) || \
-    echo "WARN: spektacular install failed — long-running runs (runs.spektacular) will be unavailable"
+    spektacular --version) || exit 1
 
 # The NodeSource GPG key is downloaded to a file and its SHA-256 verified
 # BEFORE being dearmored/trusted (issue #3821), mirroring the
@@ -499,6 +526,10 @@ COPY bin/repo-toolchain.sh /usr/local/bin/
 COPY bin/agent-launch.sh /usr/local/bin/
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
 COPY bin/hive-config.sh /usr/local/bin/
+# hivecommons/hive#10299: the contributor's own quota reading publisher. The
+# entrypoint starts it alongside the relay so an unattended contributor gets
+# proactive quota protection with no custom reader and no local hive server.
+COPY --from=quota-publisher-builder /hive-quota-publisher /usr/local/bin/hive-quota-publisher
 COPY config/backends.conf /usr/local/etc/hive/
 COPY config/restrictions/contributor-default.json /etc/hive/restrictions/
 

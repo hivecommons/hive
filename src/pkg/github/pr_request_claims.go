@@ -265,6 +265,20 @@ func incompleteIssueReason(issue *gh.Issue) string {
 // comment quote-block or copied from CONTRIBUTING without transcription risk.
 const humanFiledBugConfirmationMarker = "hive: reporter-confirmed"
 
+// humanFiledBugCloseOnMergeMarker is the filing-time opt-in for human-filed
+// bugs whose merged fix IS the verification: code-sweep findings with no
+// observed symptom, and timing/failure-path/fleet-only bugs the reporter
+// cannot reproduce on demand (hivecommons/hive#10304). It goes in the issue
+// body or on the issue as a label, detected exactly like
+// humanFiledBugConfirmationMarker. When present, humanFiledBugReason returns ""
+// so the fix PR keeps "Closes #N" and the close path accepts the merge.
+//
+// It is a separate, honestly named marker rather than a documented use of
+// "hive: reporter-confirmed" at filing time: that name claims the reporter
+// verified a fix that does not exist yet. Without either marker the #6781
+// protection is unchanged.
+const humanFiledBugCloseOnMergeMarker = "hive: close-on-merge"
+
 // humanFiledBugReason returns a non-empty downgrade reason when issue is a
 // human-filed bug report that has NOT been marked as reporter-confirmed. When
 // this reason is applied by validatePRRequestClaims the PR body's "Closes #N"
@@ -296,11 +310,12 @@ func humanFiledBugReason(issue *gh.Issue) string {
 	if !IsHumanFiledBugReport(issue) {
 		return ""
 	}
-	if hasReporterConfirmation(issue) {
+	if hasReporterConfirmation(issue) || hasCloseOnMergeOptIn(issue) {
 		return ""
 	}
 	return "human-filed bug: reporter must confirm the fix before auto-closing (add " +
-		strconv.Quote(humanFiledBugConfirmationMarker) + " to the issue body or apply the same label); " +
+		strconv.Quote(humanFiledBugConfirmationMarker) + " to the issue body or apply the same label, or file with " +
+		strconv.Quote(humanFiledBugCloseOnMergeMarker) + " when the merged fix is the verification); " +
 		"see kubestellar/hive#6781"
 }
 
@@ -367,14 +382,27 @@ func IsHumanFiledBugReport(issue *gh.Issue) bool {
 // in to auto-close via the marker (in the body) or the corresponding label.
 // Body match is case-insensitive so a marker pasted in mixed case is honoured.
 func hasReporterConfirmation(issue *gh.Issue) bool {
+	return hasIssueMarker(issue, humanFiledBugConfirmationMarker)
+}
+
+// hasCloseOnMergeOptIn reports whether the filer opted in to close-on-merge
+// via humanFiledBugCloseOnMergeMarker in the body or as a label
+// (hivecommons/hive#10304).
+func hasCloseOnMergeOptIn(issue *gh.Issue) bool {
+	return hasIssueMarker(issue, humanFiledBugCloseOnMergeMarker)
+}
+
+// hasIssueMarker reports whether marker (lower-case) appears in the issue body
+// (case-insensitive substring) or as a label (case-insensitive, trimmed).
+func hasIssueMarker(issue *gh.Issue, marker string) bool {
 	if issue == nil {
 		return false
 	}
-	if strings.Contains(strings.ToLower(issue.GetBody()), humanFiledBugConfirmationMarker) {
+	if strings.Contains(strings.ToLower(issue.GetBody()), marker) {
 		return true
 	}
 	for _, l := range issue.Labels {
-		if strings.EqualFold(strings.TrimSpace(l.GetName()), humanFiledBugConfirmationMarker) {
+		if strings.EqualFold(strings.TrimSpace(l.GetName()), marker) {
 			return true
 		}
 	}

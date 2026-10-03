@@ -5,173 +5,292 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
-// FromConfig constructs the WorkSource for a governor from its WorkSourceConfig.
-// When cfg.Type is "" or "github", returns a githubIssuesSource wrapping the
-// existing ghClient — no config change needed for existing hives.
+// FromConfig constructs the WorkSource for a governor from its
+// WorkSourceConfig. When cfg.Type is "" or "github", returns a
+// githubIssuesSource wrapping the existing ghClient — no config change needed
+// for existing hives.
+//
+// Selection goes through the primary registry (RegisterPrimary) rather than a
+// switch, so an adapter is one registration instead of an edit here. An
+// unknown type is still a hard config error: workSourceIssuesForCycle turns
+// that into the fail-closed branch, which is the only safe reading of "the
+// operator asked for a source this binary does not have".
 func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, ghOrg string, logger *slog.Logger) (WorkSource, error) {
-	var primary WorkSource
-	switch cfg.Type {
-	case "", "github":
-		primary = NewGitHubIssuesSource(ghClient)
-	case "github_projects":
-		c := cfg.GitHubProjects
-		primary = NewGitHubProjectsSource(GitHubProjectsConfig{
-			Token:          ghToken,
-			Org:            coalesce(c.Org, ghOrg),
-			ProjectNumber:  c.ProjectNumber,
-			States:         c.States,
-			PriorityField:  c.PriorityField,
-			IterationField: c.IterationField,
-			DefaultRepo:    c.DefaultRepo,
-		})
-	case "linear":
-		c := cfg.Linear
-		if c.APIKey == "" {
-			return nil, fmt.Errorf("work_source.linear.api_key is required")
-		}
-		apiKey, err := resolveSecretRef("work_source.linear.api_key", c.APIKey)
-		if err != nil {
-			return nil, err
-		}
-		if len(c.Teams) == 0 {
-			return nil, fmt.Errorf("work_source.linear.teams must contain at least one team")
-		}
-		teams := make([]LinearTeamConfig, len(c.Teams))
-		for i, t := range c.Teams {
-			if t.Key == "" {
-				return nil, fmt.Errorf("work_source.linear.teams[%d].key is required", i)
-			}
-			if t.Repo == "" {
-				return nil, fmt.Errorf("work_source.linear.teams[%d].repo is required", i)
-			}
-			if t.Cycles != "" && t.Cycles != "current" {
-				return nil, fmt.Errorf("work_source.linear.teams[%d].cycles = %q (want empty or current)", i, t.Cycles)
-			}
-			projects := make([]LinearProjectConfig, len(t.Projects))
-			for j, p := range t.Projects {
-				if p.Name == "" {
-					return nil, fmt.Errorf("work_source.linear.teams[%d].projects[%d].name is required", i, j)
-				}
-				projects[j] = LinearProjectConfig{Name: p.Name, Repo: p.Repo}
-			}
-			teams[i] = LinearTeamConfig{Key: t.Key, Repo: t.Repo, States: t.States, Projects: projects, Cycles: t.Cycles}
-		}
-		viewerID := ""
-		if c.AssignedOnly {
-			// Fail closed: assigned_only without a connected Linear agent
-			// cannot mean "enumerate everything" — that would silently hand
-			// agents the whole backlog the operator asked to narrow.
-			viewerID = linearagent.StoredViewerID(linearagent.DefaultStorePath())
-			if viewerID == "" {
-				return nil, fmt.Errorf("work_source.linear.assigned_only requires the Linear agent to be connected (no install found at %s)", linearagent.DefaultStorePath())
-			}
-		}
-		primary = NewLinearSource(LinearConfig{
-			APIKey:      apiKey,
-			Teams:       teams,
-			HoldLabels:  c.HoldLabels,
-			ViewerID:    viewerID,
-			Logger:      logger,
-			Transitions: c.Transitions,
-		}, nil)
-	case "jira":
-		c := cfg.Jira
-		apiToken, err := resolveSecretRef("work_source.jira.api_token", c.APIToken)
-		if err != nil {
-			return nil, err
-		}
-		password, err := resolveSecretRef("work_source.jira.password", c.Password)
-		if err != nil {
-			return nil, err
-		}
-		var caBundle, clientCert, clientKey string
-		if jiraConfigIsDataCenter(c.Deployment) {
-			caBundle, err = resolveSecretRef("work_source.jira.ca_bundle", c.CABundle)
-			if err != nil {
-				return nil, err
-			}
-			clientCert, err = resolveSecretRef("work_source.jira.client_cert", c.ClientCert)
-			if err != nil {
-				return nil, err
-			}
-			clientKey, err = resolveSecretRef("work_source.jira.client_key", c.ClientKey)
-			if err != nil {
-				return nil, err
-			}
-		}
-		jiraCfg := JiraConfig{
-			Deployment:         c.Deployment,
-			BaseURL:            c.BaseURL,
-			Email:              c.Email,
-			Username:           c.Username,
-			APIToken:           apiToken,
-			Password:           password,
-			CABundle:           caBundle,
-			InsecureSkipVerify: c.InsecureSkipVerify,
-			ClientCert:         clientCert,
-			ClientKey:          clientKey,
-			ProjectKeys:        c.ProjectKeys,
-			JQL:                c.JQL,
-			Repo:               c.Repo,
-			HoldLabels:         c.HoldLabels,
-			Transitions:        c.Transitions,
-			Logger:             logger,
-		}
-		if err := ValidateJiraTLSConfig(jiraCfg); err != nil {
-			return nil, err
-		}
-		primary = NewJiraSource(jiraCfg)
-	case "gitea":
-		c := cfg.Gitea
-		token, err := resolveSecretRef("work_source.gitea.token", c.Token)
-		if err != nil {
-			return nil, err
-		}
-		primary, err = newGiteaSource(forgeWorkSourceConfig{
-			BaseURL:    c.BaseURL,
-			Token:      token,
-			TokenEnv:   c.TokenEnv,
-			Org:        c.Org,
-			Repos:      forgeReposFromConfig(c.Repos),
-			States:     c.States,
-			Labels:     c.Labels,
-			Assignee:   c.Assignee,
-			HoldLabels: c.HoldLabels,
-		})
-		if err != nil {
-			return nil, err
-		}
-	case "gitlab":
-		c := cfg.GitLab
-		token, err := resolveSecretRef("work_source.gitlab.token", c.Token)
-		if err != nil {
-			return nil, err
-		}
-		primary, err = newGitLabSource(forgeWorkSourceConfig{
-			BaseURL:    c.BaseURL,
-			Token:      token,
-			TokenEnv:   c.TokenEnv,
-			Org:        c.Org,
-			Repos:      forgeReposFromConfig(c.Repos),
-			States:     c.States,
-			Labels:     c.Labels,
-			Assignee:   c.Assignee,
-			HoldLabels: c.HoldLabels,
-		})
-		if err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, jira, gitea, or gitlab)", cfg.Type)
+	name := strings.TrimSpace(cfg.Type)
+	if name == "" {
+		name = PrimaryGitHub
+	}
+	build, ok := lookupPrimary(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown work_source type %q (want github, github_projects, linear, jira, gitea, gitlab, or external)", cfg.Type)
+	}
+	primary, err := build(cfg, PrimaryDeps{
+		GitHub:      ghClient,
+		GitHubToken: ghToken,
+		GitHubOrg:   ghOrg,
+		Logger:      logger,
+	})
+	if err != nil {
+		return nil, err
 	}
 	return AppendAdditive(primary, cfg)
+}
+
+// Registry names of the built-in primary work sources.
+const (
+	PrimaryGitHub         = "github"
+	PrimaryGitHubProjects = "github_projects"
+	PrimaryLinear         = "linear"
+	PrimaryJira           = "jira"
+	PrimaryGitea          = "gitea"
+	PrimaryGitLab         = "gitlab"
+	// PrimaryExternal is the provider-operated HTTP/JSON source (ADR-0020).
+	PrimaryExternal = "external"
+)
+
+// PrimaryDeps carries what the built-in adapters need from FromConfig's
+// parameters. External providers use only Logger: they never receive the
+// GitHub client or token (ADR-0020, "Secrets").
+type PrimaryDeps struct {
+	GitHub      *github.Client
+	GitHubToken string
+	GitHubOrg   string
+	Logger      *slog.Logger
+}
+
+// PrimaryBuilder constructs one primary (replacement) work source from the
+// governor's work-source config.
+type PrimaryBuilder func(cfg config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error)
+
+var (
+	primaryMu       sync.RWMutex
+	primaryBuilders = map[string]PrimaryBuilder{}
+)
+
+// RegisterPrimary registers the builder for a named primary source.
+// Registering the same name twice panics, like RegisterAdditive: two builders
+// for one type would make the selected source depend on link order.
+func RegisterPrimary(name string, build PrimaryBuilder) {
+	primaryMu.Lock()
+	defer primaryMu.Unlock()
+	if _, dup := primaryBuilders[name]; dup {
+		panic(fmt.Sprintf("worksource: primary source %q registered twice", name))
+	}
+	primaryBuilders[name] = build
+}
+
+func lookupPrimary(name string) (PrimaryBuilder, bool) {
+	primaryMu.RLock()
+	defer primaryMu.RUnlock()
+	b, ok := primaryBuilders[name]
+	return b, ok
+}
+
+func init() {
+	RegisterPrimary(PrimaryGitHub, buildGitHubIssuesSource)
+	RegisterPrimary(PrimaryGitHubProjects, buildGitHubProjectsSource)
+	RegisterPrimary(PrimaryLinear, buildLinearSource)
+	RegisterPrimary(PrimaryJira, buildJiraSource)
+	RegisterPrimary(PrimaryGitea, buildGiteaSource)
+	RegisterPrimary(PrimaryGitLab, buildGitLabSource)
+	RegisterPrimary(PrimaryExternal, buildExternalSource)
+}
+
+func buildGitHubIssuesSource(_ config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error) {
+	return NewGitHubIssuesSource(deps.GitHub), nil
+}
+
+func buildGitHubProjectsSource(cfg config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error) {
+	c := cfg.GitHubProjects
+	return NewGitHubProjectsSource(GitHubProjectsConfig{
+		Token:          deps.GitHubToken,
+		Org:            coalesce(c.Org, deps.GitHubOrg),
+		ProjectNumber:  c.ProjectNumber,
+		States:         c.States,
+		PriorityField:  c.PriorityField,
+		IterationField: c.IterationField,
+		DefaultRepo:    c.DefaultRepo,
+	}), nil
+}
+
+func buildLinearSource(cfg config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error) {
+	c := cfg.Linear
+	if c.APIKey == "" {
+		return nil, fmt.Errorf("work_source.linear.api_key is required")
+	}
+	apiKey, err := resolveSecretRef("work_source.linear.api_key", c.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(c.Teams) == 0 {
+		return nil, fmt.Errorf("work_source.linear.teams must contain at least one team")
+	}
+	teams := make([]LinearTeamConfig, len(c.Teams))
+	for i, t := range c.Teams {
+		if t.Key == "" {
+			return nil, fmt.Errorf("work_source.linear.teams[%d].key is required", i)
+		}
+		if t.Repo == "" {
+			return nil, fmt.Errorf("work_source.linear.teams[%d].repo is required", i)
+		}
+		if t.Cycles != "" && t.Cycles != "current" {
+			return nil, fmt.Errorf("work_source.linear.teams[%d].cycles = %q (want empty or current)", i, t.Cycles)
+		}
+		projects := make([]LinearProjectConfig, len(t.Projects))
+		for j, p := range t.Projects {
+			if p.Name == "" {
+				return nil, fmt.Errorf("work_source.linear.teams[%d].projects[%d].name is required", i, j)
+			}
+			projects[j] = LinearProjectConfig{Name: p.Name, Repo: p.Repo}
+		}
+		teams[i] = LinearTeamConfig{Key: t.Key, Repo: t.Repo, States: t.States, Projects: projects, Cycles: t.Cycles}
+	}
+	viewerID := ""
+	if c.AssignedOnly {
+		// Fail closed: assigned_only without a connected Linear agent
+		// cannot mean "enumerate everything" — that would silently hand
+		// agents the whole backlog the operator asked to narrow.
+		viewerID = linearagent.StoredViewerID(linearagent.DefaultStorePath())
+		if viewerID == "" {
+			return nil, fmt.Errorf("work_source.linear.assigned_only requires the Linear agent to be connected (no install found at %s)", linearagent.DefaultStorePath())
+		}
+	}
+	return NewLinearSource(LinearConfig{
+		APIKey:      apiKey,
+		Teams:       teams,
+		HoldLabels:  c.HoldLabels,
+		ViewerID:    viewerID,
+		Logger:      deps.Logger,
+		Transitions: c.Transitions,
+	}, nil), nil
+}
+
+func buildJiraSource(cfg config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error) {
+	c := cfg.Jira
+	apiToken, err := resolveSecretRef("work_source.jira.api_token", c.APIToken)
+	if err != nil {
+		return nil, err
+	}
+	password, err := resolveSecretRef("work_source.jira.password", c.Password)
+	if err != nil {
+		return nil, err
+	}
+	var caBundle, clientCert, clientKey string
+	if jiraConfigIsDataCenter(c.Deployment) {
+		caBundle, err = resolveSecretRef("work_source.jira.ca_bundle", c.CABundle)
+		if err != nil {
+			return nil, err
+		}
+		clientCert, err = resolveSecretRef("work_source.jira.client_cert", c.ClientCert)
+		if err != nil {
+			return nil, err
+		}
+		clientKey, err = resolveSecretRef("work_source.jira.client_key", c.ClientKey)
+		if err != nil {
+			return nil, err
+		}
+	}
+	jiraCfg := JiraConfig{
+		Deployment:         c.Deployment,
+		BaseURL:            c.BaseURL,
+		Email:              c.Email,
+		Username:           c.Username,
+		APIToken:           apiToken,
+		Password:           password,
+		CABundle:           caBundle,
+		InsecureSkipVerify: c.InsecureSkipVerify,
+		ClientCert:         clientCert,
+		ClientKey:          clientKey,
+		ProjectKeys:        c.ProjectKeys,
+		JQL:                c.JQL,
+		Repo:               c.Repo,
+		HoldLabels:         c.HoldLabels,
+		Transitions:        c.Transitions,
+		Logger:             deps.Logger,
+	}
+	if err := ValidateJiraTLSConfig(jiraCfg); err != nil {
+		return nil, err
+	}
+	return NewJiraSource(jiraCfg), nil
+}
+
+func buildGiteaSource(cfg config.WorkSourceConfig, _ PrimaryDeps) (WorkSource, error) {
+	c := cfg.Gitea
+	token, err := resolveSecretRef("work_source.gitea.token", c.Token)
+	if err != nil {
+		return nil, err
+	}
+	return newGiteaSource(forgeWorkSourceConfig{
+		BaseURL:    c.BaseURL,
+		Token:      token,
+		TokenEnv:   c.TokenEnv,
+		Org:        c.Org,
+		Repos:      forgeReposFromConfig(c.Repos),
+		States:     c.States,
+		Labels:     c.Labels,
+		Assignee:   c.Assignee,
+		HoldLabels: c.HoldLabels,
+	})
+}
+
+func buildGitLabSource(cfg config.WorkSourceConfig, _ PrimaryDeps) (WorkSource, error) {
+	c := cfg.GitLab
+	token, err := resolveSecretRef("work_source.gitlab.token", c.Token)
+	if err != nil {
+		return nil, err
+	}
+	return newGitLabSource(forgeWorkSourceConfig{
+		BaseURL:    c.BaseURL,
+		Token:      token,
+		TokenEnv:   c.TokenEnv,
+		Org:        c.Org,
+		Repos:      forgeReposFromConfig(c.Repos),
+		States:     c.States,
+		Labels:     c.Labels,
+		Assignee:   c.Assignee,
+		HoldLabels: c.HoldLabels,
+	})
+}
+
+// buildExternalSource constructs the provider-operated HTTP/JSON source.
+//
+// Validate() runs here as well as at config load so the adapter can never be
+// built from a block that was written straight into the dashboard overlay:
+// a bad base_url, a literal token, or an empty repo allow-list is a
+// construction error, and the cycle fails closed.
+func buildExternalSource(cfg config.WorkSourceConfig, deps PrimaryDeps) (WorkSource, error) {
+	c := cfg.External
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	token, err := resolveSecretRef("work_source.external.auth_token", c.AuthToken)
+	if err != nil {
+		return nil, err
+	}
+	caBundle, err := resolveSecretRef("work_source.external.ca_bundle", c.CABundle)
+	if err != nil {
+		return nil, err
+	}
+	return NewExternalSource(ExternalConfig{
+		Name:        strings.TrimSpace(c.Name),
+		DisplayName: c.Label(),
+		BaseURL:     strings.TrimSpace(c.BaseURL),
+		AuthToken:   token,
+		CABundle:    caBundle,
+		Repos:       c.Repos,
+		HoldLabels:  c.HoldLabels,
+		Timeout:     time.Duration(c.EffectiveTimeoutSeconds()) * time.Second,
+		Logger:      deps.Logger,
+	})
 }
 
 // AdditiveBuilder constructs one additive (non-primary) work source from the

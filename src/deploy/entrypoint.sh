@@ -1781,6 +1781,32 @@ print('\n'.join(sorted(names)))
 " 2>/dev/null) || true
   fi
 
+  # The hub-resident Spektacular executor launches its stage CLI as its own
+  # UID (hive-<identity>) rather than as dev (#10054): dev can read the GitHub
+  # App key and is exempt from the :443 redirect. Allocate that UID in the same
+  # map (so the proxy attributes its traffic) but keep it out of the per-agent
+  # loop below: its workspace stays dev-owned and is shared per stage.
+  SPEK_EXECUTOR_IDENTITY=""
+  if [ -f "$HIVE_CONFIG" ]; then
+    SPEK_EXECUTOR_IDENTITY=$(HIVE_CONFIG="$HIVE_CONFIG" python3 -c "
+import os, re, yaml
+with open(os.environ['HIVE_CONFIG']) as f:
+    cfg = yaml.safe_load(f) or {}
+spek = ((cfg.get('runs') or {}).get('spektacular') or {})
+hub = spek.get('hub_executor') or {}
+if spek.get('enabled') and hub.get('enabled') is not False:
+    ident = str(hub.get('identity') or '').strip() or 'hive-spek'
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,25}', ident):
+        print(ident)
+" 2>/dev/null) || SPEK_EXECUTOR_IDENTITY=""
+  fi
+  SPEK_EXECUTOR_PROVISION=false
+  if [ -n "$SPEK_EXECUTOR_IDENTITY" ] \
+     && ! printf '%s\n' "$AGENT_NAMES" | grep -qxF "$SPEK_EXECUTOR_IDENTITY"; then
+    AGENT_NAMES=$(printf '%s\n%s\n' "$AGENT_NAMES" "$SPEK_EXECUTOR_IDENTITY" | sed '/^$/d')
+    SPEK_EXECUTOR_PROVISION=true
+  fi
+
   # Pre-cleanup: remove stale workspace artifacts from agent dirs.
   # Runs in BACKGROUND to avoid blocking startup — on slow CephFS with many
   # dirs, sequential rm -rf can exceed the startup probe timeout (10 min),
@@ -1824,6 +1850,14 @@ print('\n'.join(sorted(names)))
     if ! AGENT_UID_LINES="$(hive_build_uid_map)"; then
       echo "[entrypoint] WARN: Failed to build UID map"
       AGENT_UID_LINES=""
+    fi
+    if [ "$SPEK_EXECUTOR_PROVISION" = "true" ]; then
+      SPEK_EXECUTOR_UID=$(printf '%s\n' "$AGENT_UID_LINES" | awk -F '\t' -v n="$SPEK_EXECUTOR_IDENTITY" '$1 == n { print $2 }')
+      AGENT_UID_LINES=$(printf '%s\n' "$AGENT_UID_LINES" | awk -F '\t' -v n="$SPEK_EXECUTOR_IDENTITY" '$1 != n')
+      if [ -n "$SPEK_EXECUTOR_UID" ]; then
+        hive_ensure_agent_user "$SPEK_EXECUTOR_IDENTITY" "$SPEK_EXECUTOR_UID"
+        echo "[entrypoint] Spektacular hub executor user: hive-${SPEK_EXECUTOR_IDENTITY} (UID ${SPEK_EXECUTOR_UID})"
+      fi
     fi
     export AGENT_UID_LINES
     printf '%s\n' "$AGENT_UID_LINES" | while IFS="$(printf '\t')" read -r agent_name AGENT_UID; do

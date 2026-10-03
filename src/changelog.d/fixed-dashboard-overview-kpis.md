@@ -1,0 +1,1 @@
+- Fixed the dashboard Overview KPI tiles so chart-backed counts render again and enlarged Overview chart/legend statistics text.

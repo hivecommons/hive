@@ -142,6 +142,107 @@ func TestDashboardSectionChromeHasNoSectionSpecificOverrides(t *testing.T) {
 	}
 }
 
+func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, `'platform-section':`) || !strings.Contains(html, `id="platform-section"`) || !strings.Contains(strings.Join(dashboardLayoutTemplateIDs(t, html), ","), "platform-section") {
+		t.Fatal("Platform must remain a top-level v6 dashboard section")
+	}
+	for _, want := range []string{
+		"function platformFactTiles(plat)",
+		`class="platform-diagnostics"`,
+		`#audit-panel.audit-resizable`,
+		`resize: vertical`,
+		`AUDIT_PANEL_HEIGHT_KEY = 'hive.audit.panel.height'`,
+		`ResizeObserver`,
+		`⚡ Powered by Spektacular`,
+		`https://github.com/jumppad-labs/spektacular`,
+		`Project inception runs on <a href="https://github.com/jumppad-labs/spektacular"`,
+		`summary: '0 facts'`,
+		"kbFactsLabel(kbTotalFactsFromStats",
+		"No lifecycle events in the last 6h.",
+		"function lcJourneyHasContent(j)",
+		"repo-header-badges",
+		"repo-header-actions",
+		`id="governor-pr-models-section"`,
+		"PRS BY MODEL",
+		"gov-pr-models-subtitle",
+		"gov-pr-models-summary",
+		"collapsedSummary",
+		"applySectionCollapse('governor-pr-models-section')",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("dashboard polish contract missing %q", want)
+		}
+	}
+	govCSS := html[strings.Index(html, "/* Governor uses the shared dash-card shell"):strings.Index(html, ".gov-title")]
+	if strings.Contains(govCSS, "box-shadow") || strings.Contains(govCSS, "padding: var(--sp-6)") || strings.Contains(html, "body.light-mode .governor,") {
+		t.Fatal("Governor outer container still draws card chrome instead of leaving it to .dash-card")
+	}
+	if regexp.MustCompile(`(?s)\.governor(?:\.[\w-]+)?\s*>\s*\.dash-card\.governor-card\s*\{[^}]*(?:border|outline|box-shadow)`).MatchString(html) {
+		t.Fatal("Governor must not override shared dash-card border, outline, or shadow in any state")
+	}
+}
+
+func TestGovernorPRModelsNestedSubsectionIsCollapsible(t *testing.T) {
+	html := indexHTML(t)
+	body := jsFunctionBody(t, html, "function renderGovernorPRModelsTile()")
+	for _, want := range []string{
+		`id="governor-pr-models-section"`,
+		`class="section-label section-header-toggle gov-pr-models-subheader"`,
+		`data-action="toggleSection"`,
+		`data-keydown-action="sectionHeaderKey"`,
+		`data-arg0="governor-pr-models-section"`,
+		`PRS BY MODEL`,
+		`gov-pr-models-subtitle`,
+		`gov-pr-models-summary`,
+		`#1 ${escapeHtml(topModel)} · ${modelCount} model`,
+		`<span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Governor PRs-by-model subsection missing %q", want)
+		}
+	}
+	renderGovernor := jsFunctionBody(t, html, "function renderGovernor(gov, cadenceMatrix, data)")
+	if !strings.Contains(renderGovernor, "applySectionCollapse('governor-pr-models-section')") {
+		t.Fatal("Governor render does not re-apply nested PRs-by-model collapse state")
+	}
+	apply := jsFunctionBody(t, html, "function applySectionCollapse(sectionId)")
+	if !strings.Contains(apply, "section.classList.toggle('collapsed', collapsed)") {
+		t.Fatal("nested subsection collapse state is not reflected on the section for collapsed summaries")
+	}
+}
+
+func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
+	html := indexHTML(t)
+	for _, id := range []string{"advisory-digest-section", "hive-advice-section", "fleet-report-section", "acmm-reco-section", "lifecycle-section", "pr-throughput-section"} {
+		idx := strings.Index(html, `id="`+id+`"`)
+		if idx < 0 {
+			t.Fatalf("missing advisory subsection %s", id)
+		}
+		window := html[idx:]
+		if len(window) > 700 {
+			window = window[:700]
+		}
+		if !strings.Contains(window, "advisory-subsection") {
+			t.Fatalf("%s does not use advisory-subsection spacing pattern", id)
+		}
+		if id != "advisory-digest-section" && !strings.Contains(window, "advisory-subsection-card") {
+			t.Fatalf("%s body card does not start below its header", id)
+		}
+	}
+}
+
+func TestDashboardNoticesContainReleaseAndPlanningAboveOverview(t *testing.T) {
+	html := indexHTML(t)
+	notices := strings.Index(html, `id="dash-notices"`)
+	release := strings.Index(html, `id="release-status"`)
+	planning := strings.Index(html, `id="planning-intro"`)
+	overview := strings.Index(html, `data-dashboard-section="overview-section"`)
+	if notices < 0 || release < notices || planning < notices || overview < 0 || release > overview || planning > overview {
+		t.Fatalf("release status and planning notice must be inside pinned notices above Overview")
+	}
+}
+
 func TestCostPanelUsesGenericSectionPersistence(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
@@ -233,4 +334,71 @@ func utf8DecodeRuneInString(s string) (rune, int) {
 		return r, i
 	}
 	return 0, 0
+}
+
+func TestSidebarDragHandlesSharePersistedOrder(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`data-nav-order-grip`,
+		`function dashboardSidebarLayoutFromDom()`,
+		`function dashboardApplyOrderFromSidebar()`,
+		`dashboardApplyLayout(layout);dashboardLayoutWrite()`,
+		`function agentCardLayoutSetOrder(order, agents)`,
+		`function agentSidebarSaveOrderFromDom()`,
+		`agentSidebarSaveOrderFromDom();`,
+		`ocUpdateSidebarAgents();`,
+		`Alt+↑/↓`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("sidebar/card order sharing is missing %q", want)
+		}
+	}
+
+	dashboardApply := jsFunctionBody(t, html, "function dashboardApplyOrderFromSidebar()")
+	for _, want := range []string{"dashboardSidebarLayoutFromDom()", "dashboardApplyLayout(layout)", "dashboardLayoutWrite()"} {
+		if !strings.Contains(dashboardApply, want) {
+			t.Fatalf("dashboard sidebar reorder does not update the persisted dashboard layout: missing %q", want)
+		}
+	}
+
+	agentSidebar := jsFunctionBody(t, html, "function agentSidebarSaveOrderFromDom()")
+	for _, want := range []string{".oc-nav-item[data-agent-nav]", "agentCardLayoutSetOrder(order, agents)", "renderAgents(window._lastAgents)"} {
+		if !strings.Contains(agentSidebar, want) {
+			t.Fatalf("agent sidebar reorder does not update the agent card layout store: missing %q", want)
+		}
+	}
+
+	agentCard := jsFunctionBody(t, html, "function agentOrderSaveFromDom(grid)")
+	if !strings.Contains(agentCard, "ocUpdateSidebarAgents()") {
+		t.Fatal("agent card reorder does not refresh the sidebar from the same order")
+	}
+	applySnapshot := jsFunctionBody(t, html, "function dashboardApplySnapshotState(state)")
+	if !strings.Contains(applySnapshot, "ocUpdateSidebarAgents()") {
+		t.Fatal("restoring a saved layout does not refresh the agent sidebar order")
+	}
+}
+
+func TestLayoutResetRestoresSidebarAndCardDefaults(t *testing.T) {
+	html := indexHTML(t)
+	reset := jsFunctionBody(t, html, "async function resetDashboardLayout()")
+	for _, want := range []string{
+		"localStorage.removeItem(DASHBOARD_LAYOUT_KEY)",
+		"dashboardLayoutExtraKeys().forEach",
+		"dashboardApplyLayout(dashboardLayoutNormalize(null))",
+		"renderAgents(((window._lastStatus||{}).agents)||",
+	} {
+		if !strings.Contains(reset, want) {
+			t.Fatalf("dashboard reset no longer restores shared layout defaults: missing %q", want)
+		}
+	}
+	extraKeys := jsFunctionBody(t, html, "function dashboardLayoutExtraKeys()")
+	if !strings.Contains(extraKeys, "hive-agent-card-layout:") {
+		t.Fatal("dashboard reset does not clear the shared agent card/sidebar order key")
+	}
+	resetAgents := jsFunctionBody(t, html, "function resetAgentCardLayout()")
+	for _, want := range []string{"localStorage.removeItem(agentLayoutHiveKey())", "renderAgents(window._lastAgents)", "ocUpdateSidebarAgents()"} {
+		if !strings.Contains(resetAgents, want) {
+			t.Fatalf("agent layout reset does not refresh both card and sidebar defaults: missing %q", want)
+		}
+	}
 }

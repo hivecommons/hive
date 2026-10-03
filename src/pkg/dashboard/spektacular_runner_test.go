@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/spektacular"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -59,8 +60,8 @@ func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 			closed, updated = `"2026-09-22T00:00:00Z"`, ``
 		}
 		e.queues[kind] = append(e.queues[kind], fmt.Sprintf(
-			`{"error":false,"kind":%q,"name":%q,"artifact_id":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
-			kind, spekRunKey, spekRunKey, st, updated, closed))
+			`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
+			kind, spekRunKey, st, updated, closed))
 	}
 }
 
@@ -71,7 +72,12 @@ func (e *spekExec) exec(_ context.Context, _ string, args []string) ([]byte, err
 		return []byte(`{"error":true,"code":"usage","message":"unknown flag: ` + args[3] + `"}`), errors.New("exit status 64")
 	}
 	if len(args) >= 2 && args[1] == "export" {
-		return []byte(`{"error":false,"kind":"plan","name":"` + spekRunKey + `","tasks":[{"ref":"T1","title":"Add encoding helpers"},{"ref":"T2","title":"Wire helpers","depends_on":["T1"]},{"ref":"T3","title":"Sign off","depends_on":["T2"],"execution":"human_required"}]}`), nil
+		// Spektacular 0.23+ identifies exported tasks by UUID `id` (never a
+		// plan-local `ref`) and emits object-valued execution (#10074).
+		return []byte(`{"error":false,"kind":"plan","name":"` + spekRunKey + `","tasks":[` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000001","title":"Add encoding helpers","execution":{"type":"agent_suitable","reason":"code change"}},` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000002","title":"Wire helpers","depends_on":["8f1c2b7e-0000-4000-8000-000000000001"]},` +
+			`{"id":"8f1c2b7e-0000-4000-8000-000000000003","title":"Sign off","depends_on":["8f1c2b7e-0000-4000-8000-000000000002"],"execution":{"type":"human_required","reason":"sign-off"}}]}`), nil
 	}
 	q := e.queues[args[0]]
 	if len(q) == 0 {
@@ -87,6 +93,7 @@ func (e *spekExec) exec(_ context.Context, _ string, args []string) ([]byte, err
 
 func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCapture) {
 	t.Helper()
+	stubSpekHubExecutorCredential(t)
 	// The lifecycle timeline is a process-wide singleton and every test here
 	// drives the SAME lease key (spekRepo!spekRunKey:<stage>), so its
 	// per-(ref,kind) Stage.Count accumulates across tests and receipt
@@ -110,6 +117,11 @@ func spekHub(t *testing.T) (*ContributeWSHub, *Server, *beads.Store, *hookCaptur
 	return hub, s, store, capture
 }
 
+func stubSpekHubExecutorCredential(t *testing.T) {
+	t.Helper()
+	t.Setenv("COPILOT_GITHUB_TOKEN", "ghu_spek_hub_test")
+}
+
 func disableSpekHubExecutorForRelayTests(s *Server) {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return
@@ -118,17 +130,18 @@ func disableSpekHubExecutorForRelayTests(s *Server) {
 	s.deps.Config.Runs.Spektacular.HubExecutor.Enabled = &off
 }
 
-func spekRunner(hub *ContributeWSHub, ex *spekExec) *spektacular.Runner {
-	return &spektacular.Runner{
-		Exec:     ex.exec,
+func spekRunner(hub *ContributeWSHub, ex *spekExec) *planengine.Runner {
+	engine := spektacular.NewEngine("spektacular", ex.exec)
+	return &planengine.Runner{
+		Engine:   engine,
 		Poll:     spekPoll,
-		Registry: spektacular.NewLeaseRegistryAdapter(hub.server),
+		Registry: planengine.NewLeaseRegistryAdapter(hub.server, engine),
 		Logger:   hub.logger,
 	}
 }
 
-// spekStageRunner installs a *spektacular.Runner as the Server's StageRunner.
-type spekStageRunner struct{ r *spektacular.Runner }
+// spekStageRunner installs the stage observer as the Server's StageRunner.
+type spekStageRunner struct{ r *planengine.Runner }
 
 func (s spekStageRunner) Tick(ctx context.Context, now time.Time) { s.r.Tick(ctx, now) }
 
@@ -343,27 +356,45 @@ func TestImportRunPlanFansOutMultiRepoPlanWhenEnabled(t *testing.T) {
 		"2. [T2] UI changes [repo:acme/ui] [agent_suitable]",
 		"3. [T3] Docs changes [repo:acme/docs] [agent_suitable]",
 	}, "\n")
+	countFanoutLeases := func() int {
+		hub.leaseMu.Lock()
+		defer hub.leaseMu.Unlock()
+		n := 0
+		for _, l := range hub.leases {
+			if l.identity == runFanoutIdentity && l.stage == StageImplement {
+				n++
+			}
+		}
+		return n
+	}
 	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
 		t.Fatalf("ImportRunPlan: %v", err)
 	}
-	if gotRunKey != spekRunKey || !reflect.DeepEqual(gotRepos, []string{"acme/api", "acme/ui", "acme/docs"}) {
-		t.Fatalf("fanout got run=%q repos=%v", gotRunKey, gotRepos)
-	}
-	hub.leaseMu.Lock()
-	fanoutLeases := 0
-	for _, l := range hub.leases {
-		if l.identity == runFanoutIdentity && l.stage == StageImplement {
-			fanoutLeases++
-		}
-	}
-	hub.leaseMu.Unlock()
-	if fanoutLeases != 3 {
-		t.Fatalf("fanout leases = %d, want 3", fanoutLeases)
+	// A draft plan is not fanned out: its implement leases would mask the
+	// plan checkpoint (hivecommons/hive#10089).
+	if gotRepos != nil || countFanoutLeases() != 0 {
+		t.Fatalf("draft plan fanned out: repos=%v leases=%d", gotRepos, countFanoutLeases())
 	}
 	_, epic := s.findRunEpic(spekRunKey)
 	if epic == nil {
 		t.Fatal("import did not create epic")
 	}
+	if got := epic.Meta(planning.MetaRunWaveIDs); got != "" {
+		t.Fatalf("draft plan wave ids = %q, want none", got)
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		t.Fatalf("ApprovePlan: %v", err)
+	}
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("ImportRunPlan after approval: %v", err)
+	}
+	if gotRunKey != spekRunKey || !reflect.DeepEqual(gotRepos, []string{"acme/api", "acme/ui", "acme/docs"}) {
+		t.Fatalf("fanout got run=%q repos=%v", gotRunKey, gotRepos)
+	}
+	if n := countFanoutLeases(); n != 3 {
+		t.Fatalf("fanout leases = %d, want 3", n)
+	}
+	_, epic = s.findRunEpic(spekRunKey)
 	if got := epic.Meta(planning.MetaRunWaveIDs); got != "wave-1:acme/api,wave-2:acme/ui,wave-3:acme/docs" {
 		t.Fatalf("wave ids = %q", got)
 	}
@@ -387,12 +418,55 @@ func TestImportRunPlanFansOutMultiRepoPlanWhenEnabled(t *testing.T) {
 	if err != nil || len(children.Children) != 3 {
 		t.Fatalf("plan tree = %+v err=%v", children, err)
 	}
-	if err := planning.ApprovePlan(store, epic.ID); err != nil {
-		t.Fatalf("ApprovePlan: %v", err)
-	}
 	listed := spekListed(t, s)
 	if len(listed) != 3 {
 		t.Fatalf("listed fanout stages = %+v, want 3 repo waves", listed)
+	}
+}
+
+// A fan-out that fails after an approved import is retried by the next
+// import tick instead of being skipped as already imported
+// (hivecommons/hive#10089).
+func TestImportRunPlanRetriesFailedFanout(t *testing.T) {
+	_, s, store, _ := spekHub(t)
+	calls := 0
+	s.deps.RunFanout = func(_ context.Context, _ string, repos []string) ([]string, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("fan-out unavailable")
+		}
+		ids := make([]string, 0, len(repos))
+		for i, repo := range repos {
+			ids = append(ids, fmt.Sprintf("wave-%d:%s", i+1, repo))
+		}
+		return ids, nil
+	}
+	taskList := strings.Join([]string{
+		"1. [T1] API changes [repo:acme/api] [agent_suitable]",
+		"2. [T2] UI changes [repo:acme/ui] [agent_suitable]",
+	}, "\n")
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("ImportRunPlan: %v", err)
+	}
+	_, epic := s.findRunEpic(spekRunKey)
+	if epic == nil {
+		t.Fatal("import did not create epic")
+	}
+	if err := planning.ApprovePlan(store, epic.ID); err != nil {
+		t.Fatalf("ApprovePlan: %v", err)
+	}
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err == nil {
+		t.Fatal("failed fan-out was not reported")
+	}
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil {
+		t.Fatalf("retried fan-out: %v", err)
+	}
+	_, epic = s.findRunEpic(spekRunKey)
+	if got := epic.Meta(planning.MetaRunWaveIDs); got != "wave-1:acme/api,wave-2:acme/ui" {
+		t.Fatalf("wave ids after retry = %q", got)
+	}
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, taskList); err != nil || calls != 2 {
+		t.Fatalf("fanned-out plan re-fanned: calls=%d err=%v", calls, err)
 	}
 }
 
@@ -466,7 +540,7 @@ func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
 					return []byte("ok"), nil
 				case "spektacular":
 					if len(args) >= 3 && args[1] == "status" {
-						return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft","current_step":"authoring"}`), nil
+						return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft","current_step":"authoring"}`), nil
 					}
 					return []byte("ok"), nil
 				}
@@ -969,8 +1043,8 @@ func TestStageLeaseSurface_HelpersAndErrorPaths(t *testing.T) {
 	if s.runPlanApproved("unknown-run") {
 		t.Fatal("unknown run reported approved")
 	}
-	if err := s.ImportRunPlan(spekRunKey, spekRepo, "not a task list"); err != nil {
-		t.Fatalf("re-import of a planned epic must be a no-op: %v", err)
+	if err := s.ImportRunPlan(spekRunKey, spekRepo, "1. [T1] x [agent_suitable]"); err != nil {
+		t.Fatalf("re-import of the same plan must be a no-op: %v", err)
 	}
 
 	// Accessor without a hub errors on both methods.
@@ -1244,6 +1318,53 @@ func TestSpecCheckpointApproveAdvancesToPlan(t *testing.T) {
 	}
 	if got, _ := store.Get(epic.ID); planning.DesignStatus(got) != planning.DesignStatusApproved {
 		t.Fatalf("design status = %q, want approved", planning.DesignStatus(got))
+	}
+}
+
+// Rejecting a design's spec forgets the rejected artifact digest, so the spec
+// the re-minted generation drafts is posted to the work item again even when
+// its text is unchanged (hivecommons/hive#10062).
+func TestSpecCheckpointRejectClearsDesignArtifactDigest(t *testing.T) {
+	hub, s, store, _ := spekHub(t)
+	now := time.Now()
+	spekLease(t, hub, StageSpec, now)
+	epic := spekDesignEpic(t, store)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignArtifactDigest, designArtifactDigest("rejected spec")); err != nil {
+		t.Fatalf("record design artifact digest: %v", err)
+	}
+	if err := s.AdvanceStageLease(spekIdentity, spekTaskID, StagePlan, now, []byte(`{}`), map[string]string{stageAttrRunKey: spekRunKey}); err != nil {
+		t.Fatalf("held spec advance: %v", err)
+	}
+
+	checkpointKey := spekRepo + "!" + spekRunKey + ":" + StageSpec
+	rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(checkpointKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionReject, Gen: spekGen})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject spec checkpoint = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaDesignArtifactDigest) != "" {
+		t.Fatalf("design artifact digest after reject = %q, want cleared", got.Meta(planning.MetaDesignArtifactDigest))
+	}
+}
+
+// An owner reset back to spec forgets the superseded design artifact digest
+// too, so the re-run Spec stage posts its artifact to the work item again even
+// when the text is unchanged - the same gap the checkpoint reject closes
+// (hivecommons/hive#10062).
+func TestRunResetToSpecClearsDesignArtifactDigest(t *testing.T) {
+	_, s, store, _ := spekHub(t)
+	epic := spekDesignEpic(t, store)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignArtifactDigest, designArtifactDigest("superseded spec")); err != nil {
+		t.Fatalf("record design artifact digest: %v", err)
+	}
+
+	if err := s.resetRunDesignForRespec(spekRunKey); err != nil {
+		t.Fatalf("resetRunDesignForRespec: %v", err)
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaDesignArtifactDigest) != "" {
+		t.Fatalf("design artifact digest after reset = %q, want cleared", got.Meta(planning.MetaDesignArtifactDigest))
+	}
+	if err := s.resetRunDesignForRespec("unknown-run"); err != nil {
+		t.Fatalf("resetRunDesignForRespec on an unknown run: %v", err)
 	}
 }
 

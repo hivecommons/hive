@@ -8,6 +8,8 @@ Use a self-hosted hub when you need a private registry, private SaaS provisionin
 
 `src/Dockerfile.hub` builds only `./cmd/hive`, installs `kubectl`, creates `/data` and `/etc/hive`, sets `HIVE_MODE=hub`, and runs:
 
+It does **not** install the Spektacular binary (unlike `src/Dockerfile` and `src/Dockerfile.contributor`): `HIVE_MODE=hub` returns from `boot()` before `bootDashboardAPIWith` runs, and that's the only place the Spektacular runner is wired up, so the hub never invokes the CLI (#10097).
+
 ```sh
 hive --config /etc/hive/hive.yaml
 ```

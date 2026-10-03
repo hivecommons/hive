@@ -150,7 +150,7 @@ func TestWorkSourceIssuesForConfiguredCycleAppendsAdditiveWithoutGitHubReenumera
 	base := github.IssueResultFromItems([]github.Issue{{
 		Repo: "hivecommons/hive", Number: 42, Title: "github issue",
 	}})
-	got := workSourceIssuesForConfiguredCycle(context.Background(), cfg, nil, base, testLogger())
+	got, _ := workSourceIssuesForConfiguredCycle(context.Background(), cfg, nil, base, testLogger())
 	if got.Count != 2 {
 		t.Fatalf("Count = %d, want 2: %+v", got.Count, got.Items)
 	}
