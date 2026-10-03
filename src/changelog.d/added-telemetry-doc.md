@@ -1,0 +1,1 @@
+- Document Hive data collection and telemetry paths for CNCF onboarding.

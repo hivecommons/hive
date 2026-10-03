@@ -57,6 +57,31 @@ func TestProvenanceGuardMatchPassesAndClearsStaleHold(t *testing.T) {
 	}
 }
 
+// Approving the plan is the fresh review a stale_plan hold waits for, so it
+// clears the hold (hivecommons/hive#10087).
+func TestApprovePlanClearsStalePlanHold(t *testing.T) {
+	store, epic := provenanceStore(t)
+	for k, v := range map[string]string{
+		MetaPlanStatus:       PlanStatusDraft,
+		MetaRunWaitingOn:     worksource.RunWaitingOnHuman,
+		MetaRunWaitingReason: WaitingReasonStalePlan,
+	} {
+		if err := store.SetMetadata(epic.ID, k, v); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
+	}
+	if err := ApprovePlan(store, epic.ID); err != nil {
+		t.Fatalf("approve plan: %v", err)
+	}
+	got, _ := store.Get(epic.ID)
+	if got.Meta(MetaPlanStatus) != PlanStatusApproved {
+		t.Fatalf("plan status = %q, want approved", got.Meta(MetaPlanStatus))
+	}
+	if got.Meta(MetaRunWaitingOn) != "" || got.Meta(MetaRunWaitingReason) != "" {
+		t.Fatalf("stale hold survived approval: waiting_on %q reason %q", got.Meta(MetaRunWaitingOn), got.Meta(MetaRunWaitingReason))
+	}
+}
+
 func provenanceStore(t *testing.T) (*beads.Store, *beads.Bead) {
 	t.Helper()
 	store, err := beads.NewStore(t.TempDir())

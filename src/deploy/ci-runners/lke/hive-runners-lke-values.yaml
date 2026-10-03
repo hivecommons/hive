@@ -72,6 +72,53 @@ template:
             name: gomod-local
           - mountPath: /mnt/toolcache
             name: toolcache
+      # The tool cache is a node-local hostPath shared by every runner on the
+      # node. On a fresh (autoscaled) node it is empty and the first ~10 jobs'
+      # actions/setup-go / setup-node steps race to populate the same
+      # directory, clobbering each other (hivecommons/hive#10234) — one node
+      # ended up with a `.complete` marker but no `bin/go`, failing every job
+      # scheduled onto it. Populate it once here under a node-wide flock before
+      # any job starts; later pods find a marker plus binary and skip. Keep GO_VERSION in step with the
+      # `go` line in src/go.mod and NODE_VERSION with what setup-node resolves
+      # for `node-version: '22'`; a mismatch is harmless (setup-* just
+      # downloads), it only forfeits the protection.
+      - name: warm-toolcache
+        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+        command:
+          - bash
+          - -ec
+          - |
+            tc=/mnt/toolcache/hostedtoolcache
+            warm() { # tool version url
+              dest="$tc/$1/$2/x64"
+              # a marker without the binary is a half-written cache: rebuild it
+              [ -f "$dest.complete" ] && [ -x "$dest/bin/$1" ] && return 0
+              rm -f "$dest.complete"
+              echo "warm-toolcache: $1 $2"
+              tmp=$(mktemp -d "$tc/.warm-$1-XXXXXX")
+              curl -fsSL --retry 3 "$3" | tar -xz -C "$tmp" --strip-components=1
+              rm -rf "$dest" && mkdir -p "$(dirname "$dest")" && mv "$tmp" "$dest"
+              touch "$dest.complete"
+            }
+            mkdir -p "$tc"
+            exec 9>"$tc/.warm.lock"
+            flock -w 600 9 || { echo "warm-toolcache: lock timeout, continuing" >&2; exit 0; }
+            warm go "$GO_VERSION" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" || echo "warm-toolcache: go failed (non-fatal)" >&2
+            warm node "$NODE_VERSION" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" || echo "warm-toolcache: node failed (non-fatal)" >&2
+        env:
+          - name: GO_VERSION
+            value: "1.26.6"
+          - name: NODE_VERSION
+            value: "22.23.3"
+        securityContext:
+          runAsUser: 1001
+          runAsGroup: 1001
+        resources:
+          requests: { cpu: 50m, memory: 64Mi }
+          limits: { cpu: "1", memory: 512Mi }
+        volumeMounts:
+          - mountPath: /mnt/toolcache
+            name: toolcache
     containers:
       - name: runner
         image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1

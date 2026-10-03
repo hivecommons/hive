@@ -335,6 +335,14 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 		_ = ClearDecomposePending(store, epic.ID)
 	}
 
+	for i, child := range children {
+		current, err := store.Get(child.ID)
+		if err != nil {
+			return nil, fmt.Errorf("planning: reloading child bead %s: %w", child.ID, err)
+		}
+		children[i] = current
+	}
+
 	return &Result{Children: children, Tasks: tasks}, nil
 }
 

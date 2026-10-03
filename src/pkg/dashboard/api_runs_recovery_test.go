@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -89,6 +90,21 @@ func TestRunAbandonPersistsAndSuppressesAdmission(t *testing.T) {
 	}
 	if err := s.AdmitRun("myorg/repo1", 8350, "feature", now); err == nil {
 		t.Fatal("abandoned run re-admitted")
+	}
+	// The explicit owner design path shares admission's terminal run-key
+	// contract too; it cannot clear the persisted tombstone.
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.startDesignSpektacular(context.Background(), store, github.Issue{Repo: "myorg/repo1", Number: 8350, Title: "Abandoned design"}, "", false); err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("explicit design start = %v", err)
+	}
+	if rec := doOwnerPost(s, runResetTestPath, runResetRequest{To: StageSpec, Reason: "restart"}); rec.Code != http.StatusNotFound {
+		t.Fatalf("abandoned reset = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !s.RunAbandoned(runResetTestKey) {
+		t.Fatal("owner start or reset reversed abandonment")
 	}
 	if err := h.recordLeaseForKeyStage("bob", "fresh", "myorg/repo1", 8350, runResetTestKey, "contributor", StageSpec, 20, now); err == nil {
 		t.Fatal("abandoned run assigned")

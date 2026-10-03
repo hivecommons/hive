@@ -56,6 +56,10 @@ func (s *Server) handleRunSpecStart(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "repo and issue number are required", http.StatusBadRequest)
 		return
 	}
+	if err := validateSpekHubRepoPath(repo); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(req.Mode), "design") {
 		store, _ := s.planEpicStore()
 		if store == nil {

@@ -1,0 +1,1 @@
+- chat: `!runs reject <key> <reason>` now sends the reason to the dashboard (audit log), and the run checkpoint prompt tells users to reply with the `!runs approve|reject <key>` form that dashboard chat forwards (#10093, #10123)

@@ -18,6 +18,7 @@ import (
 
 func runInterviewTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
+	stubSpekHubExecutorCredential(t)
 	s, _ := runsTestServer(t)
 	setAgentWorkspaceRootForTest(t, t.TempDir())
 	runKey := "myorg/repo1#9024"
@@ -359,7 +360,7 @@ func TestSpekInterviewExecutorClearsConsumedRound(t *testing.T) {
 	launched := false
 	e.Exec = func(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
 		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
-			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft"}`), nil
 		}
 		if name == "sh" {
 			launched = true
@@ -384,5 +385,132 @@ func TestSpekInterviewExecutorClearsConsumedRound(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(worktree, path)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("consumed file remains: %s (%v)", path, err)
 		}
+	}
+}
+
+func TestRunInterviewPostRefusedWhileExecutorRunsTheStage(t *testing.T) {
+	s, key, worktree := runInterviewTestServer(t)
+	e := NewSpekHubExecutor(s, config.RunsConfig{}, "copilot", "", nil, nil)
+	st := spekHubStage{runKey: key, stage: StageSpec, gen: 4}
+	e.inFlight = map[string]*spekHubExecution{e.executionKey(st): {stage: st, cancel: func() {}, done: make(chan struct{})}}
+	s.SetStageExecutor(e)
+	endpoint := "/api/runs/" + url.PathEscape(key) + "/interview"
+	req := runInterviewPostRequest{Answers: []SpekInterviewAnswer{{ID: "scope", Answer: "dashboard"}, {ID: "risk", Answer: "latency"}}}
+	if rec := doOwnerPost(s, endpoint, req); rec.Code != http.StatusConflict {
+		t.Fatalf("POST while the CLI runs = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(worktree, spekInterviewAnswersRelPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("answers written while the CLI runs: %v", err)
+	}
+	e.mu.Lock()
+	e.inFlight = nil
+	e.mu.Unlock()
+	if rec := doOwnerPost(s, endpoint, req); rec.Code != http.StatusOK {
+		t.Fatalf("POST after the CLI exited = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSpekInterviewOversizedRequestIsNotRead(t *testing.T) {
+	s, key, worktree := runInterviewTestServer(t)
+	big := `{"schema_version":"` + spekInterviewSchemaVersion + `","questions":[{"id":"a","text":"q"}]` + strings.Repeat(" ", spekInterviewMaxFileBytes) + `}`
+	if err := os.WriteFile(filepath.Join(worktree, spekInterviewRequestRelPath), []byte(big), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, ok := spekInterviewPending(worktree); ok {
+		t.Fatal("oversized request reported as pending")
+	}
+	if rec := doOwnerGet(s, "/api/runs/"+url.PathEscape(key)+"/interview"); rec.Code == http.StatusOK {
+		t.Fatalf("GET oversized interview = %d, want an error", rec.Code)
+	}
+}
+
+// spekInterviewExecutor fakes git and spektacular for executeStage; status
+// reports documentStatus and the agent CLI runs agent.
+func spekInterviewExecutor(t *testing.T, s *Server, documentStatus string, agent func(dir string)) *SpekHubExecutor {
+	t.Helper()
+	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
+	e.Exec = func(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
+		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"` + documentStatus + `"}`), nil
+		}
+		if name == "sh" {
+			agent(dir)
+		}
+		return []byte("ok"), nil
+	}
+	return e
+}
+
+func writeSpekInterviewSpec(t *testing.T, worktree, key string) {
+	t.Helper()
+	spec := filepath.Join(worktree, ".spektacular", "specs", sanitizeRunPromptPath(key)+".md")
+	if err := os.MkdirAll(filepath.Dir(spec), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spec, []byte("# spec"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSpekInterviewExecutorDiscardsRequestBesideFinalDocument(t *testing.T) {
+	s, key, worktree := runInterviewTestServer(t)
+	reqPath := filepath.Join(worktree, spekInterviewRequestRelPath)
+	request, err := os.ReadFile(reqPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(reqPath); err != nil {
+		t.Fatal(err)
+	}
+	launched := false
+	e := spekInterviewExecutor(t, s, "final", func(dir string) {
+		launched = true
+		// The agent finishes the document but also leaves a request behind.
+		writeSpekInterviewSpec(t, dir, key)
+		if err := os.WriteFile(filepath.Join(dir, spekInterviewRequestRelPath), request, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	st := spekHubStage{runKey: key, key: "myorg/repo1!" + key + ":spec", stage: StageSpec, identity: e.Identity, taskID: "run-hub-9024", repo: "myorg/repo1", number: 9024, gen: 4}
+	if err := e.executeStage(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !launched {
+		t.Fatal("CLI did not launch")
+	}
+	if _, _, _, _, pending := spekInterviewPending(worktree); pending {
+		t.Fatal("request beside a final document still holds the run")
+	}
+	if _, err := os.Stat(reqPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("request beside a final document remains: %v", err)
+	}
+	if e.Status().LastError != "" {
+		t.Fatalf("unexpected failure recorded: %s", e.Status().LastError)
+	}
+}
+
+func TestSpekInterviewAlreadyFinalClearsConsumedRound(t *testing.T) {
+	s, key, worktree := runInterviewTestServer(t)
+	req := runInterviewPostRequest{Answers: []SpekInterviewAnswer{{ID: "scope", Answer: "dashboard"}, {ID: "risk", Answer: "latency"}}}
+	if rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(key)+"/interview", req); rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d", rec.Code)
+	}
+	writeSpekInterviewSpec(t, worktree, key)
+	launched := false
+	e := spekInterviewExecutor(t, s, "final", func(string) { launched = true })
+	st := spekHubStage{runKey: key, key: "myorg/repo1!" + key + ":spec", stage: StageSpec, identity: e.Identity, taskID: "run-hub-9024", repo: "myorg/repo1", number: 9024, gen: 4}
+	if err := e.executeStage(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if launched {
+		t.Fatal("CLI relaunched although the document is already final")
+	}
+	for _, path := range []string{spekInterviewRequestRelPath, spekInterviewAnswersRelPath} {
+		if _, err := os.Stat(filepath.Join(worktree, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("consumed file remains after the already-final shortcut: %s (%v)", path, err)
+		}
+	}
+	if got := readSpekInterviewAnswers(worktree); len(got) != 0 {
+		t.Fatalf("answers would reach the next stage's prompt: %s", got)
 	}
 }

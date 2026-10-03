@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // Campaign is the dashboard projection for resumable inception/Spektacular work.
@@ -145,7 +146,11 @@ func (s *Server) handleCampaignResume(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, campaignResumeResponse{OK: true, Campaign: campaign, State: state, Message: "Inception campaign restored"})
 			return
 		}
-		if campaign.LeaseOwner != "" && campaign.LeaseOwner != requestUser(r) {
+		// A Spektacular run's lease owner is its stage-lease identity
+		// (hive-triage once admitted, then a contributor or executor), never a
+		// dashboard user, and resume only reads the run back; gating it on
+		// that identity refused every operator (hivecommons/hive#10059).
+		if campaign.Type != "spektacular" && campaign.LeaseOwner != "" && campaign.LeaseOwner != requestUser(r) {
 			jsonError(w, "campaign lease held by "+campaign.LeaseOwner, http.StatusConflict)
 			return
 		}
@@ -189,7 +194,11 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "campaign lease not found", http.StatusNotFound)
 				return
 			}
-			if held.identity != requestUser(r) {
+			// A pending Spektacular stage lease is held by the server-side
+			// stage identity, not a dashboard user. Owners may clear those
+			// placeholders, while contributor-held leases still require the
+			// matching identity.
+			if !s.contributeHub.isPendingStageIdentity(held.identity) && held.identity != requestUser(r) {
 				jsonError(w, "campaign lease held by "+held.identity, http.StatusConflict)
 				return
 			}
@@ -391,6 +400,7 @@ func campaignFromRun(run Run) Campaign {
 	if leaseKey := strings.TrimSpace(run.LeaseKey); leaseKey != "" {
 		id = runKeyOfLease(leaseKey, run.Repo)
 	}
+	id = campaignArtifactID(id)
 	prs := []string{}
 	for _, wave := range run.ReviewWaves {
 		for _, pr := range wave.PRs {
@@ -417,6 +427,19 @@ func campaignFromRun(run Run) Campaign {
 		Status: runCampaignStatus(run), Engine: "Spektacular", Type: "spektacular", RunKey: run.Key,
 		RunURL: "/api/runs/" + url.PathEscape(run.Key), RunGen: run.Gen, LeaseOwner: run.Assignee, ArtifactID: run.ArtifactID, DocumentStatus: run.DocumentStatus, Interview: run.Interview,
 	}
+}
+
+// campaignArtifactID adjusts runKeyOfLease's output for issue-numbered runs
+// (worksource "owner/repo#N" keys), which carry no dedicated artifact slug:
+// Spektacular addresses them as the "owner-repo-n" ArtifactSlug spelling,
+// not the bare worksource key, so the resume command and id must match that
+// (hivecommons/hive#10091). Runs keyed by an embedded "!external" slug already
+// resolve to that slug above and are left untouched.
+func campaignArtifactID(id string) string {
+	if ref, ok := worksource.ParseKey(id); ok && ref.Number > 0 {
+		return ref.ArtifactSlug()
+	}
+	return id
 }
 
 func campaignArchiveErrorStatus(err error) int {

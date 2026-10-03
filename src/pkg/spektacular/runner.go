@@ -6,7 +6,9 @@
 //
 // Contract boundary: Hive never opens a Spektacular file. Every fact about an
 // artifact arrives through Exec, which is the only seam to the outside world,
-// so tests drive the runner with a fake and production wires BinaryExec.
+// so tests drive the engine with a fake and production wires BinaryExec. The
+// Hive-owned stage observer that drives this engine lives in pkg/planengine
+// (ADR-0021).
 package spektacular
 
 import (
@@ -20,35 +22,23 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
-// DocumentStatus is the #8301 `document_status` value.
-type DocumentStatus string
-
+// Artifact kinds accepted by the status verb. They are the neutral kinds the
+// stage observer asks about (ADR-0021).
 const (
-	// DocumentDraft: the artifact is still being authored.
-	DocumentDraft DocumentStatus = "draft"
-	// DocumentFinal: the artifact is complete and the stage may advance.
-	DocumentFinal DocumentStatus = "final"
-	// DocumentStale: the artifact was invalidated by a later upstream change
-	// and must not advance until it is replanned or re-approved.
-	DocumentStale DocumentStatus = "stale"
-)
-
-// Artifact kinds accepted by the status verb.
-const (
-	KindSpec = "spec"
-	KindPlan = "plan"
+	KindSpec = planengine.KindSpec
+	KindPlan = planengine.KindPlan
 )
 
 // Verb names of the Spektacular CLI the runner invokes. The status verb is
 // the #8301 contract as confirmed on jumppad-labs/spektacular#45; the export
-// verb is still an open ask recorded in docs/spektacular.md.
+// verb shipped in Spektacular 0.23 and is absent from 0.22 and earlier.
 //
 // The CLI has no `--json` flag anywhere (its only global flag is `--fields`):
 // every verb already prints JSON, and an unknown flag is a usage error. The
@@ -68,6 +58,12 @@ const (
 const (
 	errorCodeArtifactNotFound = "artifact_not_found"
 	errorCodeNotFound         = "not_found"
+	// Spektacular 0.23+ addresses `file read` paths without the document
+	// extension and rejects `<name>.md` / `<name>/plan.md` with this code.
+	errorCodeUnexpectedExtension = "unexpected_extension"
+	// Spektacular 0.23+ `plan export` rejects a plan.md without
+	// `#### - [ ] Task:` headings; Hive's plan.md fallback may still parse it.
+	errorCodePlanStructureInvalid = "plan_structure_invalid"
 )
 
 // Artifact name normalisation. Spektacular addresses a spec as
@@ -110,30 +106,7 @@ func RunArtifactName(runKey string) string {
 	if !ok || ref.Repo == "" {
 		return ArtifactKey(runKey)
 	}
-	id := ref.ExternalID
-	if ref.Number > 0 {
-		id = strconv.Itoa(ref.Number)
-	}
-	raw := strings.ToLower(ref.Repo + "-" + id)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range raw {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "run"
-	}
-	return out
+	return ref.ArtifactSlug()
 }
 
 // markdownExt returns the markdown extension name carries, or "".
@@ -148,38 +121,6 @@ func markdownExt(name string) string {
 }
 
 func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
-
-// ArtifactStatus is the parsed per-artifact status document
-// (spektacular#45):
-//
-//	{"error":false,"kind","name","artifact_id","document_status","current_step",
-//	 "completed_steps":[],"created_at","updated_at","closed_at","spec","plan"}
-//
-// Progress is decided by DocumentStatus, CurrentStep and CompletedSteps
-// only. UpdatedAt is informational: it is workflow activity only while the
-// in-progress workflow state matches this artifact, and a file mtime
-// otherwise (moved by a checkout, a reformat or a touch), and Spektacular
-// may omit it entirely. Nothing in this package reads it to decide progress
-// or staleness; whether a generation is spent is decided by the hub executor
-// that ran it (#9143). Spec and Plan are the frontmatter cross-references,
-// which are almost never populated; they are surfaced for diagnostics and
-// are never a join key.
-type ArtifactStatus struct {
-	Kind           string
-	Name           string
-	ArtifactID     string
-	DocumentStatus DocumentStatus
-	CurrentStep    string
-	CompletedSteps []string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	ClosedAt       time.Time
-	Spec           string
-	Plan           string
-	// Body is populated by the runner for a final Spec artifact via the
-	// Spektacular file-read verb. It is not part of the status JSON contract.
-	Body string
-}
 
 // artifactStatusWire is the on-the-wire shape. Timestamps are RFC3339
 // strings that Spektacular emits as "" when unknown (the frontmatter dates
@@ -227,13 +168,9 @@ func (t *flexTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON decodes the wire shape into ArtifactStatus.
-func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
-	var w artifactStatusWire
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	*s = ArtifactStatus{
+// status converts the wire shape into the neutral ArtifactStatus.
+func (w artifactStatusWire) status() ArtifactStatus {
+	return ArtifactStatus{
 		Kind:           w.Kind,
 		Name:           w.Name,
 		ArtifactID:     strings.TrimSpace(w.ArtifactID),
@@ -246,40 +183,93 @@ func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
 		Spec:           w.Spec,
 		Plan:           w.Plan,
 	}
+}
+
+// planWire is the on-the-wire `plan export` / tasks.json shape. Its tasks
+// decode through planTaskWire so both export shapes reach the neutral Plan.
+type planWire struct {
+	Kind  string         `json:"kind"`
+	Name  string         `json:"name"`
+	Tasks []planTaskWire `json:"tasks"`
+}
+
+func (w planWire) plan() Plan {
+	plan := Plan{Kind: w.Kind, Name: w.Name}
+	if w.Tasks != nil {
+		plan.Tasks = make([]PlanTask, len(w.Tasks))
+		for i, task := range w.Tasks {
+			plan.Tasks[i] = PlanTask(task)
+		}
+	}
+	return plan
+}
+
+// planTaskWire decodes one exported plan task into the neutral PlanTask.
+type planTaskWire PlanTask
+
+// UnmarshalJSON accepts both export shapes: the pre-0.23 string fields and
+// Spektacular 0.23+'s objects, `repo: {"name","location"}` and
+// `execution: {"type","reason"}`.
+func (t *planTaskWire) UnmarshalJSON(data []byte) error {
+	type planTaskAlias PlanTask
+	var raw struct {
+		planTaskAlias
+		Repo      json.RawMessage `json:"repo,omitempty"`
+		Execution json.RawMessage `json:"execution,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = planTaskWire(raw.planTaskAlias)
+	var repo struct {
+		Name     string `json:"name"`
+		Location string `json:"location"`
+	}
+	if err := unmarshalStringOrObject(raw.Repo, &t.Repo, &repo); err != nil {
+		return fmt.Errorf("repo: %w", err)
+	}
+	if t.Repo == "" {
+		t.Repo = planTaskRepo(repo.Name, repo.Location)
+	}
+	var execution struct {
+		Type string `json:"type"`
+	}
+	if err := unmarshalStringOrObject(raw.Execution, &t.Execution, &execution); err != nil {
+		return fmt.Errorf("execution: %w", err)
+	}
+	if t.Execution == "" {
+		t.Execution = strings.TrimSpace(execution.Type)
+	}
 	return nil
 }
 
-// Final reports whether the artifact has reached document_status final.
-func (s ArtifactStatus) Final() bool { return s.DocumentStatus == DocumentFinal }
-
-// JoinKey returns the globally durable Spektacular artifact key. Older
-// Spektacular versions do not emit artifact_id, so Hive falls back to the
-// historical name only for backward compatibility.
-func (s ArtifactStatus) JoinKey() string {
-	if strings.TrimSpace(s.ArtifactID) != "" {
-		return strings.TrimSpace(s.ArtifactID)
+func unmarshalStringOrObject(data json.RawMessage, str *string, obj any) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil
 	}
-	return s.Name
+	if data[0] == '"' {
+		return json.Unmarshal(data, str)
+	}
+	return json.Unmarshal(data, obj)
 }
 
-// PlanTask is one task of a final plan as exported by Spektacular. Ref is the
-// plan-local id (T1, T2, ...), DependsOn references other refs, Execution is
-// agent_suitable or human_required (empty means agent_suitable).
-type PlanTask struct {
-	ID        string   `json:"id,omitempty"`
-	Ref       string   `json:"ref"`
-	Repo      string   `json:"repo,omitempty"`
-	Title     string   `json:"title"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	Execution string   `json:"execution,omitempty"`
-}
-
-// Plan is the structured plan export the runner hands to Hive's planner so no
-// LLM redecomposition happens.
-type Plan struct {
-	Kind  string     `json:"kind"`
-	Name  string     `json:"name"`
-	Tasks []PlanTask `json:"tasks"`
+// planTaskRepo picks the owner/repo spelling from a 0.23+ repo object: name
+// when it already is owner/repo, otherwise a GitHub location, otherwise name.
+func planTaskRepo(name, location string) string {
+	name = strings.TrimSpace(name)
+	if strings.Contains(name, "/") {
+		return name
+	}
+	loc := strings.TrimSpace(location)
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "git@github.com:", "github.com/"} {
+		loc = strings.TrimPrefix(loc, prefix)
+	}
+	loc = strings.TrimSuffix(strings.TrimSuffix(loc, "/"), ".git")
+	if parts := strings.Split(loc, "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(loc, ":") {
+		return loc
+	}
+	return name
 }
 
 // ExecFunc runs the spektacular CLI with args in dir and returns its stdout. A
@@ -288,6 +278,15 @@ type Plan struct {
 // promises. dir may be empty for direct unit tests and probes; the stage
 // runner always supplies the repo checkout/worktree that owns the artifact.
 type ExecFunc func(ctx context.Context, dir string, args []string) ([]byte, error)
+
+// Runner is the CLI client behind the Spektacular Engine: it invokes the
+// verbs, classifies the JSON error envelopes and normalises artifact names.
+// It holds no lease state; the poll loop that does is the Hive-owned stage
+// observer in pkg/planengine (ADR-0021).
+type Runner struct {
+	// Exec is the only path to the outside world.
+	Exec ExecFunc
+}
 
 const binaryExecTimeout = 30 * time.Second
 const binaryExecWaitDelay = time.Second
@@ -322,74 +321,6 @@ func binaryExec(binary string, timeout, waitDelay time.Duration) ExecFunc {
 		return stdout.Bytes(), nil
 	}
 }
-
-// NotFoundError is returned when the status verb reports that the artifact
-// does not exist (error code artifact_not_found). Callers distinguish it from
-// transport failures because it is a signal about the document (it may have
-// been replaced by a new one), not about the CLI.
-type NotFoundError struct {
-	Kind    string
-	Name    string
-	Message string
-}
-
-func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("spektacular %s %q not found: %s", e.Kind, e.Name, e.Message)
-}
-
-// VerbError is a JSON error envelope the CLI printed for a reason other than
-// a missing artifact.
-type VerbError struct {
-	Kind    string
-	Name    string
-	Code    string
-	Message string
-}
-
-func (e *VerbError) Error() string {
-	return fmt.Sprintf("spektacular %s %q: %s (%s)", e.Kind, e.Name, e.Message, e.Code)
-}
-
-// WorkDirError means the stage runner could not resolve a repository checkout
-// for a run. It is typed so callers and tests can distinguish an intentional
-// park from a CLI/status failure.
-type WorkDirError struct {
-	RunKey string
-	Stage  string
-	Repo   string
-}
-
-func (e *WorkDirError) Error() string {
-	parts := []string{"spektacular: no repo workdir resolved"}
-	if e.RunKey != "" {
-		parts = append(parts, "run="+e.RunKey)
-	}
-	if e.Stage != "" {
-		parts = append(parts, "stage="+e.Stage)
-	}
-	if e.Repo != "" {
-		parts = append(parts, "repo="+e.Repo)
-	}
-	return strings.Join(parts, " ")
-}
-
-// ContractError means the CLI produced output that does not match the #8301
-// shape (unparseable JSON, unknown document_status, wrong kind or name).
-type ContractError struct {
-	Kind   string
-	Name   string
-	Reason string
-	Err    error
-}
-
-func (e *ContractError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("spektacular %s %q: contract violation: %s: %v", e.Kind, e.Name, e.Reason, e.Err)
-	}
-	return fmt.Sprintf("spektacular %s %q: contract violation: %s", e.Kind, e.Name, e.Reason)
-}
-
-func (e *ContractError) Unwrap() error { return e.Err }
 
 // errorEnvelope is the JSON error shape every Spektacular failure is
 // expressed in (internal/output.ErrorResponse):
@@ -463,10 +394,11 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 		// status; classify it the same way a non-zero exit would be.
 		return ArtifactStatus{}, classifyEnvelope(kind, name, env, message)
 	}
-	var st ArtifactStatus
-	if err := json.Unmarshal(trimmed, &st); err != nil {
+	var wire artifactStatusWire
+	if err := json.Unmarshal(trimmed, &wire); err != nil {
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: "status is not valid JSON", Err: err}
 	}
+	st := wire.status()
 	if st.Kind != kind {
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("kind %q does not match requested %q", st.Kind, kind)}
 	}
@@ -478,7 +410,11 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 	}
 	st.Name = name
 	switch st.DocumentStatus {
-	case DocumentDraft, DocumentFinal, DocumentStale:
+	case "":
+		// An artifact without a document_status frontmatter key is open;
+		// the CLI prints it as "".
+		st.DocumentStatus = DocumentDraft
+	case DocumentDraft, DocumentFinal, DocumentStale, DocumentSuperseded, DocumentArchived:
 	default:
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("unknown document_status %q", st.DocumentStatus)}
 	}
@@ -498,7 +434,8 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		return "", &ContractError{Kind: kind, Reason: "empty artifact name"}
 	}
 	candidates := map[string]time.Time{}
-	for id, mt := range r.artifactsFromFileList(ctx, dir, kind) {
+	listed, listErr := r.artifactsFromFileList(ctx, dir, kind)
+	for id, mt := range listed {
 		if artifactMatchesSlug(id, slug) {
 			candidates[id] = mt
 		}
@@ -511,6 +448,9 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 		}
 	}
 	if len(candidates) == 0 {
+		if listErr != nil {
+			return "", fmt.Errorf("listing %s artifacts: %w", kind, listErr)
+		}
 		return "", &NotFoundError{Kind: kind, Name: slug, Message: "no matching artifact id found"}
 	}
 	type candidate struct {
@@ -530,24 +470,26 @@ func (r *Runner) ResolveArtifact(ctx context.Context, dir, kind, slug string) (s
 	return list[0].id, nil
 }
 
+// artifactMatchesSlug accepts the bare slug plus both Spektacular id
+// schemes: timestamp (`<id>-<slug>`) and counter (`000001_<slug>`).
 func artifactMatchesSlug(id, slug string) bool {
 	id = ArtifactKey(id)
 	slug = ArtifactKey(slug)
-	return id == slug || strings.HasSuffix(id, "-"+slug)
+	return id == slug || strings.HasSuffix(id, "-"+slug) || strings.HasSuffix(id, "_"+slug)
 }
 
-func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) map[string]time.Time {
+func (r *Runner) artifactsFromFileList(ctx context.Context, dir, kind string) (map[string]time.Time, error) {
 	out, err := r.execInDir(ctx, dir, []string{kind, verbFile, "list"})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var raw any
-	if json.Unmarshal(bytes.TrimSpace(out), &raw) != nil {
-		return nil
+	if err := json.Unmarshal(bytes.TrimSpace(out), &raw); err != nil {
+		return nil, err
 	}
 	ids := map[string]time.Time{}
 	collectArtifactStrings(raw, ids)
-	return ids
+	return ids, nil
 }
 
 func collectArtifactStrings(v any, ids map[string]time.Time) {
@@ -623,8 +565,8 @@ func artifactIDFromPath(path string) string {
 
 // ExportPlan invokes `spektacular plan export <name> --format json` and returns the
 // structured task list of a final plan. It is the one verb beyond #8301 the
-// runner needs and is still an open ask on the Spektacular side; the fixture
-// encodes its assumed shape.
+// runner needs; Spektacular 0.23+ ships it (with object-valued task repo and
+// execution, which PlanTask accepts alongside the older string shape).
 func (r *Runner) ExportPlan(ctx context.Context, name string) (Plan, error) {
 	return r.exportPlanInDir(ctx, "", name)
 }
@@ -650,9 +592,9 @@ func (r *Runner) exportPlanInDir(ctx context.Context, dir, name string) (Plan, e
 }
 
 // ExportPlanWithFallback preserves `spektacular plan export <name> --format json` as the
-// primary task-list source. Until upstream ships that verb, an
-// unknown-subcommand response falls back to Hive's documented on-disk plan
-// artifact convention: `<name>/tasks.json` first, then `<name>/plan.md`, both
+// primary task-list source. When the CLI lacks that verb (0.22 and earlier)
+// or rejects the plan structure, it falls back to Hive's documented on-disk
+// plan artifact convention: `<name>/tasks.json` first, then `<name>/plan.md`, both
 // read through `spektacular plan file read` so the CLI still owns store
 // access.
 func (r *Runner) ExportPlanWithFallback(ctx context.Context, name string) (Plan, error) {
@@ -705,7 +647,7 @@ func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) 
 	if err == nil {
 		return parsePlanJSON(name, bytes.TrimSpace(out), "tasks.json")
 	}
-	if !isNotFound(err) {
+	if !isNotFound(err) && !isUnexpectedExtension(err) {
 		return Plan{}, err
 	}
 	planPath := name + "/plan.md"
@@ -717,34 +659,51 @@ func (r *Runner) exportPlanFallbackInDir(ctx context.Context, dir, name string) 
 }
 
 func (r *Runner) readPlanFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
-	out, execErr := r.execInDir(ctx, dir, []string{KindPlan, verbFile, verbRead, path})
-	if execErr != nil {
-		return nil, classifyExecError(KindPlan, name, out, execErr)
-	}
-	trimmed := bytes.TrimSpace(out)
-	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
-		return nil, classifyEnvelope(KindPlan, name, env, message)
-	}
-	return out, nil
+	return r.readFileInDir(ctx, dir, KindPlan, name, path)
 }
 
 func (r *Runner) readSpecFileInDir(ctx context.Context, dir, name, path string) ([]byte, error) {
-	out, execErr := r.execInDir(ctx, dir, []string{KindSpec, verbFile, verbRead, path})
+	return r.readFileInDir(ctx, dir, KindSpec, name, path)
+}
+
+// readFileInDir reads path through `<kind> file read`. Pre-0.23 CLIs want the
+// extension (`<name>.md`, `<name>/plan.md`); 0.23+ rejects it with
+// unexpected_extension, so the read is retried once without it.
+func (r *Runner) readFileInDir(ctx context.Context, dir, kind, name, path string) ([]byte, error) {
+	out, err := r.readFileOnceInDir(ctx, dir, kind, name, path)
+	if err == nil || !isUnexpectedExtension(err) {
+		return out, err
+	}
+	bare := strings.TrimSuffix(path, filepath.Ext(path))
+	if bare == path || bare == "" {
+		return out, err
+	}
+	return r.readFileOnceInDir(ctx, dir, kind, name, bare)
+}
+
+func (r *Runner) readFileOnceInDir(ctx context.Context, dir, kind, name, path string) ([]byte, error) {
+	out, execErr := r.execInDir(ctx, dir, []string{kind, verbFile, verbRead, path})
 	if execErr != nil {
-		return nil, classifyExecError(KindSpec, name, out, execErr)
+		return nil, classifyExecError(kind, name, out, execErr)
 	}
 	trimmed := bytes.TrimSpace(out)
 	if env, message, isErr := parseErrorEnvelope(trimmed); isErr {
-		return nil, classifyEnvelope(KindSpec, name, env, message)
+		return nil, classifyEnvelope(kind, name, env, message)
 	}
 	return out, nil
 }
 
+func isUnexpectedExtension(err error) bool {
+	var ve *VerbError
+	return errors.As(err, &ve) && strings.EqualFold(ve.Code, errorCodeUnexpectedExtension)
+}
+
 func parsePlanJSON(name string, data []byte, source string) (Plan, error) {
-	var plan Plan
-	if err := json.Unmarshal(data, &plan); err != nil {
+	var wire planWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: source + " is not valid JSON", Err: err}
 	}
+	plan := wire.plan()
 	if ArtifactKey(plan.Name) != name {
 		if strings.TrimSpace(plan.Name) != "" {
 			return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: fmt.Sprintf("%s name %q does not match requested %q", source, plan.Name, name)}
@@ -907,35 +866,6 @@ func parenListValue(title *string, key string) []string {
 	return out
 }
 
-// RenderTaskList turns an exported plan into the ordered task-list text that
-// planning.DecomposeFromOutput parses, so Spektacular's structure is admitted
-// verbatim and no model is asked to redecompose it.
-func RenderTaskList(plan Plan) string {
-	var b strings.Builder
-	for i, task := range plan.Tasks {
-		ref := strings.TrimSpace(task.Ref)
-		if ref == "" {
-			ref = strings.TrimSpace(task.ID)
-		}
-		if ref == "" {
-			ref = fmt.Sprintf("T%d", i+1)
-		}
-		fmt.Fprintf(&b, "%d. [%s] %s", i+1, ref, strings.TrimSpace(task.Title))
-		if repo := strings.TrimSpace(task.Repo); repo != "" {
-			fmt.Fprintf(&b, " [repo:%s]", repo)
-		}
-		if len(task.DependsOn) > 0 {
-			fmt.Fprintf(&b, " (depends: %s)", strings.Join(task.DependsOn, ", "))
-		}
-		execution := strings.TrimSpace(task.Execution)
-		if execution == "" {
-			execution = "agent_suitable"
-		}
-		fmt.Fprintf(&b, " [%s]\n", execution)
-	}
-	return b.String()
-}
-
 func (r *Runner) execInDir(ctx context.Context, dir string, args []string) ([]byte, error) {
 	if r == nil || r.Exec == nil {
 		return nil, errors.New("spektacular: runner has no Exec")
@@ -984,6 +914,7 @@ func planExportUnavailable(err error) bool {
 		code := strings.ToLower(ve.Code)
 		msg := strings.ToLower(ve.Message)
 		return code == "unknown_subcommand" || code == "unknown_command" ||
+			code == errorCodePlanStructureInvalid ||
 			(strings.Contains(msg, "unknown") && strings.Contains(msg, "export")) ||
 			exportFlagRejected(msg)
 	}

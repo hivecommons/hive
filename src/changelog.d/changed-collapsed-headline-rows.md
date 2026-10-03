@@ -1,0 +1,1 @@
+- Keep each dashboard section's own headline KPI/chart row visible at full width when collapsed.

@@ -16,7 +16,7 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
@@ -36,6 +36,13 @@
 # ready work until its blockers close, and lifts it automatically when they do
 # — write the order here, not only in a comment. A blocker that cannot be
 # linked is reported in the result and does not stop the create.
+#
+# --close-on-merge appends the `hive: close-on-merge` marker to the new issue's
+# body (hivecommons/hive#10304): the filer states up front that the merged fix
+# IS the verification, so a fix PR keeps `Closes #N` and the close path accepts
+# the merge instead of waiting for reporter confirmation. Use it for code-sweep
+# findings and bugs the reporter cannot reproduce on demand. Only meaningful for
+# a create; the marker is not added twice if the body already carries it.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -90,12 +97,13 @@ REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
 OVERRIDE_REASON=""
 PARENT=""
 BLOCKED_BY=()
+CLOSE_ON_MERGE=0
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -122,6 +130,7 @@ while [ $# -gt 0 ]; do
     --parent=*) PARENT="${1#*=}"; shift;;
     --blocked-by=*) BLOCKED_BY+=("${1#*=}"); shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
+    --close-on-merge) CLOSE_ON_MERGE=1; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
@@ -162,6 +171,11 @@ if [ -n "$BODY_FILE" ]; then
   fi
 fi
 
+if [ "$CLOSE_ON_MERGE" -eq 1 ] && [ "$KIND" != "issue" ]; then
+  echo "hive-open-issue: --close-on-merge only applies when creating an issue; nothing was written." >&2
+  exit 2
+fi
+
 if [ "$KIND" = "issue" ]; then
   # --body stays required (matching the original shim contract pinned by
   # bin/test_hive_open_issue.sh): an issue with an empty body is always an
@@ -169,6 +183,9 @@ if [ "$KIND" = "issue" ]; then
   if [ -z "$REPO" ] || [ -z "$TITLE" ] || [ -z "$BODY" ]; then
     echo "hive-open-issue: --repo, --title, and --body are required" >&2
     exit 2
+  fi
+  if [ "$CLOSE_ON_MERGE" -eq 1 ] && ! printf '%s' "$BODY" | grep -qi 'hive: close-on-merge'; then
+    BODY="$BODY"$'\n\n''hive: close-on-merge'
   fi
 elif [ "$KIND" = "label" ]; then
   # A label request needs the item AND at least one label to change; the

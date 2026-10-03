@@ -463,3 +463,14 @@ func TestIssueClaim_ClaimFromIssueMap(t *testing.T) {
 		t.Fatalf("claimTTL() = %v, want 1m", got)
 	}
 }
+
+func TestLeaseHeartbeatAtNeverInFuture(t *testing.T) {
+	now := time.Now()
+	if got := leaseHeartbeatAt(now.Add(time.Hour), now); !got.Equal(now) {
+		t.Errorf("held lease heartbeat = %v, want clamped to now %v", got, now)
+	}
+	renewed := now.Add(-time.Minute)
+	if got := leaseHeartbeatAt(renewed.Add(leaseTTL), now); !got.Equal(renewed) {
+		t.Errorf("renewed lease heartbeat = %v, want %v", got, renewed)
+	}
+}

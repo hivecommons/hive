@@ -390,6 +390,9 @@ type InceptionState struct {
 	WikiName          string               `json:"wiki_name,omitempty"`
 	AutoFactCount     int                  `json:"auto_fact_count,omitempty"`
 	AutoQuestionCount int                  `json:"auto_question_count,omitempty"`
+	// AdmittedRunKey is the Spektacular run admitted when the inception was
+	// approved, if any.
+	AdmittedRunKey string `json:"admitted_run_key,omitempty"`
 }
 
 // TranscriptDocument tracks a scrubbed raw transcript stored in the inception wiki vault.

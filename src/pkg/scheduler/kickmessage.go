@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
 
 func (s *Scheduler) formatIssueList(issues []github.Issue) string {
@@ -19,6 +20,56 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 func hasIssueLabel(labels []string, want string) bool {
 	for _, label := range labels {
 		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// upstreamPortDiffURL is the "port this" handoff (hivecommons/hive#9969): for
+// an issue the upstream watch filed — one carrying the configured
+// upstream-port label AND the hidden `<!-- upstream-ref: owner/repo#123 -->`
+// marker RenderIssue embeds — it returns the upstream pull request's `.diff`
+// URL so the fixer that picks the issue up starts with the patch in its kick
+// context instead of hunting for it.
+//
+// It is derived, never trusted: the URL is rebuilt from a validated
+// owner/repo#number marker, so an issue body cannot inject a link of its own.
+// Empty for every other issue, for a release marker (no diff exists), and when
+// no repo configures the label.
+func (s *Scheduler) upstreamPortDiffURL(issue github.Issue) string {
+	if s == nil || s.cfg == nil || len(s.cfg.UpstreamWatch.Repos) == 0 || issue.Body == "" {
+		return ""
+	}
+	if !hasAnyIssueLabel(issue.Labels, s.upstreamPortLabels()) {
+		return ""
+	}
+	ref, ok := upstreamwatch.ParseMarkerRef(issue.Body)
+	if !ok {
+		return ""
+	}
+	return upstreamwatch.MarkerDiffURL(ref)
+}
+
+// upstreamPortLabels is the set of labels the upstream watch files issues
+// with across the configured repos (per-repo `label`, defaulting to
+// upstream/port). A label is matched against this whole set rather than the
+// issue's own repo entry because a kick list can span repos.
+func (s *Scheduler) upstreamPortLabels() []string {
+	labels := make([]string, 0, len(s.cfg.UpstreamWatch.Repos))
+	for _, rc := range s.cfg.UpstreamWatch.Repos {
+		label := strings.TrimSpace(rc.Label)
+		if label == "" {
+			label = config.DefaultUpstreamWatchLabel
+		}
+		labels = append(labels, label)
+	}
+	return labels
+}
+
+func hasAnyIssueLabel(labels []string, want []string) bool {
+	for _, w := range want {
+		if hasIssueLabel(labels, w) {
 			return true
 		}
 	}
@@ -96,6 +147,9 @@ func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, ref
 		b.WriteString(fmt.Sprintf("  %dm %s %s [%s] %s\n",
 			issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
 			strings.Join(labels, ","), title))
+		if diff := s.upstreamPortDiffURL(issue); diff != "" {
+			b.WriteString(fmt.Sprintf("    ↳ upstream patch: %s — read it first, then port the change to this fork by hand; do not cherry-pick across repos\n", diff))
+		}
 		if issue.ClaimContext != nil && issue.ClaimContext.MergedPR {
 			reason := "weakly claimed"
 			if issue.ClaimContext.Reference {

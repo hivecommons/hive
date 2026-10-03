@@ -1,1 +1,0 @@
-- Reference CNCF Code of Conduct in READMEs (#10039)

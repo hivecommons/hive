@@ -37,7 +37,7 @@ variable "runner_pool_count" {
 
 variable "runner_pool_min" {
   type    = number
-  default = 3
+  default = 4 # matches the live pool floor; 3 was never applied (pool was hand-built with the autoscaler off)
 }
 
 variable "runner_pool_max" {

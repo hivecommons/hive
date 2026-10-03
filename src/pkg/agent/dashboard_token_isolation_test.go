@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
@@ -88,13 +89,33 @@ func TestAgentMCPFlagsNeverCarryDashboardToken(t *testing.T) {
 		t.Fatalf("MCP launch flags carry the dashboard token: %q", flags)
 	}
 
-	// Positive control: the flag is well formed and names exactly the
-	// operator-declared server, with no token query parameter appended.
-	const flagPrefix = " --mcp-server '"
+	// Positive control: the flag is a well-formed --mcp-config document that
+	// names exactly the operator-declared server, with no token query
+	// parameter appended.
+	const flagPrefix = " --mcp-config '"
 	if !strings.HasPrefix(flags, flagPrefix) || !strings.HasSuffix(flags, "'") {
 		t.Fatalf("MCP launch flags malformed: %q", flags)
 	}
-	raw := strings.TrimSuffix(strings.TrimPrefix(flags, flagPrefix), "'")
+	var doc struct {
+		Servers map[string]struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	rawDoc := strings.TrimSuffix(strings.TrimPrefix(flags, flagPrefix), "'")
+	if err := json.Unmarshal([]byte(rawDoc), &doc); err != nil {
+		t.Fatalf("MCP config does not parse: %q: %v", rawDoc, err)
+	}
+	if len(doc.Servers) != 1 {
+		t.Fatalf("MCP config servers = %v, want exactly one", doc.Servers)
+	}
+	var raw string
+	for _, s := range doc.Servers {
+		if s.Type != "http" {
+			t.Fatalf("MCP server type = %q, want http", s.Type)
+		}
+		raw = s.URL
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("MCP server URL does not parse: %q: %v", raw, err)

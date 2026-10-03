@@ -15,10 +15,11 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText", "renderVersionMenu", "renderVersionChip", "fetchGitVersion"} {
-		if name == "fetchGitVersion" {
-			source.WriteString("async ")
-		}
+	// fetchGitVersion reconciles persisted upgrade progress before it renders
+	// (versionManualUpgradeActive & co.); without those helpers the try block
+	// throws a ReferenceError, the catch swallows it, and the legacy strip is
+	// never cleared — a silent pass turned into a silent fail.
+	for _, name := range []string{"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText", "versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary", "versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionManualUpgradeActive", "versionElapsedText", "versionUpgradeProgressStatus", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "renderVersionMenu", "renderVersionChip", "fetchGitVersion"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -38,6 +39,10 @@ const elements = {
 };
 const document = { getElementById: id => elements[id] || null };
 const window = {};
+const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+const VERSION_UPGRADE_DONE_MS = 30000;
+const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
+const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(k,v){this.data[k]=String(v)}, removeItem(k){delete this.data[k]}};
 let payload, calls = 0, _upgradeInProgress = false, _upgradeTargetHash = null;
 function showToast() {}
 function renderReleaseStatus() {}
@@ -67,7 +72,7 @@ async function render(overrides = {}) {
     const ref = 'ghcr.io/hivecommons/hive:' + channel;
     const { chip, menu } = await render({ channel, tracking: 'floating', imageRef: ref });
     assert.ok(chip.includes('>' + channel + ' (v5)</span>'));
-    assert.ok(menu.includes('Channel</span><strong>' + channel + ' (v5)</strong>'));
+    assert.ok(menu.includes('Channel</span><strong title="' + channel + ' (v5)">' + channel + ' (v5)</strong>'));
     assert.ok(menu.includes('>floating</strong>'));
     assert.ok(menu.includes('Channel: ' + channel));
     assert.ok(menu.includes('Built from: v5'));
@@ -112,7 +117,8 @@ async function render(overrides = {}) {
   assert.ok(out.menu.includes('Upgrade now'));
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
   assert.ok(out.menu.includes('manual update required'));
-  assert.ok(!out.menu.includes('spoke-upgrade-btn'));
+  // The button stays on screen but disabled, carrying the reason as its title.
+  assert.ok(out.menu.includes('id="spoke-upgrade-btn" class="hv-btn btn-primary btn-sm" type="button" disabled aria-disabled="true" title="deployment runtime is not explicitly configured (unknown)"'));
   out = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
   assert.ok(out.menu.includes('Up to date'));
   assert.ok(!out.chip.includes('oc-version-update-dot'));

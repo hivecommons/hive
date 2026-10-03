@@ -1,0 +1,1 @@
+- The planning stage observer now runs on the engine-neutral planning-engine interface instead of a Spektacular-specific command hook; stage receipts, lease attributes and refusal reasons are unchanged ([#10353](https://github.com/hivecommons/hive/issues/10353)).

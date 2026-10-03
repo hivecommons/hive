@@ -159,6 +159,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// #4298: "for every recent reset, how much of the budget had been used".
 	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
+	s.mux.HandleFunc("GET /api/overview/history", s.handleOverviewHistory)
 	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
 	s.mux.HandleFunc("GET /api/governor/pr-models", s.handleGovernorPRModels)
@@ -278,6 +279,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/governor/gateways/discover", s.handleGovernorGatewaysDiscover)
 	s.registerOpenRouterRoutes()
 	s.registerLinearAgentRoutes()
+	s.mux.HandleFunc("GET /api/upstream-watch", s.handleUpstreamWatch)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -1299,6 +1301,14 @@ func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.TrendHistory())
+}
+
+func (s *Server) handleOverviewHistory(w http.ResponseWriter, r *http.Request) {
+	var since int64
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		since, _ = strconv.ParseInt(raw, 10, 64)
+	}
+	jsonResponse(w, s.OverviewKPIHistory(since))
 }
 
 // handleTimeSeries is the unified read endpoint over the sparkline histories.

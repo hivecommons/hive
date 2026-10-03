@@ -51,6 +51,12 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 	if err != nil {
 		return nil, "", err
 	}
+	// The governor re-enters here every cycle while the design label stays on
+	// the issue; an approved design is settled and must not be re-requested
+	// or re-admitted as a fresh spec run.
+	if planning.DesignStatus(epic) == planning.DesignStatusApproved {
+		return epic, runKey, nil
+	}
 	if err := planning.RequestDesign(store, epic.ID); err != nil {
 		return nil, "", err
 	}
@@ -62,7 +68,9 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 			return nil, "", err
 		}
 	}
-	_ = store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignStatus, planning.DesignStatusRequested); err != nil {
+		return nil, "", err
+	}
 	if err := s.AdmitTriagedRunRefWithContext(issueWorkRef(issue), worksource.WorkItemContextFromGitHubIssue(issue), "", "", time.Now()); err != nil {
 		return nil, "", err
 	}
@@ -76,7 +84,9 @@ func (s *Server) startDesignSpektacular(ctx context.Context, store *beads.Store,
 // call.
 func (s *Server) StartDesignSpektacularFromIssue(ctx context.Context, store *beads.Store, issue github.Issue) (*beads.Bead, string, error) {
 	// A design label is not an instruction to undo an owner's retirement on
-	// every governor cycle. Explicit owner starts remain a separate path.
+	// every governor cycle. Abandonment is terminal for the run key: explicit
+	// owner starts are also refused by the shared admission path. Other
+	// retirements (such as triage_fix) have separate owner-start semantics.
 	if s.RunAbandoned(issueWorkRef(issue).Key()) || s.RunTriageFixRetired(issue.Repo, issue.Number) || s.runRetirement(issueWorkRef(issue).Key()) == runResetReasonTriageFix {
 		return nil, "", nil
 	}
@@ -137,6 +147,21 @@ func (s *Server) postDesignArtifact(ctx context.Context, store *beads.Store, epi
 
 func designArtifactComment(body string) string {
 	return strings.TrimSpace("📐 Spektacular design artifact\n\n" + strings.TrimSpace(body))
+}
+
+// clearDesignArtifactDigest forgets the rejected design artifact, so the spec
+// the re-minted generation drafts is posted to the work item again even when
+// its text is unchanged - otherwise a rejection leaves the reviewer with no
+// new artifact to read (hivecommons/hive#10062).
+func clearDesignArtifactDigest(store *beads.Store, epicID string) error {
+	if store == nil || epicID == "" {
+		return nil
+	}
+	epic, err := store.Get(epicID)
+	if err != nil || epic.Meta(planning.MetaDesignArtifactDigest) == "" {
+		return nil
+	}
+	return store.UnsetMetadata(epicID, planning.MetaDesignArtifactDigest)
 }
 
 func designArtifactDigest(body string) string {

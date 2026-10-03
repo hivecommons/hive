@@ -182,7 +182,7 @@ func TestHandleVersionUsesHubUpgradePolicyTarget(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	s.SetHubUpgradePolicy(&spoke.HeartbeatUpgradePolicy{
-		HubManaged: true, Schedule: "daily", Branch: "v4", Channel: "edge",
+		HubManaged: true, Schedule: "daily", ScheduleHour: 13, ScheduleTimezone: "America/New_York", Branch: "v4", Channel: "edge",
 		TargetSHA: "6a5b337", TargetResolved: true,
 	})
 
@@ -213,6 +213,10 @@ func TestHandleVersionUsesHubUpgradePolicyTarget(t *testing.T) {
 	}
 	if au["state"] != autoUpdateStateBehind || au["targetChannel"] != "edge" {
 		t.Errorf("autoUpdate state=%v targetChannel=%v, want behind/edge", au["state"], au["targetChannel"])
+	}
+	policy, _ := body["upgradePolicy"].(map[string]any)
+	if policy["schedule"] != "daily" || policy["schedule_hour"] != float64(13) || policy["schedule_timezone"] != "America/New_York" {
+		t.Errorf("upgradePolicy cadence = %v, want daily/13/America_New_York", policy)
 	}
 }
 
@@ -379,6 +383,51 @@ func TestBuildUpgradeAttemptStatusSupersededByLaterRoll(t *testing.T) {
 	}
 	if strings.Contains(moved.Detail, "running the target image") || !strings.Contains(moved.Detail, "since moved to ffe1e19") {
 		t.Errorf("Detail = %q, must say the hive has since moved", moved.Detail)
+	}
+}
+
+func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
+	oldStatePath := dashboardUpgradeStatePath
+	dashboardUpgradeStatePath = filepath.Join(t.TempDir(), "dashboard-upgrade-state.json")
+	t.Cleanup(func() { dashboardUpgradeStatePath = oldStatePath })
+	s := NewServer(0, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	now := time.Date(2026, 10, 2, 19, 0, 0, 0, time.UTC)
+
+	targetlessMoved := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:       dashboardUpgradeStateStarted,
+		StartedFrom: "1234567",
+		StartedAt:   now.Add(-5 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	}, "f29ba7aabcdef", now)
+	if targetlessMoved.State != dashboardUpgradeStateDone || !sameCommitDashboard(targetlessMoved.Target, "f29ba7a") {
+		t.Fatalf("targetless moved state = %+v, want done at running commit", targetlessMoved)
+	}
+	if at := upgradeAttemptFromDashboardState(targetlessMoved); at == nil || at.State != upgradeAttemptSucceeded || !strings.Contains(at.Detail, "f29ba7a") {
+		t.Fatalf("attempt from targetless moved state = %+v, want completed at running commit", at)
+	}
+
+	targetedMoved := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:       dashboardUpgradeStateStarted,
+		Target:      "990d0b2",
+		StartedFrom: "1234567",
+		StartedAt:   now.Add(-5 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	}, "f29ba7aabcdef", now)
+	if targetedMoved.State != dashboardUpgradeStateSuperseded {
+		t.Fatalf("targeted moved state = %+v, want superseded until ancestry proves completion", targetedMoved)
+	}
+
+	stale := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:     dashboardUpgradeStateStarted,
+		Target:    "990d0b2",
+		StartedAt: now.Add(-31 * time.Minute),
+		UpdatedAt: now.Add(-31 * time.Minute),
+	}, "1234567abcdef", now)
+	if stale.State != dashboardUpgradeStateSuperseded {
+		t.Fatalf("stale state = %+v, want superseded", stale)
+	}
+	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptSuperseded {
+		t.Fatalf("attempt from stale state = %+v, want superseded", at)
 	}
 }
 

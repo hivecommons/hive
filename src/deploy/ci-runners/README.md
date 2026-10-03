@@ -317,13 +317,15 @@ fleet into "fixing" code. Three pieces now catch them automatically:
 | --- | --- | --- |
 | Classifier | `.github/scripts/ci_infra_classify.py` + `ci-infra-signatures.tsv` | Sorts one failed job into `infra:<class>`, `derived` (a shard gate that only reports other jobs) or `code`, from the failing step's output and the job's annotations. Anything unrecognised is `code`. |
 | Rerun once | `.github/workflows/ci-infra-rerun.yml` | On every failed run of the watched CI workflows, classifies the failed jobs and reruns them once when all are infra. Never past attempt 1, never when any job is `code`, never for a fork. |
+| Runner canary | `.github/workflows/ci-runner-canary.yml` (every 20 min) | Four parallel self-hosted jobs run setup-go/setup-node, verify tool-cache integrity, dind and free disk, while a GitHub-hosted watchdog fails if they are not picked up within 10 minutes or any run has been queued over 15 minutes. One `ci-runner-canary` issue is opened/updated on red and closed on the next green. |
 | Rate alert | `.github/workflows/ci-infra-rate.yml` (hourly) | Share of the last 100 completed CI runs with at least one infra failure. At 15% or more it opens or updates one tracking issue with a class x runner breakdown; below that it closes it. |
 
 Classes shipped: `gocache-permission`, `build-cache-corrupt`, `disk-full`,
 `lint-no-go-files`, `lint-timeout`, `runner-lost` (the runner pod died; seen
 only as the job annotation "The self-hosted runner lost communication with the
-server") and `test-list-empty` (a `go test -list` step that exited without
-printing anything). To add one, append a row to `ci-infra-signatures.tsv` and a
+server"), `test-list-empty` (a `go test -list` step that exited without
+printing anything) and `toolcache-clobbered` (setup-go/setup-node on a fresh
+node whose shared tool cache was overwritten mid-extraction, #10234). To add one, append a row to `ci-infra-signatures.tsv` and a
 trimmed real log under `.github/scripts/testdata/ci-infra/`; the self-test
 (`python3 .github/scripts/test-ci-infra.py`, run in v2 CI) fails if a class has
 no fixture.

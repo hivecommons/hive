@@ -3,10 +3,17 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func jamTestServer(t *testing.T) *Server {
@@ -185,5 +192,275 @@ func TestCampaignJamSuggestionMatchesExactSectionHeading(t *testing.T) {
 	want := "## Goals\nKeep team async review\n\n## Goal\nShip phase 1 only"
 	if got != want {
 		t.Fatalf("section replacement mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestCampaignJamPostRejectsStaleBaseRevision(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-5/jam", "read-write", "alice", map[string]any{
+		"spec_content": "## Goals\nAlice",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed revision = %d body=%s", seed.Code, seed.Body.String())
+	}
+	current := decodeJam(t, seed).SpecRevisionID
+	if current == "" {
+		t.Fatal("seed revision id is empty")
+	}
+
+	stale := jamPostAs(t, s, "/api/campaigns/spec-5/jam", "read-write", "bob", map[string]any{
+		"spec_content":     "## Goals\nBob",
+		"base_revision_id": "rev-stale",
+	}, false)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale REST revision = %d body=%s, want 409", stale.Code, stale.Body.String())
+	}
+	missing := jamPostAs(t, s, "/api/campaigns/spec-5/jam", "read-write", "bob", map[string]any{
+		"spec_content": "## Goals\nBob",
+	}, false)
+	if missing.Code != http.StatusConflict {
+		t.Fatalf("REST revision without base_revision_id = %d body=%s, want 409", missing.Code, missing.Body.String())
+	}
+
+	jam := decodeJam(t, doOwnerGet(s, "/api/campaigns/spec-5/jam"))
+	if jam.SpecContent != "## Goals\nAlice" || len(jam.Revisions) != 1 {
+		t.Fatalf("stale REST edit overwrote state: %+v", jam)
+	}
+
+	fresh := jamPostAs(t, s, "/api/campaigns/spec-5/jam", "read-write", "bob", map[string]any{
+		"spec_content":     "## Goals\nBob",
+		"base_revision_id": current,
+	}, false)
+	if fresh.Code != http.StatusOK {
+		t.Fatalf("current-base revision = %d body=%s", fresh.Code, fresh.Body.String())
+	}
+	if jam := decodeJam(t, fresh); jam.SpecContent != "## Goals\nBob" || len(jam.Revisions) != 2 {
+		t.Fatalf("current-base revision not applied: %+v", jam)
+	}
+}
+
+func TestCampaignJamStoreFailuresKeepStateAndReport5xx(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-6/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "first thread",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed thread = %d body=%s", seed.Code, seed.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read jam store: %v", err)
+	}
+
+	// Fail the staged write at the rename: the previously persisted state
+	// must survive untouched instead of being truncated the way the old
+	// in-place write did, and the staged temp file must be cleaned up.
+	campaignJamRename = func(string, string) error { return errors.New("injected rename failure") }
+	t.Cleanup(func() { campaignJamRename = os.Rename })
+	blocked := jamPostAs(t, s, "/api/campaigns/spec-6/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "second thread",
+	}, false)
+	if blocked.Code != http.StatusInternalServerError {
+		t.Fatalf("blocked jam write = %d body=%s, want 500", blocked.Code, blocked.Body.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read jam store after failed write: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("failed write changed the store:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	assertNoCampaignJamTempFiles(t, path)
+	campaignJamRename = os.Rename
+
+	if err := os.WriteFile(path, []byte(`{"campaigns": {"spec`), 0o600); err != nil {
+		t.Fatalf("truncate jam store: %v", err)
+	}
+	corrupt := doOwnerGet(s, "/api/campaigns/spec-6/jam")
+	if corrupt.Code != http.StatusInternalServerError {
+		t.Fatalf("corrupt jam store get = %d body=%s, want 500", corrupt.Code, corrupt.Body.String())
+	}
+}
+
+func TestCampaignJamWriteLeavesNoTempFile(t *testing.T) {
+	s := jamTestServer(t)
+	rec := jamPostAs(t, s, "/api/campaigns/spec-7/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "thread",
+	}, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("thread post = %d body=%s", rec.Code, rec.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	assertNoCampaignJamTempFiles(t, path)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat jam store: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("jam store mode = %o, want 600", perm)
+	}
+}
+
+func assertNoCampaignJamTempFiles(t *testing.T, path string) {
+	t.Helper()
+	leftovers, err := filepath.Glob(path + ".*.tmp")
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	if len(leftovers) > 0 {
+		t.Fatalf("temp jam files left beside the store: %v", leftovers)
+	}
+}
+
+func TestCampaignJamRejectsUnknownCampaignIDs(t *testing.T) {
+	s := jamTestServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.Start("Prepare bootc-installer for a beta release")
+	if err != nil {
+		t.Fatalf("start inception: %v", err)
+	}
+
+	ghost := jamPostAs(t, s, "/api/campaigns/ghost-never/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "made-up campaign",
+	}, false)
+	if ghost.Code != http.StatusNotFound {
+		t.Fatalf("unknown campaign thread post = %d body=%s, want 404", ghost.Code, ghost.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err == nil && strings.Contains(string(raw), "ghost-never") {
+		t.Fatalf("unknown campaign was persisted:\n%s", raw)
+	}
+
+	known := jamPostAs(t, s, "/api/campaigns/"+state.IdeaSlug+"/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "real campaign",
+	}, false)
+	if known.Code != http.StatusOK {
+		t.Fatalf("known campaign thread post = %d body=%s", known.Code, known.Body.String())
+	}
+}
+
+func TestCampaignJamEmptyStoreIsAnErrorNotAnEmptyStore(t *testing.T) {
+	s := jamTestServer(t)
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write empty store: %v", err)
+	}
+	get := doOwnerGet(s, "/api/campaigns/spec-8/jam")
+	if get.Code != http.StatusInternalServerError {
+		t.Fatalf("empty jam store get = %d body=%s, want 500", get.Code, get.Body.String())
+	}
+	post := jamPostAs(t, s, "/api/campaigns/spec-8/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "must not overwrite the damaged store",
+	}, false)
+	if post.Code != http.StatusInternalServerError {
+		t.Fatalf("empty jam store post = %d body=%s, want 500", post.Code, post.Body.String())
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != 0 {
+		t.Fatalf("damaged store was rewritten: info=%v err=%v", info, err)
+	}
+}
+
+func TestCampaignJamRequiresConfiguredDataDir(t *testing.T) {
+	s := newMinimalServer(t)
+	t.Chdir(t.TempDir())
+	rec := jamPostAs(t, s, "/api/campaigns/spec-9/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "no data dir",
+	}, false)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("jam post without data dir = %d body=%s, want 500", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat("campaign-jam.json"); !os.IsNotExist(err) {
+		t.Fatalf("jam store written to the working directory: err=%v", err)
+	}
+}
+
+// TestCampaignJamMutationTakesCrossProcessLock covers #10083: every campaign's
+// Jam state lives in one file that each mutation rewrites whole, so a second
+// hive sharing the data directory must not read its own snapshot and write it
+// back over the first one's work. A mutation has to wait for the advisory
+// lock beside the store, exactly as the beads ledger does. flock is held per
+// open file description, so a second descriptor opened here contends with the
+// server's just as another process would.
+func TestCampaignJamMutationTakesCrossProcessLock(t *testing.T) {
+	s := jamTestServer(t)
+	seed := jamPostAs(t, s, "/api/campaigns/spec-lock/jam/threads", "read-write", "alice", map[string]any{
+		"section": "Goals",
+		"body":    "first",
+	}, false)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed thread = %d body=%s", seed.Code, seed.Body.String())
+	}
+	path, err := s.campaignJamPath()
+	if err != nil {
+		t.Fatalf("jam path: %v", err)
+	}
+	held, err := os.OpenFile(filepath.Join(filepath.Dir(path), campaignJamLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open jam lock: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX); err != nil {
+		t.Skipf("filesystem does not support flock: %v", err)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		var b bytes.Buffer
+		_ = json.NewEncoder(&b).Encode(map[string]any{"section": "Goals", "body": "second"})
+		req := httptest.NewRequest(http.MethodPost, "/api/campaigns/spec-lock/jam/threads", &b)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hive-Role", "read-write")
+		req.Header.Set("X-Hive-User", "bob")
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+
+	select {
+	case code := <-done:
+		t.Fatalf("jam write finished (%d) while another holder had the store lock", code)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("release jam lock: %v", err)
+	}
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("jam write after lock release = %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("jam write did not finish after the store lock was released")
+	}
+
+	get := doOwnerGet(s, "/api/campaigns/spec-lock/jam")
+	if get.Code != http.StatusOK {
+		t.Fatalf("jam get = %d body=%s", get.Code, get.Body.String())
+	}
+	if jam := decodeJam(t, get); len(jam.Threads) != 2 {
+		t.Fatalf("threads after serialized writes = %d, want 2", len(jam.Threads))
 	}
 }

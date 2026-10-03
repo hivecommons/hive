@@ -2739,6 +2739,24 @@
                       "type": "boolean",
                       "description": "Whether the working tree has uncommitted changes"
                     },
+                    "upgradePolicy": {
+                      "type": "object",
+                      "description": "Hub-delivered upgrade policy, present after a heartbeat when the hub has an upgrade posture for this spoke.",
+                      "properties": {
+                        "hub_managed": { "type": "boolean" },
+                        "spoke_managed": { "type": "boolean" },
+                        "schedule": { "type": "string", "enum": ["instant", "daily", "weekly"] },
+                        "schedule_hour": { "type": "integer", "description": "24h local hour for daily/weekly windows" },
+                        "schedule_timezone": { "type": "string", "description": "IANA timezone for the schedule hour" },
+                        "schedule_weekday": { "type": "string", "description": "Weekly window opening day" },
+                        "paused": { "type": "boolean" },
+                        "branch": { "type": "string" },
+                        "channel": { "type": "string" },
+                        "target_sha": { "type": "string" },
+                        "target_resolved": { "type": "boolean" },
+                        "armed_target": { "type": "string" }
+                      }
+                    },
                     "behind": {
                       "type": "integer",
                       "description": "Commits behind origin"
@@ -19303,6 +19321,137 @@
         }
       }
     },
+    "/api/upstream-watch": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get upstream-watch divergence",
+        "description": "Read-only divergence view for every repo under upstream_watch.repos: the upstream followed, the watermark and the time of the last run, counts of surfaced/ported/dismissed/skipped refs, and the recent upstream refs with their upstream and diff URLs, fork issue number and state. Reads the config and the watch's state file only; it never polls GitHub. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Divergence view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Mirrors upstream_watch.enabled."
+                    },
+                    "configured": {
+                      "type": "boolean",
+                      "description": "True when at least one repo is declared under upstream_watch.repos."
+                    },
+                    "state_path": {
+                      "type": "string",
+                      "description": "File the watch persists its watermark and per-ref outcomes to."
+                    },
+                    "state_error": {
+                      "type": "string",
+                      "description": "Why the state file could not be read; absent when it was read (a missing file is not an error)."
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "upstream": {
+                            "type": "string",
+                            "description": "owner/repo the fork follows; the runtime-resolved value when config leaves it empty."
+                          },
+                          "watermark": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_run_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "surfaced": {
+                            "type": "integer"
+                          },
+                          "ported": {
+                            "type": "integer"
+                          },
+                          "dismissed": {
+                            "type": "integer"
+                          },
+                          "skipped": {
+                            "type": "integer"
+                          },
+                          "recent": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string",
+                                  "description": "Dedupe key: upstream#<pr> or release:<tag>."
+                                },
+                                "upstream_ref": {
+                                  "type": "string",
+                                  "description": "Upstream-qualified form: owner/repo#123 or owner/repo@<tag>."
+                                },
+                                "upstream_url": {
+                                  "type": "string"
+                                },
+                                "diff_url": {
+                                  "type": "string",
+                                  "description": "Upstream patch URL; absent for a release, which has no diff."
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "filed",
+                                    "skipped",
+                                    "ported",
+                                    "dismissed"
+                                  ]
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "surfaced",
+                                    "ported",
+                                    "dismissed",
+                                    "skipped"
+                                  ]
+                                },
+                                "issue_number": {
+                                  "type": "integer"
+                                },
+                                "issue_url": {
+                                  "type": "string"
+                                },
+                                "recorded_at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/linear/agent/status": {
       "get": {
         "tags": [
@@ -23374,6 +23523,42 @@
         }
       }
     },
+    "/api/overview/history": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "Get Overview KPI history",
+        "description": "Returns downsampled, persisted history samples for the six Overview KPI tiles. The optional `since` query parameter is a Unix millisecond lower bound.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Unix millisecond timestamp; samples before this time are omitted before downsampling."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview KPI history entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/prs/{owner}/{repo}/{number}/queue-automerge": {
       "post": {
         "tags": [
@@ -25173,13 +25358,106 @@
         }
       }
     },
+    "/api/runs/{key}/abandon": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Terminally abandon a staged run",
+        "description": "Verified-owner only. Atomically removes all stage leases and persists a non-expiring admission tombstone for this run key. Old generations cannot resume, and automatic triage, design admission, and explicit owner starts cannot restart it. No reversal operation is provided. Records an owner audit and lifecycle event; retained timeline detail shows state=abandoned. Does not close the source issue.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "URL-escaped canonical work-item key.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Required non-empty reason for abandoning the run; recorded in the audit and lifecycle timeline."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run abandoned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "key",
+                    "state",
+                    "reason"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "abandoned"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing run key, or empty/missing reason."
+          },
+          "403": {
+            "description": "Verified owner required."
+          },
+          "404": {
+            "description": "No live staged lease holds the key."
+          },
+          "409": {
+            "description": "Concurrent lease generation change or lease expiry."
+          },
+          "500": {
+            "description": "Retirement could not be persisted; leases remain unchanged."
+          },
+          "503": {
+            "description": "Run lease registry unavailable."
+          }
+        }
+      }
+    },
     "/api/runs/{key}/reset": {
       "post": {
         "tags": [
           "Status"
         ],
-        "summary": "Reset a run to an earlier stage",
-        "description": "Owner-only. Moves the run's lease back to a strictly earlier stage (for example implement to plan after a rejected plan), mints a new generation so the relay holding the previous generation can no longer resume, persists before answering, and records the reason on the agent audit sink, the lifecycle timeline, and the stage_completed hook payload (attrs.reset = \"true\"). The same stage and any later stage are refused.",
+        "summary": "Reset or recover a staged run",
+        "description": "Owner-only. Moves a live run to a strictly earlier stage, or resets an escalated lease to its current stage with a fresh stage budget. Mints a fresh generation, persists before answering, and records the reason in the audit and lifecycle timeline. Non-escalated same-stage resets and later targets are refused. An abandoned run key cannot be reset or restarted.",
         "parameters": [
           {
             "name": "key",
@@ -25209,7 +25487,7 @@
                       "plan",
                       "implement"
                     ],
-                    "description": "Target stage; must be earlier than the run's current stage."
+                    "description": "Target stage; must be earlier than the current stage unless the live lease is escalated, when the current stage is also allowed."
                   },
                   "reason": {
                     "type": "string",
@@ -25272,7 +25550,7 @@
             }
           },
           "400": {
-            "description": "Target is the same or a later stage, an unknown stage, or the reason is missing."
+            "description": "Invalid target stage, non-escalated same-stage reset, later target, or missing reason."
           },
           "403": {
             "description": "Owner role required"

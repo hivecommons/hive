@@ -39,9 +39,8 @@ expect_decision() {
 }
 
 expect_decision promote "all five policy conditions promote"
-CANDIDATE_AGE_SECONDS=3600 LINEAGE_AGE_SECONDS=90000 expect_decision promote "newest candidate can be young when un-promoted lineage is old"
-LINEAGE_AGE_SECONDS=3600 expect_decision hold "lineage soak failure holds" "lineage age"
-LINEAGE_AGE_SECONDS=90000 CURRENT_CANDIDATE=false expect_decision hold "superseded candidate failure holds even after lineage soak" "superseded"
+CANDIDATE_AGE_SECONDS=3600 expect_decision hold "young current candidate holds even when an older superseded build soaked" "candidate age"
+CANDIDATE_AGE_SECONDS=90000 CURRENT_CANDIDATE=false expect_decision hold "superseded candidate failure holds after candidate soak" "superseded"
 GREEN_EVIDENCE=false expect_decision hold "green evidence failure holds" "evidence"
 BLOCKER_COUNT=1 expect_decision hold "open release blocker failure holds" "release blocker"
 SMOKE_EVIDENCE= expect_decision hold "missing operator smoke signal holds" "smoke signal"
@@ -163,49 +162,6 @@ else
   pass "mirror-stable fails closed when source digest metadata is missing"
 fi
 
-# The oldest un-promoted candidate generation may sit beyond the first gh run
-# page on busy release days. The lineage lookup must keep paging until it has
-# inspected runs at or below the current stable generation; otherwise it can
-# incorrectly restart the soak from a newer candidate.
-# shellcheck source=/dev/null
-source <(sed -n '/^workflow_lineage_created_at()/,/^}/p' "$promoter")
-lineage="$tmp/lineage"
-mkdir -p "$lineage/bin"
-cat > "$lineage/bin/gh" <<'MOCK'
-#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-  *'&page=1'*)
-    cat <<'JSON'
-{"workflow_runs":[
-  {"run_number":300,"created_at":"2026-09-23T12:00:00Z","status":"completed","conclusion":"success"},
-  {"run_number":250,"created_at":"2026-09-22T12:00:00Z","status":"completed","conclusion":"success"}
-]}
-JSON
-    ;;
-  *'&page=2'*)
-    cat <<'JSON'
-{"workflow_runs":[
-  {"run_number":151,"created_at":"2026-09-21T12:00:00Z","status":"completed","conclusion":"success"},
-  {"run_number":149,"created_at":"2026-09-20T12:00:00Z","status":"completed","conclusion":"success"}
-]}
-JSON
-    ;;
-  *)
-    echo "unexpected gh invocation: $*" >&2
-    exit 1
-    ;;
-esac
-MOCK
-chmod +x "$lineage/bin/gh"
-got=$(PATH="$lineage/bin:$PATH" DOCKER_WORKFLOW_DEFAULT=docker.yml RELEASE_BRANCH_DEFAULT=v5 \
-  workflow_lineage_created_at example/repo 150 300)
-if [[ $got == "2026-09-21T12:00:00Z" ]]; then
-  pass "lineage lookup pages back to the oldest un-promoted candidate generation"
-else
-  bad "lineage lookup did not find the oldest un-promoted generation across pages (got ${got})"
-fi
-
 workflow="$script_dir/../../.github/workflows/docker.yml"
 if grep -q 'stable,candidate\|CHANNELS: "stable,candidate"' "$workflow"; then
   bad "docker workflow still publishes stable together with candidate"
@@ -261,15 +217,95 @@ fi
 # Promotion must be all-or-nothing across images. Run 34360559434 re-checked
 # and published one image at a time, so when hive-hub:candidate changed
 # mid-loop, hive and hive-contributor were already retagged: stable ended up a
-# mixed generation. Every digest must be re-verified before any publish.
-promote_block=$(sed -n '/\$decision == promote \]\]/,/^  fi$/p' "$promoter")
-first_loop=$(sed -n '/for image in/,/done/p' <<<"$promote_block" | sed -n '1,/done/p')
-if grep -q 'publish_stable' <<<"$first_loop"; then
+# mixed generation. Every digest must be re-verified before any publish, and
+# that re-verify loop is a separate pass over every image, not interleaved
+# with publishing.
+promote_fn=$(sed -n '/^promote() {/,/^}/p' "$promoter")
+reverify_block=$(sed -n '/candidate that is$/,/^  fi$/p' <<<"$promote_fn")
+publish_block=$(sed -n '/already confirmed every image/,/^  fi$/p' <<<"$promote_fn")
+if [[ -z $reverify_block || -z $publish_block ]]; then
+  bad "promote() no longer has distinct re-verify and publish blocks"
+elif grep -q 'publish_stable' <<<"$reverify_block"; then
   bad "promotion publishes inside the verification loop: a mid-loop candidate change leaves stable partially promoted"
-elif ! grep -q 'publish_stable' <<<"$promote_block"; then
+elif ! grep -q 'publish_stable' <<<"$publish_block"; then
   bad "promotion block no longer publishes at all"
 else
   pass "promotion verifies every candidate digest before publishing any image"
+fi
+
+# A candidate superseded between the initial read and the tag move must hold
+# (like the in-flight-candidate race below), not fail the whole workflow run
+# with exit 1 — a failed run pages someone about a benign, expected race.
+superseded="$tmp/superseded"
+mkdir -p "$superseded/bin"
+cat > "$superseded/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  if [[ $* == *'.Manifest.Digest'* ]]; then
+    if [[ $* == *':stable'* ]]; then
+      echo 'sha256:stable'
+    else
+      # Simulate a docker.yml run landing mid-promotion: the candidate digest
+      # changes between the initial read (first call) and the re-verify
+      # right before the tag move (second call).
+      count_file="$MOCK_CALL_COUNT_FILE"
+      n=$(($(cat "$count_file" 2>/dev/null || echo 0) + 1))
+      echo "$n" > "$count_file"
+      if [[ $n -le 1 ]]; then echo 'sha256:candidate'; else echo 'sha256:newer-candidate'; fi
+    fi
+    exit 0
+  fi
+  ref=${@: -1}
+  if [[ $ref == *':stable'* ]]; then gen=100; else gen=200; fi
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"abcdef"}}}\n' "$gen"
+  exit 0
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 1
+MOCK
+cat > "$superseded/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == run && $2 == list ]]; then
+  echo '[{"number":200,"createdAt":"2026-09-10T00:00:00Z","status":"completed","conclusion":"success"},{"number":100,"createdAt":"2026-09-01T00:00:00Z","status":"completed","conclusion":"success"}]' \
+    | jq -r "${@: -1}"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then
+  echo 0
+  exit 0
+fi
+if [[ $1 == api ]]; then
+  if [[ $* == *'head_sha='* ]]; then
+    json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  else
+    json='{"workflow_runs":[]}'
+  fi
+  jqexpr=""
+  prev=""
+  for a in "$@"; do
+    [[ $prev == --jq ]] && jqexpr=$a
+    prev=$a
+  done
+  if [[ -n $jqexpr ]]; then
+    jq -r "$jqexpr" <<<"$json"
+  else
+    echo "$json"
+  fi
+  exit 0
+fi
+echo '[]'
+MOCK
+chmod +x "$superseded/bin/docker" "$superseded/bin/gh"
+out=$(PATH="$superseded/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true \
+  MOCK_CALL_COUNT_FILE="$superseded/calls" NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"abcdef","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'superseded by' <<<"$out" && grep -q 'before the tag move' <<<"$out"; then
+  pass "a candidate superseded before the tag move holds instead of failing the run"
+else
+  bad "a candidate superseded before the tag move must hold, not exit 1 (rc=${rc}; output: ${out})"
 fi
 
 if sed -n '/^workflow_success()/,/^}/p' "$promoter" | grep -q 'failure) return 1'; then

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {
@@ -83,6 +84,11 @@ func TestRewireSpektacular_EnableDisableAfterBoot(t *testing.T) {
 	if !rewireSpektacular(cfg, srv, logger, nil) || srv.StageExecutor() != dashboard.StageExecutor(exec) {
 		t.Fatal("identical config replaced the executor")
 	}
+	// hivecommons/hive#10069: the keep path must not call Stop() on the
+	// executor it means to keep running.
+	if exec.Stopped() {
+		t.Fatal("identical config stopped the kept executor")
+	}
 
 	cfg.Runs.Spektacular.Enabled = false
 	if !rewireSpektacular(cfg, srv, logger, nil) {
@@ -90,6 +96,44 @@ func TestRewireSpektacular_EnableDisableAfterBoot(t *testing.T) {
 	}
 	if srv.StageRunner() != nil || srv.StageExecutor() != nil || srv.SpektacularStatus() != nil {
 		t.Fatalf("after disable: runner=%v executor=%v status=%v", srv.StageRunner(), srv.StageExecutor(), srv.SpektacularStatus())
+	}
+}
+
+// #10069: a rewire that finds the installed hub executor already up to date
+// (runs config reverted to the executor's build-time snapshot) kept the same
+// executor installed but left it stopped, because the keep path replaced it
+// with a freshly built one (stopping the kept executor as the old value) and
+// then restored the kept one as the new value (stopping the freshly built
+// one instead) — the installed pointer survived but Stop() had already fired
+// on it. It must still be running and able to launch stages afterward.
+func TestRewireSpektacular_KeepPathDoesNotStopExecutor(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := dashboard.NewServer(0, logger)
+	cfg := &config.Config{}
+	wireSpektacularRunner(cfg, srv, logger) // boot with the feature off
+
+	hubOn := true
+	cfg.Runs.Spektacular = config.SpektacularConfig{Enabled: true, Binary: "false", HubExecutor: config.SpektacularHubExecutorConfig{Enabled: &hubOn}}
+	if !rewireSpektacular(cfg, srv, logger, nil) {
+		t.Fatal("enable was not applied live")
+	}
+	exec, ok := srv.StageExecutor().(*dashboard.SpekHubExecutor)
+	if !ok {
+		t.Fatalf("executor not installed: %v", srv.StageExecutor())
+	}
+
+	// Repeated rewires with the same, already-up-to-date config must keep
+	// reaching the keep path without ever stopping the installed executor.
+	for i := 0; i < 3; i++ {
+		if !rewireSpektacular(cfg, srv, logger, nil) {
+			t.Fatalf("rewire %d: identical config was not applied", i)
+		}
+		if srv.StageExecutor() != dashboard.StageExecutor(exec) {
+			t.Fatalf("rewire %d: identical config replaced the executor", i)
+		}
+		if exec.Stopped() {
+			t.Fatalf("rewire %d: keep path stopped the kept executor", i)
+		}
 	}
 }
 
@@ -112,4 +156,34 @@ func TestRewireSpektacular_DefersWhileExecutorBusy(t *testing.T) {
 	if !rewireSpektacular(cfg, srv, logger, nil) || srv.StageExecutor() != nil {
 		t.Fatal("idle executor was not removed once the stage finished")
 	}
+}
+
+type stubCloneMinter struct{ token string }
+
+func (m stubCloneMinter) MintPushToken(context.Context, string) (string, error) { return m.token, nil }
+
+func TestLazySpektacularCloneAuthResolvesMinterPerLaunch(t *testing.T) {
+	var current pushbroker.TokenMinter
+	auth := lazySpektacularCloneAuth(func() pushbroker.TokenMinter { return current })
+	dir := t.TempDir()
+
+	args, token, cleanup, err := auth(context.Background(), "o/r", dir)
+	if err != nil || args != nil || token != "" {
+		t.Fatalf("no minter: args=%v token=%q err=%v, want anonymous clone", args, token, err)
+	}
+	cleanup()
+
+	current = stubCloneMinter{token: "tok-1"}
+	args, token, cleanup, err = auth(context.Background(), "o/r", dir)
+	if err != nil || token != "tok-1" || len(args) != 2 {
+		t.Fatalf("minter arrived late: args=%v token=%q err=%v", args, token, err)
+	}
+	cleanup()
+
+	current = stubCloneMinter{token: "tok-2"}
+	_, token, cleanup, err = auth(context.Background(), "o/r", dir)
+	if err != nil || token != "tok-2" {
+		t.Fatalf("rebuilt minter not used: token=%q err=%v", token, err)
+	}
+	cleanup()
 }

@@ -11,6 +11,7 @@ func TestNousBaselinePct(t *testing.T) {
 		count int
 		want  float64
 	}{
+		{"negative snapshot count", -1, 0},
 		{"zero snapshots", 0, 0},
 		{"half of target", NousBaselineTarget / 2, 50},
 		{"exactly at target", NousBaselineTarget, 100},

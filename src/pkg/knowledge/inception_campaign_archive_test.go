@@ -119,3 +119,69 @@ func TestInceptionExternalCampaignRevisionDefaults(t *testing.T) {
 		t.Fatalf("loaded external revision = %+v", loaded)
 	}
 }
+
+// Restarting inception with an idea whose slug collides with an earlier
+// archived campaign must not silently archive onto — and overwrite the state
+// and wiki of — that earlier campaign (hivecommons/hive#10084).
+func TestInceptionRestartWithCollidingIdeaDoesNotOverwriteEarlierArchive(t *testing.T) {
+	dir := t.TempDir()
+	engine := NewInceptionEngine(dir, nil, nil)
+
+	first, err := engine.Start("Build a CLI tool for widgets")
+	if err != nil {
+		t.Fatalf("start first inception: %v", err)
+	}
+	wikiDir := engine.WikiDir()
+	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
+		t.Fatalf("mkdir wiki: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wikiDir, "spec.md"), []byte("# Spec\nFirst campaign"), 0o644); err != nil {
+		t.Fatalf("write wiki: %v", err)
+	}
+	if err := engine.SetQuestions([]Question{{ID: "goal", Text: "Goal?"}}); err != nil {
+		t.Fatalf("set questions: %v", err)
+	}
+	if _, err := engine.ArchiveCurrentCampaign(); err != nil {
+		t.Fatalf("archive first campaign: %v", err)
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	second, err := engine.Start("build a CLI tool for widgets!")
+	if err != nil {
+		t.Fatalf("start second inception: %v", err)
+	}
+	if second.IdeaSlug == first.IdeaSlug {
+		t.Fatalf("second slug %q collided with first %q", second.IdeaSlug, first.IdeaSlug)
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	archives, err := engine.ListCampaignArchives()
+	if err != nil {
+		t.Fatalf("list archives: %v", err)
+	}
+	if len(archives) != 1 {
+		t.Fatalf("archives = %+v, want exactly the first campaign preserved", archives)
+	}
+	preserved, err := engine.LoadCampaignArchive(first.IdeaSlug)
+	if err != nil {
+		t.Fatalf("load first archive: %v", err)
+	}
+	if len(preserved.State.Questions) != 1 || preserved.State.Questions[0].ID != "goal" {
+		t.Fatalf("first archive state was overwritten: %+v", preserved.State)
+	}
+	if len(preserved.WikiFiles) != 1 || preserved.WikiFiles[0] != "spec.md" {
+		t.Fatalf("first archive wiki files = %+v, want spec.md preserved", preserved.WikiFiles)
+	}
+	restoredWikiDir := filepath.Join(dir, inceptionCampaignsDir, first.IdeaSlug, inceptionArchiveWiki)
+	data, err := os.ReadFile(filepath.Join(restoredWikiDir, "spec.md"))
+	if err != nil {
+		t.Fatalf("read archived wiki: %v", err)
+	}
+	if string(data) != "# Spec\nFirst campaign" {
+		t.Fatalf("first archive wiki content overwritten: %q", string(data))
+	}
+}

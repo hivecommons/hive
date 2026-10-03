@@ -1,0 +1,1 @@
+- Unify dashboard top navbar chips on one shared height, radius, spacing, and accessible interaction system.

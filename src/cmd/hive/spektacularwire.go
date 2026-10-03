@@ -32,6 +32,16 @@ func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *sl
 }
 
 func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth) bool {
+	return wireSpektacularRunnerStages(cfg, srv, logger, cloneAuth, true)
+}
+
+// wireSpektacularRunnerStages is wireSpektacularRunnerWithCloneAuth with the
+// hub executor install step made optional, so rewireSpektacular's keep path
+// (hivecommons/hive#10069) can rebuild the stage runner and re-probe the
+// binary without installing a new executor — doing so would swap out the
+// kept one and stop it via dashboard.Server.SetStageExecutor's old-vs-new
+// comparison, even though the swap is immediately reverted.
+func wireSpektacularRunnerStages(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth, installExecutor bool) bool {
 	if cfg == nil || srv == nil || !cfg.Runs.Spektacular.Enabled {
 		return false
 	}
@@ -46,7 +56,7 @@ func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Serve
 		}
 	}
 	srv.SetStageRunner(spektacular.NewHubRunner(cfg.Runs, srv, logger))
-	if cfg.Runs.Spektacular.HubExecutorEnabled() {
+	if installExecutor && cfg.Runs.Spektacular.HubExecutorEnabled() {
 		backend := cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultAgentBackend(cfg))
 		exec := dashboard.NewSpekHubExecutor(srv, cfg.Runs, backend, "", cloneAuth, logger)
 		srv.SetStageExecutor(exec)
@@ -110,13 +120,16 @@ func rewireSpektacular(cfg *config.Config, srv *dashboard.Server, logger *slog.L
 		return true
 	}
 	if keepExecutor {
-		// wireSpektacularRunnerWithCloneAuth would replace it; restore the
-		// original so its held generations and activity survive.
-		defer srv.SetStageExecutor(current)
+		// Rebuild the runner and re-probe the binary only; installing a new
+		// executor here would swap the kept one out from under itself and
+		// stop it, even though the swap is reverted right after
+		// (hivecommons/hive#10069). Leaving it alone keeps its held
+		// generations and activity — and keeps it running.
+		wireSpektacularRunnerStages(cfg, srv, logger, cloneAuth, false)
 	} else {
 		srv.SetStageExecutor(nil)
+		wireSpektacularRunnerWithCloneAuth(cfg, srv, logger, cloneAuth)
 	}
-	wireSpektacularRunnerWithCloneAuth(cfg, srv, logger, cloneAuth)
 	return true
 }
 
@@ -144,7 +157,7 @@ func spektacularCloneAuth(minter pushbroker.TokenMinter) dashboard.SpekHubCloneA
 		if strings.TrimSpace(token) == "" {
 			return nil, "", func() {}, errors.New("empty clone token")
 		}
-		path := filepath.Join(dir, ".hive-git-credentials-"+strings.NewReplacer("/", "-", "#", "-").Replace(strings.TrimSpace(repo))+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+		path := filepath.Join(dir, dashboard.SpekHubCloneCredentialFilePrefix+strings.NewReplacer("/", "-", "#", "-").Replace(strings.TrimSpace(repo))+"-"+strconv.FormatInt(time.Now().UnixNano(), 10))
 		if err := os.WriteFile(path, []byte("https://x-access-token:"+token+"@github.com\n"), 0o600); err != nil {
 			return nil, "", func() {}, err
 		}
@@ -167,4 +180,17 @@ func defaultAgentBackend(cfg *config.Config) string {
 		}
 	}
 	return config.DefaultSpektacularHubExecutorBackend
+}
+
+// lazySpektacularCloneAuth resolves the minter at launch time so an App that
+// arrives or is rebuilt after boot is used by the hub executor. With no
+// minter it clones anonymously, as an unset CloneAuth does.
+func lazySpektacularCloneAuth(minter func() pushbroker.TokenMinter) dashboard.SpekHubCloneAuth {
+	return func(ctx context.Context, repo, dir string) ([]string, string, func(), error) {
+		auth := spektacularCloneAuth(minter())
+		if auth == nil {
+			return nil, "", func() {}, nil
+		}
+		return auth(ctx, repo, dir)
+	}
 }

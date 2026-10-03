@@ -1,0 +1,1 @@
+- runs: a design-mode run is no longer held for review (or approvable) at the Spec checkpoint before its spec exists, rejecting a design's Spec checkpoint re-mints the spec generation, and rejecting a held plan re-mints the plan generation — including for run-imported epics without an issue number (#10061, #10062, #10063)

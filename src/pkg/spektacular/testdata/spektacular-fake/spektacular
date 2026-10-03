@@ -7,12 +7,22 @@
 # the real Spektacular repository. Hive never reads this file's state: the
 # counter below is the fake's own bookkeeping, hidden behind the CLI boundary.
 #
+# Everything the fake answers is version-gated on SPEK_FAKE_VERSION so a test
+# cannot pass against behaviour the pinned release does not have (#10074):
+# 0.22 has no `plan export`, never reports `stale`, never emits `artifact_id`,
+# and addresses `file read` paths WITH the document extension; 0.23+ is the
+# opposite on each count.
+#
 # Contract encoded here (see src/docs/spektacular.md):
 #   spektacular <spec|plan> status <name>           (bare name, no extension;
 #                                                    the CLI has no --json flag)
-#     -> {"error":false,"kind","name","artifact_id","document_status":"draft"|"final"|"stale",
+#     -> {"error":false,"kind","name",["artifact_id" only on 0.23+],
+#         "document_status":"draft"|"final"|"superseded"|"archived"|"stale",
 #         "current_step","completed_steps":[],"created_at","updated_at",
 #         "closed_at","spec","plan"}
+#        0.22 emits draft, final, superseded and archived (and "" for an
+#        artifact without the frontmatter key, which counts as open); stale
+#        is only emitted by 0.23+.
 #        created_at / closed_at are frontmatter dates emitted as RFC3339
 #        midnight UTC, "" when unset; updated_at is workflow activity only
 #        while the in-progress state matches the artifact, otherwise a file
@@ -21,21 +31,50 @@
 #     missing artifact -> non-zero exit and the JSON error envelope
 #        {"error":true,"code":"artifact_not_found","message":"...",
 #         "resource":"<name>","next_action":"..."} on stdout
-#   spektacular plan export <name> --format json
-#                                    (still an open ask on the Spektacular
-#                                     side; shape assumed)
+#        A store (`.spektacular/` in the working directory) makes the answer
+#        store-backed: ids there are timestamped, so a BARE slug is
+#        artifact_not_found exactly as the real 0.22 store reports it, and
+#        the caller has to resolve the id through `file list` first.
+#   spektacular init <agent> --name <project>       (creates the store)
+#   spektacular <spec|plan> new --data '{"name":"<slug>"}'
+#     -> creates the ID-prefixed artifact (`<timestamp>-<slug>`) and prints
+#        the same status envelope for it
+#   spektacular <spec|plan> file list
+#     -> {"error":false,"kind","files":["<id>.md"|"<id>/plan.md", ...]}
+#   spektacular <spec|plan> file read <path>
+#     -> the document bytes on stdout. 0.22 wants the extension
+#        (`<id>.md`, `<id>/plan.md`); 0.23+ rejects it with
+#        {"error":true,"code":"unexpected_extension",...} and wants the bare
+#        path. A missing document is the `not_found` envelope.
+#   spektacular plan export <name> --format json    (0.23+ only; 0.22 swallows
+#                                    `export` as a positional argument and
+#                                    rejects --format)
 #     -> {"error":false,"kind":"plan","name",
-#         "tasks":[{"ref","title","depends_on","execution"}]}
+#         "tasks":[{"id","title","repo":{"name","location"},"depends_on",
+#                   "execution":{"type","reason"}}]}
+#        0.23+ identifies tasks by UUID `id`, not by a plan-local `ref`.
 #
 # Environment:
 #   SPEK_FAKE_SCENARIO  draft-final | never-final | final-then-draft |
-#                       final-no-updated-at | stale-plan | missing
+#                       final-no-updated-at | stale-plan | superseded |
+#                       archived | missing
+#   SPEK_FAKE_VERSION   version printed by --version (default 0.22.0); also
+#                       selects the behaviour gates above
 #   SPEK_FAKE_STATE     path of the per-scenario call counter file
 set -eu
 
-kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"; format="${5:-}"
-scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
-state="${SPEK_FAKE_STATE:?SPEK_FAKE_STATE is required}"
+version="${SPEK_FAKE_VERSION:-0.22.0}"
+
+# Version probe (Probe runs `spektacular --version`); the pinned release.
+if [ "${1:-}" = "--version" ]; then
+  echo "spektacular ${version}"
+  exit 0
+fi
+
+major=${version%%.*}
+rest=${version#*.}
+minor=${rest%%.*}
+at_least_023() { [ "$major" -gt 0 ] || [ "$minor" -ge 23 ]; }
 
 # Exit codes the fake uses. The real CLI exits non-zero on every envelope
 # error; the exact code is not part of the contract.
@@ -46,6 +85,119 @@ usage_error() {
   printf '{"error":true,"code":"usage","message":"%s","next_action":"see spektacular --help"}\n' "$1"
   exit "$EXIT_USAGE"
 }
+
+not_found() {
+  # $1 kind, $2 resource, $3 code
+  printf '{"error":true,"code":"%s","message":"%s artifact \\"%s\\" was not found","resource":"%s","next_action":"run `spektacular %s file list` to see available %ss"}\n' \
+    "$3" "$1" "$2" "$2" "$1" "$1"
+  exit "$EXIT_NOT_FOUND"
+}
+
+store=".spektacular"
+kind="${1:-}"; verb="${2:-}"; name="${3:-}"; extra="${4:-}"; format="${5:-}"
+
+store_dir() {
+  case "$1" in
+    spec) printf '%s/specs' "$store" ;;
+    plan) printf '%s/plans' "$store" ;;
+    *) usage_error "unknown artifact kind: $1" ;;
+  esac
+}
+
+# init creates the project store the other verbs read.
+if [ "$kind" = "init" ]; then
+  if [ "$name" != "--name" ] || [ -z "$extra" ]; then
+    usage_error "init requires --name"
+  fi
+  mkdir -p "$store/specs" "$store/plans"
+  printf '%s\n' "$extra" > "$store/project"
+  printf '{"error":false,"kind":"project","name":"%s"}\n' "$extra"
+  exit 0
+fi
+
+case "$kind" in
+  spec|plan) ;;
+  *) usage_error "unknown command: $kind" ;;
+esac
+
+dir=$(store_dir "$kind")
+
+# `<kind> new --data '{"name":"<slug>"}'`: artifact ids are timestamped, so
+# the created name is never the slug the caller asked for.
+if [ "$verb" = "new" ]; then
+  if [ "$name" != "--data" ] || [ -z "$extra" ]; then
+    usage_error "new requires --data"
+  fi
+  slug=$(printf '%s' "$extra" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ -z "$slug" ]; then
+    usage_error "--data needs a name"
+  fi
+  id="$(date -u +%Y%m%d%H%M%S)-$slug"
+  mkdir -p "$dir"
+  if [ "$kind" = "plan" ]; then
+    mkdir -p "$dir/$id"
+    printf -- '---\ndocument_status: draft\n---\n\n# %s\n' "$id" > "$dir/$id/plan.md"
+  else
+    printf -- '---\ndocument_status: draft\n---\n\n# %s\n' "$id" > "$dir/$id.md"
+  fi
+  printf '{"error":false,"kind":"%s","name":"%s","document_status":"draft","current_step":"interview","completed_steps":[]}\n' "$kind" "$id"
+  exit 0
+fi
+
+# `<kind> file list` / `<kind> file read <path>`: the store verbs. Hive
+# resolves timestamped ids through list and reads documents through read, so
+# neither path may be reachable only through a Go stub.
+if [ "$verb" = "file" ]; then
+  case "$name" in
+    list)
+      files=''
+      if [ -d "$dir" ]; then
+        for entry in "$dir"/*; do
+          [ -e "$entry" ] || continue
+          base=${entry##*/}
+          if [ "$kind" = "plan" ]; then
+            [ -f "$entry/plan.md" ] || continue
+            rel="$base/plan.md"
+          else
+            case "$base" in *.md) rel="$base" ;; *) continue ;; esac
+          fi
+          if [ -z "$files" ]; then files="\"$rel\""; else files="$files,\"$rel\""; fi
+        done
+      fi
+      printf '{"error":false,"kind":"%s","files":[%s]}\n' "$kind" "$files"
+      exit 0
+      ;;
+    read)
+      path="$extra"
+      [ -n "$path" ] || usage_error "file read needs a path"
+      if at_least_023; then
+        # 0.23+ addresses documents without the extension.
+        case "$path" in
+          *.md|*.json|*.markdown)
+            printf '{"error":true,"code":"unexpected_extension","message":"unexpected extension in \\"%s\\"","resource":"%s","next_action":"drop the extension"}\n' "$path" "$path"
+            exit "$EXIT_NOT_FOUND"
+            ;;
+        esac
+        for candidate in "$dir/$path" "$dir/$path.md" "$dir/$path.json"; do
+          if [ -f "$candidate" ]; then
+            cat "$candidate"
+            exit 0
+          fi
+        done
+      elif [ -f "$dir/$path" ]; then
+        cat "$dir/$path"
+        exit 0
+      fi
+      not_found "$kind" "$path" "not_found"
+      ;;
+    *)
+      usage_error "unknown file verb: $name"
+      ;;
+  esac
+fi
+
+scenario="${SPEK_FAKE_SCENARIO:-draft-final}"
+state="${SPEK_FAKE_STATE:?SPEK_FAKE_STATE is required}"
 
 # The real CLI has no --json flag (its only global flag is --fields); an
 # unknown flag is a usage error, which is what a caller still passing it
@@ -59,8 +211,7 @@ fi
 # which is what the real store answers for it.
 case "$name" in
   *.md|*/*)
-    printf '{"error":true,"code":"artifact_not_found","message":"%s artifact \\"%s\\" was not found","resource":"%s","next_action":"run `spektacular %s file list` to see available %ss"}\n' "$kind" "$name" "$name" "$kind" "$kind"
-    exit "$EXIT_NOT_FOUND"
+    not_found "$kind" "$name" "artifact_not_found"
     ;;
 esac
 
@@ -73,7 +224,16 @@ if [ "$verb" = "export" ]; then
   if [ "$kind" != "plan" ]; then
     usage_error "only plans export"
   fi
-  printf '{"error":false,"kind":"plan","name":"%s","tasks":[{"ref":"T1","title":"Add encoding helpers","execution":"agent_suitable"},{"ref":"T2","title":"Wire helpers into the parser","depends_on":["T1"],"execution":"agent_suitable"},{"ref":"T3","title":"Sign off on the public API","depends_on":["T2"],"execution":"human_required"}]}\n' "$name"
+  if ! at_least_023; then
+    # 0.22 has no export verb: `export` is swallowed as a positional argument
+    # of `plan` and the first thing rejected is the --format flag.
+    printf '{"error":true,"code":"internal_error","message":"unknown flag: --format"}\n'
+    exit "$EXIT_USAGE"
+  fi
+  if [ -d "$dir" ] && [ ! -f "$dir/$name/plan.md" ]; then
+    not_found "$kind" "$name" "artifact_not_found"
+  fi
+  printf '{"error":false,"kind":"plan","name":"%s","tasks":[{"id":"8f1c2b7e-0000-4000-8000-000000000001","title":"Add encoding helpers","repo":{"name":"myorg/repo1","location":"."},"execution":{"type":"agent_suitable","reason":"code change"}},{"id":"8f1c2b7e-0000-4000-8000-000000000002","title":"Wire helpers into the parser","depends_on":["8f1c2b7e-0000-4000-8000-000000000001"],"execution":{"type":"agent_suitable","reason":"code change"}},{"id":"8f1c2b7e-0000-4000-8000-000000000003","title":"Sign off on the public API","depends_on":["8f1c2b7e-0000-4000-8000-000000000002"],"execution":{"type":"human_required","reason":"sign-off"}}]}\n' "$name"
   exit 0
 fi
 
@@ -81,14 +241,27 @@ if [ "$verb" != "status" ]; then
   usage_error "unknown verb: $verb"
 fi
 
+# With a store present the status answer is store-backed: an id that is not
+# in the store is missing, which is what a bare slug is once Spektacular has
+# timestamped the artifact id.
+if [ -d "$dir" ]; then
+  if [ "$kind" = "plan" ]; then
+    [ -f "$dir/$name/plan.md" ] || not_found "$kind" "$name" "artifact_not_found"
+  else
+    [ -f "$dir/$name.md" ] || not_found "$kind" "$name" "artifact_not_found"
+  fi
+fi
+
 count=$((count + 1))
 printf '%s' "$count" > "$state"
+
+aid=''
+if at_least_023; then aid=$(printf '"artifact_id":"%s",' "$name"); fi
 
 with_updated=1
 case "$scenario" in
   missing)
-    printf '{"error":true,"code":"artifact_not_found","message":"%s artifact \\"%s\\" was not found","resource":"%s","next_action":"run `spektacular %s file list` to see available %ss"}\n' "$kind" "$name" "$name" "$kind" "$kind"
-    exit "$EXIT_NOT_FOUND"
+    not_found "$kind" "$name" "artifact_not_found"
     ;;
   never-final)
     status=draft
@@ -103,7 +276,13 @@ case "$scenario" in
     with_updated=0
     ;;
   stale-plan)
+    if ! at_least_023; then
+      usage_error "stale is only reported by spektacular 0.23+; set SPEK_FAKE_VERSION"
+    fi
     status=stale
+    ;;
+  superseded|archived)
+    status="$scenario"
     ;;
   draft-final|*)
     if [ "$count" -le 2 ]; then status=draft; else status=final; fi
@@ -129,9 +308,9 @@ plan=''
 if [ "$kind" = "plan" ]; then plan="$name"; fi
 
 if [ "$with_updated" -eq 1 ]; then
-  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$name" "$status" "$step" "$steps" "$count" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s",%s"document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-22T13:3%s:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$aid" "$status" "$step" "$steps" "$count" "$closed" "$plan"
 else
-  printf '{"error":false,"kind":"%s","name":"%s","artifact_id":"%s","document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
-    "$kind" "$name" "$name" "$status" "$step" "$steps" "$closed" "$plan"
+  printf '{"error":false,"kind":"%s","name":"%s",%s"document_status":"%s","current_step":"%s","completed_steps":%s,"created_at":"2026-09-21T00:00:00Z","closed_at":%s,"spec":"","plan":"%s"}\n' \
+    "$kind" "$name" "$aid" "$status" "$step" "$steps" "$closed" "$plan"
 fi

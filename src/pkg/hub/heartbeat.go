@@ -453,6 +453,13 @@ type HeartbeatUpgradePolicy struct {
 	// empty stored mode is the historical instant behaviour and is reported
 	// as such rather than as unknown.
 	Schedule string `json:"schedule,omitempty"`
+	// ScheduleHour is the 24h local hour at/after which scheduled daily/weekly
+	// auto-upgrades may fire. Omitted for instant/manual policies.
+	ScheduleHour int `json:"schedule_hour,omitempty"`
+	// ScheduleTimezone is the IANA timezone for ScheduleHour.
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
+	// ScheduleWeekday is the weekly window's opening day, e.g. "Tuesday".
+	ScheduleWeekday string `json:"schedule_weekday,omitempty"`
 	// Paused is the fleet-wide spoke-upgrade kill switch state.
 	Paused bool `json:"paused"`
 	// Branch is the git line the spoke reports running (its target line).
@@ -472,6 +479,16 @@ type HeartbeatUpgradePolicy struct {
 	// ArmedTarget is the SHA the hub currently has armed for this hive (a
 	// pending or in-flight upgrade), "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
+	// NextUpdateAt is when the next promotion into Channel is expected
+	// (RFC3339 UTC, #10256): the end of the 24-hour lineage soak of the
+	// queued candidate build (docs/stable-soak-policy.md). The hourly
+	// promotion run lands it at or after this time once its other gates pass,
+	// and it may be in the past while a gate holds. Omitted when unknown:
+	// channels other than stable (candidate/edge move on every green build),
+	// branch tags and pins, stable auto-promotion paused, nothing queued, or
+	// the hub has not resolved the channels yet. Describes the channel, not
+	// this hive's own daily/weekly upgrade window (Schedule*).
+	NextUpdateAt string `json:"next_update_at,omitempty"`
 }
 
 type TaskStatusPayload struct {

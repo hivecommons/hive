@@ -26,8 +26,8 @@ func TestNeedsHumanEscalationBadgePinned(t *testing.T) {
 		"labels.includes('needs-human')",
 		// State chip in the action-chip slot.
 		"pill-needs-human-badge",
-		`<span class="repo-pr-pill needs-human pill-needs-human-badge pill-icon"`,
-		`aria-label="${esc(needsHumanTip)}">⚠</span>`,
+		`<button type="button" class="repo-pr-pill needs-human pill-needs-human-badge pill-icon repo-pill-filter-toggle"`,
+		`aria-label="${esc(needsHumanTip)}"${repoPillFilterAttrs('needs-human')}>⚠</button>`,
 		// Pill tint: needs-human wins over mergeable.
 		".repo-pr-pill.needs-human",
 		"needsHuman ? ' needs-human' : mergeClass",

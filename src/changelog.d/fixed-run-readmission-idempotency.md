@@ -1,0 +1,1 @@
+- runs: re-admitting a previously-run key now starts its spec past every earlier receipt generation instead of looking parked at the checkpoint, and the governor no longer resets an approved Spektacular design back to `requested` (#10065, #10067)

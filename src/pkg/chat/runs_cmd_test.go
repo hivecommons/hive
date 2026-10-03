@@ -84,6 +84,9 @@ func TestCmdRunsApproveRejectOwnerGuardAndPlanRoutes(t *testing.T) {
 			}
 			posts = append(posts, fmt.Sprintf("%s:%d", body.Action, body.Gen))
 			posts = append(posts, r.URL.EscapedPath())
+			if body.Action == "reject" && body.Reason != "needs changes" {
+				t.Errorf("reject reason = %q, want %q", body.Reason, "needs changes")
+			}
 			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected path %q", r.URL.EscapedPath())

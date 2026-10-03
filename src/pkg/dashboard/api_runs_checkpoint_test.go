@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -159,6 +160,39 @@ func TestRunCheckpointDecisionApprovesCurrentGeneration(t *testing.T) {
 	epic, _ := store.Get(epicID)
 	if got := epic.Meta(planning.MetaPlanStatus); got != planning.PlanStatusApproved {
 		t.Fatalf("plan status after approve = %q, want approved", got)
+	}
+}
+
+// Concurrent approvals of one plan generation must not leave the plan rolled
+// back to draft once the run has advanced (hivecommons/hive#10119).
+func TestRunCheckpointConcurrentApprovesKeepAdvancedPlanApproved(t *testing.T) {
+	s, store, epicID, runKey := checkpointTestServer(t, "", 7)
+
+	const approvers = 8
+	codes := make([]int, approvers)
+	var wg sync.WaitGroup
+	for i := 0; i < approvers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := doOwnerPost(s, "/api/runs/"+url.PathEscape(runKey)+"/checkpoint", runCheckpointDecisionRequest{Action: runCheckpointDecisionApprove, Gen: 7})
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+
+	ok := 0
+	for _, code := range codes {
+		if code == http.StatusOK {
+			ok++
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("approve codes = %v, want exactly one 200", codes)
+	}
+	epic, _ := store.Get(epicID)
+	if got := epic.Meta(planning.MetaPlanStatus); got != planning.PlanStatusApproved {
+		t.Fatalf("plan status after concurrent approves = %q, want approved", got)
 	}
 }
 

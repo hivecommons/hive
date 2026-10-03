@@ -343,6 +343,7 @@ func TestGovernorFeaturesRotationValidation(t *testing.T) {
 	}{
 		{name: "threshold zero", body: map[string]any{"rotationThresholdPct": 0}},
 		{name: "threshold too high", body: map[string]any{"rotationThresholdPct": 101}},
+		{name: "unknown spektacular interview", body: map[string]any{"spektacularInterview": "atuo"}},
 		{name: "bad tier", body: map[string]any{"rotationAgents": map[string]string{"worker": "T4"}}},
 		{name: "unknown backend", body: map[string]any{
 			"rotationProviders": map[string]any{

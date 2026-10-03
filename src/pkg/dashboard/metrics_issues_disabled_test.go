@@ -160,7 +160,7 @@ func TestIssuesDisabledBannerWired(t *testing.T) {
 			t.Fatalf("issues-disabled banner is missing %q", want)
 		}
 	}
-	notices := strings.Index(html, `<div id="dashboard-notices">`)
+	notices := strings.Index(html, `<div id="dash-notices">`)
 	banner := strings.Index(html, `id="issues-disabled-banner"`)
 	firstSection := strings.Index(html, `data-dashboard-section="overview-section"`)
 	if notices < 0 || banner < notices || banner > firstSection {
