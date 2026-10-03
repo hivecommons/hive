@@ -17,7 +17,6 @@ package spektacular
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -79,21 +78,20 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 
 	// `spec new` creates a timestamp-prefixed artifact id, never the bare
 	// slug Hive asked for (the naming mismatch #10074's "Observed" bullet
-	// described).
+	// described). 0.22.0 reports it as `spec_name` in a `new` envelope, not
+	// as `name` in a status envelope; the fake prints the same shape.
 	newOut := run(t, ctx, bin, dir, "spec", "new", "--data", `{"name":"demo"}`)
-	var created struct {
-		Name string `json:"name"`
+	createdName, err := createdArtifactName(newOut)
+	if err != nil {
+		t.Fatalf("spec new output %q did not decode an artifact id: %v", newOut, err)
 	}
-	if err := json.Unmarshal(newOut, &created); err != nil || created.Name == "" {
-		t.Fatalf("spec new output %q did not decode a name: %v", newOut, err)
-	}
-	if created.Name == "demo" {
-		t.Fatalf("spec new returned the bare slug %q; want a timestamp-prefixed id", created.Name)
+	if createdName == "demo" {
+		t.Fatalf("spec new returned the bare slug %q; want a timestamp-prefixed id", createdName)
 	}
 
 	// Confirmed #1: the status verb's draft/final contract, read by the
 	// bare-name join key production code uses.
-	status, err := r.statusInDir(ctx, dir, KindSpec, created.Name)
+	status, err := r.statusInDir(ctx, dir, KindSpec, createdName)
 	if err != nil {
 		t.Fatalf("status of the created spec: %v", err)
 	}
@@ -108,18 +106,18 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveArtifact(demo): %v", err)
 	}
-	if resolved != created.Name {
-		t.Fatalf("ResolveArtifact(demo) = %q, want %q", resolved, created.Name)
+	if resolved != createdName {
+		t.Fatalf("ResolveArtifact(demo) = %q, want %q", resolved, createdName)
 	}
 
 	// `spec file read` through the real store, the other half of the
 	// resolver/file-list path #10074 said was reachable only via a Go stub.
-	body, err := r.readSpecInDir(ctx, dir, created.Name)
+	body, err := r.readSpecInDir(ctx, dir, createdName)
 	if err != nil {
-		t.Fatalf("readSpecInDir(%s): %v", created.Name, err)
+		t.Fatalf("readSpecInDir(%s): %v", createdName, err)
 	}
 	if strings.TrimSpace(body) == "" {
-		t.Fatalf("readSpecInDir(%s) returned an empty document", created.Name)
+		t.Fatalf("readSpecInDir(%s) returned an empty document", createdName)
 	}
 }
 

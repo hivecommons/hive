@@ -880,16 +880,36 @@ func fixtureStore(t *testing.T, kind, slug, version string) (string, string) {
 	if err != nil {
 		t.Fatalf("fixture %s new: %v", kind, err)
 	}
-	var created struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out), &created); err != nil {
+	created, err := createdArtifactName(out)
+	if err != nil {
 		t.Fatalf("fixture %s new output %q: %v", kind, out, err)
 	}
-	if created.Name == slug || !strings.HasSuffix(created.Name, "-"+slug) {
-		t.Fatalf("fixture %s new minted %q, want a timestamped id for %q", kind, created.Name, slug)
+	if created == slug || !strings.HasSuffix(created, "-"+slug) {
+		t.Fatalf("fixture %s new minted %q, want a timestamped id for %q", kind, created, slug)
 	}
-	return dir, created.Name
+	return dir, created
+}
+
+// createdArtifactName decodes the artifact id `<kind> new` minted. The real
+// 0.22.0 release answers `spec new` with {"error":false,"instruction",
+// "spec_name","spec_path","step":"new"} (observed by the real-CLI smoke,
+// #10074), so the id lives under `<kind>_name`; `name` is accepted as a
+// fallback for a status-shaped envelope.
+func createdArtifactName(out []byte) (string, error) {
+	var created struct {
+		SpecName string `json:"spec_name"`
+		PlanName string `json:"plan_name"`
+		Name     string `json:"name"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &created); err != nil {
+		return "", err
+	}
+	for _, id := range []string{created.SpecName, created.PlanName, created.Name} {
+		if id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("no spec_name, plan_name or name member in %q", out)
 }
 
 // TestFixture_StoreBackedResolutionAndRead drives the resolver and the file
