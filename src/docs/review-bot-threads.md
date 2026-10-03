@@ -83,6 +83,15 @@ key the Go side reads from the project file
   authored by the App bot — so there is no state file to drift.
 - `resolve_after_fix: false` makes the agent reply but leave the thread open.
 
+The dashboard's **Settings → Features → Review Gate** card displays the
+three effective review-bot settings read-only, including defaults (one attempt
+per thread and resolve after fix enabled). The governor settings bundle at
+`GET /api/config/governor` exposes them in `review_bots`, along with `enabled`;
+`load_error` reports an unreadable or malformed project file rather than hiding
+it as an unconfigured feature. Logins remain config-file-only because adding
+one grants agents thread-resolution rights. This surface does not yet include
+the priority filter proposed in [#10479](https://github.com/hivecommons/hive/issues/10479).
+
 `copilot_check` / `bin/copilot-comment-checker.sh` are untouched: they cover
 *merged* PRs; this covers *open* ones.
 
