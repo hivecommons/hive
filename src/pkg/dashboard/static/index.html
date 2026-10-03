@@ -95,6 +95,7 @@
       padding: 64px 20px 84px calc(var(--sidebar-w) + 20px);
       margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
     }
+    [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(64px + var(--sp-5)); }
     h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
     h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
@@ -5305,6 +5306,8 @@
     const SECTION_TRANSITION_MS = 200;
     const SECTION_EXPANDED_MAX_HEIGHT = 'none';
     const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
+    const NAV_JUMP_SETTLE_MS = 350;
+    const NAV_JUMP_RESIZE_QUIET_MS = 60;
     const ALL_AGENTS_COMPACT_KEY = 'hive-all-agents-compact';
 
     const STATUS = Object.freeze({
@@ -5803,7 +5806,7 @@
       const chevron = document.querySelector(`#${sectionId} .dash-card-header .section-chevron, #${sectionId} .section-chevron`);
       const card = document.querySelector(`#${sectionId} .dash-card`);
       const header = document.querySelector(`#${sectionId} .dash-card-header, #${sectionId} .section-header-toggle`);
-      applySectionBodyCollapse(body, collapsed, true);
+      applySectionBodyCollapse(body, collapsed, options.animate !== false);
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
       if (card) card.classList.toggle('collapsed', collapsed);
       if (section) section.classList.toggle('collapsed', collapsed);
@@ -5831,6 +5834,15 @@
       if (!collapsed && section) replaySparklinesIn(section);
     }
     var _dashboardNavPeekSectionId = null;
+    function navPeekSectionId() {
+      let sectionId = _dashboardNavPeekSectionId;
+      let section = sectionId ? document.getElementById(sectionId) : null;
+      if (!section || section.getAttribute('data-nav-peek') !== '1') {
+        section = document.querySelector('[data-nav-peek="1"]');
+        sectionId = section && section.id;
+      }
+      return sectionId || null;
+    }
     function navPeekExpand(sectionId) {
       const section = document.getElementById(sectionId);
       if (!section || section.getAttribute('data-nav-peek') === '1' || !isSectionCollapsed(sectionId)) return false;
@@ -5839,19 +5851,16 @@
       _dashboardNavPeekSectionId = sectionId;
       return true;
     }
-    function navPeekRestore(nextSectionId) {
-      let sectionId = _dashboardNavPeekSectionId;
+    function navPeekRestore(nextSectionId, opts) {
+      const options = opts || {};
+      let sectionId = navPeekSectionId();
       let section = sectionId ? document.getElementById(sectionId) : null;
-      if (!section || section.getAttribute('data-nav-peek') !== '1') {
-        section = document.querySelector('[data-nav-peek="1"]');
-        sectionId = section && section.id;
-      }
       if (!sectionId || sectionId === nextSectionId) return false;
       _dashboardNavPeekSectionId = null;
       if (!section || section.getAttribute('data-nav-peek') !== '1') return false;
       section.removeAttribute('data-nav-peek');
       if (!isSectionCollapsed(sectionId)) return false;
-      toggleSection(sectionId, { collapsed: true, persist: false, navPeek: true });
+      toggleSection(sectionId, { collapsed: true, persist: false, navPeek: true, animate: !options.instant });
       return true;
     }
     var _dashboardNavPeekSectionId = null;
@@ -6225,6 +6234,67 @@
       } catch {}
     }
 
+    function ocSectionBody(sectionId) {
+      return document.querySelector(`#${sectionId} .dash-card-body, #${sectionId} .section-body`);
+    }
+    function ocAfterNavLayoutSettles(sectionIds, callback) {
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function(fn) { setTimeout(fn, 0); };
+      const afterPaint = function(fn) { raf(function() { raf(fn); }); };
+      const ids = Array.from(new Set((sectionIds || []).filter(Boolean)));
+      const bodies = ids.map(ocSectionBody).filter(Boolean);
+      if (!bodies.length) { afterPaint(callback); return; }
+      let done = false;
+      let quietTimer = null;
+      let maxTimer = null;
+      let lastResizeAt = 0;
+      let observer = null;
+      const pending = new Set(bodies);
+      const cleanup = function() {
+        bodies.forEach(function(body) { body.removeEventListener('transitionend', onTransitionEnd); });
+        if (observer) observer.disconnect();
+        if (quietTimer) clearTimeout(quietTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+      };
+      const finish = function() {
+        if (done) return;
+        done = true;
+        cleanup();
+        afterPaint(callback);
+      };
+      const scheduleQuietFinish = function() {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(function() {
+          if (!lastResizeAt || performance.now() - lastResizeAt >= NAV_JUMP_RESIZE_QUIET_MS) finish();
+          else scheduleQuietFinish();
+        }, NAV_JUMP_RESIZE_QUIET_MS);
+      };
+      var onTransitionEnd = function(event) {
+        if (event.target !== event.currentTarget) return;
+        if (event.propertyName && event.propertyName !== SECTION_MAX_HEIGHT_PROPERTY && event.propertyName !== 'opacity') return;
+        pending.delete(event.currentTarget);
+        if (!pending.size) finish();
+      };
+      bodies.forEach(function(body) { body.addEventListener('transitionend', onTransitionEnd); });
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(function() {
+          lastResizeAt = performance.now();
+          scheduleQuietFinish();
+        });
+        ids.forEach(function(id) {
+          const el = document.getElementById(id);
+          if (el) observer.observe(el);
+        });
+      }
+      maxTimer = setTimeout(finish, NAV_JUMP_SETTLE_MS);
+    }
+    function ocScrollSectionIntoView(section) {
+      const el = document.getElementById(section);
+      if (!el) return;
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      el.classList.remove('anchor-highlight');
+      void el.offsetWidth;
+      el.classList.add('anchor-highlight');
+    }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
       _ocSelectedAgent = null;
@@ -6233,17 +6303,14 @@
       const detail = document.getElementById('oc-agent-detail');
       if (detail) { detail.classList.remove('active'); detail.innerHTML = ''; }
       ocUpdateFocusedState();
-      navPeekRestore(section);
-      navPeekExpand(section);
+      const previousPeekSection = navPeekSectionId();
+      const restored = navPeekRestore(section, { instant: true });
+      const expanded = navPeekExpand(section);
       if (!skipScroll) {
-        const el = document.getElementById(section);
-        if (el) {
-          const y = el.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-          window.scrollTo({ top: y, behavior: 'smooth' });
-          el.classList.remove('anchor-highlight');
-          void el.offsetWidth;
-          el.classList.add('anchor-highlight');
-        }
+        const affectedSections = [];
+        if (restored && previousPeekSection) affectedSections.push(previousPeekSection);
+        if (expanded) affectedSections.push(section);
+        ocAfterNavLayoutSettles(affectedSections, function() { ocScrollSectionIntoView(section); });
       }
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-section="${section}"]`);
