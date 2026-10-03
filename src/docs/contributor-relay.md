@@ -1175,6 +1175,26 @@ shape above. Two of the three read a different source than #6833's original
 adapter table named, and the divergence is recorded here so a later reader does
 not "fix" an adapter back to a source that was deliberately rejected:
 
+- **Pi** — no built-in Pi-compatible quota reader is currently available,
+  including for `openai-codex`, `openrouter`, and `anthropic`. Pi's
+  `AGENT_MODEL=provider/model` selection is named in the startup diagnostic;
+  it does **not** imply Claude Code credentials or Codex CLI credentials.
+  Those readers use different credential stores and must not publish to Pi's
+  pool. Old automatic Pi pool readings are ignored, including a previous
+  `unknown` reading caused by missing Claude credentials.
+
+  To retain quota protection, supply readings for the **selected Pi provider
+  and account** using `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` (recommended for a
+  live, atomically refreshed source) or `HIVE_CONTRIBUTOR_QUOTA_READING_JSON`.
+  These explicit sources still take precedence and missing, malformed,
+  `unknown`, or `stale` readings still hold work; `continue-*` does not bypass
+  them. Setting only `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` does not create a Pi
+  reader. With no explicit source, Pi follows the unsupported-backend
+  `unprovisioned` behavior above: work is admitted, with a warning that quota
+  protection is unavailable and paid credits may be consumed. To explicitly
+  opt out instead, set `HIVE_CONTRIBUTOR_QUOTA_GUARD=off` at launch; this is
+  **not quota protection** and may spend paid credits.
+
 - **Codex** — the app-server `account/rateLimits/read` method, as #6833
   specified. All returned windows (`primary`, `secondary`, and any
   `rateLimitsByLimitId` scoped windows) fold in, worst window binds

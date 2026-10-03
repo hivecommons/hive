@@ -141,7 +141,7 @@ func TestProbe_InTreeFixtureReportsVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := Probe(context.Background(), script)
-	if err != nil || !res.Present || res.Version != "spektacular 0.22.0" {
+	if err != nil || !res.Present || !strings.HasPrefix(res.Version, "spektacular version 0.22.0 (") {
 		t.Fatalf("fixture probe: %v %+v", err, res)
 	}
 }

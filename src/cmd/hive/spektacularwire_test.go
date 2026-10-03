@@ -137,6 +137,37 @@ func TestRewireSpektacular_KeepPathDoesNotStopExecutor(t *testing.T) {
 	}
 }
 
+// ADR-0021 AC-4(d): with runs.engine unset the default engine is wired and
+// named on the status card; an unknown runs.engine installs no stage runner
+// at boot or on a live rewire, and never falls back to another engine.
+func TestWirePlanningEngine_UnknownEngineInstallsNoRunner(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := dashboard.NewServer(0, logger)
+	cfg := &config.Config{Runs: config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true, Binary: "false"}}}
+	if !wireSpektacularRunner(cfg, srv, logger) || srv.StageRunner() == nil {
+		t.Fatal("default engine: runner not installed")
+	}
+	if st := srv.SpektacularStatus(); st == nil || st.Engine != config.DefaultRunsEngine || st.Binary != "false" {
+		t.Fatalf("default engine status = %+v", st)
+	}
+
+	cfg.Runs.Engine = "no-such-engine"
+	if !rewireSpektacular(cfg, srv, logger, nil) {
+		t.Fatal("unknown engine rewire was not applied")
+	}
+	if srv.StageRunner() != nil {
+		t.Fatalf("unknown engine left a stage runner installed: %v", srv.StageRunner())
+	}
+
+	fresh := dashboard.NewServer(0, logger)
+	if wirePlanningEngine(cfg, fresh, logger, nil, true) {
+		t.Fatal("unknown engine reported a runner installed at boot")
+	}
+	if fresh.StageRunner() != nil || fresh.StageExecutor() != nil {
+		t.Fatalf("unknown engine at boot: runner=%v executor=%v", fresh.StageRunner(), fresh.StageExecutor())
+	}
+}
+
 // #9172: a busy hub executor is never swapped out from under its running
 // stage; the change is deferred until it is idle.
 func TestRewireSpektacular_DefersWhileExecutorBusy(t *testing.T) {

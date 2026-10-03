@@ -631,7 +631,7 @@ function quotaPoolActive() { return quotaPool !== null; }
 // the pool directory, so "no reading yet" is a transient startup/torn state to
 // HOLD on, not the permanent `unprovisioned` admit an unsupported backend gets.
 // `pi` fronts anthropic and `gemini` fronts google in the default rotation set.
-const QUOTA_GUARD_SUPPORTED_BACKENDS = new Set(['claude', 'pi', 'codex', 'agy', 'gemini', 'kiro']);
+const QUOTA_GUARD_SUPPORTED_BACKENDS = new Set(['claude', 'codex', 'agy', 'gemini', 'kiro']);
 const quotaBackendSupported = QUOTA_GUARD_SUPPORTED_BACKENDS.has(BACKEND);
 
 // The pool-keyed reading file the Go publisher writes and this relay reads when
@@ -971,6 +971,13 @@ let warnedQuotaGuardUnprovisioned = false;
 function warnQuotaGuardUnprovisionedOnce() {
   if (warnedQuotaGuardUnprovisioned) return;
   warnedQuotaGuardUnprovisioned = true;
+  if (BACKEND === 'pi') {
+    console.warn(`Contributor quota guard: Pi provider ${PI_SELECTION.valid ? PI_SELECTION.provider : '(unselected)'} ` +
+      'has no Pi-compatible quota reader. Quota protection is unavailable; no unrelated Claude/Codex reading will be used. ' +
+      'Set HIVE_CONTRIBUTOR_QUOTA_READING_FILE or HIVE_CONTRIBUTOR_QUOTA_READING_JSON to supply provider readings; ' +
+      'see src/docs/contributor-relay.md. Work may consume paid credits.');
+    return;
+  }
   console.warn(`Contributor quota guard is ${QUOTA_GUARD_MODE} but no reading source is configured ` +
     '(HIVE_CONTRIBUTOR_QUOTA_READING_FILE / HIVE_CONTRIBUTOR_QUOTA_READING_JSON are unset), ' +
     'so it cannot see quota and is not guarding anything this session.');

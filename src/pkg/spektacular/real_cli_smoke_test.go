@@ -12,12 +12,11 @@ package spektacular
 // SPEKTACULAR_REAL_CLI_BIN names, or the first `spektacular` on PATH, and is
 // skipped everywhere else: it needs the `integration` build tag AND a real
 // binary, so `go test ./...` (and every other package test) never depends on
-// it. The scheduled spektacular-real-cli-smoke workflow supplies the pinned
-// release from the contributor image.
+// it. The spektacular-real-cli-smoke workflow downloads the release pinned in
+// src/Dockerfile.contributor and sets SPEKTACULAR_EXPECTED_VERSION to it.
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -41,18 +40,27 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	bin := realSpektacularBinary(t)
 	ctx := context.Background()
 
-	// Confirmed #1 (sort of): --version answers "spektacular <version>" so
-	// Probe can run against it (#10269).
+	// Confirmed #1 (sort of): --version answers
+	// "spektacular version <version> (<commit>)" so Probe can run against it
+	// (#10269). The in-tree fake prints the same shape.
 	probed, err := Probe(ctx, bin)
 	if err != nil || !probed.Present {
 		t.Fatalf("Probe(%s): present=%v err=%v", bin, probed.Present, err)
 	}
-	if !strings.HasPrefix(probed.Version, "spektacular ") {
-		t.Fatalf("--version printed %q, want the documented `spektacular <version>` shape", probed.Version)
+	fields := strings.Fields(probed.Version)
+	if len(fields) < 3 || fields[0] != "spektacular" || fields[1] != "version" {
+		t.Fatalf("--version printed %q, want the `spektacular version <version> (<commit>)` shape", probed.Version)
+	}
+	// The workflow exports the pin it downloaded, so the smoke fails loudly
+	// if it ever runs a binary other than the pinned release.
+	if want := strings.TrimSpace(os.Getenv("SPEKTACULAR_EXPECTED_VERSION")); want != "" {
+		if got := strings.TrimPrefix(fields[2], "v"); got != strings.TrimPrefix(want, "v") {
+			t.Fatalf("--version reported %q, want the pinned %q", got, want)
+		}
 	}
 
 	dir := t.TempDir()
-	run(t, ctx, bin, dir, "init", "copilot", "--name", "hive-real-cli-smoke")
+	run(t, ctx, bin, dir, "init", "claude", "--name", "hive-real-cli-smoke")
 
 	r := &Runner{Exec: BinaryExec(bin)}
 
@@ -70,21 +78,20 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 
 	// `spec new` creates a timestamp-prefixed artifact id, never the bare
 	// slug Hive asked for (the naming mismatch #10074's "Observed" bullet
-	// described).
+	// described). 0.22.0 reports it as `spec_name` in a `new` envelope, not
+	// as `name` in a status envelope; the fake prints the same shape.
 	newOut := run(t, ctx, bin, dir, "spec", "new", "--data", `{"name":"demo"}`)
-	var created struct {
-		Name string `json:"name"`
+	createdName, err := createdArtifactName(newOut)
+	if err != nil {
+		t.Fatalf("spec new output %q did not decode an artifact id: %v", newOut, err)
 	}
-	if err := json.Unmarshal(newOut, &created); err != nil || created.Name == "" {
-		t.Fatalf("spec new output %q did not decode a name: %v", newOut, err)
-	}
-	if created.Name == "demo" {
-		t.Fatalf("spec new returned the bare slug %q; want a timestamp-prefixed id", created.Name)
+	if createdName == "demo" {
+		t.Fatalf("spec new returned the bare slug %q; want a timestamp-prefixed id", createdName)
 	}
 
 	// Confirmed #1: the status verb's draft/final contract, read by the
 	// bare-name join key production code uses.
-	status, err := r.statusInDir(ctx, dir, KindSpec, created.Name)
+	status, err := r.statusInDir(ctx, dir, KindSpec, createdName)
 	if err != nil {
 		t.Fatalf("status of the created spec: %v", err)
 	}
@@ -99,18 +106,18 @@ func TestRealSpektacularCLISmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveArtifact(demo): %v", err)
 	}
-	if resolved != created.Name {
-		t.Fatalf("ResolveArtifact(demo) = %q, want %q", resolved, created.Name)
+	if resolved != createdName {
+		t.Fatalf("ResolveArtifact(demo) = %q, want %q", resolved, createdName)
 	}
 
 	// `spec file read` through the real store, the other half of the
 	// resolver/file-list path #10074 said was reachable only via a Go stub.
-	body, err := r.readSpecInDir(ctx, dir, created.Name)
+	body, err := r.readSpecInDir(ctx, dir, createdName)
 	if err != nil {
-		t.Fatalf("readSpecInDir(%s): %v", created.Name, err)
+		t.Fatalf("readSpecInDir(%s): %v", createdName, err)
 	}
 	if strings.TrimSpace(body) == "" {
-		t.Fatalf("readSpecInDir(%s) returned an empty document", created.Name)
+		t.Fatalf("readSpecInDir(%s) returned an empty document", createdName)
 	}
 }
 

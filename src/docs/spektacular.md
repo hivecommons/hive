@@ -742,7 +742,10 @@ UUID `id`. The fake also implements `init`, `<kind> new --data`,
 `<kind> file list` and `<kind> file read`, backed by a real `.spektacular`
 store in the working directory, so the resolver, the plan-export fallback and
 the hub executor's `init` flow run against the CLI boundary rather than a Go
-stub. Artifact ids the store mints are timestamped, which makes a bare slug
+stub. `spec new` answers with the real 0.22.0 `new` envelope
+(`{"error":false,"instruction","spec_name","spec_path","step":"new"}`, as the
+real-CLI smoke observed) rather than a status envelope; the minted id is
+`spec_name`, and the fake's `plan new` mirrors it as `plan_name`/`plan_path`. Artifact ids the store mints are timestamped, which makes a bare slug
 `artifact_not_found` exactly as the real store answers it. The Go `plan
 export` stubs in the package tests print the same 0.23+ shape the fake does
 (UUID `id` tasks, object `repo` / `execution`), so no test passes against a
