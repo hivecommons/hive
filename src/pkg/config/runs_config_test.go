@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -142,5 +143,34 @@ func TestSpektacularConfigValidateInterview(t *testing.T) {
 	}
 	if err := (SpektacularConfig{Interview: "atuo"}).Validate(); err == nil {
 		t.Error("Validate(\"atuo\") = nil, want error")
+	}
+}
+
+func TestRunsEngineDefaultsToSpektacular(t *testing.T) {
+	if got := (RunsConfig{}).EngineOrDefault(); got != DefaultRunsEngine {
+		t.Fatalf("unset EngineOrDefault() = %q, want %q", got, DefaultRunsEngine)
+	}
+	if err := (RunsConfig{}).ValidateEngine(); err != nil {
+		t.Fatalf("unset ValidateEngine() = %v, want nil", err)
+	}
+}
+
+func TestRunsEngineExplicitSpektacular(t *testing.T) {
+	r := RunsConfig{Engine: " Spektacular "}
+	if got := r.EngineOrDefault(); got != "spektacular" {
+		t.Fatalf("EngineOrDefault() = %q, want spektacular", got)
+	}
+	if err := r.ValidateEngine(); err != nil {
+		t.Fatalf("ValidateEngine() = %v, want nil", err)
+	}
+}
+
+func TestRunsEngineUnknownFailsClosed(t *testing.T) {
+	err := (RunsConfig{Engine: "nonesuch"}).ValidateEngine()
+	if err == nil {
+		t.Fatal("ValidateEngine(nonesuch) = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "nonesuch") {
+		t.Fatalf("error %q does not name the bad value", err)
 	}
 }

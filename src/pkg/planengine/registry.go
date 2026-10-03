@@ -3,6 +3,7 @@ package planengine
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -36,3 +37,17 @@ func Lookup(name string) (Builder, bool) {
 	b, ok := builders[name]
 	return b, ok
 }
+
+// Names returns the registered engine names in sorted order.
+func Names() []string {
+	buildersMu.RLock()
+	defer buildersMu.RUnlock()
+	names := make([]string, 0, len(builders))
+	for n := range builders {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func init() { config.RegisteredRunsEngines = Names }
