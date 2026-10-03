@@ -24,6 +24,52 @@ func TestSidebarVersionChipHasExplicitAffordance(t *testing.T) {
 	}
 }
 
+func TestSidebarVersionChipShowsUpgradeProgressAnimation(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — sidebar version chip JS was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := `
+const assert = require('node:assert/strict');
+function escapeHtml(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const chip = {
+  innerHTML: '',
+  title: '',
+  attrs: {},
+  classes: new Set(['oc-version-chip']),
+  classList: { toggle(name, on) { on ? chip.classes.add(name) : chip.classes.delete(name); } },
+  setAttribute(k, v) { this.attrs[k] = v; }
+};
+const document = { getElementById(id) { return id === 'oc-version-chip' ? chip : null; } };
+` + jsFunc(t, html, "versionShortSHA") + "\n" +
+		jsFunc(t, html, "versionNowMs") + "\n" +
+		jsFunc(t, html, "versionElapsedText") + "\n" +
+		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
+		jsFunc(t, html, "versionNavbarUpgradeHTML") + "\n" +
+		jsFunc(t, html, "renderVersionChip") + `
+renderVersionChip({hash:'1111111abcdef', short:'1111111', branch:'v5'}, {deliveryLabel:'v5', upgradeProgress:{target:'94386f3abcdef', targetShort:'94386f3', startedAt:1000}});
+assert.ok(chip.innerHTML.includes('oc-version-navbar-upgrade'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('oc-version-hive'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('oc-version-bee'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('Upgrading…'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('→ 94386f3'), chip.innerHTML);
+assert.ok(chip.classes.has('is-upgrading'), 'missing is-upgrading class');
+assert.equal(chip.attrs['aria-label'], 'Upgrade in progress to 94386f3 — Version & upgrade details');
+renderVersionChip({hash:'94386f3abcdef', short:'94386f3', branch:'v5'}, {deliveryLabel:'v5', upgradeProgress:null});
+assert.ok(!chip.innerHTML.includes('oc-version-navbar-upgrade'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('oc-version-sha'), chip.innerHTML);
+assert.ok(chip.innerHTML.includes('94386f3'), chip.innerHTML);
+assert.ok(!chip.classes.has('is-upgrading'), 'stale is-upgrading class');
+assert.equal(chip.attrs['aria-label'], 'Version & upgrade details');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node sidebar version chip upgrade progress failed: %v\n%s", err, out)
+	}
+}
+
 func TestSidebarVersionDetailsFitAndFallbackRows(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -87,6 +133,7 @@ var _upgradeInProgress = false;
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
 		jsFunc(t, html, "versionBeeProgressHTML") + "\n" +
 		jsFunc(t, html, "versionButtonHTML") + "\n" +
 		jsFunc(t, html, "versionManualUpgradeActive") + "\n" +

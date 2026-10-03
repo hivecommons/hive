@@ -19,8 +19,8 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText",
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
-		"versionUpgradeProgressStatus", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
-		"renderVersionMenu", "renderVersionChip", "fetchGitVersion",
+		"versionUpgradeProgressStatus", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
+		"versionNavbarUpgradeHTML", "renderVersionMenu", "renderVersionChip", "fetchGitVersion",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')

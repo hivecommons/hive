@@ -372,6 +372,15 @@
     .oc-version-progress-status { color: var(--muted); margin-top: var(--sp-1); overflow-wrap: anywhere; }
     .oc-version-progress-status a { color: var(--accent); }
     .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
+    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); }
+    .oc-version-navbar-upgrade { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; }
+    .oc-version-navbar-upgrade .oc-version-hive { width: 24px; height: 24px; }
+    .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
+    .oc-version-navbar-upgrade .oc-version-bee { font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
+    .oc-version-navbar-upgrade .oc-version-progress-copy { line-height: 1.1; overflow: hidden; white-space: nowrap; }
+    .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
       from { transform: rotate(0deg) translateX(17px) rotate(0deg); }
       to { transform: rotate(360deg) translateX(17px) rotate(-360deg); }
@@ -24721,11 +24730,25 @@ function burnAreaChart() {
       if (!st) return '';
       const title = st.completedAt ? 'Upgrade complete' : 'Upgrading…';
       return '<div class="oc-version-upgrade-progress" role="status" aria-live="polite">' +
-        '<div class="oc-version-hive" aria-hidden="true">' +
+        versionUpgradeHiveHTML() + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
+        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+    }
+
+    function versionUpgradeHiveHTML() {
+      return '<span class="oc-version-hive" aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
         '<span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-honey-dot"></span>' +
-        '</div><div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
-        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+        '</span>';
+    }
+
+    function versionNavbarUpgradeHTML(st, v) {
+      if (!st || st.completedAt) return '';
+      const target = st.targetShort || versionShortSHA(st.target || '');
+      const elapsed = versionElapsedText(st.startedAt);
+      const status = (target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : '');
+      return '<span class="oc-version-navbar-upgrade" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">Upgrading… </span>' +
+        '<span class="oc-version-progress-status">' + escapeHtml(status) + '</span></span></span>';
     }
 
     function versionButtonHTML(label, title, targetHash, enabled) {
@@ -24832,11 +24855,14 @@ function burnAreaChart() {
       const channel = ctx.deliveryLabel || (v.branch && v.branch !== 'unknown' ? String(v.branch) : 'unknown');
       const progress = ctx.upgradeProgress || null;
       const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
-      const progressGlyph = progress && !progress.completedAt ? '<span class="oc-version-bee-chip" title="Upgrade in progress">🐝</span>' : (progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '');
-      chip.innerHTML = '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
+      const upgrading = progress && !progress.completedAt;
+      const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
+      if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
+      chip.innerHTML = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
+        '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
         (channel ? '<span class="oc-version-channel">' + escapeHtml(channel) + '</span>' : '') + progressGlyph + updateDot + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>';
       chip.title = progress && !progress.completedAt ? 'Upgrade in progress — Version & upgrade details' : 'Version & upgrade details';
-      chip.setAttribute('aria-label', 'Version & upgrade details');
+      chip.setAttribute('aria-label', upgrading ? 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version & upgrade details' : 'Version & upgrade details');
     }
 
     async function fetchGitVersion() {
