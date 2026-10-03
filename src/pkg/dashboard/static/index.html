@@ -1252,24 +1252,6 @@
     .off-badge { margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe (default muted) */
     .on-demand-badge { --component-status: var(--status-info); margin-left: var(--sp-2); vertical-align: middle; } /* pill recipe */
 
-    /* Health status panel */
-    .health { margin-bottom: var(--sp-8); }
-    .health h2 { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); margin-bottom: var(--sp-4); }
-    .health-grid { display: flex; flex-wrap: wrap; gap: var(--sp-5); }
-    .health-item {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--r); padding: 10px 16px; display: flex; align-items: center; gap: var(--sp-4);
-      font-size: 0.8rem;
-    }
-    .health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-    .health-dot.ok { background: var(--green); }
-    .health-dot.fail { background: var(--red); }
-    .health-dot.unknown { background: var(--muted); }
-    .health-label { color: var(--text); }
-    .health-ci { font-weight: 700; }
-    .health-ci.good { color: var(--green); }
-    .health-ci.warn { color: var(--yellow); }
-    .health-ci.bad { color: var(--red); }
     /* .btn / .terminal-link / .restart-btn — button system recipes at end of style block */
     /* .backend-select — shared input recipe (end of style block) */
     .backend-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
@@ -8424,9 +8406,7 @@
       const label = escapeHtml(stat.label || stat.key);
       const icon = stat.icon ? escapeHtml(stat.icon) + ' ' : '';
 
-      // Health-check stats carry a desc (what the check verifies) —
-      // surface it as a hover tooltip on the chip.
-      const desc = stat.desc || (stat.source === 'health' && HEALTH_DESC_DEFAULTS[stat.field]) || '';
+      const desc = stat.desc || '';
       const tipAttr = desc ? ` title="${escapeHtml(desc)}" style="cursor:help"` : '';
 
       if (style === 'dot') {
@@ -10312,31 +10292,6 @@
       } finally {
         if (btn) { btn.disabled = false; setTimeout(function() { btn.textContent = 'Re-check'; }, 3000); }
       }
-    }
-
-    function renderHealth(health) {
-      const el = document.getElementById('health');
-      if (!health || Object.keys(health).length === 0) { setIfChanged(el, '<span style="color:var(--muted);font-size:0.8rem">Loading…</span>'); return; }
-      const items = [
-        { key: 'ci', label: 'CI Pass Rate', type: 'pct' },
-        { key: 'brew', label: 'Brew Formula' },
-        { key: 'helm', label: 'Helm Chart' },
-        { key: 'nightly', label: 'Nightly Tests' },
-        { key: 'nightlyRel', label: 'Nightly Release' },
-        { key: 'weekly', label: 'Weekly Tests' },
-        { key: 'weeklyRel', label: 'Weekly Rel' },
-        { key: 'vllm', label: 'vLLM-d Deploy' },
-        { key: 'pokprod', label: 'PokProd Deploy' },
-      ];
-      setIfChanged(el, items.map(it => {
-        const v = health[it.key];
-        if (it.type === 'pct') {
-          const cls = v >= 90 ? 'good' : v >= 70 ? 'warn' : 'bad';
-          return `<div class="health-item"><span class="health-ci ${cls}">${v}%</span><span class="health-label">${it.label}</span></div>`;
-        }
-        const dotCls = v === 1 ? 'ok' : v === 0 ? 'fail' : 'unknown';
-        return `<div class="health-item"><span class="health-dot ${dotCls}"></span><span class="health-label">${it.label}</span></div>`;
-      }).join(''));
     }
 
     function formatFixTime(minutes) {
@@ -20542,9 +20497,6 @@ function burnAreaChart() {
       // Update Light health badge with hover detail
       const ocHealth = document.getElementById('oc-health');
       if (ocHealth) {
-        const h = data.health || {};
-        const CI_PASS_THRESHOLD = 70;
-        const HEALTH_LABELS = _buildHealthLabels(data.agents || []);
         const failing = [];
         const warning = [];
         const passing = [];
@@ -20560,19 +20512,6 @@ function burnAreaChart() {
           if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
           else if (c.status === 'warn') warning.push(line);
           else passing.push(line);
-        }
-        for (const [k, v] of Object.entries(h)) {
-          const label = HEALTH_LABELS[k] || k;
-          if (k === 'ci') {
-            if (v < CI_PASS_THRESHOLD) failing.push(`${label}: ${v}% (threshold: ${CI_PASS_THRESHOLD}%)`);
-            else passing.push(`${label}: ${v}%`);
-          } else if (v === false || v === 0) {
-            failing.push(`${label}: failing`);
-          } else if (v === -1) {
-            passing.push(`${label}: skipped`);
-          } else {
-            passing.push(`${label}: passing`);
-          }
         }
         const hoverLines = [];
         if (failing.length) hoverLines.push('FAILING:\n' + failing.map(f => '  ✗ ' + f).join('\n'));
@@ -20681,56 +20620,6 @@ function burnAreaChart() {
       } else {
         if (!_hashScrollPending) window.scrollTo(0, scrollY);
       }
-    }
-
-    const HEALTH_LABEL_DEFAULTS = {
-      ci: 'CI Pass Rate', brew: 'Homebrew', helm: 'Helm', nightly: 'Nightly',
-      nightlyCompliance: 'Compliance', nightlyDashboard: 'Dashboard', nightlyGhaw: 'GHAW',
-      nightlyPlaywright: 'Playwright', nightlyRel: 'Release', weekly: 'Weekly',
-      weeklyRel: 'Weekly Rel', hourly: 'Hourly', deploy_vllm_d: 'vLLM-d', deploy_pok_prod: 'POK'
-    };
-    function _buildHealthLabels(agents) {
-      const labels = { ...HEALTH_LABEL_DEFAULTS };
-      for (const a of agents || []) {
-        for (const s of a.statsConfig || []) {
-          if (s.source === 'health' && s.field && s.label) {
-            labels[s.field] = s.label;
-          }
-        }
-      }
-      return labels;
-    }
-
-    // One-line explanations of what each health check verifies (mirrors
-    // pkg/github/health.go). Used as tooltip fallback when the stats config
-    // entry carries no desc of its own. The health payload holds only ints,
-    // so no last-run timestamp is available to show.
-    const HEALTH_DESC_DEFAULTS = {
-      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing; failed runs that scheduled no jobs are dropped from the sample)',
-      brew: 'Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)',
-      helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
-      nightly: "Most recent 'Nightly Test Suite' workflow run did not fail",
-      nightlyCompliance: "Most recent 'Nightly Compliance & Perf' workflow run did not fail",
-      nightlyDashboard: "Most recent 'Nightly Dashboard Health' workflow run did not fail",
-      nightlyGhaw: "Most recent 'Nightly gh-aw Version Check' workflow run did not fail",
-      nightlyPlaywright: "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail",
-      nightlyRel: "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)",
-      weeklyRel: "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)",
-      weekly: "Most recent 'Weekly Coverage Review' workflow run did not fail",
-      hourly: 'Latest runs of the perf workflows (React commits per navigation, TTFI gate) did not fail',
-      deploy_vllm_d: "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail",
-      deploy_pok_prod: "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail",
-    };
-    function _buildHealthDescs(agents) {
-      const descs = { ...HEALTH_DESC_DEFAULTS };
-      for (const a of agents || []) {
-        for (const s of a.statsConfig || []) {
-          if (s.source === 'health' && s.field && s.desc) {
-            descs[s.field] = s.desc;
-          }
-        }
-      }
-      return descs;
     }
 
     // ── Inception section ──
@@ -21752,43 +21641,14 @@ function burnAreaChart() {
       const grid = document.getElementById('debug-grid');
       if (!grid) return;
       const data = window._lastStatus || {};
-      const health = data.health || {};
       const agents = data.agents || [];
       const budget = data.budget || {};
       const ghRate = data.ghRateLimits || {};
       const tokens = data.tokens || {};
 
-      const CI_PASS_THRESHOLD = 70;
-      const HEALTH_LABELS = _buildHealthLabels(agents);
-
       const cardStyle = 'background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;';
       const labelStyle = 'font-size:0.65rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:var(--sp-4);font-weight:600;';
       const rowStyle = 'display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:0.8rem;';
-
-      // Only show health checks that match ci-maintainer's stats config
-      const ciAgent = agents.find(a => a.role === 'ci-maintainer' || a.name === 'ci-maintainer');
-      const ciHealthFields = new Set(
-        (ciAgent?.statsConfig || [])
-          .filter(s => s.source === 'health')
-          .map(s => s.field)
-      );
-
-      const HEALTH_DESCS = _buildHealthDescs(agents);
-      let healthRows = '';
-      for (const [k, v] of Object.entries(health)) {
-        if (ciHealthFields.size > 0 && !ciHealthFields.has(k)) continue;
-        const label = HEALTH_LABELS[k] || k;
-        const desc = HEALTH_DESCS[k] || '';
-        const labelHtml = desc
-          ? `<span style="cursor:help;text-decoration:underline dotted;text-underline-offset:3px" title="${escapeHtml(desc)}">${label}</span>`
-          : `<span>${label}</span>`;
-        const ok = k === 'ci' ? v >= CI_PASS_THRESHOLD : (v === true || v === 1);
-        const skip = v === -1;
-        const dot = skip ? '⊘' : ok ? '✓' : '✗';
-        const color = skip ? 'var(--muted)' : ok ? 'var(--green)' : 'var(--red)';
-        const val = k === 'ci' ? `${v}%` : skip ? 'skipped' : ok ? 'ok' : 'fail';
-        healthRows += `<div style="${rowStyle}">${labelHtml}<span style="color:${color};font-weight:600">${dot} ${val}</span></div>`;
-      }
 
       const { sorted: sortedForStates, groups: stateGroups } = _sortAgentsBySidebar(agents);
       let agentRows = '';
@@ -21852,12 +21712,10 @@ function burnAreaChart() {
       const budgetPct = budgetLimit > 0 ? Math.round((budgetUsed / budgetLimit) * 100) : 0;
 
       const platform = _platformStatus || data.platform || null;
-      const warningCount = Object.entries(health).filter(([k, v]) => k === 'ci' ? Number(v) < CI_PASS_THRESHOLD && Number(v) !== -1 : !(v === true || v === 1 || v === -1)).length;
       const version = platform && (platform.version || platform.hiveVersion || platform.gitVersion || platform.commit);
-      setSectionSummary('debug-section', warningCount ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : `healthy${version ? ' · ' + version : ''}`);
+      setSectionSummary('debug-section', version ? `version ${version}` : 'platform diagnostics');
       grid.innerHTML = `
         <div style="${cardStyle}" class="platform-diagnostics"><div style="${labelStyle}">Platform</div>${platformFactTiles(platform)}</div>
-        <div style="${cardStyle}"><div style="${labelStyle}">Health Checks</div>${healthRows || '<div style="color:var(--muted);font-size:0.8rem">No data</div>'}</div>
         <div style="${cardStyle}"><div style="${labelStyle}">Agent States</div>${agentRows || '<div style="color:var(--muted);font-size:0.8rem">No agents</div>'}</div>
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>

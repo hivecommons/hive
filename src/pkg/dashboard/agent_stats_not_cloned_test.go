@@ -156,40 +156,10 @@ func TestReaderPrunesClonedCIStrip(t *testing.T) {
 	}
 }
 
-// TestHealthStatsScopedToRole: the "health" source describes the primary
-// repo's workflows and is offered only to agents that can own them — never to
-// an ADVISORY or on-demand agent.
-func TestHealthStatsScopedToRole(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  config.AgentConfig
-		want bool
-	}{
-		{"scheduled worker", config.AgentConfig{}, true},
-		{"ci-maintainer", config.AgentConfig{Mode: "AUTONOMOUS"}, true},
-		{"advisory", config.AgentConfig{Mode: "ADVISORY"}, false},
-		{"advisory lowercase", config.AgentConfig{Mode: "advisory"}, false},
-		{"on-demand", config.AgentConfig{OnDemand: true}, false},
-		{"reviewer as created", config.AgentConfig{Role: "reviewer", Mode: "ADVISORY", OnDemand: true}, false},
-	}
-	for _, c := range cases {
-		if got := healthStatsApply(c.cfg); got != c.want {
-			t.Errorf("%s: healthStatsApply = %v, want %v", c.name, got, c.want)
-		}
-		_, offered := statSourcesFor(&c.cfg)["health"]
-		if offered != c.want {
-			t.Errorf("%s: statSourcesFor offers health=%v, want %v", c.name, offered, c.want)
-		}
-	}
-	if _, ok := statSourcesFor(nil)["health"]; !ok {
-		t.Error("the unscoped catalogue lost the health source")
-	}
-}
-
-// TestStatSourcesEndpointAndAgentConfigAreScoped: the dashboard reads the
-// catalogue from the agent config response (so the Stats tab renders the
-// scoped set synchronously) and /api/config/stat-sources honours ?agent=.
-func TestStatSourcesEndpointAndAgentConfigAreScoped(t *testing.T) {
+// TestStatSourcesEndpointAndAgentConfig: the dashboard reads the
+// catalogue from the agent config response so the Stats tab renders the
+// available set synchronously.
+func TestStatSourcesEndpointAndAgentConfig(t *testing.T) {
 	useTempStatsDir(t)
 	s, deps := apiServer(t)
 	deps.Config.Agents["reviewer"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true, Role: "reviewer", Mode: "ADVISORY", OnDemand: true}
@@ -203,17 +173,12 @@ func TestStatSourcesEndpointAndAgentConfigAreScoped(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &catalogue)
 	if _, ok := catalogue.Sources["health"]; ok {
-		t.Error("stat-sources?agent=reviewer still offers the health source to an advisory on-demand agent")
-	}
-	rec = doGet(s, "/api/config/stat-sources?agent=scanner")
-	_ = json.Unmarshal(rec.Body.Bytes(), &catalogue)
-	if _, ok := catalogue.Sources["health"]; !ok {
-		t.Error("stat-sources?agent=scanner lost the health source for a scheduled agent")
+		t.Error("stat-sources?agent=reviewer offers the removed workflow health source")
 	}
 	rec = doGet(s, "/api/config/stat-sources")
 	_ = json.Unmarshal(rec.Body.Bytes(), &catalogue)
-	if _, ok := catalogue.Sources["health"]; !ok {
-		t.Error("unscoped stat-sources lost the health source")
+	if _, ok := catalogue.Sources["health"]; ok {
+		t.Error("unscoped stat-sources offers the removed workflow health source")
 	}
 
 	var agentResp struct {
@@ -237,7 +202,7 @@ func TestStatSourcesEndpointAndAgentConfigAreScoped(t *testing.T) {
 		t.Fatal("agent config response carries no statSources catalogue for the Stats tab")
 	}
 	if _, ok := agentResp.StatSources.Sources["health"]; ok {
-		t.Error("agent config response offers the health source to the advisory reviewer")
+		t.Error("agent config response offers the removed workflow health source")
 	}
 	if len(agentResp.StatSources.Styles) == 0 {
 		t.Error("agent config response carries no stat styles")

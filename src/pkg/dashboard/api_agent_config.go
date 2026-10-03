@@ -1680,19 +1680,6 @@ func valueOrDefault(v, dflt string) string {
 	return dflt
 }
 
-// healthStatsApply reports whether the "health" stat source — the primary
-// repo's CI/coverage/release workflow checks — is meaningful for an agent.
-// Those checks describe the repository's pipelines, so they belong on the
-// agent that owns CI. An ADVISORY or on-demand agent runs no pipeline and
-// produces verdicts, not builds; offering it the strip is how a reviewer ends
-// up displaying "COVERAGE 0% vs goal 91%" for nothing (#7411).
-func healthStatsApply(agentCfg config.AgentConfig) bool {
-	if agentCfg.OnDemand {
-		return false
-	}
-	return !strings.EqualFold(agentCfg.Mode, "ADVISORY")
-}
-
 // statSourcesFor returns the stat sources the Stats tab may offer an agent.
 // agentCfg == nil means unscoped (every source).
 func statSourcesFor(agentCfg *config.AgentConfig) map[string]any {
@@ -1700,15 +1687,6 @@ func statSourcesFor(agentCfg *config.AgentConfig) map[string]any {
 		"status": map[string]any{
 			"label":  "Repo Status",
 			"fields": []string{"actionableCount", "openPrCount", "mergeableCount"},
-		},
-		"health": map[string]any{
-			"label": "Health Checks",
-			"fields": []string{
-				"brew", "helm", "ci", "weekly", "nightly",
-				"nightlyCompliance", "nightlyDashboard", "nightlyGhaw",
-				"nightlyPlaywright", "nightlyRel", "weeklyRel",
-				"deploy_vllm_d", "deploy_pok_prod",
-			},
 		},
 		"agentMetrics": map[string]any{
 			"label": "Agent Metrics",
@@ -1722,16 +1700,13 @@ func statSourcesFor(agentCfg *config.AgentConfig) map[string]any {
 			"fields": []string{"input", "output", "cacheRead", "cacheCreate", "sessions", "messages"},
 		},
 	}
-	if agentCfg != nil && !healthStatsApply(*agentCfg) {
-		delete(sources, "health")
-	}
 	return sources
 }
 
 var statStyles = []string{"number", "dot", "pct", "pct-bar", "spark"}
 
 // handleStatSources answers the stat source catalogue. With ?agent=<name> the
-// catalogue is scoped to what makes sense for that agent (see healthStatsApply).
+// catalogue is scoped to the requested agent when future sources need it.
 func (s *Server) handleStatSources(w http.ResponseWriter, r *http.Request) {
 	var scope *config.AgentConfig
 	if name := r.URL.Query().Get("agent"); name != "" {
