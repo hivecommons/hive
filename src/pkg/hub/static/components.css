@@ -706,6 +706,46 @@ a.nav-chip:active,
   margin: var(--sp-0);
 }
 
+.hv-upstream-watch {
+  border-top: var(--line-width) solid var(--line);
+  margin-top: var(--sp-6);
+  padding-top: var(--sp-5);
+}
+
+.hv-upstream-watch-title {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  letter-spacing: var(--tracking-eyebrow);
+  margin-bottom: var(--sp-3);
+  text-transform: uppercase;
+}
+
+.hv-upstream-watch-panel {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.hv-upstream-watch-table {
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  margin-top: var(--sp-2);
+}
+
+.hv-upstream-watch-table thead tr {
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.hv-upstream-watch-table th,
+.hv-upstream-watch-table td {
+  padding: var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0);
+}
+
+.hv-upstream-watch-table th:last-child,
+.hv-upstream-watch-table td:last-child {
+  padding: var(--sp-1) var(--sp-0);
+}
+
 @keyframes hv-status-pulse {
   from,
   to {
