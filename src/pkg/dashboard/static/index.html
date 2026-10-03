@@ -95,6 +95,7 @@
       padding: 64px 20px 84px calc(var(--sidebar-w) + 20px);
       margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
     }
+    [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(64px + var(--sp-5)); }
     h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
     h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
@@ -108,8 +109,8 @@
     .git-version { font-size: 0.65rem; color: var(--muted); margin-left: 10px; font-weight: 400; font-family: var(--font-mono); }
     .git-version .git-behind { color: var(--yellow); font-weight: 600; white-space: nowrap; }
     /* Release channel + last upgrade attempt panel (#7092). */
-    #dashboard-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
-    #dashboard-notices:empty { display: none; }
+    #dash-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
+    #dash-notices:empty { display: none; }
     .release-status { margin: 6px 0 10px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.5; }
     .release-status-row { display: block; }
     .release-status-row + .release-status-row { margin-top: var(--sp-2); }
@@ -1751,11 +1752,17 @@
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: 12rem; overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-    .overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .overview-kpi { display: grid; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); cursor: pointer; }
+    .overview-kpis { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); padding-top: var(--sp-6); }
+    .overview-kpi-range { position: absolute; top: 0; right: 0; display: inline-flex; gap: var(--sp-1); }
+    .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
+    .overview-kpi-range-btn.active { border-color: var(--accent); color: var(--accent); }
+    .overview-kpi { display: grid; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); min-height: 5.9rem; cursor: pointer; }
     .overview-kpi:hover { border-color: var(--accent); }
     .overview-kpi-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
     .overview-kpi-label { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .overview-kpi-spark { min-height: 24px; display: flex; align-items: end; margin-top: var(--sp-1); }
+    .overview-kpi-spark .sparkline { width: 100%; }
+    .overview-kpi-spark svg { width: 100%; height: 24px; }
     .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5); align-items: stretch; }
     .overview-chart-card { --overview-chart-card-min-height: 16rem; position: relative; display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); align-items: center; gap: var(--sp-5); min-width: 0; min-height: var(--overview-chart-card-min-height); overflow: hidden; }
     .overview-chart-card + .overview-chart-card { border-left: 1px solid var(--border); padding-left: var(--sp-5); }
@@ -3327,6 +3334,13 @@
     .section-body.collapsed {
       max-height: 0 !important; opacity: 0; pointer-events: none;
     }
+    .section-body.collapsed.collapsed-with-headline {
+      max-height: none !important; opacity: 1; pointer-events: auto;
+    }
+    .collapsed-with-headline .collapsed-hidden { display: none !important; }
+    .collapsed-with-headline .sec-headline,
+    .collapsed-with-headline [data-collapsed-keep] { margin-top: var(--sp-0); margin-bottom: var(--sp-2); }
+    .collapsed-with-headline .collapsed-control-hidden { display: none !important; }
     #hive-dashboard-root > [data-dashboard-section] { margin-top: var(--sp-6) !important; margin-bottom: var(--sp-6) !important; }
     #hive-dashboard-root { --dash-card-padding: var(--sp-6); --dash-card-inner-padding: var(--sp-6); --dash-card-header-gap: var(--sp-4); --dash-section-header-gap: var(--sp-3); --dash-tile-gap: var(--sp-3); }
     .dash-card { background: var(--surface-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); padding: var(--dash-card-padding); box-shadow: var(--shadow-card); }
@@ -3345,6 +3359,7 @@
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
     .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
@@ -3365,6 +3380,7 @@
     @media (prefers-reduced-motion: reduce) { .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { animation: none; stroke-dashoffset: 0; } }
     .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
+    .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
     #audit-panel.audit-resizable { min-height: 320px; height: var(--audit-panel-height, 640px); max-height: 80vh; overflow-y: auto; resize: vertical; position: relative; }
     #audit-panel.audit-resizable::after { content: '↕ drag to resize'; position: sticky; bottom: 0; float: right; margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-2xs); background: color-mix(in srgb, var(--surface-1) 92%, transparent); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-2); pointer-events: none; }
     .dash-card .section-label, .dash-card .token-title, .dash-card .cost-title, .dash-card .gov-title { margin: 0; }
@@ -4077,6 +4093,69 @@
   </div>
 </div>
 <div id="hive-dashboard-root" class="hive-dashboard-root">
+  <!-- Dedicated pinned notices slot. It stays outside the dashboard section
+       order list so saved layouts cannot move it below a section. -->
+  <div id="dash-notices">
+    <div id="release-status" class="release-status" hidden></div>
+    <div id="planning-intro" hidden></div>
+  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">GitHub App Not Installed</div>
+      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
+    </div>
+    <!-- autocomplete=off + name-less: Firefox form history would otherwise
+         offer/refill a stored value and, on Linux, could clear the field on a
+         re-render. Enter also submits (onkeydown) so entry works even if the
+         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
+         Firefox — matching Safari, where the flow already worked instantly. -->
+    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      data-keydown-action="submitGitHubInstallationID" data-prevent="1" data-keys="Enter"
+      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
+      style="width:120px;padding:var(--sp-3) var(--sp-4);margin-right:var(--sp-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--text);font-size:0.8rem" />
+    <!-- Where-do-I-find-this hint. Content is injected by
+         renderGitHubAppInstallIdHint() because the GitHub host and org are only
+         known at runtime (a GHE hive must not be told to look at github.com).
+         The button is click/keyboard operable, not hover-only. -->
+    <span class="gh-idhint" id="gh-app-install-id-hint">
+      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
+        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
+        aria-label="Where do I find my Installation ID?"
+        data-action="toggleInstallIdHint" data-arg-types="e">?</button>
+      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
+    </span>
+    <!-- type=button is explicit: with no type a <button> defaults to
+         type=submit, and if this banner were ever wrapped in a form (or Firefox
+         treated an ancestor as one), the click would trigger an implicit submit
+         that navigates/resets the page and clears the input before the handler
+         ran — a Firefox-vs-Safari difference. type=button removes that path.
+         No inline ghost override: this button SUBMITS the typed ID, so it gets
+         the banner's solid primary recipe (.gh-app-btn). The old transparent
+         style made it read as static text — operators typed the ID and never
+         realized a click was required. -->
+    <button type="button" data-action="submitGitHubInstallationID" class="hv-btn btn-primary gh-app-btn" id="gh-app-set-id-btn">Save Installation ID</button>
+    <button type="button" data-action="recheckGitHubApp" class="hv-btn btn-primary gh-app-btn" id="gh-app-recheck-btn">Re-check</button>
+    <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="hv-btn btn-primary gh-app-btn">Install GitHub App</a>
+  </div>
+  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">Project Target Misconfigured</div>
+      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
+    </div>
+    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
+  </div>
+  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span class="fs-2xl">&#9888;&#65039;</span>
+    <div class="gh-app-body">
+      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
+      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
+    </div>
+  </div>
+  <div id="hub-banner" style="display:none"></div>
+  <div id="system-alerts-banner" style="display:none"></div>
+  </div>
 <div id="toast-container"></div>
 <button type="button" class="hv-btn btn-primary feedback-fab" data-action="openFeedbackModal" title="Report a bug or request a feature">💬 Feedback</button>
 
@@ -4381,79 +4460,8 @@
     <button class="hv-btn btn-icon btn-sm layout-toggle" id="layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
   </h1>
 
-  <!-- Release channel + last upgrade attempt (#7092). Findable on the spoke's
-       own dashboard: which channel this hive follows, and what happened on the
-       last upgrade attempt — "succeeded" and "failed" are rendered as visually
-       distinct states so a blank panel can never masquerade as success. The
-       "never attempted" state renders nothing at all: the marker only records
-       upgrades driven through the hub, so a hive moved by any other means
-       (direct image bump, redeploy, spoke roll) reads as "never" no matter how
-       many times it has actually been upgraded, and asserting that to an
-       operator is worse than saying nothing. Populated by
-       renderReleaseStatus() from /api/version's releaseStatus object. -->
-  <div id="dashboard-notices">
-    <div id="release-status" class="release-status" hidden></div>
-    <div id="planning-intro" hidden></div>
-    <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
+  <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
 
-  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div style="flex:1">
-      <div class="gh-app-title">GitHub App Not Installed</div>
-      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your project; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
-    </div>
-    <!-- autocomplete=off + name-less: Firefox form history would otherwise
-         offer/refill a stored value and, on Linux, could clear the field on a
-         re-render. Enter also submits (onkeydown) so entry works even if the
-         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
-         Firefox — matching Safari, where the flow already worked instantly. -->
-    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
-      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-      data-keydown-action="submitGitHubInstallationID" data-prevent="1" data-keys="Enter"
-      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
-      style="width:120px;padding:var(--sp-3) var(--sp-4);margin-right:var(--sp-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);color:var(--text);font-size:0.8rem" />
-    <!-- Where-do-I-find-this hint. Content is injected by
-         renderGitHubAppInstallIdHint() because the GitHub host and org are only
-         known at runtime (a GHE hive must not be told to look at github.com).
-         The button is click/keyboard operable, not hover-only. -->
-    <span class="gh-idhint" id="gh-app-install-id-hint">
-      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
-        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
-        aria-label="Where do I find my Installation ID?"
-        data-action="toggleInstallIdHint" data-arg-types="e">?</button>
-      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
-    </span>
-    <!-- type=button is explicit: with no type a <button> defaults to
-         type=submit, and if this banner were ever wrapped in a form (or Firefox
-         treated an ancestor as one), the click would trigger an implicit submit
-         that navigates/resets the page and clears the input before the handler
-         ran — a Firefox-vs-Safari difference. type=button removes that path.
-         No inline ghost override: this button SUBMITS the typed ID, so it gets
-         the banner's solid primary recipe (.gh-app-btn). The old transparent
-         style made it read as static text — operators typed the ID and never
-         realized a click was required. -->
-    <button type="button" data-action="submitGitHubInstallationID" class="hv-btn btn-primary gh-app-btn" id="gh-app-set-id-btn">Save Installation ID</button>
-    <button type="button" data-action="recheckGitHubApp" class="hv-btn btn-primary gh-app-btn" id="gh-app-recheck-btn">Re-check</button>
-    <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="hv-btn btn-primary gh-app-btn">Install GitHub App</a>
-  </div>
-  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div style="flex:1">
-      <div class="gh-app-title">Project Target Misconfigured</div>
-      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
-    </div>
-    <button type="button" class="hv-btn btn-primary gh-app-btn" data-action="gh1">Fix in Projects</button>
-  </div>
-  <div id="issues-disabled-banner" class="gh-app-install-banner perm-issue" hidden>
-    <span class="fs-2xl">&#9888;&#65039;</span>
-    <div class="gh-app-body">
-      <div class="gh-app-title">Issues Disabled on a Watched Project</div>
-      <div class="gh-app-desc" id="issues-disabled-banner-list"></div>
-    </div>
-  </div>
-  <div id="hub-banner" style="display:none"></div>
-  <div id="system-alerts-banner" style="display:none"></div>
-  </div>
   <div class="repos" id="overview-section" data-dashboard-section="overview-section">
     <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
     <div class="overview-settings-popover" id="overview-chart-settings" hidden></div>
@@ -5305,6 +5313,8 @@
     const SECTION_TRANSITION_MS = 200;
     const SECTION_EXPANDED_MAX_HEIGHT = 'none';
     const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
+    const NAV_JUMP_SETTLE_MS = 350;
+    const NAV_JUMP_RESIZE_QUIET_MS = 60;
     const ALL_AGENTS_COMPACT_KEY = 'hive-all-agents-compact';
 
     const STATUS = Object.freeze({
@@ -5759,16 +5769,53 @@
       body.addEventListener('transitionend', onEnd);
       setTimeout(release, SECTION_TRANSITION_MS);
     }
+    function sectionHeadlineSelector() {
+      return '.sec-headline,[data-collapsed-keep]';
+    }
+    function clearCollapsedHeadlineVisibility(body) {
+      if (!body || !body.querySelectorAll) return;
+      body.classList.remove('collapsed-with-headline');
+      body.querySelectorAll('.collapsed-hidden').forEach(el => el.classList.remove('collapsed-hidden'));
+      body.querySelectorAll('.collapsed-control-hidden').forEach(el => el.classList.remove('collapsed-control-hidden'));
+    }
+    function applyCollapsedHeadlineVisibility(body, collapsed) {
+      if (!body || !body.querySelectorAll) return false;
+      const headlines = Array.from(body.querySelectorAll(sectionHeadlineSelector())).filter(el => el && el.closest && el.closest('.dash-card-body, .section-body') === body);
+      clearCollapsedHeadlineVisibility(body);
+      if (!collapsed || headlines.length === 0) return false;
+      const keep = sectionHeadlineSelector();
+      body.classList.add('collapsed-with-headline');
+      const visit = (parent) => {
+        Array.from(parent.children || []).forEach(child => {
+          if (!child || !child.matches) return;
+          const isHeadline = child.matches(keep);
+          const containsHeadline = !!(child.querySelector && child.querySelector(keep));
+          if (isHeadline) return;
+          if (containsHeadline) {
+            visit(child);
+            return;
+          }
+          child.classList.add('collapsed-hidden');
+        });
+      };
+      visit(body);
+      body.querySelectorAll('.sec-headline [data-collapsed-control], .sec-headline .collapsed-control').forEach(el => el.classList.add('collapsed-control-hidden'));
+      return true;
+    }
+
     /** Reflect a section's collapsed state onto the body while keeping transitions animated. */
     function applySectionBodyCollapse(body, collapsed, animate) {
       if (!body) return;
       if (collapsed) {
-        if (animate) {
+        const hasHeadline = applyCollapsedHeadlineVisibility(body, true);
+        if (animate && !hasHeadline) {
           body.style.maxHeight = body.scrollHeight + 'px';
           void body.offsetHeight;
         }
         body.classList.add('collapsed');
+        body.style.maxHeight = hasHeadline ? SECTION_EXPANDED_MAX_HEIGHT : body.style.maxHeight;
       } else {
+        clearCollapsedHeadlineVisibility(body);
         body.classList.remove('collapsed');
         if (animate) {
           body.style.maxHeight = body.scrollHeight + 'px';
@@ -5803,10 +5850,17 @@
       const chevron = document.querySelector(`#${sectionId} .dash-card-header .section-chevron, #${sectionId} .section-chevron`);
       const card = document.querySelector(`#${sectionId} .dash-card`);
       const header = document.querySelector(`#${sectionId} .dash-card-header, #${sectionId} .section-header-toggle`);
-      applySectionBodyCollapse(body, collapsed, true);
+      applySectionBodyCollapse(body, collapsed, options.animate !== false);
+      const hasCollapsedHeadline = !!(body && body.classList && body.classList.contains('collapsed-with-headline'));
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
-      if (card) card.classList.toggle('collapsed', collapsed);
-      if (section) section.classList.toggle('collapsed', collapsed);
+      if (card) {
+        card.classList.toggle('collapsed', collapsed);
+        card.classList.toggle('has-collapsed-headline', hasCollapsedHeadline);
+      }
+      if (section) {
+        section.classList.toggle('collapsed', collapsed);
+        section.classList.toggle('has-collapsed-headline', hasCollapsedHeadline);
+      }
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       if (!collapsed && section) replaySparklinesIn(section, { force: true });
       if (sectionId === 'overview-section' && !collapsed) triggerOverviewAnimations('expand');
@@ -5824,13 +5878,29 @@
       if (!navPeek && _dashboardNavPeekSectionId === sectionId) _dashboardNavPeekSectionId = null;
       normalizeSectionCardChrome(sectionId);
       applySectionBodyCollapse(body, collapsed, false);
+      const hasCollapsedHeadline = !!(body && body.classList && body.classList.contains('collapsed-with-headline'));
       if (chevron) chevron.classList.toggle('collapsed', collapsed);
-      if (card) card.classList.toggle('collapsed', collapsed);
-      if (section) section.classList.toggle('collapsed', collapsed);
+      if (card) {
+        card.classList.toggle('collapsed', collapsed);
+        card.classList.toggle('has-collapsed-headline', hasCollapsedHeadline);
+      }
+      if (section) {
+        section.classList.toggle('collapsed', collapsed);
+        section.classList.toggle('has-collapsed-headline', hasCollapsedHeadline);
+      }
       if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       if (!collapsed && section) replaySparklinesIn(section);
     }
     var _dashboardNavPeekSectionId = null;
+    function navPeekSectionId() {
+      let sectionId = _dashboardNavPeekSectionId;
+      let section = sectionId ? document.getElementById(sectionId) : null;
+      if (!section || section.getAttribute('data-nav-peek') !== '1') {
+        section = document.querySelector('[data-nav-peek="1"]');
+        sectionId = section && section.id;
+      }
+      return sectionId || null;
+    }
     function navPeekExpand(sectionId) {
       const section = document.getElementById(sectionId);
       if (!section || section.getAttribute('data-nav-peek') === '1' || !isSectionCollapsed(sectionId)) return false;
@@ -5839,19 +5909,16 @@
       _dashboardNavPeekSectionId = sectionId;
       return true;
     }
-    function navPeekRestore(nextSectionId) {
-      let sectionId = _dashboardNavPeekSectionId;
+    function navPeekRestore(nextSectionId, opts) {
+      const options = opts || {};
+      let sectionId = navPeekSectionId();
       let section = sectionId ? document.getElementById(sectionId) : null;
-      if (!section || section.getAttribute('data-nav-peek') !== '1') {
-        section = document.querySelector('[data-nav-peek="1"]');
-        sectionId = section && section.id;
-      }
       if (!sectionId || sectionId === nextSectionId) return false;
       _dashboardNavPeekSectionId = null;
       if (!section || section.getAttribute('data-nav-peek') !== '1') return false;
       section.removeAttribute('data-nav-peek');
       if (!isSectionCollapsed(sectionId)) return false;
-      toggleSection(sectionId, { collapsed: true, persist: false, navPeek: true });
+      toggleSection(sectionId, { collapsed: true, persist: false, navPeek: true, animate: !options.instant });
       return true;
     }
     var _dashboardNavPeekSectionId = null;
@@ -5887,7 +5954,7 @@
     var DASHBOARD_LAYOUT_TEMPLATE={main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','beads-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','logs-section','agents-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
-    var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';
+    var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
     var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
     var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
     var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
@@ -5909,7 +5976,7 @@
     // Sections missing from a saved layout (added after the layout was
     // saved) slot in next to their template neighbour instead of being
     // appended after the trailing FAQ section (#9426).
-    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
+    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx+1;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardLayoutExtraKeys(){var keys=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i)||'';if(k.indexOf('hive-repos-pill-filter:')===0||k.indexOf('hive-repo-card-widths:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY||k.indexOf('hive-agent-card-layout:')===0||k.indexOf('hive.repo.tile.order')===0||k.indexOf('hive.repo-tile.order')===0||k.indexOf('hive.repoTile.order')===0||k.indexOf('hive.dashboard.repoTileOrder')===0)keys.push(k);}}catch(e){}keys.sort();return keys;}
     function dashboardLayoutSnapshot(){var collapsed={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,extras:extras};}
@@ -5935,8 +6002,8 @@
     function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
     async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
     function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
-    function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);return anchor&&anchor.parentElement===region?anchor:null;}
-    function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});}
+    function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);if(!region||!anchor)return null;if(anchor.parentElement!==region||region.firstElementChild!==anchor)region.insertBefore(anchor,region.firstElementChild||null);return anchor;}
+    function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});dashboardTopAnchor(region);}
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
     function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
@@ -6225,6 +6292,67 @@
       } catch {}
     }
 
+    function ocSectionBody(sectionId) {
+      return document.querySelector(`#${sectionId} .dash-card-body, #${sectionId} .section-body`);
+    }
+    function ocAfterNavLayoutSettles(sectionIds, callback) {
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function(fn) { setTimeout(fn, 0); };
+      const afterPaint = function(fn) { raf(function() { raf(fn); }); };
+      const ids = Array.from(new Set((sectionIds || []).filter(Boolean)));
+      const bodies = ids.map(ocSectionBody).filter(Boolean);
+      if (!bodies.length) { afterPaint(callback); return; }
+      let done = false;
+      let quietTimer = null;
+      let maxTimer = null;
+      let lastResizeAt = 0;
+      let observer = null;
+      const pending = new Set(bodies);
+      const cleanup = function() {
+        bodies.forEach(function(body) { body.removeEventListener('transitionend', onTransitionEnd); });
+        if (observer) observer.disconnect();
+        if (quietTimer) clearTimeout(quietTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+      };
+      const finish = function() {
+        if (done) return;
+        done = true;
+        cleanup();
+        afterPaint(callback);
+      };
+      const scheduleQuietFinish = function() {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(function() {
+          if (!lastResizeAt || performance.now() - lastResizeAt >= NAV_JUMP_RESIZE_QUIET_MS) finish();
+          else scheduleQuietFinish();
+        }, NAV_JUMP_RESIZE_QUIET_MS);
+      };
+      var onTransitionEnd = function(event) {
+        if (event.target !== event.currentTarget) return;
+        if (event.propertyName && event.propertyName !== SECTION_MAX_HEIGHT_PROPERTY && event.propertyName !== 'opacity') return;
+        pending.delete(event.currentTarget);
+        if (!pending.size) finish();
+      };
+      bodies.forEach(function(body) { body.addEventListener('transitionend', onTransitionEnd); });
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(function() {
+          lastResizeAt = performance.now();
+          scheduleQuietFinish();
+        });
+        ids.forEach(function(id) {
+          const el = document.getElementById(id);
+          if (el) observer.observe(el);
+        });
+      }
+      maxTimer = setTimeout(finish, NAV_JUMP_SETTLE_MS);
+    }
+    function ocScrollSectionIntoView(section) {
+      const el = document.getElementById(section);
+      if (!el) return;
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      el.classList.remove('anchor-highlight');
+      void el.offsetWidth;
+      el.classList.add('anchor-highlight');
+    }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
       _ocSelectedAgent = null;
@@ -6233,17 +6361,14 @@
       const detail = document.getElementById('oc-agent-detail');
       if (detail) { detail.classList.remove('active'); detail.innerHTML = ''; }
       ocUpdateFocusedState();
-      navPeekRestore(section);
-      navPeekExpand(section);
+      const previousPeekSection = navPeekSectionId();
+      const restored = navPeekRestore(section, { instant: true });
+      const expanded = navPeekExpand(section);
       if (!skipScroll) {
-        const el = document.getElementById(section);
-        if (el) {
-          const y = el.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-          window.scrollTo({ top: y, behavior: 'smooth' });
-          el.classList.remove('anchor-highlight');
-          void el.offsetWidth;
-          el.classList.add('anchor-highlight');
-        }
+        const affectedSections = [];
+        if (restored && previousPeekSection) affectedSections.push(previousPeekSection);
+        if (expanded) affectedSections.push(section);
+        ocAfterNavLayoutSettles(affectedSections, function() { ocScrollSectionIntoView(section); });
       }
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-section="${section}"]`);
@@ -7648,10 +7773,11 @@
 
     function sparklineSvgVisible(svg) {
       if (!svg || !svg.isConnected) return false;
+      const inHeadline = !!(svg.closest && svg.closest('.sec-headline,[data-collapsed-keep]'));
       const shell = svg.closest('.dash-card, .section-body, [data-dashboard-section], section');
-      if (shell && shell.classList && shell.classList.contains('collapsed')) return false;
+      if (shell && shell.classList && shell.classList.contains('collapsed') && !inHeadline) return false;
       const body = svg.closest('.dash-card-body, .section-body');
-      if (body && body.classList && body.classList.contains('collapsed')) return false;
+      if (body && body.classList && body.classList.contains('collapsed') && !(inHeadline && body.classList.contains('collapsed-with-headline'))) return false;
       if (svg.getClientRects && svg.getClientRects().length === 0) return false;
       return true;
     }
@@ -11184,7 +11310,7 @@
 
       const governorBody = `
         <div class="gov-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Governor section" aria-pressed="false">⠿</button>Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
-        <div class="gov-grid">
+        <div class="gov-grid sec-headline" data-collapsed-keep>
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
           <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open issues across all monitored KubeStellar projects, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
@@ -12821,11 +12947,12 @@
         const key = node.getAttribute('data-overview-kpi-key') || '';
         const target = Number(node.getAttribute('data-overview-kpi-value'));
         if (!key || !Number.isFinite(target)) return;
+        const display = node.getAttribute('data-overview-kpi-display') || String(target);
         const prior = Number(_overviewKPIValues[key]);
         const start = fromZero || !Number.isFinite(prior) ? 0 : prior;
         _overviewKPIValues[key] = target;
         if (reduced || start === target || !window.requestAnimationFrame) {
-          node.textContent = String(target);
+          node.textContent = display;
           return;
         }
         const duration = overviewCssDurationMs('--anim-kpi-count', 800);
@@ -12835,7 +12962,7 @@
           const t = Math.min(1, (now - started) / duration);
           node.textContent = String(Math.round(start + (target - start) * easeOutCubic(t)));
           if (t < 1) window.requestAnimationFrame(tick);
-          else node.textContent = String(target);
+          else node.textContent = display;
         };
         node.textContent = String(Math.round(start));
         window.requestAnimationFrame(tick);
@@ -12864,6 +12991,100 @@
       const exportFormat = OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat) ? saved.exportFormat : base.exportFormat;
       const timeBasis = OVERVIEW_TIME_BASES.includes(saved.timeBasis) ? saved.timeBasis : base.timeBasis;
       return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat, timeBasis };
+    }
+
+    const OVERVIEW_KPI_WINDOWS = { '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
+    const OVERVIEW_KPI_WINDOW_KEY = 'hive.overviewKPI.window';
+    const OVERVIEW_KPI_LOCAL_PREFIX = 'hive.overviewKPI.local.';
+    const OVERVIEW_KPI_LOCAL_MAX = 2016;
+    const OVERVIEW_KPI_MIN_SAMPLE_MS = 5 * 60 * 1000;
+    let _overviewKPIHistory = [];
+    let _overviewKPIWindow = (() => {
+      try { return localStorage.getItem(OVERVIEW_KPI_WINDOW_KEY) || '24h'; } catch { return '24h'; }
+    })();
+    let _overviewKPILocalScope = 'all';
+
+    function overviewKPILocalKey() {
+      const hive = String(((window._lastStatus || {}).hiveId) || 'default').trim() || 'default';
+      return OVERVIEW_KPI_LOCAL_PREFIX + hive + '.' + _overviewKPILocalScope;
+    }
+    function overviewKPIRepoScope(repos) {
+      const selected = (repos || []).map(r => r.full || r.name || '').filter(Boolean).sort();
+      const all = (_overviewLastRepos || []).map(r => r.full || r.name || '').filter(Boolean).sort();
+      if (!all.length || selected.length === all.length) return 'all';
+      return selected.join('|') || 'none';
+    }
+    function overviewKPILoadLocal() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(overviewKPILocalKey()) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+      } catch { return []; }
+    }
+    function overviewKPISaveLocal(entries) {
+      try { localStorage.setItem(overviewKPILocalKey(), JSON.stringify((entries || []).slice(-OVERVIEW_KPI_LOCAL_MAX))); } catch {}
+    }
+    function overviewKPIRecordLocal(sample) {
+      if (!sample || !sample.t) return;
+      const entries = overviewKPILoadLocal();
+      const last = entries[entries.length - 1];
+      if (last && Math.abs(Number(last.t || 0) - Number(sample.t || 0)) < OVERVIEW_KPI_MIN_SAMPLE_MS) {
+        entries[entries.length - 1] = sample;
+      } else {
+        entries.push(sample);
+      }
+      overviewKPISaveLocal(entries);
+    }
+    async function fetchOverviewKPIHistory() {
+      try {
+        const since = Date.now() - OVERVIEW_KPI_WINDOWS['7d'];
+        const r = await fetch('/api/' + 'overview/history?since=' + encodeURIComponent(String(since)));
+        const data = await r.json();
+        _overviewKPIHistory = Array.isArray(data) ? data : [];
+        if (window._lastStatus && Array.isArray(window._lastStatus.repos)) renderOverviewCharts(window._lastStatus.repos);
+      } catch { /* non-critical: local fallback below still records samples */ }
+    }
+    function setOverviewKPIWindow(win) {
+      if (!Object.prototype.hasOwnProperty.call(OVERVIEW_KPI_WINDOWS, win)) return;
+      _overviewKPIWindow = win;
+      try { localStorage.setItem(OVERVIEW_KPI_WINDOW_KEY, win); } catch {}
+      renderOverviewCharts(_overviewLastRepos || []);
+    }
+    function overviewKPIHistoryEntries(useServer) {
+      const cutoff = Date.now() - (OVERVIEW_KPI_WINDOWS[_overviewKPIWindow] || OVERVIEW_KPI_WINDOWS['24h']);
+      const byT = new Map();
+      const sources = overviewKPILoadLocal().concat(useServer ? (_overviewKPIHistory || []) : []);
+      sources.forEach(e => {
+        const t = Number(e && e.t);
+        if (Number.isFinite(t) && t >= cutoff) byT.set(t, e);
+      });
+      return Array.from(byT.entries()).sort((a, b) => a[0] - b[0]).map(pair => pair[1]);
+    }
+    function overviewKPICurrentSample(cards) {
+      const sample = { t: Date.now() };
+      (cards || []).forEach(card => { sample[card.field] = Number(card.rawValue); });
+      return sample;
+    }
+    function overviewKPISparkTitle(values, fmt) {
+      const finite = values.map(Number).filter(Number.isFinite);
+      if (!finite.length) return 'min — · max — · latest —';
+      const min = Math.min(...finite);
+      const max = Math.max(...finite);
+      const latest = finite[finite.length - 1];
+      return `min ${fmt(min)} · max ${fmt(max)} · latest ${fmt(latest)}`;
+    }
+    function overviewKPISpark(card, useServer) {
+      const entries = overviewKPIHistoryEntries(useServer);
+      const values = entries.map(e => Number(e[card.field])).filter(Number.isFinite);
+      if (values.length < 2) return '';
+      const title = overviewKPISparkTitle(values, card.sparkFmt || fmtSparkVal);
+      return `<span class="overview-kpi-spark">${renderSparkline(null, values, {
+        width: 92, height: 24, color: card.color, title, ariaLabel: `${card.label}: ${title}`,
+        label: `overview ${card.label}`, id: `overview-kpi:${card.key}`,
+        wrapperClass: 'sparkline--flush', wrapperTitle: title,
+      })}</span>`;
+    }
+    function overviewKPIWindowControls() {
+      return `<span class="overview-kpi-range" aria-label="Overview KPI history range">${Object.keys(OVERVIEW_KPI_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _overviewKPIWindow ? ' active' : ''}" data-action="setOverviewKPIWindow" data-arg0="${esc(win)}" data-stop="1" aria-pressed="${win === _overviewKPIWindow ? 'true' : 'false'}" title="Show ${esc(win)} KPI history">${esc(win)}</button>`).join('')}</span>`;
     }
 
     function saveOverviewChartsState(state) {
@@ -13070,6 +13291,26 @@
       return Math.round(median / 1440) + 'd';
     }
 
+    function fmtDurationFromSeconds(seconds) {
+      if (!Number.isFinite(Number(seconds))) return '—';
+      const minutes = Math.max(0, Number(seconds)) / 60;
+      if (minutes < 60) return Math.round(minutes) + 'm';
+      if (minutes < 1440) return Math.round(minutes / 60) + 'h';
+      return Math.round(minutes / 1440) + 'd';
+    }
+
+    function overviewMedianAgeSeconds(slices, state) {
+      const ages = (slices || []).flatMap(s => (s.items || []).map(item => {
+        const raw = (item && (item.item || item.issue || item.pr)) || item || {};
+        const basis = state.timeBasis === 'created' ? (raw.created_at || raw.updated_at) : (raw.updated_at || raw.created_at);
+        const t = Date.parse(basis || '');
+        return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : overviewItemAgeMinutes(item);
+      })).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+      if (!ages.length) return NaN;
+      const median = ages[Math.floor(ages.length / 2)];
+      return Math.round(median * 60);
+    }
+
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
       const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -13078,19 +13319,28 @@
       const held = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
       const blockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
-      const age = overviewMedianAgeLabel((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
+      const actionableSlices = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key));
+      const age = overviewMedianAgeLabel(actionableSlices, state);
+      const ageSec = typeof overviewMedianAgeSeconds === 'function' ? overviewMedianAgeSeconds(actionableSlices, state) : NaN;
+      const kpiScope = typeof overviewKPIRepoScope === 'function' ? overviewKPIRepoScope(repos) : 'all';
+      if (typeof _overviewKPILocalScope !== 'undefined') _overviewKPILocalScope = kpiScope;
+      const useServerHistory = kpiScope === 'all';
       const cards = [
-        ['open-issues', 'Open issues', openIssues, 'Actionable plus held issues in the selected repos.'],
-        ['open-prs', 'Open PRs', openPRs, 'Open plus held pull requests in the selected repos.'],
-        ['actionable-now', 'Actionable now', actionableNow, 'Items in bands that can move without waiting.'],
-        ['held', 'Held', held, 'Issues and PRs deliberately paused by a hold.'],
-        ['blocked-needs-human', 'Blocked / needs-human', blockedNeedsHuman, 'Waiting, blocked, or escalated work needing a person or dependency.'],
-        ['median-age', 'Median age', age, 'Median selected actionable item age by the configured time basis.']
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
+        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
+        { key: 'median-age', field: 'overviewMedianAgeSec', label: 'Median age', value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: 'Median selected actionable item age by the configured time basis.' }
       ];
-      return `<div class="overview-kpis">${cards.map(([key, label, value, tip]) => {
-        const n = Number(value);
-        const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(key)}" data-overview-kpi-value="${n}"` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(label)}</span></button>`;
+      if (typeof overviewKPIRecordLocal === 'function' && typeof overviewKPICurrentSample === 'function') overviewKPIRecordLocal(overviewKPICurrentSample(cards));
+      const controls = typeof overviewKPIWindowControls === 'function' ? overviewKPIWindowControls() : '';
+      return `<div class="overview-kpis sec-headline" data-collapsed-keep>${controls}${cards.map(card => {
+        const value = card.value;
+        const n = Number(card.rawValue);
+        const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
+        const spark = typeof overviewKPISpark === 'function' ? overviewKPISpark(card, useServerHistory) : '';
+        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${spark}</button>`;
       }).join('')}</div>`;
     }
 
@@ -15394,7 +15644,7 @@ function burnAreaChart() {
       const tokenRates = computeHourlyBurnRates();
       const currentTokHr = tokenRates.length ? tokenRates[tokenRates.length - 1].rate : Math.round(totalTokens / Math.max(1, tokens.lookbackHours || 24));
       const tokenSummary = `${fmtTokens(currentTokHr)} tok/hr · ${t.sessions} sessions (${tokens.lookbackHours || 24}h)`;
-      const tokenBody = `        <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-8);padding-bottom:var(--sp-6);border-bottom:1px solid var(--border)">
+      const tokenBody = `        <div class="sec-headline" data-collapsed-keep style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-8);padding-bottom:var(--sp-6);border-bottom:1px solid var(--border)">
           <div style="flex:1;min-width:0">${intensityGauge()}</div>
           <div style="flex:1;min-width:0">${burnAreaChart()}</div>
         </div>
@@ -15798,7 +16048,7 @@ function burnAreaChart() {
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
-          <div class="cost-grid">
+          <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
             <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
             <div class="cost-stat"><div class="cval" title="${cost.closed_issues ? `${fmtUSD(est.total_usd)} ÷ ${cost.closed_issues} closed issues` : 'no closed issues yet'}">${cost.closed_issues ? fmtUSD(est.total_usd / cost.closed_issues) : '—'}</div><div class="clabel">cost / issue — all-time total ÷ closed issues</div></div>
@@ -16872,7 +17122,7 @@ function burnAreaChart() {
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
       const m = dto.metrics || {};
       const metricSeries = prtBucketMetricSeries(dto);
-      const metricsHtml = `<div class="prt-metrics">
+      const metricsHtml = `<div class="prt-metrics sec-headline" data-collapsed-keep>
         <div class="prt-metric" title="Merged PRs divided by each throughput bucket, normalized to one day."><div class="mval">${escapeHtml(prtFmtRate(m.merged_per_day))}</div><div class="mlbl">merge velocity</div>${prtMetricSpark(metricSeries.mergedVelocity, metricSeries.times, 'var(--green)', 'merge velocity', prtFmtRate, 'merge-velocity')}</div>
         <div class="prt-metric" title="Opened PRs divided by each throughput bucket, normalized to one day."><div class="mval">${escapeHtml(prtFmtRate(m.opened_per_day))}</div><div class="mlbl">open velocity</div>${prtMetricSpark(metricSeries.openedVelocity, metricSeries.times, 'var(--blue)', 'open velocity', prtFmtRate, 'open-velocity')}</div>
         <div class="prt-metric" title="Per-bucket median elapsed time from PR open audit event to merge audit event. Shows — until matching open timestamps exist."><div class="mval">${escapeHtml(prtFmtHours(m.median_time_to_merge_hours))}</div><div class="mlbl">median TTM</div>${prtMetricSpark(metricSeries.medianTTM, metricSeries.times, 'var(--yellow)', 'median TTM', prtFmtHours, 'median-ttm')}</div>
@@ -16884,8 +17134,8 @@ function burnAreaChart() {
       </div>`;
       const breakdowns = [prtTopList('Merged by agent', dto.merged_by_agent), prtTopList('Top repos', dto.top_repos), prtTopList('Close reasons', dto.closed_reasons)].filter(Boolean).join('');
       const label = prtWindowLabel(dto);
-      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls"><div class="gov-pr-models-toggle">${buttons}</div>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
-        <div class="lc-fleet">
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls collapsed-control" data-collapsed-control><div class="gov-pr-models-toggle">${buttons}</div>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
+        <div class="lc-fleet sec-headline" data-collapsed-keep>
           <div class="lc-fleet-stat" title="Pull/merge requests opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
@@ -18793,7 +19043,7 @@ function burnAreaChart() {
       // Stats row
       const staleTotal = layers.reduce((sum, l) => sum + (l.stale || 0), 0);
       const orphanedTotal = layers.reduce((sum, l) => sum + (l.orphaned || 0), 0);
-      html += '<div class="kb-stat-grid kb-summary-stats">';
+      html += '<div class="kb-stat-grid kb-summary-stats sec-headline" data-collapsed-keep>';
       html += `<div class="kb-stat"><div class="val">${totalPages}</div><div class="lbl">Total Facts</div>${factSparkSvg()}</div>`;
       html += `<div class="kb-stat" title="Layers are knowledge sources (personal, project, org, community, vaults, or imported docs) that scope where facts come from and where new facts are written."><div class="val">${healthyCount}/${layers.length}</div><div class="lbl">Layers Online</div></div>`;
       html += `<div class="kb-stat"><div class="val">${escapeHtml(_kbCache.engine || 'n/a')}</div><div class="lbl">Engine</div></div>`;
@@ -29597,6 +29847,23 @@ function burnAreaChart() {
       const mode = typeof arg0 === 'string' ? arg0 : arg1;
       const kind = typeof arg0 === 'string' ? arg1 : arg2;
       if (!_configState.data.cadences) _configState.data.cadences = {};
+      const legacyContinuous = ((_configState.data && _configState.data.general) || {}).continuous === true;
+      if (legacyContinuous && mode !== 'quiet' && (kind === 'interval' || kind === 'off')) {
+        if (!_configState.data.general) _configState.data.general = {};
+        for (const otherMode of ['surge', 'busy', 'idle']) {
+          if (otherMode === mode) continue;
+          const otherCurrent = Object.prototype.hasOwnProperty.call(_configState.data.cadences, otherMode)
+            ? _configState.data.cadences[otherMode]
+            : (otherMode === 'idle' ? undefined : _configState.data.cadences.idle);
+          const otherKind = cadenceModeValue(otherCurrent);
+          if (otherKind !== 'continuous' && otherKind !== 'off') {
+            _configState.data.cadences[otherMode] = 'continuous';
+            markDirty('cadences', otherMode, 'continuous');
+          }
+        }
+        _configState.data.general.continuous = false;
+        markDirty('general', 'continuous', false);
+      }
       const current = _configState.data.cadences[mode];
       const value = kind === 'continuous' ? 'continuous' : kind === 'interval' ? (cadenceModeValue(current) === 'interval' && typeof current !== 'object' ? current : SECONDS_PER_HOUR) : 0;
       _configState.data.cadences[mode] = value;
@@ -29645,7 +29912,7 @@ function burnAreaChart() {
       const cron = detailKind === 'cron' ? (value.cron || '') : '30 9 * * 1-5';
       const selectedDays = new Set(detailKind === 'times' ? (value.days || []) : []);
       const days = ['mon','tue','wed','thu','fri','sat','sun'].map(d => `<label class="cadence-day-label"><input type="checkbox" data-cadence-day="${mode}" value="${d}" ${selectedDays.size===0 || selectedDays.has(d) ? 'checked' : ''} data-change-action="cadenceChanged" data-arg0="${mode}">${d}</label>`).join('');
-      const storedNote = legacyActive ? `Legacy shorthand is making this active mode continuous; turning it off restores the stored ${cadenceSummary(value).toLowerCase()}.` : cadenceSummary(value);
+      const storedNote = legacyActive ? 'Legacy all-modes continuous is on; choosing Off or Interval here converts it to per-mode settings.' : cadenceSummary(value);
       const body = kind === 'interval'
         ? `<div class="cadence-mode-presets">
             <button class="hv-btn btn-secondary btn-sm" type="button" data-action="cadenceSetPreset" data-arg0="${mode}" data-arg1="daily">Daily at…</button>
@@ -38094,6 +38361,7 @@ function burnAreaChart() {
       setTimeout(() => {
         const deferred = [
           () => fetchFactHistory(),
+          () => fetchOverviewKPIHistory().then(() => { setInterval(fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
           () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchBudgetHistory().then(() => { setInterval(fetchBudgetHistory, HISTORY_REFRESH_MS); }),

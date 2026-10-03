@@ -8,14 +8,14 @@ import (
 func TestDashboardNoticesPinnedAboveReorderableSections(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`<div id="dashboard-notices">`,
+		`<div id="dash-notices">`,
 		`<div id="release-status"`,
 		`id="gh-app-install-banner"`,
 		`id="repo-target-banner"`,
 		`id="hub-banner"`,
 		`id="planning-intro"`,
 		`id="system-alerts-banner"`,
-		`var DASHBOARD_LAYOUT_ANCHOR_ID='dashboard-notices';`,
+		`var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';`,
 		`function dashboardPinNoticeAnchor(region)`,
 		`function dashboardTopAnchor(region)`,
 	} {
@@ -24,7 +24,7 @@ func TestDashboardNoticesPinnedAboveReorderableSections(t *testing.T) {
 		}
 	}
 
-	notices := strings.Index(html, `id="dashboard-notices"`)
+	notices := strings.Index(html, `id="dash-notices"`)
 	firstSection := strings.Index(html, `data-dashboard-section="overview-section"`)
 	if notices < 0 || firstSection < 0 || notices > firstSection {
 		t.Fatalf("dashboard notices wrapper is not before the first reorderable section")
