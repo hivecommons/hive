@@ -1,0 +1,1 @@
+- Require the current candidate build to complete the stable-promotion soak before `stable` advances.
