@@ -34,6 +34,9 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 - [Architecture](architecture.md)
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
+- [Maintainer commands](maintainer-commands.md) — slash commands for un-parking
+  issues, requesting help, confirming fixes, reopening issues, and using label
+  or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
 - [Security model](security-model.md)
 - [Data collection and telemetry](telemetry.md)
