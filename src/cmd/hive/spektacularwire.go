@@ -15,8 +15,10 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/planengine"
 	"github.com/hivecommons/hive/pkg/pushbroker"
-	"github.com/hivecommons/hive/pkg/spektacular"
+	// Linking pkg/spektacular registers the default "spektacular" engine.
+	_ "github.com/hivecommons/hive/pkg/spektacular"
 )
 
 // wireSpektacularRunner installs the Spektacular stage runner on the
@@ -32,22 +34,45 @@ func wireSpektacularRunner(cfg *config.Config, srv *dashboard.Server, logger *sl
 }
 
 func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth) bool {
-	return wireSpektacularRunnerStages(cfg, srv, logger, cloneAuth, true)
+	return wirePlanningEngine(cfg, srv, logger, cloneAuth, true)
 }
 
-// wireSpektacularRunnerStages is wireSpektacularRunnerWithCloneAuth with the
-// hub executor install step made optional, so rewireSpektacular's keep path
-// (hivecommons/hive#10069) can rebuild the stage runner and re-probe the
-// binary without installing a new executor — doing so would swap out the
-// kept one and stop it via dashboard.Server.SetStageExecutor's old-vs-new
-// comparison, even though the swap is immediately reverted.
-func wireSpektacularRunnerStages(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth, installExecutor bool) bool {
-	if cfg == nil || srv == nil || !cfg.Runs.Spektacular.Enabled {
+// wirePlanningEngine builds the planning engine selected by runs.engine
+// (ADR-0021), probes it, publishes the probe through SetSpektacularStatus and
+// installs the stage observer when the selected engine's block is enabled.
+// With runs.engine unset that is exactly runs.spektacular.enabled. An unknown
+// engine installs no runner and never falls back to another engine.
+//
+// The hub executor install step is optional so rewireSpektacular's keep path
+// (hivecommons/hive#10069) can rebuild the stage runner and re-probe without
+// installing a new executor — doing so would swap out the kept one and stop
+// it via dashboard.Server.SetStageExecutor's old-vs-new comparison, even
+// though the swap is immediately reverted.
+func wirePlanningEngine(cfg *config.Config, srv *dashboard.Server, logger *slog.Logger, cloneAuth dashboard.SpekHubCloneAuth, installExecutor bool) bool {
+	if cfg == nil || srv == nil || !planningEngineEnabled(cfg.Runs) {
+		return false
+	}
+	name := cfg.Runs.EngineOrDefault()
+	build, ok := planengine.Lookup(name)
+	if !ok {
+		srv.SetStageRunner(nil)
+		if logger != nil {
+			logger.Error("[planengine] unknown runs.engine; no stage runner installed",
+				"engine", name, "registered", strings.Join(planengine.Names(), ", "))
+		}
+		return false
+	}
+	engine, err := build(cfg.Runs, logger)
+	if err != nil || engine == nil {
+		srv.SetStageRunner(nil)
+		if logger != nil {
+			logger.Error("[planengine] engine build failed; no stage runner installed", "engine", name, "error", err)
+		}
 		return false
 	}
 	binary := cfg.Runs.Spektacular.BinaryOrDefault()
-	probe, err := spektacular.Probe(context.Background(), binary)
-	srv.SetSpektacularStatus(dashboard.FrontendSpektacular{Present: probe.Present, Version: probe.Version, Binary: probe.Binary})
+	probe, err := engine.Probe(context.Background())
+	srv.SetSpektacularStatus(dashboard.FrontendSpektacular{Engine: engine.Name(), Present: probe.Present, Version: probe.Version, Binary: probe.Binary})
 	if logger != nil {
 		if err != nil {
 			logger.Warn("[spektacular] binary not available", "binary", binary, "error", err)
@@ -55,7 +80,12 @@ func wireSpektacularRunnerStages(cfg *config.Config, srv *dashboard.Server, logg
 			logger.Info("[spektacular] binary detected", "binary", probe.Binary, "version", probe.Version)
 		}
 	}
-	srv.SetStageRunner(spektacular.NewHubRunner(cfg.Runs, srv, logger))
+	srv.SetStageRunner(&planEngineObserver{runner: &planengine.Runner{
+		Engine:   engine,
+		Poll:     cfg.Runs.Spektacular.PollInterval(),
+		Registry: planengine.NewLeaseRegistryAdapter(srv, engine),
+		Logger:   logger,
+	}})
 	if installExecutor && cfg.Runs.Spektacular.HubExecutorEnabled() {
 		backend := cfg.Runs.Spektacular.HubExecutor.BackendOrDefault(defaultAgentBackend(cfg))
 		exec := dashboard.NewSpekHubExecutor(srv, cfg.Runs, backend, "", cloneAuth, logger)
@@ -70,10 +100,29 @@ func wireSpektacularRunnerStages(cfg *config.Config, srv *dashboard.Server, logg
 	}
 	if logger != nil {
 		logger.Info("[spektacular] stage runner installed",
+			"engine", engine.Name(),
 			"binary", binary,
 			"poll", cfg.Runs.Spektacular.PollInterval().String())
 	}
 	return true
+}
+
+// planningEngineEnabled reports whether the block of the engine runs.engine
+// selects is enabled. Only runs.spektacular exists today, and every engine
+// still runs through its Enabled switch, so with runs.engine unset the
+// condition is exactly runs.spektacular.enabled.
+func planningEngineEnabled(runs config.RunsConfig) bool {
+	return runs.Spektacular.Enabled
+}
+
+// planEngineObserver adapts the planengine observer to the dashboard's
+// StageRunner (Tick without a result; the observer logs its own result).
+type planEngineObserver struct {
+	runner *planengine.Runner
+}
+
+func (o *planEngineObserver) Tick(ctx context.Context, now time.Time) {
+	o.runner.Tick(ctx, now)
 }
 
 // spektacularRewireMu serializes live rewires: two dashboard saves racing
@@ -125,7 +174,7 @@ func rewireSpektacular(cfg *config.Config, srv *dashboard.Server, logger *slog.L
 		// stop it, even though the swap is reverted right after
 		// (hivecommons/hive#10069). Leaving it alone keeps its held
 		// generations and activity — and keeps it running.
-		wireSpektacularRunnerStages(cfg, srv, logger, cloneAuth, false)
+		wirePlanningEngine(cfg, srv, logger, cloneAuth, false)
 	} else {
 		srv.SetStageExecutor(nil)
 		wireSpektacularRunnerWithCloneAuth(cfg, srv, logger, cloneAuth)
