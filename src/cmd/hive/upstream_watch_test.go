@@ -58,6 +58,10 @@ func (r *recordingFiler) File(_ context.Context, issue upstreamwatch.Issue) (int
 	return 1, nil
 }
 
+func (r *recordingFiler) GetIssue(context.Context, int) (upstreamwatch.IssueOutcome, bool, error) {
+	return upstreamwatch.IssueOutcome{}, false, nil
+}
+
 func TestUpstreamWatchFiler_NeutralizesMentions(t *testing.T) {
 	rec := &recordingFiler{}
 	f := upstreamWatchFiler{Filer: rec}

@@ -3,6 +3,7 @@ package upstreamwatch
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -11,6 +12,10 @@ import (
 // stateReasonNotPlanned is the GitHub state_reason of an issue closed as
 // "not planned".
 const stateReasonNotPlanned = "not_planned"
+
+// stateReasonCompleted is the GitHub state_reason of an issue closed as
+// completed.
+const stateReasonCompleted = "completed"
 
 // markerSearchPerPage bounds the marker search: a marker is unique per
 // upstream item, so a handful of results is plenty.
@@ -61,6 +66,29 @@ func (g *GitHubFiler) File(ctx context.Context, issue Issue) (int, error) {
 		return 0, fmt.Errorf("create issue on %s/%s: %w", g.owner, g.repo, err)
 	}
 	return created.GetNumber(), nil
+}
+
+// GetIssue implements Filer. It is the reconciliation pass's read of one
+// previously filed fork issue's current state.
+func (g *GitHubFiler) GetIssue(ctx context.Context, number int) (IssueOutcome, bool, error) {
+	issue, resp, err := g.client.Issues.Get(ctx, g.owner, g.repo, number)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return IssueOutcome{}, false, nil
+		}
+		return IssueOutcome{}, false, fmt.Errorf("get issue %s/%s#%d: %w", g.owner, g.repo, number, err)
+	}
+	if issue.GetState() != "closed" {
+		return IssueOutcome{Open: true}, true, nil
+	}
+	out := IssueOutcome{}
+	switch {
+	case issueDismissed(issue):
+		out.Dismissed = true
+	case issue.GetStateReason() == stateReasonCompleted:
+		out.Ported = true
+	}
+	return out, true, nil
 }
 
 // issueDismissed reports whether a fork issue was closed as "not planned" or
