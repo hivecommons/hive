@@ -293,7 +293,7 @@ func TestManager_PublishesReadingForSupportedBackend(t *testing.T) {
 	m := NewManager(rotationTestConfig())
 	m.EnableContributorReadingPublish(dir, "")
 
-	// Healthy probe for anthropic (fronts "claude","pi").
+	// Healthy probe for anthropic fronts Claude Code, never Pi.
 	m.SetHeadroom(Headroom{
 		Provider:  "anthropic",
 		Available: true,
@@ -305,10 +305,13 @@ func TestManager_PublishesReadingForSupportedBackend(t *testing.T) {
 	if reading.State != "available" || len(reading.Limits) != 1 || reading.Limits[0].PctRemaining != 55 {
 		t.Errorf("claude reading = %+v", reading)
 	}
-	// Same reading published for every backend fronting the provider.
-	readJSONFile(t, ContributorReadingPath(dir, "pi", ""), &reading)
-	if reading.State != "available" {
-		t.Errorf("pi reading state = %q", reading.State)
+	m.announceContributorPublisher()
+	if _, err := os.Stat(ContributorPublisherMarkerPath(dir, "pi", "")); !os.IsNotExist(err) {
+		t.Errorf("Claude reader must not announce a Pi publisher: %v", err)
+	}
+	// Even an operator rotation config listing Pi cannot assume Claude's pool.
+	if _, err := os.Stat(ContributorReadingPath(dir, "pi", "")); !os.IsNotExist(err) {
+		t.Errorf("Claude reader must not publish to Pi: %v", err)
 	}
 
 	// A failed probe must overwrite with "unknown", never leave/emit healthy.
@@ -362,12 +365,12 @@ func TestContributorGuardProviders(t *testing.T) {
 
 // The publish-only default backend map (kubestellar/hive#6987) must flatten to
 // exactly QUOTA_GUARD_SUPPORTED_BACKENDS in bin/contributor-relay.js
-// ({claude, pi, codex, agy, gemini, kiro}): a backend the relay guards but this map
+// ({claude, codex, agy, gemini, kiro}): a backend the relay guards but this map
 // omits gets no reading and silently stays on the unprovisioned admit; a
 // backend here the relay does not guard writes files nothing reads. Every
 // provider in the map must itself be guard-supported.
 func TestContributorGuardDefaultBackends_MatchesRelaySupportedSet(t *testing.T) {
-	want := map[string]bool{"claude": true, "pi": true, "codex": true, "agy": true, "gemini": true, "kiro": true}
+	want := map[string]bool{"claude": true, "codex": true, "agy": true, "gemini": true, "kiro": true}
 	got := map[string]bool{}
 	for provider, backends := range contributorGuardDefaultBackends {
 		if !contributorGuardProviders[provider] {
@@ -549,7 +552,7 @@ func TestAnnounceContributorPublisher_WritesMarkersForAllGuardPools(t *testing.T
 	m := NewContributorReadingPublisher(dir, "")
 	m.announceContributorPublisher()
 
-	for _, backend := range []string{"claude", "pi", "codex", "agy", "gemini"} {
+	for _, backend := range []string{"claude", "codex", "agy", "gemini"} {
 		if _, err := os.Stat(ContributorPublisherMarkerPath(dir, backend, "")); err != nil {
 			t.Errorf("no presence marker for %s after announce: %v", backend, err)
 		}
@@ -671,7 +674,6 @@ func TestContributorBackendReadingPublisher_KeepsNotInstalledSkip(t *testing.T) 
 func TestContributorGuardBackendProvider_CoversTheRelaySupportedSet(t *testing.T) {
 	want := map[string]string{
 		"claude": "anthropic",
-		"pi":     "anthropic",
 		"codex":  "openai",
 		"agy":    "google",
 		"gemini": "google",
@@ -683,7 +685,7 @@ func TestContributorGuardBackendProvider_CoversTheRelaySupportedSet(t *testing.T
 			t.Errorf("ContributorGuardBackendProvider(%q) = %q,%v; want %q,true", backend, got, ok, provider)
 		}
 	}
-	for _, backend := range []string{"copilot", "bob", "goose", "opencode", ""} {
+	for _, backend := range []string{"pi", "copilot", "bob", "goose", "opencode", ""} {
 		if _, ok := ContributorGuardBackendProvider(backend); ok {
 			t.Errorf("backend %q has no guard reading and must report unsupported", backend)
 		}
