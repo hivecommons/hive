@@ -3638,6 +3638,65 @@ test('profiles sharing a hub URL retain independent disabled flags and connectio
   } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('all-disabled CLI readiness stays ready and ignores unowned token refreshes', async () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_HUB_DISABLED: 'true,true' }, cliStates: ['ready'] });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    for (const hub of hubs) relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hub);
+    relay.armCLIReadyWait();
+    await flushMicrotasks();
+    assert.strictEqual(relay.getCliReady(), true);
+    assert.strictEqual(relay.getCliReadyFailed(), false, 'no missing-hub exception should enter CLI failure handling');
+    for (const hub of hubs) {
+      relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'unowned-token' }), hub);
+      relay.handleMessage(JSON.stringify({ type: 'token_refresh_failed', reason: 'unowned' }), hub);
+    }
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.ok(!sentA.concat(sentB).some(m => m.type === 'ready'));
+  } finally { teardown(relay); }
+});
+
+for (const sharedURL of [false, true]) {
+  test(`token rotation preserves in-flight hub identity after reorder (shared URL: ${sharedURL})`, () => {
+    const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+    fs.mkdirSync(scratchRoot, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(scratchRoot, 'rotate-'));
+    const envFile = path.join(dir, 'contributor.env');
+    const urls = ['wss://hub-a.example/contribute', sharedURL ? 'wss://hub-a.example/contribute' : 'wss://hub-b.example/contribute'];
+    const relay = loadRelay({ env: { HIVE_HUB: urls.join(','), HIVE_REGISTRATION_TOKEN: 'tok-a,tok-b',
+      CONTRIBUTOR_ID: 'c1,c2', HIVE_CONTRIBUTOR_ENV: envFile } });
+    try {
+      const { hubs } = attachHubSinks(relay);
+      const original = hubs.slice();
+      relay.setCliReady(true);
+      for (let i = 0; i < 2; i++) relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: `c${i + 1}` }), original[i]);
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'rotating', repo: 'o/r', number: 1, kind: 'issue', title: 'work' }), original[0]);
+      const task = relay.getCurrentTask();
+      assert.ok(task);
+      const oldSocket = original[0].ws;
+      const otherSocket = original[1].ws;
+      original[0].authFailed = true;
+      fs.writeFileSync(envFile, `HIVE_HUB=${urls[1]},${urls[0]}\nHIVE_REGISTRATION_TOKEN=tok-b,rotated-a\nCONTRIBUTOR_ID=c2,c1\nHIVE_HUB_DISABLED=false,true\n`);
+      relay.reloadHubsFromProjection();
+      assert.deepStrictEqual(relay.getHubs(), [original[1], original[0]]);
+      assert.strictEqual(relay.getCurrentTask(), task);
+      assert.strictEqual(task._hub, original[0]);
+      assert.notStrictEqual(original[0].ws, oldSocket, 'rotated credentials reconnect the same hub object');
+      assert.strictEqual(original[1].ws, otherSocket, 'other profile must not reconnect');
+      assert.strictEqual(original[0].regToken, 'rotated-a');
+      assert.strictEqual(original[0].authenticated, false);
+      assert.strictEqual(original[0].authFailed, false);
+      const frames = [];
+      original[0].ws = { readyState: 1, send: p => frames.push(JSON.parse(p)) };
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), original[0]);
+      relay.handleMessage(JSON.stringify({ type: 'token_refresh_failed', reason: 'renewal failed' }), original[0]);
+      relay.sendTo(task._hub, { type: 'task_complete', task_id: task.task_id });
+      assert.ok(frames.some(m => m.type === 'task_complete'), 'completion reaches the reconnected owner');
+      assert.ok(!frames.some(m => m.type === 'ready'), 'disabled task owner never solicits more work');
+    } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
 test('an all-disabled relay resumes solicitation on an enable reload', () => {
   const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
   fs.mkdirSync(scratchRoot, { recursive: true });

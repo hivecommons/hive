@@ -1285,9 +1285,10 @@ function disabledHubFlags(env, count) {
   return flags.map(s => s === 'true');
 }
 
-function makeHub(url, token, disabled = false) {
+function makeHub(url, token, disabled = false, contributorId = '') {
   return {
     disabled,
+    contributorId,
     url: hubWsURL(url),
     sourceURL: hubPublicURL(url),
     regToken: token,
@@ -1332,8 +1333,9 @@ function makeHub(url, token, disabled = false) {
   };
 }
 
+const initialContributorIds = String(process.env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
 const initiallyDisabledHubs = disabledHubFlags(process.env, rawHubList.length);
-const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i]));
+const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || ''));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
@@ -2137,8 +2139,9 @@ function hubListFromEnv(env) {
   if (hubList.length > 1 && tokenList.length !== hubList.length) {
     throw new Error(`HIVE_HUB lists ${hubList.length} hub(s) but HIVE_REGISTRATION_TOKEN lists ${tokenList.length} token(s)`);
   }
+  const contributorIds = String(env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
   const disabled = disabledHubFlags(env, hubList.length);
-  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i] }));
+  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '' }));
 }
 
 function stopHub(hub, reason) {
@@ -2178,23 +2181,39 @@ function reloadHubsFromProjection() {
   commonsStrategy = normalizeCommonsStrategy(projection.HIVE_COMMONS_STRATEGY || projection.HIVE_CONTRIBUTOR_STRATEGY || commonsStrategy);
   refreshCommonsStatusTimer();
   // Profiles may share a URL (for example separate contributor sessions).
-  // Match credentials as well so toggling one never reconnects another's task.
+  // Identity is URL + contributor ID, not the rotatable registration token.
+  // Legacy projections without IDs can match credentials, or a unique URL;
+  // never guess by URL alone when multiple profiles share it.
   const remaining = new Set(hubs);
   const next = entries.map(entry => {
     const url = hubWsURL(entry.url);
-    const existing = [...remaining].find(h => h.url === url && h.regToken === entry.token);
+    const compatible = h => h.url === url &&
+      (!h.contributorId || !entry.contributorId || h.contributorId === entry.contributorId);
+    const existing = [...remaining].find(h => h.url === url && entry.contributorId && h.contributorId === entry.contributorId)
+      || [...remaining].find(h => compatible(h) && h.regToken === entry.token)
+      || (entries.filter(e => hubWsURL(e.url) === url).length === 1 && hubs.filter(h => h.url === url).length === 1
+        ? [...remaining].find(compatible) : null);
     if (existing) {
+      const tokenChanged = existing.regToken !== entry.token;
       existing.sourceURL = hubPublicURL(entry.url);
+      existing.contributorId = entry.contributorId || existing.contributorId;
       existing.disabled = entry.disabled;
       if (existing.disabled) invalidateReadyRetry(existing, 'hive disabled');
       remaining.delete(existing);
+      if (tokenChanged) {
+        stopHub(existing, 'registration token changed');
+        existing.regToken = entry.token;
+        existing.authFailed = false;
+        existing.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+        connectHub(existing);
+      }
       return existing;
     }
-    const hub = makeHub(entry.url, entry.token, entry.disabled);
+    const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId);
     connectHub(hub);
     return hub;
   });
-  for (const removed of remaining) stopHub(removed, 'removed or credentials changed in contributor.env');
+  for (const removed of remaining) stopHub(removed, 'removed from contributor.env');
   hubs.splice(0, hubs.length, ...next);
   activeHubIndex = hubs.findIndex(h => !h.disabled && !h.authFailed);
   if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
@@ -4241,7 +4260,7 @@ function armCLIReadyWait() {
     cliReady = true;
     cliReadyFailed = false;
     const hub = currentTaskHub();
-    if (!currentTask && hub.authenticated) {
+    if (!currentTask && hub && hub.authenticated) {
       requestWork(hub, 'cli_ready');
     }
     flushPendingTask();
