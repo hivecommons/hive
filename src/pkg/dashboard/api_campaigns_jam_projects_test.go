@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -305,5 +306,63 @@ func TestCampaignJamProjectSyncStoreFailuresReport5xx(t *testing.T) {
 	}, true)
 	if syncPost.Code != http.StatusInternalServerError {
 		t.Fatalf("project-sync sync on corrupt store = %d body=%s, want 500", syncPost.Code, syncPost.Body.String())
+	}
+}
+
+// TestJamProjectSyncUsesProjectsV2ForEnterpriseEndpoints covers the rest of
+// hivecommons/hive#10086: a GitHub Enterprise Server GraphQL endpoint
+// (https://<host>/api/graphql) is a real GitHub API with the Projects v2
+// schema and no hiveJamProjectSync field, so an override pointing at one must
+// publish draft issues the same way the canonical endpoint does instead of
+// posting the hive's own mutation. Endpoints that are not GitHub GraphQL
+// APIs keep the previous behaviour.
+func TestJamProjectSyncUsesProjectsV2ForEnterpriseEndpoints(t *testing.T) {
+	projectsV2 := []string{
+		"https://api.github.com/graphql",
+		"https://ghe.example.com/api/graphql",
+		"https://github.example.com/api/graphql",
+	}
+	for _, raw := range projectsV2 {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %s: %v", raw, err)
+		}
+		if !jamProjectSyncUsesProjectsV2(u) {
+			t.Fatalf("%s treated as a non-GitHub endpoint, want the Projects v2 mutation", raw)
+		}
+	}
+	custom := []string{
+		"http://127.0.0.1:8080",
+		"https://relay.example.com/jam-sync",
+		"https://user:pass@ghe.example.com/api/graphql",
+		"https://ghe.example.com/graphql",
+	}
+	for _, raw := range custom {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %s: %v", raw, err)
+		}
+		if jamProjectSyncUsesProjectsV2(u) {
+			t.Fatalf("%s treated as a GitHub GraphQL endpoint", raw)
+		}
+	}
+}
+
+// TestJamProjectSyncEnterpriseEndpointKeepsItsOwnToken pins the token binding
+// that #10086's routing change must not disturb: an enterprise GraphQL
+// override now gets the Projects v2 mutation, but still only ever receives
+// HIVE_JAM_PROJECT_SYNC_TOKEN, never GITHUB_TOKEN (#8811).
+func TestJamProjectSyncEnterpriseEndpointKeepsItsOwnToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "gh-secret")
+	t.Setenv(jamProjectSyncTokenEnv, "custom-token")
+	endpoint, token, err := jamProjectSyncAuth("https://ghe.example.com/api/graphql")
+	if err != nil {
+		t.Fatalf("jamProjectSyncAuth: %v", err)
+	}
+	if endpoint != "https://ghe.example.com/api/graphql" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+	if token != "custom-token" {
+		t.Fatalf("token = %q, want the custom endpoint token", token)
 	}
 }
