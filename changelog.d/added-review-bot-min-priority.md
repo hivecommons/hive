@@ -1,1 +1,0 @@
-- Add optional `classification.review_bots.min_priority` to route only findings at or above a Codex priority badge, preserve unknown formats, and report per-PR filtered counts while leaving lower-priority threads for humans ([#10479](https://github.com/hivecommons/hive/issues/10479)).

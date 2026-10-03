@@ -1,1 +1,0 @@
-- Clarify Reporter trust help text: commit-history associations can grant trust automatically when checked, while the default associations require org membership or repo access; explain Always-trusted logins and remove the obsolete rollout note and issue link ([#10487](https://github.com/hivecommons/hive/issues/10487)).
