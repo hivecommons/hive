@@ -42,6 +42,19 @@
 #                   bad update, when the top of the history is the bad pin.
 #   unpin           remove the drop-in, returning the unit to the floating tag
 #                   in hive.container, and restart.
+#   upgrade <ref> [--force-pin]
+#                   The single entry point dashboard-triggered upgrades use
+#                   (#10344 gap 3), so the caller never has to know which
+#                   mechanism a host is on. If registry tracking is OFF, this
+#                   is `pin <ref>`, unchanged. If it is ON, <ref> must name the
+#                   SAME floating tag the unit already tracks -- that is what
+#                   `podman auto-update` polls -- and this runs that instead of
+#                   writing a digest pin, so podman-auto-update.timer and the
+#                   AutoUpdate=registry drop-in are both left in place. A <ref>
+#                   that does not match the tracked tag is REFUSED, not
+#                   silently pinned: a pin here would shadow registry tracking
+#                   (see src/docs/podman-auto-update.md), and that trade-off
+#                   needs `--force-pin` to opt into explicitly.
 #   reconcile [check|apply]
 #                   Compare the repo-owned files this host RUNS FROM against
 #                   the checkout, and with `apply` re-copy the ones that have
@@ -107,6 +120,7 @@ HISTORY_KEEP=10
 ROOTFUL=0
 CMD=""
 REF=""
+FORCE_PIN=0
 
 c_reset=""; c_bold=""; c_red=""; c_green=""; c_yellow=""
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -128,20 +142,21 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    status|resolve|pin|rollback|unpin|autoupdate|reconcile)
+    status|resolve|pin|rollback|unpin|autoupdate|reconcile|upgrade)
       # `autoupdate status` is a command plus an ACTION, and the action happens
       # to be spelled the same as another command. Only the argument-taking
       # commands may absorb a second one of these words; `status rollback` is
       # still two commands and still an error.
       if [ -z "$CMD" ]; then
         CMD="$1"
-      elif [ -z "$REF" ] && case "$CMD" in autoupdate|reconcile|pin|resolve) true ;; *) false ;; esac; then
+      elif [ -z "$REF" ] && case "$CMD" in autoupdate|reconcile|pin|resolve|upgrade) true ;; *) false ;; esac; then
         REF="$1"
       else
         printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage
       fi ;;
     --rootful)  ROOTFUL=1 ;;
     --rootless) ROOTFUL=0 ;;
+    --force-pin) FORCE_PIN=1 ;;
     -h|--help)  usage ;;
     -*) printf 'unknown option: %s\n' "$1" >&2; usage ;;
     *)
@@ -966,6 +981,105 @@ do_pin() {
   exit "$EX_CONFIG"
 }
 
+# --- upgrade: the one entry point a caller that does not want to know this
+# host's tracking mode should use (#10344 gap 3) -----------------------------
+#
+# `pin` and `podman auto-update` both want the same Image= line, and #4378
+# already measured that the pin wins silently: a digest cannot change, so
+# auto-update reports UPDATED=false, exits 0, and the timer looks exactly like
+# "up to date" forever after. `bin/hive-dashboard-upgrade-helper.sh` and
+# `bin/hive-upgrade-request.sh` used to call `pin` unconditionally, which did
+# that silently on every tracked host. `upgrade` is the fix: it looks at
+# whether registry tracking is on and picks the mechanism that will not shadow
+# it, or refuses outright rather than doing so without being told.
+do_upgrade() {
+  [ -n "$REF" ] || { printf 'upgrade needs a reference\n' >&2; usage; }
+  require_unit
+
+  if ! autoupdate_on_host; then
+    # No tracking to shadow: this is exactly #4378's pin, unchanged.
+    do_pin
+    return $?
+  fi
+
+  local tracked_tag; tracked_tag="$(unit_image)"
+  if [ "$FORCE_PIN" -eq 0 ] && { [ "$REF" != "$tracked_tag" ] || [[ "$REF" == *@sha256:* ]]; }; then
+    head1 "Upgrade -- $MODE_LABEL"
+    bad "registry tracking is ON ($AUTOUPDATE_TIMER) -- refusing to pin"
+    info "tracked tag: ${tracked_tag:-<unknown>}"
+    info "requested:   $REF"
+    info "podman auto-update polls the tracked tag; it cannot be told to poll a"
+    info "different tag or a digest, and pinning $REF here would SILENTLY disable"
+    info "$AUTOUPDATE_TIMER (the #10421 footgun -- see src/docs/podman-auto-update.md)"
+    info ""
+    info "to pin anyway and accept that trade-off: $0 upgrade $REF --force-pin${MODE_FLAG}"
+    exit "$EX_CONFIG"
+  fi
+  if [ "$FORCE_PIN" -eq 1 ] && { [ "$REF" != "$tracked_tag" ] || [[ "$REF" == *@sha256:* ]]; }; then
+    warn "--force-pin: pinning $REF over registry tracking, as asked"
+    info "$AUTOUPDATE_TIMER stays enabled but has nothing left to poll once this writes a digest"
+    do_pin
+    return $?
+  fi
+
+  do_registry_update "$tracked_tag"
+}
+
+# Drives an immediate check via the SAME mechanism podman-auto-update.timer
+# already runs on its own schedule, so a dashboard-triggered upgrade on a
+# tracked host costs nothing in posture: the timer and the AutoUpdate=registry
+# drop-in are both still there afterwards.
+do_registry_update() {
+  local tracked_tag="$1" out line rc=0 matched=0
+  head1 "Upgrade (registry-tracked) -- $MODE_LABEL"
+  info "polling ${tracked_tag} the way $AUTOUPDATE_TIMER already does (#4411);"
+  info "this does not write a digest pin"
+
+  head1 "podman auto-update"
+  out="$(pod auto-update --rollback=true --format '{{.Unit}}|{{.Container}}|{{.Image}}|{{.Policy}}|{{.Updated}}' 2>&1)"
+  rc=$?
+  [ -n "$out" ] && say "$out"
+  while IFS='|' read -r u_unit u_container u_image u_policy u_updated; do
+    [ "$u_unit" = "$UNIT" ] || continue
+    matched=1
+    case "$u_updated" in
+      true)         ok "updated to $u_image" ;;
+      false)        ok "already up to date on $u_image" ;;
+      "rolled back")
+        bad "the new image did not stay healthy; podman rolled it back to $u_image"
+        rc="$EX_CONFIG" ;;
+      *) warn "unexpected UPDATED value from podman: ${u_updated:-<empty>}" ;;
+    esac
+  done <<<"$out"
+  if [ "$matched" -eq 0 ]; then
+    warn "podman auto-update did not report on $UNIT -- see the raw output above"
+  fi
+
+  # #6078, same as `pin`: the image may have just moved, so the gateway
+  # config shipped alongside it has to move too.
+  head1 "Managed files"
+  refresh_gateway_config || true
+  if have_checkout && ! managed_report 0; then
+    warn "unit files on this host are older than the checkout, and were NOT rewritten"
+    info "a unit change needs a container recreate to mean anything:"
+    info "    $0 reconcile apply${MODE_FLAG}"
+  fi
+
+  head1 "Result"
+  if [ "$rc" -ne 0 ]; then
+    bad "the registry-tracked upgrade did not end healthy for $UNIT"
+    exit "$EX_CONFIG"
+  fi
+  if ensure_gateway_serving; then
+    ok "registry-tracked upgrade completed and the deployment is serving"
+    info "$AUTOUPDATE_TIMER remains enabled; this did not write a pin"
+    exit 0
+  fi
+  bad "podman reports $UNIT healthy, but the DEPLOYMENT is not serving"
+  info "the dashboard stays dead until the gateway is up: $SCTL_LABEL start $GATEWAY_UNIT"
+  exit "$EX_CONFIG"
+}
+
 do_rollback() {
   require_unit
   head1 "Rollback -- $MODE_LABEL"
@@ -1204,6 +1318,7 @@ case "$CMD" in
   autoupdate) do_autoupdate ;;
   resolve)    do_resolve ;;
   pin)        do_pin ;;
+  upgrade)    do_upgrade ;;
   rollback)   do_rollback ;;
   unpin)      do_unpin ;;
   reconcile)  do_reconcile ;;

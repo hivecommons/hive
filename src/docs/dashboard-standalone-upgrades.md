@@ -114,7 +114,7 @@ notices and runs the real update script outside every container namespace.
 container  %E/hive/upgrade-requests -> /run/hive/upgrade-requests   (rw, the only writable mount)
 host       hive-upgrade.path  --PathExistsGlob-->  hive-upgrade.service
                                                    -> hive-upgrade-request.sh apply
-                                                      -> bin/hive-podman-update.sh pin <ref>
+                                                      -> bin/hive-podman-update.sh upgrade <ref>
 ```
 
 Assets: `src/deploy/systemd/hive-upgrade.path`,
@@ -179,16 +179,24 @@ untrusted input:
   `hive-upgrade-request.sh` to run".
 
 The bridge changes **where** an upgrade runs, not what it does: it still
-delegates to `bin/hive-podman-update.sh pin <ref>`, with the digest-pin
-consequences described under operational notes below.
+delegates to `bin/hive-podman-update.sh upgrade <ref>`, which is `pin` on a
+host that is not tracking the registry and `podman auto-update` semantics
+(unchanged timer, unchanged `AutoUpdate=registry` drop-in) on one that is —
+see [podman-auto-update.md](podman-auto-update.md) and gap 3 of
+[#10344](https://github.com/hivecommons/hive/issues/10344) for why a plain
+`pin` would silently disable tracking.
 
 ## Operational notes
 
 - Owner authorization is still required on `/api/self-upgrade`.
-- Podman dashboard upgrades write a digest pin. On hosts using
-  `podman-auto-update.timer`, the pin shadows automatic registry updates until
-  the operator runs `bin/hive-podman-update.sh unpin` or otherwise chooses that
-  posture.
+- Podman dashboard upgrades go through `bin/hive-podman-update.sh upgrade
+  <ref>`. On a host **not** using `podman-auto-update.timer`, this writes a
+  digest pin, same as `bin/hive-podman-update.sh pin <ref>` always has. On a
+  host that **is** tracking the registry, `upgrade` instead drives
+  `podman auto-update` directly so the timer and the `AutoUpdate=registry`
+  drop-in are both left in place; it REFUSES rather than silently pinning if
+  `<ref>` is not the tag the host already tracks (a digest, or a different
+  tag), and `--force-pin` is the explicit, documented way to override that.
 - Podman dashboard upgrades are image-only. The update script refreshes the
   gateway config but does not rewrite Quadlet/boot units; run
   `bin/hive-podman-update.sh reconcile check` or `reconcile apply` for host
@@ -198,5 +206,7 @@ consequences described under operational notes below.
   60-second Watchtower poller and manual dashboard upgrades unless they accept
   that Watchtower may observe the image as already current.
 - Rollback remains runtime-specific: Podman uses the update script's newest
-  healthy pin; Compose keeps the old image available for an operator/helper to
-  run with Docker if a post-swap rollback is needed.
+  healthy pin (an auto-update-driven upgrade does not add a pin history entry;
+  `rollback` after one requires `unpin` was never run and a prior pin exists);
+  Compose keeps the old image available for an operator/helper to run with
+  Docker if a post-swap rollback is needed.

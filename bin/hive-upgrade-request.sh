@@ -245,14 +245,15 @@ apply_one() {
   # allow-list, and it is still passed as a separate word rather than
   # interpolated — the validation is the first guard, not the only one.
   #
-  # `pin` is what bin/hive-dashboard-upgrade-helper.sh already delegates to, so
-  # the bridge changes WHERE the upgrade runs and nothing about WHAT it does.
-  # Switching tracking=registry to podman-auto-update semantics is a separate,
-  # deliberate change (#10344 gap 3) and is not smuggled in here.
+  # `upgrade` is what bin/hive-dashboard-upgrade-helper.sh now delegates to as
+  # well (#10344 gap 3): it is `pin` when the host is not on registry
+  # tracking, unchanged, and `podman auto-update` semantics instead of a
+  # digest pin when it is — so a request routed through the bridge gets the
+  # same posture-preserving behaviour as one run by hand.
   say ""
-  if "$UPDATE_SCRIPT" pin "$ref" "$MODE_FLAG"; then
+  if "$UPDATE_SCRIPT" upgrade "$ref" "$MODE_FLAG"; then
     ok "upgrade to ${ref} completed and ended healthy"
-    archive_request "$file" "$DONE_DIR" "ok: pinned ${ref}"
+    archive_request "$file" "$DONE_DIR" "ok: upgraded to ${ref}"
     return 0
   fi
   bad "upgrade to ${ref} did not end healthy; see the output above"
