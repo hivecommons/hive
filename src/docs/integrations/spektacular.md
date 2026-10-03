@@ -10,6 +10,34 @@ Project Inception can admit an approved issue into a long-running `spec` run whe
 
 Spektacular owns artifact state; Hive owns the workflow lease. Hive polls Spektacular for `spec` and `plan` artifacts, advances leases on final documents, and imports final plan tasks into Hive's planner (`src/pkg/planengine/adapter.go:114`). The dashboard side stays decoupled through the stage lease interface and `SetStageRunner` (`src/pkg/dashboard/stage_leases.go:87`).
 
+## Selecting an engine
+
+Which planning engine observes those stages is named by `runs.engine`
+(ADR-0021). Unset means `spektacular`, which is the CLI contract described
+below, so existing `runs.spektacular` configs need no edit:
+
+```yaml
+runs:
+  engine: spektacular        # default; the name of a registered engine
+  spektacular:
+    enabled: true
+```
+
+- Each engine reads its own `runs.<engine>` block; the `spektacular` engine is
+  built from `runs.spektacular.binary` (`src/pkg/spektacular/register.go:17`),
+  and the selected engine's `enabled` switch still gates the runner
+  (`src/cmd/hive/spektacularwire.go:114`).
+- An unknown name fails config validation rather than silently falling back:
+  `ValidateEngine` rejects any name no engine registered
+  (`src/pkg/config/runs_config.go:201`). If an unregistered name does reach
+  boot, Hive installs no stage runner at all
+  (`src/cmd/hive/spektacularwire.go:56`).
+- Receipts, stage status and imported epics name the engine that produced
+  them, so mixed-engine history stays auditable.
+
+Adding an engine is a Go change, not a config one: see [Writing a planning
+engine](../spektacular.md#writing-a-planning-engine).
+
 ## Interface
 
 Hive talks to a CLI executable, configured by `runs.spektacular.binary` with default `spektacular` (`src/pkg/config/runs_config.go:137`). The runner executes commands through `BinaryExec`, which runs the configured binary with arguments and captures stdout (`src/pkg/spektacular/runner.go:249`).
@@ -106,8 +134,9 @@ Use `pkg/spektacular/testdata/spektacular-fake/spektacular`, which implements th
 - Rate limits: tune `poll_interval_s`; every active `spec` or `plan` stage is polled at that cadence (`src/pkg/config/runs_config.go:145`).
 - Failure modes: missing artifacts become typed not-found errors; stale/replaced documents are refused rather than silently rebound; expired leases retry until `max_stage_retries` then escalate (`src/pkg/spektacular/runner.go:300`, `src/pkg/spektacular/runner.go:520`).
 - What is exposable: status JSON, plan export JSON, run-stage work items, stage receipts, and campaign projections through `/api/campaigns`.
-- What is not exposable: Hive does not open Spektacular files directly, does not provide a generic planning-engine registry, and does not let a third-party engine mutate Hive's leases except through the configured runner boundary.
+- What is not exposable: Hive does not open Spektacular files directly, and no engine may mutate Hive's leases — an engine only answers questions about documents (`src/pkg/planengine/engine.go:20`). Engines are registered in-process; there is no remote/HTTP engine transport.
 
 ## Gaps
 
-- A different inception/planning engine can work only by behaving like the Spektacular CLI or by adding new Hive code. There is no named `runs.<engine>` registry for Project Inception yet; tracked in [#10175](https://github.com/hivecommons/hive/issues/10175).
+- A planning engine other than Spektacular is now a registered Go package selected by `runs.engine`, so it no longer has to behave like the Spektacular CLI ([Writing a planning engine](../spektacular.md#writing-a-planning-engine)). What [#10175](https://github.com/hivecommons/hive/issues/10175) still leaves open is an out-of-process engine: the boundary is compile-time, so an engine Hive does not link must either emulate the baseline CLI through `runs.spektacular.binary` or wait for a later ADR that defines a remote engine.
+- Document authoring stays Spektacular-specific: the hub executor and design-mode paths write documents rather than observe them, and they are not part of the engine interface.
