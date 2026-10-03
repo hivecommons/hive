@@ -1,6 +1,8 @@
 # ADR-0020: External work sources over a versioned HTTP/JSON contract
 
-Status: Proposed
+Status: Accepted — implemented in #10291 (config block, primary registry,
+`external` adapter, tests, and provider docs). Write-back
+(`hive.worksource/v2`) and the open questions below are still open.
 
 Tracked in #10174. Implementation in #10291.
 
