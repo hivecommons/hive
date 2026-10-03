@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.120.1)
+
+### Fixed
+
+- Fix dashboard nav peek scroll settling (#10319)
+
 ## 2026-10-02 (v5.120.0)
 
 ### Added

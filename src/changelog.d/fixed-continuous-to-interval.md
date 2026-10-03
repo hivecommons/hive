@@ -1,0 +1,1 @@
+- Let per-mode cadence edits convert legacy all-modes continuous into explicit settings so Interval and Off selections stick.
