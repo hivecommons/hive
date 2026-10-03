@@ -1,0 +1,1 @@
+- Add an `external` work source: `governor.work_source.type: external` reads actionable items from a provider-operated HTTPS shim over the versioned `hive.worksource/v1` JSON contract, read-only, with Hive keeping identity, credentials, and admission.
