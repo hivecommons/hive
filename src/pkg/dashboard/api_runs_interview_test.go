@@ -360,7 +360,7 @@ func TestSpekInterviewExecutorClearsConsumedRound(t *testing.T) {
 	launched := false
 	e.Exec = func(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
 		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
-			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft"}`), nil
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft"}`), nil
 		}
 		if name == "sh" {
 			launched = true
@@ -431,7 +431,7 @@ func spekInterviewExecutor(t *testing.T, s *Server, documentStatus string, agent
 	e := NewSpekHubExecutor(s, config.RunsConfig{Spektacular: config.SpektacularConfig{Enabled: true}}, "copilot", "", nil, nil)
 	e.Exec = func(_ context.Context, dir string, _ []string, name string, args ...string) ([]byte, error) {
 		if name == "spektacular" && len(args) >= 3 && args[1] == "status" {
-			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"` + documentStatus + `"}`), nil
+			return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"` + documentStatus + `"}`), nil
 		}
 		if name == "sh" {
 			agent(dir)

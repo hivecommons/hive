@@ -59,8 +59,8 @@ func (e *spekExec) push(kind string, statuses ...spektacular.DocumentStatus) {
 			closed, updated = `"2026-09-22T00:00:00Z"`, ``
 		}
 		e.queues[kind] = append(e.queues[kind], fmt.Sprintf(
-			`{"error":false,"kind":%q,"name":%q,"artifact_id":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
-			kind, spekRunKey, spekRunKey, st, updated, closed))
+			`{"error":false,"kind":%q,"name":%q,"document_status":%q,"current_step":"authoring","completed_steps":["interview"],"created_at":"2026-09-21T00:00:00Z"%s,"closed_at":%s,"spec":"","plan":""}`,
+			kind, spekRunKey, st, updated, closed))
 	}
 }
 
@@ -533,7 +533,7 @@ func TestHubExecutorSpendsStageBudgetUnderCleanupLoop(t *testing.T) {
 					return []byte("ok"), nil
 				case "spektacular":
 					if len(args) >= 3 && args[1] == "status" {
-						return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","artifact_id":"` + args[2] + `","document_status":"draft","current_step":"authoring"}`), nil
+						return []byte(`{"error":false,"kind":"spec","name":"` + args[2] + `","document_status":"draft","current_step":"authoring"}`), nil
 					}
 					return []byte("ok"), nil
 				}
