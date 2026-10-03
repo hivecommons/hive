@@ -649,6 +649,7 @@ governor:
 #       - "Copilot"
 #     max_attempts_per_thread: 1   # hive replies per thread before a human takes over
 #     resolve_after_fix: true      # false: reply but leave the thread open
+#     min_priority: P1             # P0-P3: skip threads with a lower-priority badge; unset = route all
 
 # GitHub authentication — use ONE of these methods
 github:

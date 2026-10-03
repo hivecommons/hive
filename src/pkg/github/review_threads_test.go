@@ -263,6 +263,32 @@ func TestFilterReviewThreads(t *testing.T) {
 	}
 }
 
+// Codex badges below min_priority are excluded; unbadged and at-or-above
+// threads still route, and the suffix-less GraphQL login matches.
+func TestFilterReviewThreads_MinPriority(t *testing.T) {
+	codex := func(p string) gqlComment {
+		return gqlComment{Author: "chatgpt-codex-connector", Body: "**<sub><sub>![" + p + " Badge](https://img.shields.io/badge/" + p + "-yellow)</sub></sub>** x"}
+	}
+	threads := []rawReviewThread{
+		rawThread("PRRT_p0", false, false, codex("P0")),
+		rawThread("PRRT_p1", false, false, codex("P1")),
+		rawThread("PRRT_p2", false, false, codex("P2")),
+		rawThread("PRRT_nobadge", false, false, gqlComment{Author: "Copilot", Body: "no badge"}),
+	}
+	bots := config.ReviewBotsConfig{Logins: []string{"chatgpt-codex-connector[bot]", "Copilot"}, MinPriority: "P1"}
+	var got []string
+	for _, th := range filterReviewThreads(threads, bots, isHiveTest) {
+		got = append(got, th.ThreadID)
+	}
+	if want := "PRRT_p0,PRRT_p1,PRRT_nobadge"; strings.Join(got, ",") != want {
+		t.Errorf("got %v, want %s", got, want)
+	}
+	bots.MinPriority = ""
+	if got := filterReviewThreads(threads, bots, isHiveTest); len(got) != 4 {
+		t.Errorf("unset min_priority must route everything, got %d", len(got))
+	}
+}
+
 func threadIDs(m map[string]ReviewThread) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
