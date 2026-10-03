@@ -220,6 +220,8 @@ build_fixture() {
      "${FIXTURE}/src/deploy/quadlet/"
   cp "${ROOT}"/src/deploy/systemd/hive-boot.target \
      "${ROOT}"/src/deploy/systemd/hive-boot-gate.service \
+     "${ROOT}"/src/deploy/systemd/hive-upgrade.service \
+     "${ROOT}"/src/deploy/systemd/hive-upgrade.path \
      "${FIXTURE}/src/deploy/systemd/"
 
   # Preflight stubs. Each records the runtime selector it was invoked with —
@@ -321,7 +323,7 @@ done
 # The boot decoupling pair (#4478): plain units, installed into the systemd
 # unit directory rather than the Quadlet one, and the gate enabled — it is the
 # only Hive unit wanted by default.target.
-for unit in hive-boot.target hive-boot-gate.service; do
+for unit in hive-boot.target hive-boot-gate.service hive-upgrade.service hive-upgrade.path; do
   if [[ -f "${SYSTEMD_UNITS_DIR}/${unit}" ]]; then pass "installed ${unit}"; else fail "did not install ${unit}"; fi
 done
 # Installed VERBATIM: the rationale in the unit headers has to travel to the
