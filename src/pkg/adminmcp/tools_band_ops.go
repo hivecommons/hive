@@ -44,7 +44,11 @@ func validBandsFor(tool string) ([]string, bool) {
 // and `held` arguments filter `rows` here instead, before the limit cap, so
 // an agent asking "what's ready to close?" always gets the full donut shape,
 // not just the slice it filtered to, and a held row past the cap is not
-// silently dropped before the `held` filter ever sees it (#10018).
+// silently dropped before the `held` filter ever sees it (#10018). `offset`
+// pages the filtered rows the same way review_queue does — skip offset rows,
+// then cap to limit, disclosing next_offset when more remain — so a band
+// with more than MaxResultLimit rows is fully readable a page at a time
+// instead of only ever showing the first limit rows (#10018).
 func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 	validBands, ok := validBandsFor(tool)
 	if !ok {
@@ -58,6 +62,10 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 			Kind:      RefusalKindInvalidArgument,
 			Reason:    fmt.Sprintf("unknown band %q; valid bands: %s", band, strings.Join(validBands, ", ")),
 		}, nil
+	}
+	offset, err := OffsetFromArgs(args)
+	if err != nil {
+		return RefusalData{Type: "refusal", Operation: tool, Kind: RefusalKindInvalidArgument, Reason: err.Error()}, nil
 	}
 	held, filterHeld := args["held"].(bool)
 	body, ok := rekeyBandRows(data).(map[string]any)
@@ -94,12 +102,22 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 	}
 	limit := LimitFromArgs(args)
 	total := len(rows)
-	out := make(map[string]any, len(body)+1)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	out := make(map[string]any, len(body)+2)
 	for k, v := range body {
 		out[k] = v
 	}
-	if total > limit {
-		out["rows"] = rows[:limit]
+	out["rows"] = rows[start:end]
+	out["offset"] = offset
+	if end < total {
+		out["next_offset"] = end
 		out["rows_truncated"] = true
 		out["_admin_mcp"] = map[string]any{
 			"truncated":        true,
@@ -107,19 +125,18 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 			"total":            total,
 			"truncated_fields": []string{"rows"},
 		}
-	} else {
-		out["rows"] = rows
 	}
 	return out, nil
 }
 
 // BandReadPath builds the GET /api/overview/{issues,prs}.json request for the
 // issues_by_band / prs_by_band tools. It deliberately never forwards `band`,
-// `held` or `limit`: the endpoint would compute bands[] counts and rows over
-// only the filtered subset, so BandReadResult fetches every band and row and
-// applies the tool's own band filter, held filter and cap afterwards instead.
-// Both the dashboard and stdio admin MCP servers share this so the path can't
-// drift between them again (#10014, following #9160).
+// `held`, `offset` or `limit`: the endpoint would compute bands[] counts and
+// rows over only the filtered subset, so BandReadResult fetches every band
+// and row and applies the tool's own band filter, held filter, offset and
+// cap afterwards instead. Both the dashboard and stdio admin MCP servers
+// share this so the path can't drift between them again (#10014, following
+// #9160).
 func BandReadPath(tool string, args map[string]any) string {
 	kind := "issues"
 	if tool == ToolPrsByBand {

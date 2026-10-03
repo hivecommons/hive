@@ -1,9 +1,7 @@
 package adminmcp
 
 import (
-	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -66,7 +64,7 @@ type reviewQueueRow struct {
 // needing a human, ordered as reviewQueueOrdering documents, paged by the
 // tool's offset/limit with truncation disclosed the way BandReadResult does.
 func ReviewQueueResult(issues, prs any, args map[string]any) (any, error) {
-	offset, err := reviewQueueOffset(args)
+	offset, err := OffsetFromArgs(args)
 	if err != nil {
 		return RefusalData{Type: "refusal", Operation: ToolReviewQueue, Kind: RefusalKindInvalidArgument, Reason: err.Error()}, nil
 	}
@@ -228,29 +226,6 @@ func rowNumber(v any) float64 {
 	default:
 		return 0
 	}
-}
-
-func reviewQueueOffset(args map[string]any) (int, error) {
-	offset := 0
-	switch v := args["offset"].(type) {
-	case nil:
-	case float64:
-		offset = int(v)
-	case int:
-		offset = v
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
-			return 0, fmt.Errorf("offset must be a non-negative integer, got %q", v)
-		}
-		offset = n
-	default:
-		return 0, fmt.Errorf("offset must be a non-negative integer")
-	}
-	if offset < 0 {
-		return 0, fmt.Errorf("offset must be a non-negative integer, got %d", offset)
-	}
-	return offset, nil
 }
 
 func reviewQueueSchema() map[string]any {

@@ -1,0 +1,1 @@
+- Admin MCP `issues_by_band`/`prs_by_band` gain an `offset` argument so a `band`/`held` selection with more rows than the result's limit cap can be paged through a page at a time (`next_offset`), instead of only ever showing the first page (#10018).

@@ -417,11 +417,13 @@ func inputSchema(name string) map[string]any {
 		props["band"] = map[string]any{"type": "string", "enum": issueBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) issues before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
+		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolPrsByBand:
 		props["repo"] = map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."}
 		props["band"] = map[string]any{"type": "string", "enum": prBandKeys}
 		props["stale"] = map[string]any{"type": "boolean"}
 		props["held"] = map[string]any{"type": "boolean", "description": "Filter rows to held (held=true) or unheld (held=false) PRs before the limit cap, so held rows are not silently dropped by it; unlike `repo`, this does not change bands[] counts."}
+		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
 	case ToolGovernorSetup:
@@ -629,6 +631,34 @@ func LimitFromArgs(args map[string]any) int {
 		}
 	}
 	return normalizeLimit(limit)
+}
+
+// OffsetFromArgs parses the shared `offset` argument used to page a capped
+// list past MaxResultLimit (review_queue, issues_by_band, prs_by_band): rows
+// to skip before applying limit, defaulting to 0. It returns an error for a
+// negative or non-integer offset so a caller gets a refusal instead of a
+// silently reinterpreted page.
+func OffsetFromArgs(args map[string]any) (int, error) {
+	offset := 0
+	switch v := args["offset"].(type) {
+	case nil:
+	case float64:
+		offset = int(v)
+	case int:
+		offset = v
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, fmt.Errorf("offset must be a non-negative integer, got %q", v)
+		}
+		offset = n
+	default:
+		return 0, fmt.Errorf("offset must be a non-negative integer")
+	}
+	if offset < 0 {
+		return 0, fmt.Errorf("offset must be a non-negative integer, got %d", offset)
+	}
+	return offset, nil
 }
 
 func ReadPath(tool string, limit int) (string, bool) {
