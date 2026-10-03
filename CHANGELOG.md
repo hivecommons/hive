@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.126.0)
+
+### Added
+
+- upstream-watch: reconcile ported/dismissed state from fork issues (#10376)
+
 ## 2026-10-03 (v5.125.0)
 
 ### Added
