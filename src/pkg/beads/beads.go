@@ -474,7 +474,7 @@ func (b *Bead) clone() *Bead {
 	if b.Metadata != nil {
 		c.Metadata = make(map[string]interface{}, len(b.Metadata))
 		for k, v := range b.Metadata {
-			c.Metadata[k] = v
+			c.Metadata[k] = cloneMetadataValue(v)
 		}
 	}
 	if b.DependsOn != nil {
@@ -489,6 +489,33 @@ func (b *Bead) clone() *Bead {
 		c.LastSeenAt = &t
 	}
 	return &c
+}
+
+func cloneMetadataValue(v interface{}) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		cp := make(map[string]interface{}, len(x))
+		for k, v := range x {
+			cp[k] = cloneMetadataValue(v)
+		}
+		return cp
+	case []interface{}:
+		cp := make([]interface{}, len(x))
+		for i, v := range x {
+			cp[i] = cloneMetadataValue(v)
+		}
+		return cp
+	case []string:
+		return append([]string(nil), x...)
+	case map[string]string:
+		cp := make(map[string]string, len(x))
+		for k, v := range x {
+			cp[k] = v
+		}
+		return cp
+	default:
+		return v
+	}
 }
 
 func (s *Store) Claim(id string) error {
