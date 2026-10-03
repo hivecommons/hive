@@ -1034,9 +1034,10 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			AssignedOnly *bool                           `json:"assigned_only"`
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
-		Jira   *workSourceJiraPatch  `json:"jira"`
-		Gitea  *workSourceForgePatch `json:"gitea"`
-		GitLab *workSourceForgePatch `json:"gitlab"`
+		Jira     *workSourceJiraPatch     `json:"jira"`
+		Gitea    *workSourceForgePatch    `json:"gitea"`
+		GitLab   *workSourceForgePatch    `json:"gitlab"`
+		External *workSourceExternalPatch `json:"external"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -1046,9 +1047,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	// --- validate before mutating anything ---
 	if body.Type != nil {
 		switch *body.Type {
-		case "", "github", "github_projects", "linear", "jira", "gitea", "gitlab":
+		case "", "github", "github_projects", "linear", "jira", "gitea", "gitlab", "external":
 		default:
-			jsonError(w, "type must be one of: github, github_projects, linear, jira, gitea, gitlab", http.StatusBadRequest)
+			jsonError(w, "type must be one of: github, github_projects, linear, jira, gitea, gitlab, external", http.StatusBadRequest)
 			return
 		}
 	}
@@ -1063,6 +1064,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 		candidate := cfg.Governor.WorkSource.Jira
 		applyJiraWorkSourcePatch(&candidate, body.Jira)
 		if err := validateJiraWorkSourceTLSPatch(candidate); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.External != nil {
+		candidate := cfg.Governor.WorkSource.External
+		applyExternalWorkSourcePatch(&candidate, body.External)
+		if err := validateExternalWorkSourcePatch(candidate, effectiveWorkSourceType(cfg, body.Type)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1121,6 +1130,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	if body.GitLab != nil {
 		applyForgeWorkSourcePatch(&ws.GitLab, body.GitLab)
 	}
+	if body.External != nil {
+		applyExternalWorkSourcePatch(&ws.External, body.External)
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after work-source update", "error", err)
@@ -1171,7 +1183,83 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 		},
 		"gitea":  forgeWorkSourceResponse(ws.Gitea),
 		"gitlab": forgeWorkSourceResponse(ws.GitLab),
+		// The external block echoes auth_token and ca_bundle verbatim. That is
+		// safe — and necessary for a round-trip — only because validation
+		// rejects anything that is not a `${VAR}`/`$VAR` reference, so what is
+		// stored here is never the credential itself (ADR-0020, "Secrets").
+		"external": map[string]interface{}{
+			"name":            ws.External.Name,
+			"display_name":    ws.External.DisplayName,
+			"base_url":        ws.External.BaseURL,
+			"auth_token":      ws.External.AuthToken,
+			"ca_bundle":       ws.External.CABundle,
+			"repos":           ws.External.Repos,
+			"hold_labels":     ws.External.HoldLabels,
+			"timeout_seconds": ws.External.TimeoutSeconds,
+		},
 	}
+}
+
+// workSourceExternalPatch is the PUT shape of the external work-source block.
+// Every scalar is a pointer so an absent key leaves the stored value alone.
+type workSourceExternalPatch struct {
+	Name           *string  `json:"name"`
+	DisplayName    *string  `json:"display_name"`
+	BaseURL        *string  `json:"base_url"`
+	AuthToken      *string  `json:"auth_token"`
+	CABundle       *string  `json:"ca_bundle"`
+	Repos          []string `json:"repos"`
+	HoldLabels     []string `json:"hold_labels"`
+	TimeoutSeconds *int     `json:"timeout_seconds"`
+}
+
+func applyExternalWorkSourcePatch(e *config.ExternalSourceConfig, patch *workSourceExternalPatch) {
+	if patch.Name != nil {
+		e.Name = strings.TrimSpace(*patch.Name)
+	}
+	if patch.DisplayName != nil {
+		e.DisplayName = strings.TrimSpace(*patch.DisplayName)
+	}
+	if patch.BaseURL != nil {
+		e.BaseURL = strings.TrimSpace(*patch.BaseURL)
+	}
+	if patch.AuthToken != nil {
+		e.AuthToken = strings.TrimSpace(*patch.AuthToken)
+	}
+	if patch.CABundle != nil {
+		e.CABundle = strings.TrimSpace(*patch.CABundle)
+	}
+	if patch.Repos != nil {
+		e.Repos = patch.Repos
+	}
+	if patch.HoldLabels != nil {
+		e.HoldLabels = patch.HoldLabels
+	}
+	if patch.TimeoutSeconds != nil {
+		e.TimeoutSeconds = *patch.TimeoutSeconds
+	}
+}
+
+// validateExternalWorkSourcePatch gates what may be persisted.
+//
+// A block that is about to become the active source must satisfy every rule.
+// A block the operator is still staging only has to keep its credentials as
+// environment references — that is the rule which, if skipped, would write a
+// real provider token into the dashboard overlay on disk.
+func validateExternalWorkSourcePatch(candidate config.ExternalSourceConfig, effectiveType string) error {
+	if effectiveType == "external" {
+		return candidate.Validate()
+	}
+	return candidate.ValidateSecretRefs()
+}
+
+// effectiveWorkSourceType is the type this request leaves configured: the
+// patched value when the body carries one, otherwise the stored value.
+func effectiveWorkSourceType(cfg *config.Config, patched *string) string {
+	if patched != nil {
+		return strings.TrimSpace(*patched)
+	}
+	return strings.TrimSpace(cfg.Governor.WorkSource.Type)
 }
 
 type workSourceForgePatch struct {

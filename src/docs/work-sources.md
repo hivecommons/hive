@@ -1,9 +1,9 @@
 # Work sources (`governor.work_source`)
 
 `work_source` selects where a hive reads actionable work items from (Step 01
-of the governor loop — see [Architecture](architecture.md)). It accepts six
+of the governor loop — see [Architecture](architecture.md)). It accepts seven
 primary `type` values: `github` (default), `github_projects`, `linear`,
-`jira`, `gitea`, and `gitlab`. A seventh item kind, `type: run`, is additive rather than a primary
+`jira`, `gitea`, `gitlab`, and `external`. A further item kind, `type: run`, is additive rather than a primary
 adapter: enable it with `run_stages: true` to append pending long-running run
 stages as work items without fabricating GitHub issues. A second additive
 kind, `wavefront`, lists the ready nodes of an imported migration graph the
@@ -12,7 +12,7 @@ Absent or `type: ""` behaves exactly like existing hives with no
 `work_source` block — GitHub Issues on the configured `project.repos`
 (`pkg/config/work_sources.go:12-32`, `pkg/worksource/factory.go:15-89`).
 
-This page documents all six. Linear has its own deeper guide —
+This page documents all seven. Linear has its own deeper guide —
 [Linear agent integration](linear-agent.md) — for the two-way agent-session
 integration (webhooks, session acknowledgement, writing back to Linear);
 this page covers only the read side (`work_source.linear`) for parity with
@@ -439,6 +439,34 @@ Returned work items use `SourceType: "gitlab"`, `Number: 0`, and
 `acme/subgroup/service!acme/subgroup/service#42`. Label add/remove use GitLab's `add_labels` and
 `remove_labels` issue update fields, comments use issue notes, and status
 transitions call `state_event=close` or `state_event=reopen`.
+
+## `type: external` — provider-operated HTTP/JSON source
+
+Reads work items from an HTTPS shim the provider runs, over the versioned
+`hive.worksource/v1` contract. It is read-only and adds no admission
+authority: Hive keeps identity, credentials, and admission
+([ADR-0020](adr/0020-external-work-source-boundary.md)).
+
+```yaml
+governor:
+  work_source:
+    type: external
+    external:
+      name: acme                      # stable SourceType; ^[a-z][a-z0-9_]{1,31}$
+      display_name: Acme Tracker      # dashboard label; defaults to name
+      base_url: https://acme-shim.internal:8443
+      auth_token: $ACME_WORKSOURCE_TOKEN     # must be an env reference
+      # ca_bundle: $ACME_WORKSOURCE_CA       # optional env reference (PEM)
+      repos: [your-org/app]           # required allow-list
+      hold_labels: [hold, blocked]
+      timeout_seconds: 30             # whole ListIssues budget; default 30
+```
+
+Returned work items use `SourceType: "<name>"`, `Number: 0`, and
+`ExternalID` as the provider sent it, giving keys such as
+`your-org/app!ACME-123`. The full wire contract, the validation rules, and the
+stable-identifier warning are in
+[Work source providers](integrations/work-source-providers.md#external-provider).
 
 ## Open questions
 
