@@ -58,6 +58,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.TaskMCP.LaunchTokenTTL < 0 {
 		return fmt.Errorf("task_mcp.launch_token_ttl must be >= 0")
 	}
+	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
+		return err
+	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}

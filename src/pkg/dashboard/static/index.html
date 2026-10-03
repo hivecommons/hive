@@ -17469,10 +17469,15 @@ function burnAreaChart() {
         if (p.predicted) {
           html += `<div style="font-size:0.72rem;color:var(--yellow)">Predicted: ${escapeHtml(JSON.stringify(p.predicted))}</div>`;
         }
-        html += '<div style="margin-top:10px">';
-        html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. The governor will apply the proposed parameter changes for the configured experiment duration.">Apply</button>';
-        html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
-        html += '</div></div>';
+        if (runLink && runLink.key) {
+          html += '<div class="text-muted" style="margin-top:10px">Approved — the proposal is running as the Spektacular run above.</div>';
+        } else {
+          html += '<div style="margin-top:10px">';
+          html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. The governor will apply the proposed parameter changes for the configured experiment duration.">Apply</button>';
+          html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
+          html += '</div>';
+        }
+        html += '</div>';
       }
 
       // Principles
@@ -17567,7 +17572,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
-        if (j.ok) { showToast(j.run && j.run.key ? 'Spektacular run admitted: ' + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
+        if (j.ok) { showToast(j.run && j.run.key ? (j.status === 'already_approved' ? 'Spektacular run already admitted: ' : 'Spektacular run admitted: ') + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
       } catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
     }
@@ -28823,6 +28828,12 @@ function burnAreaChart() {
         </div>
 
         <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">
+        <h4 style="font-size:var(--fs-base);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Telemetry</h4>
+        <div class="config-field" id="hub-telemetry-omit">
+          <label>Withheld from hub heartbeat <span class="config-info">i<span class="config-tooltip">Set hub.heartbeat_omit in hive.yaml to withhold identifier classes from the heartbeat and task-status push. Upgrade and config delivery keep working; the hub simply shows less.</span></span></label>
+          ${renderHubTelemetryOmit(hub.heartbeat_omit)}
+        </div>
+        <hr style="border-color:var(--border);margin:var(--sp-6) var(--sp-0)">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Auto-update</h4>
         <div class="config-toggle" id="hub-autoupdate-toggle-row">
           <div class="config-toggle-switch ${hub.auto_upgrade ? 'on' : ''}" id="hub-autoupdate-toggle" data-action="toggleConfigSwitch" data-section="hub" data-key="auto_upgrade"></div>
@@ -28980,6 +28991,24 @@ function burnAreaChart() {
               '<span style="font-size:0.65rem;color:var(--muted)">/hr · /day · max</span></div>';
           }).join('')}</div>
         </div>`;
+    }
+
+    // HEARTBEAT_OMIT_CLASSES mirrors config.HeartbeatOmitAll; tradeoffs match docs/telemetry.md.
+    var HEARTBEAT_OMIT_CLASSES = [
+      ['repos', 'Repo names', 'Hub cannot list this hive\'s repos or per-repo activity.'],
+      ['users', 'Usernames', 'Hub loses owner, leaderboard and per-user time-in-hive.'],
+      ['task_titles', 'Task titles', 'Hub leaderboard shows no current task.'],
+      ['dashboard_urls', 'Dashboard URLs', 'Hub cannot link to this hive\'s dashboard or snapshot.']
+    ];
+    function renderHubTelemetryOmit(omitted) {
+      var set = {};
+      (omitted || []).forEach(function(c) { set[c] = true; });
+      return '<div style="display:flex;flex-direction:column;gap:var(--sp-2)">' + HEARTBEAT_OMIT_CLASSES.map(function(c) {
+        var off = !!set[c[0]];
+        return '<div style="font-size:var(--fs-sm);color:var(--text)"><span style="display:inline-block;min-width:7.5rem">' + esc(c[1]) + '</span>' +
+          '<span style="font-weight:600;color:' + (off ? 'var(--green)' : 'var(--muted)') + '">' + (off ? 'Withheld' : 'Sent') + '</span>' +
+          '<span style="color:var(--muted)"> — ' + esc(c[2]) + '</span></div>';
+      }).join('') + '</div>';
     }
 
     // Auto-update section helpers (#6962, #6963). autoUpdatePeriodLabel maps

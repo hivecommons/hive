@@ -321,18 +321,26 @@ falls back to the queued-run snapshot, so an operator can paste either identifie
 
 **`issues_by_band` / `prs_by_band`** (hive#9106) let an agent ask "which issues are ready to
 close?" without re-implementing the Overview donut's label rules. Both take an optional
-`repo` (`owner/name`), `band`, and `stale`, plus the usual `limit`. `bands[]` — the key,
-human label, rule sentence, and real count for every band — is always returned in full, even
-when `band` filters `rows[]` to one of them, so a caller can map "Confirm & close" to
-`band=done` without knowing the `hive/*` label names. An unknown `band` gets the same
-`{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys. The tool never
-forwards `band` or `limit` to the Overview endpoint itself — that would compute `bands[]`
-counts and `rows[]` over only the already-filtered subset — so it fetches every band and
-filters/caps `rows[]` itself, disclosing `rows_truncated` and `_admin_mcp.total` the same way
-other capped list fields do. `band=done` includes issues an agent labelled
-`hive/covered-by-pr`, which only means an agent found an *open* PR that references the
-issue, not that it merged: a caller closing "ready" issues from this band must still verify
-the referenced work landed before closing, exactly as the worked example in hive#9106 does.
+`repo` (`owner/name`), `band`, `stale`, `held` (hive#10018), and `offset` (hive#10018), plus
+the usual `limit`.
+`bands[]` — the key, human label, rule sentence, and real count for every band — is always
+returned in full, even when `band` or `held` filters `rows[]` down, so a caller can map
+"Confirm & close" to `band=done` without knowing the `hive/*` label names. An unknown `band`
+gets the same `{"type":"refusal",...}` shape as `refuse_operation`, listing the valid keys.
+The tool never forwards `band`, `held`, `offset`, or `limit` to the Overview endpoint itself —
+that would compute `bands[]` counts and `rows[]` over only the already-filtered subset — so it
+fetches every band and row and filters/pages `rows[]` itself, disclosing `rows_truncated` and
+`_admin_mcp.total` the same way other capped list fields do. Filtering `held` ahead of the
+cap (rather than leaving a caller to inspect `held` on an already-capped page) means a hive
+with more open issues/PRs than the cap does not silently lose held rows when asking "what is
+on hold?" (hive#10018). `offset`, applied after the `band`/`held` filters and before `limit`
+the same way `review_queue`'s does, pages past the cap: the answer carries `next_offset` when
+more filtered rows remain, so a band or `held` selection with more rows than `limit` is fully
+readable a page at a time instead of only ever showing the first page (hive#10018). `band=done`
+includes issues an agent labelled `hive/covered-by-pr`,
+which only means an agent found an *open* PR that references the issue, not that it merged: a
+caller closing "ready" issues from this band must still verify the referenced work landed
+before closing, exactly as the worked example in hive#9106 does.
 Overview rows carry the band's display label ("Confirm & close"), not its key; the tool maps
 each row back to the key through `bands[]` inside `pkg/adminmcp`, so `band=<key>` matches on
 both the dashboard endpoint and stdio (hive#10018).

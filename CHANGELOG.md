@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-02 (v5.120.0)
+
+### Added
+
+- heartbeat: hub.heartbeat_omit classes and Hub tab telemetry display (#10295)
+- dashboard: `/api/version`'s `autoUpdate` object carries `nextUpdateAt` (the hub's expected next-update time, omitted when unknown) and the version menu and Hub tab show it as "Next update" (#10257, #10258)
+
 ## 2026-10-02 (v5.119.0)
 
 ### Added

@@ -179,3 +179,140 @@ func TestBandReadResultMatchesLabelShapedRows(t *testing.T) {
 		}
 	}
 }
+
+// TestBandReadResultFiltersHeldWithoutShrinkingBands pins the #10018 held/
+// paging follow-up: a `held` argument must filter rows before the limit cap
+// (not after, and not by relying on the caller to inspect held=true/false on
+// an already-capped page), while bands[] keeps reporting every row's real
+// count regardless of the held filter.
+func TestBandReadResultFiltersHeldWithoutShrinkingBands(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	data["rows"] = []any{
+		map[string]any{"number": float64(1), "band": "done", "held": false},
+		map[string]any{"number": float64(2), "band": "done", "held": true},
+		map[string]any{"number": float64(3), "band": "done", "held": true},
+		map[string]any{"number": float64(4), "band": "done", "held": false},
+	}
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done", "held": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v", out)
+	}
+	bands, ok := body["bands"].([]any)
+	if !ok || len(bands) != 2 {
+		t.Fatalf("bands = %#v, want both bands unaffected by the held filter", body["bands"])
+	}
+	rows, ok := body["rows"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("rows = %#v, want only the 2 held rows", body["rows"])
+	}
+	for _, row := range rows {
+		if held := row.(map[string]any)["held"]; held != true {
+			t.Fatalf("row held = %#v, want true", held)
+		}
+	}
+}
+
+// TestBandReadResultHeldFiltersAheadOfLimitCap pins the issue's documented
+// gap: capping rows at the limit before a client-side held check would drop
+// held rows a hive with more than MaxResultLimit open issues/PRs needs to
+// see. Filtering held before the cap, as BandReadResult now does, keeps them.
+func TestBandReadResultHeldFiltersAheadOfLimitCap(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	rows := make([]any, 0, 3)
+	rows = append(rows, map[string]any{"number": float64(1), "band": "done", "held": true})
+	for n := 2; n <= 3; n++ {
+		rows = append(rows, map[string]any{"number": float64(n), "band": "done", "held": false})
+	}
+	data["rows"] = rows
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done", "held": true, "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.(map[string]any)
+	got, ok := body["rows"].([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("rows = %#v, want the single held row", body["rows"])
+	}
+	if got[0].(map[string]any)["number"] != float64(1) {
+		t.Fatalf("rows = %#v, want the held row (#1), not an unheld row dropped by the cap first", got)
+	}
+}
+
+// TestBandReadPathNeverForwardsHeld pins that `held`, like `band` and
+// `limit`, is filtered client-side by BandReadResult rather than sent to the
+// Overview endpoint — forwarding it would make the endpoint's own bands[]
+// counts reflect only held (or only unheld) rows instead of the full shape.
+func TestBandReadPathNeverForwardsHeld(t *testing.T) {
+	path := BandReadPath(ToolIssuesByBand, map[string]any{"held": true})
+	if strings.Contains(path, "held=") {
+		t.Fatalf("path = %q, must not forward held — the tool filters rows itself so bands[] keeps its real counts", path)
+	}
+}
+
+// TestBandReadResultOffsetPagesPastLimitCap pins the issue's remaining gap:
+// MaxResultLimit caps rows at 50 with no way to see rows past the cap. An
+// `offset` argument, applied after band/held filtering and before the limit
+// cap like review_queue's, lets a caller page through a band with more rows
+// than the cap instead of only ever seeing the first page.
+func TestBandReadResultOffsetPagesPastLimitCap(t *testing.T) {
+	data := sampleOverviewIssuesResponse()
+	data["rows"] = []any{
+		map[string]any{"number": float64(1), "band": "done"},
+		map[string]any{"number": float64(2), "band": "done"},
+		map[string]any{"number": float64(3), "band": "done"},
+	}
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"band": "done", "limit": float64(1), "offset": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.(map[string]any)
+	rows, ok := body["rows"].([]any)
+	if !ok || len(rows) != 1 || rows[0].(map[string]any)["number"] != float64(2) {
+		t.Fatalf("rows = %#v, want only row #2 (offset=1, limit=1)", body["rows"])
+	}
+	if body["offset"] != 1 {
+		t.Fatalf("offset = %#v, want 1", body["offset"])
+	}
+	if body["next_offset"] != 2 {
+		t.Fatalf("next_offset = %#v, want 2 so a caller can read row #3 next", body["next_offset"])
+	}
+	if body["rows_truncated"] != true {
+		t.Fatalf("rows_truncated missing: %#v", body)
+	}
+}
+
+// TestBandReadResultOffsetBeyondTotalReturnsNoRows pins that an offset past
+// every filtered row returns an empty page rather than erroring or wrapping
+// back to the start — the same behavior review_queue's paging already has.
+func TestBandReadResultOffsetBeyondTotalReturnsNoRows(t *testing.T) {
+	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewIssuesResponse(), map[string]any{"band": "done", "offset": float64(50)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.(map[string]any)
+	rows, ok := body["rows"].([]any)
+	if !ok || len(rows) != 0 {
+		t.Fatalf("rows = %#v, want an empty page", body["rows"])
+	}
+	if _, hasNext := body["next_offset"]; hasNext {
+		t.Fatalf("next_offset = %#v, want absent once there is nothing left to page to", body["next_offset"])
+	}
+}
+
+// TestBandReadResultRefusesNegativeOffset pins that a negative offset is a
+// refusal, not a silently reinterpreted page, matching review_queue's offset
+// validation.
+func TestBandReadResultRefusesNegativeOffset(t *testing.T) {
+	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewIssuesResponse(), map[string]any{"offset": float64(-1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal, ok := out.(RefusalData)
+	if !ok || refusal.Type != "refusal" || refusal.Kind != RefusalKindInvalidArgument {
+		t.Fatalf("result = %#v, want a refusal for a negative offset", out)
+	}
+}

@@ -1,0 +1,1 @@
+- Fix the Jam Projects-sync handlers (`GET`/`POST /api/campaigns/{id}/jam/project-sync`) to report shared Jam store failures (corrupt or unreadable `campaign-jam.json`) as `500` via `campaignJamStatus`, the same as the thread and agent-invite handlers, instead of the client-error `400` they still returned after #10268 fixed every other Jam endpoint (#10083).
