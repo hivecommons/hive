@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.123.0)
+
+### Added
+
+- contribute: publish quota readings automatically for standalone contributors (#10360)
+
 ## 2026-10-03 (v5.122.1)
 
 ### Fixed
