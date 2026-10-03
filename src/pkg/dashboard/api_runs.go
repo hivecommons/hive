@@ -762,6 +762,12 @@ func (s *Server) handleRunReset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if lease.stage == StageSpec {
+		if err := s.resetRunDesignForRespec(key); err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	s.auditFromRequest(r, auditActionRunStageReset, auditDetail(
 		"run", key, "stage_from", held.stage, "stage_to", lease.stage,
 		"reason", body.Reason, "gen", strconv.FormatUint(lease.gen, 10)), "")

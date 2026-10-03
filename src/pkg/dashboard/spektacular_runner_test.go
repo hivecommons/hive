@@ -1333,6 +1333,28 @@ func TestSpecCheckpointRejectClearsDesignArtifactDigest(t *testing.T) {
 	}
 }
 
+// An owner reset back to spec forgets the superseded design artifact digest
+// too, so the re-run Spec stage posts its artifact to the work item again even
+// when the text is unchanged - the same gap the checkpoint reject closes
+// (hivecommons/hive#10062).
+func TestRunResetToSpecClearsDesignArtifactDigest(t *testing.T) {
+	_, s, store, _ := spekHub(t)
+	epic := spekDesignEpic(t, store)
+	if err := store.SetMetadata(epic.ID, planning.MetaDesignArtifactDigest, designArtifactDigest("superseded spec")); err != nil {
+		t.Fatalf("record design artifact digest: %v", err)
+	}
+
+	if err := s.resetRunDesignForRespec(spekRunKey); err != nil {
+		t.Fatalf("resetRunDesignForRespec: %v", err)
+	}
+	if got, _ := store.Get(epic.ID); got.Meta(planning.MetaDesignArtifactDigest) != "" {
+		t.Fatalf("design artifact digest after reset = %q, want cleared", got.Meta(planning.MetaDesignArtifactDigest))
+	}
+	if err := s.resetRunDesignForRespec("unknown-run"); err != nil {
+		t.Fatalf("resetRunDesignForRespec on an unknown run: %v", err)
+	}
+}
+
 // Rejecting a design's spec re-mints the spec generation so a revised spec is
 // drafted, and marks the design requested (hivecommons/hive#10062).
 func TestSpecCheckpointRejectRetriesDesignSpec(t *testing.T) {

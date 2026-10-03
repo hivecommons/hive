@@ -618,6 +618,7 @@ func (s *Server) AdvanceStageLease(identity, taskID, to string, now time.Time, r
 				// forge write is retried on the next advance without blocking it.
 				if err := s.postDesignArtifact(context.Background(), store, epic, digest, body); err != nil {
 					s.logger.Warn("[runs] design artifact comment failed", "run", runKey, "epic", epic.ID, "error", err)
+					s.recordDesignArtifactFailed(runKey, epic.ID, l.identity, err, now)
 				}
 			}
 		}
@@ -931,6 +932,20 @@ func (s *Server) resetRunPlanForReplan(runKey string) error {
 		}
 	}
 	return supersedeRunPlanImport(store, epic)
+}
+
+// resetRunDesignForRespec runs when an owner resets a run back to the spec
+// stage: the rejected design artifact digest is forgotten so the spec the
+// re-run Spec stage drafts is posted to the work item again even when its text
+// is unchanged, as rejecting the Spec checkpoint already does - otherwise the
+// reset silently leaves the owner reading the superseded artifact
+// (hivecommons/hive#10062).
+func (s *Server) resetRunDesignForRespec(runKey string) error {
+	store, epic := s.findRunEpic(runKey)
+	if epic == nil || epic.Meta(planning.MetaDesignVia) != planning.DesignViaSpektacular {
+		return nil
+	}
+	return clearDesignArtifactDigest(store, epic.ID)
 }
 
 // supersedeRunPlanImport invalidates a run epic's import digest so the next
@@ -1421,6 +1436,36 @@ func (s *Server) approveRunDesign(ctx context.Context, store *beads.Store, epicI
 		})
 	}
 	return nil
+}
+
+// recordDesignArtifactFailed puts a dropped design artifact comment where an
+// owner can see it, exactly as a failed design signal already is: the advance
+// stands and the next one retries the comment, but without an audit entry and
+// a timeline note the only trace of a work item that never received the spec
+// is a log line (hivecommons/hive#10094).
+func (s *Server) recordDesignArtifactFailed(runKey, epicID, actor string, cause error, at time.Time) {
+	if s == nil || cause == nil {
+		return
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	s.audit.Log(actor, "design_artifact_failed", auditDetail("epic", epicID, "run", runKey, "error", cause.Error()), planning.ArchitectAgentName)
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: runKey,
+		Kind:     timeline.KindProgress,
+		Agent:    actor,
+		At:       at.UnixMilli(),
+		Attrs: map[string]string{
+			stageAttrRunKey: runKey,
+			stageAttrStage:  StageSpec,
+			stageAttrReason: "design_artifact_failed",
+			"error":         cause.Error(),
+		},
+	})
 }
 
 func (s *Server) activeRunStage(runKey string) string {
