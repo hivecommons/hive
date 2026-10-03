@@ -1,0 +1,1 @@
+- hive-merge relay: `MergePR` now upgrades squash to a merge commit for forward-merge PRs (`sync/v*-to-v*` heads or "forward-merge" titles), sharing the sweep's guard so the relay no longer re-breaks v6 Top-up (#10265)

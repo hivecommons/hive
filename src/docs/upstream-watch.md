@@ -81,6 +81,72 @@ Each upstream item has a ref: `upstream#<pr>` or `release:<tag>`.
   carries the `upstream/dismissed` label, the ref is recorded as `dismissed`
   and never resurfaced.
 
+## Dashboard and API
+
+The Features tab of the dashboard carries an **Upstream Watch** panel: one
+table per watched fork with the upstream it follows, the watermark and the
+time of the last run, the surfaced / ported / dismissed / skipped counts, and
+the recent upstream refs with their fork issue and state. Each recent pull
+request offers *port this* — a link to the upstream patch. The panel renders a
+"not configured" shell when `upstream_watch.repos` is empty.
+
+It reads `GET /api/upstream-watch` (owner only), which is the same view as
+JSON:
+
+```json
+{
+  "enabled": true,
+  "configured": true,
+  "state_path": "/data/upstream-watch.json",
+  "repos": [
+    {
+      "repo": "myorg/forked-thing",
+      "upstream": "origin-owner/thing",
+      "watermark": "2026-01-02T03:04:05Z",
+      "last_run_at": "2026-01-02T04:00:00Z",
+      "surfaced": 3, "ported": 1, "dismissed": 1, "skipped": 1,
+      "recent": [
+        {
+          "ref": "upstream#12",
+          "upstream_ref": "origin-owner/thing#12",
+          "upstream_url": "https://github.com/origin-owner/thing/pull/12",
+          "diff_url": "https://github.com/origin-owner/thing/pull/12.diff",
+          "status": "filed", "state": "surfaced",
+          "issue_number": 77,
+          "issue_url": "https://github.com/myorg/forked-thing/issues/77",
+          "recorded_at": "2026-01-02T00:00:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The endpoint is strictly read-only: it reads the config and the state file and
+never polls GitHub, so refreshing the panel costs no API quota. `state` is the
+recorded outcome as the watch knows it — `surfaced` while the fork issue is
+open, `ported` once the issue is completed, `dismissed` when it was closed as
+*not planned* or labelled `upstream/dismissed`, `skipped` when no touched file
+exists in the fork. A repo that is configured but has never run appears with
+empty times and zero counts; an unreadable state file is reported as
+`state_error` rather than silently looking idle.
+
+## Port this
+
+A fork issue the watch filed carries the hidden `upstream-ref` marker, so the
+kick that offers it to a fixer can hand over the upstream patch with it. When
+an issue carrying the configured label (default `upstream/port`) appears in a
+kick list, the list entry gains one line:
+
+```
+  12m myorg/forked-thing#77 [upstream/port] upstream: fix the thing
+    ↳ upstream patch: https://github.com/origin-owner/thing/pull/12.diff — read it first, …
+```
+
+The URL is rebuilt from the validated `owner/repo#number` marker, never echoed
+from the issue body, so an issue cannot inject a link of its own. A release
+marker has no diff and gets no line.
+
 ## State file
 
 The watermark, last-run time and per-ref outcomes (`filed`, `skipped`,
@@ -90,4 +156,5 @@ re-scans an upstream from zero. A corrupt file stops the watch rather than
 refiling everything.
 
 Sources: `src/pkg/config/upstream_watch.go`, `src/pkg/upstreamwatch/`,
-`src/cmd/hive/upstream_watch.go`.
+`src/cmd/hive/upstream_watch.go`, `src/pkg/dashboard/api_upstream_watch.go`,
+`src/pkg/scheduler/kickmessage.go`.

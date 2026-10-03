@@ -290,3 +290,79 @@ func TestValidatePRRequestClaims_HonoursReporterConfirmation(t *testing.T) {
 		t.Fatalf("reporter-confirmed bug should remain Closes-able: %q / %q", title, body)
 	}
 }
+
+// TestValidatePRRequestClaims_CloseOnMergeOptIn pins hivecommons/hive#10304:
+// a human-filed kind/bug issue that the filer marked with
+// humanFiledBugCloseOnMergeMarker — in the body or as a label — keeps
+// "Closes #N" with no Refs downgrade and no "closing keyword withheld" note,
+// while the same issue without the marker is still downgraded (#6781).
+func TestValidatePRRequestClaims_CloseOnMergeOptIn(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		labels    []map[string]string
+		wantKeeps bool
+	}{
+		{
+			name:      "marker in body keeps Closes",
+			body:      "Found by reading the code ...\n\nhive: close-on-merge",
+			labels:    []map[string]string{{"name": "kind/bug"}},
+			wantKeeps: true,
+		},
+		{
+			name:      "mixed-case marker in body keeps Closes",
+			body:      "Sweep finding\n\nHive: Close-On-Merge",
+			labels:    []map[string]string{{"name": "kind/bug"}},
+			wantKeeps: true,
+		},
+		{
+			name:      "marker as label keeps Closes",
+			body:      "Found by reading the code ...",
+			labels:    []map[string]string{{"name": "kind/bug"}, {"name": "hive: close-on-merge"}},
+			wantKeeps: true,
+		},
+		{
+			name:      "no marker is still downgraded",
+			body:      "Found by reading the code ...",
+			labels:    []map[string]string{{"name": "kind/bug"}},
+			wantKeeps: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := map[string]any{
+				"number": 42,
+				"title":  "sweep finding",
+				"body":   tt.body,
+				"state":  "open",
+				"labels": tt.labels,
+				"user":   map[string]any{"login": "some-maintainer", "type": "User"},
+			}
+			srv := claimValidationServer(t, nil, issue)
+			defer srv.Close()
+			c := claimValidationClient(t, srv)
+
+			title, body, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+				Repo: "o/r", Head: "agent/fix", Title: "fix it", Body: "Closes #42",
+			})
+			if err != nil {
+				t.Fatalf("validatePRRequestClaims: %v", err)
+			}
+			if title != "fix it" {
+				t.Fatalf("title = %q, want unchanged", title)
+			}
+			if tt.wantKeeps {
+				if body != "Closes #42" {
+					t.Fatalf("close-on-merge bug should keep Closes: body = %q", body)
+				}
+				return
+			}
+			if !strings.Contains(body, "Refs #42") || strings.Contains(body, "Closes #42") {
+				t.Fatalf("bug without opt-in should be downgraded to Refs: body = %q", body)
+			}
+			if !strings.Contains(body, "closing keyword withheld") {
+				t.Fatalf("downgrade should carry the withheld annotation: body = %q", body)
+			}
+		})
+	}
+}
