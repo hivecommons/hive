@@ -150,7 +150,8 @@ needs the project's node id (`PVT_…`) as `project_id`.
 `HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
 `https` (plain `http` is accepted only for loopback hosts) and never receives
 `GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its
-own bearer token.
+own bearer token. A GitHub Enterprise Server override
+(`https://<host>/api/graphql`) publishes the same Projects v2 draft issues.
 
 Maintainers can invite Spektacular or another configured hive agent into a Jam
 thread (`POST /api/campaigns/{id}/jam/agents`, handler

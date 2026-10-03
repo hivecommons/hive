@@ -65,6 +65,23 @@ func jamProjectSyncIsCanonicalGitHub(u *url.URL) bool {
 		strings.EqualFold(u.Hostname(), jamProjectSyncGitHubHost) && u.Path == "/graphql"
 }
 
+// jamProjectSyncUsesProjectsV2 reports whether the endpoint is a GitHub
+// GraphQL API and must therefore receive the real Projects v2 mutation rather
+// than the hive's own hiveJamProjectSync mutation (#10086). That is the
+// canonical api.github.com/graphql endpoint and, for GitHub Enterprise
+// Server, the fixed https://<host>/api/graphql path an override points at:
+// GHES speaks the same Projects v2 schema and has no hiveJamProjectSync
+// field, so sending it the custom mutation failed the documented publish in
+// exactly the way the canonical endpoint used to. Token binding is decided
+// separately by jamProjectSyncAuth and is unchanged: a GHES override still
+// never receives GITHUB_TOKEN.
+func jamProjectSyncUsesProjectsV2(u *url.URL) bool {
+	if jamProjectSyncIsCanonicalGitHub(u) {
+		return true
+	}
+	return u.Scheme == "https" && u.User == nil && u.Path == "/api/graphql"
+}
+
 func jamProjectSyncLoopback(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -267,7 +284,7 @@ func postCampaignProjectSync(payload campaignProjectSyncPayload) error {
 	if err != nil {
 		return err
 	}
-	if u, perr := url.Parse(endpoint); perr == nil && jamProjectSyncIsCanonicalGitHub(u) {
+	if u, perr := url.Parse(endpoint); perr == nil && jamProjectSyncUsesProjectsV2(u) {
 		return postGitHubProjectDrafts(endpoint, token, payload)
 	}
 	return jamProjectSyncGraphQL(endpoint, token,
