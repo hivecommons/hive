@@ -91,17 +91,22 @@ the historical `/api/pr-throughput` path and `pr-throughput-*` element IDs for
 compatibility, and reports opened, observed merged, and observed
 closed-without-merging terminal states.
 
-Actor attribution splits created, reviewed, and merged/closed activity into:
+Actor attribution splits created, reviewed, and merged/closed activity into
+precise buckets:
 
-- `hive`: writes that went through this hive's audited relays or governor
-  paths (`agent_pr_created`, `agent_issue_created`, `agent_pr_reviewed`,
-  agent issue comments/claims, relay/sweep merges and issue closes). The hive
-  identities are the same ones used by the GitHub client: the configured GitHub
-  App bot login (`SetAppBotLogin`), review bot settings, and the visible
-  `— hive:` attribution trailer/agent metadata.
-- `human`: forge-observed PR terminal events attributed to a non-bot actor.
-- `other`: Dependabot, Renovate, other bot accounts, unknown terminal actors,
-  and other automation outside this hive.
+- `hive`: changes merged or closed by this hive. This includes audited
+  sweep/queue/relay/governor paths (`agent_pr_created`, `agent_issue_created`,
+  `agent_pr_reviewed`, agent issue comments/claims, relay/sweep merges and
+  issue closes) and forge-observed PR terminal events whose `merged_by` actor
+  matches this hive's configured identity or GitHub App bot login when no audit
+  path exists.
+- `human`: any non-bot GitHub login, including maintainers who merge through
+  `gh pr merge --admin --squash` or the GitHub UI.
+- `other`: non-hive bot accounts only, such as Dependabot, Renovate, GitHub
+  Actions, Copilot coding agents, and other `*[bot]` logins.
+- `unknown`: terminal observations with no recorded actor/path. Unknown counts
+  are kept in the actor matrix as unrecorded evidence but are excluded from the
+  trend share math so missing attribution is never mislabeled as automation.
 
 Issue data comes from the existing issue-request and claim-poller audit stream:
 agent-created issues, agent comments/claims as triage/review signals, and

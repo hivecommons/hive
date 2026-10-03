@@ -42,6 +42,7 @@ const (
 	prThroughputActorHive            = "hive"
 	prThroughputActorHuman           = "human"
 	prThroughputActorOtherAutomation = "other"
+	prThroughputActorUnknown         = "unknown"
 
 	prThroughputCounterVersion = 2
 )
@@ -49,6 +50,15 @@ const (
 // prThroughputActions are the audit actions the PR throughput counts are
 // built from: changes the hive created/reviewed plus terminal states observed
 // for PRs and issues.
+//
+// Actor buckets are intentionally narrow:
+//   - hive: this hive's audited merge paths (sweep, queue, relay) and terminal
+//     PR observations whose actor is this hive identity or configured App bot.
+//   - human: non-bot GitHub logins, including maintainers using gh pr merge.
+//   - other: non-hive bot logins such as dependabot, renovate, GitHub Actions,
+//     and Copilot coding agents.
+//   - unknown: terminal observations without an actor/path. Unknown is counted
+//     in by_actor for transparency but excluded from share trend math.
 var prThroughputActions = map[string]bool{
 	ghpkg.AuditActionAgentPRCreated:      true,
 	ghpkg.AuditActionAgentIssueCreated:   true,
@@ -269,10 +279,12 @@ func actorFromPRPath(path string) string {
 		return prThroughputActorHive
 	case prThroughputMergePathHuman:
 		return prThroughputActorHuman
-	case prThroughputMergePathOtherAutomation, prThroughputMergePathUnknown:
+	case prThroughputMergePathOtherAutomation:
 		return prThroughputActorOtherAutomation
+	case prThroughputMergePathUnknown:
+		return prThroughputActorUnknown
 	default:
-		return prThroughputActorOtherAutomation
+		return prThroughputActorUnknown
 	}
 }
 
@@ -285,10 +297,12 @@ func prThroughputActorFromAttrs(attrs map[string]string, fallback string) string
 			return prThroughputActorHuman
 		case "other_automation", "other", "bot", "automation":
 			return prThroughputActorOtherAutomation
+		case prThroughputActorUnknown, "unrecorded":
+			return prThroughputActorUnknown
 		}
 	}
 	if fallback == "" {
-		return prThroughputActorOtherAutomation
+		return prThroughputActorUnknown
 	}
 	return fallback
 }

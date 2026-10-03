@@ -1425,12 +1425,10 @@
     .prt-legend .hive { background:var(--prt-actor-hive); }
     .prt-legend .human { background:var(--prt-actor-human); }
     .prt-legend .other { background:var(--prt-actor-other); }
-    .prt-trend-svg .baseline { stroke:var(--border); }
-    .prt-trend-svg .halo { fill:none; stroke:var(--bg); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; opacity:.95; }
-    .prt-trend-svg .series { fill:none; stroke-linecap:round; stroke-linejoin:round; }
-    .prt-trend-svg .series.other { stroke:var(--prt-actor-other); stroke-width:1.1; }
-    .prt-trend-svg .series.human { stroke:var(--prt-actor-human); stroke-width:1.3; }
-    .prt-trend-svg .series.hive { stroke:var(--prt-actor-hive); stroke-width:1.6; }
+    .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
+    .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
+    .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
+    .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
     .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
@@ -16267,17 +16265,31 @@ function burnAreaChart() {
     function prtTrendSvg(series) {
       if (!Array.isArray(series) || series.length < 2) return '';
       const w = 360, h = 120, pad = 10;
+      const innerH = h - pad*2;
       const pts = series.map((p, i) => {
-        const hive = Number(p.hive) || 0;
-        const human = Number(p.human) || 0;
-        const other = Number(p.other) || 0;
+        const hive = Math.max(0, Number(p.hive) || 0);
+        const human = Math.max(0, Number(p.human) || 0);
+        const other = Math.max(0, Number(p.other) || 0);
         const total = hive + human + other;
         const x = pad + (i * (w - pad*2) / Math.max(1, series.length - 1));
-        return { x, hive: total ? hive / total : 0, human: total ? human / total : 0, other: total ? other / total : 0 };
+        const shares = total ? { hive: hive / total, human: human / total, other: other / total } : { hive: 0, human: 0, other: 0 };
+        let acc = 0;
+        const bands = {};
+        ['hive','human','other'].forEach(key => {
+          const y0 = h - pad - (acc * innerH);
+          acc += shares[key];
+          const y1 = h - pad - (acc * innerH);
+          bands[key] = { y0, y1 };
+        });
+        return { x, bands };
       });
-      const path = key => pts.map((p,i) => `${i?'L':'M'}${p.x.toFixed(1)},${(h-pad-(p[key]*(h-pad*2))).toFixed(1)}`).join(' ');
-      const line = key => `<path class="halo" d="${path(key)}"/><path class="series ${key}" d="${path(key)}"/>`;
-      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="hive, human, and other automation actor share trend"><line class="baseline" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/>${['other','human','hive'].map(line).join('')}</svg>`;
+      const area = key => {
+        if (prtSeriesAllZero(series, key)) return '';
+        const top = pts.map((p,i) => `${i?'L':'M'}${p.x.toFixed(1)},${p.bands[key].y1.toFixed(1)}`).join(' ');
+        const bottom = pts.slice().reverse().map(p => `L${p.x.toFixed(1)},${p.bands[key].y0.toFixed(1)}`).join(' ');
+        return `<path class="area ${key}" d="${top}${bottom}Z"><title>${key === 'other' ? 'other automation' : key} share</title></path>`;
+      };
+      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="100% stacked area trend for hive, human, and other automation actor shares">${['other','human','hive'].map(area).join('')}</svg>`;
     }
     function prtTrendCaption(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
@@ -16294,7 +16306,7 @@ function burnAreaChart() {
     function prtActorTrend(dto) {
       const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
-      const legend = [['hive', 'hive'], ['human', 'human'], ['other', 'other automation']].map(([key, label]) => `<span><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
+      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
       return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
     }
     function prtWindowControls() {
@@ -16320,7 +16332,7 @@ function burnAreaChart() {
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
       const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})`;
       setSectionSummary('pr-throughput-section', summary, `Merged and opened PRs in the selected window; ${hiveMergedPct}% hive-attributed merged share`);
-      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';

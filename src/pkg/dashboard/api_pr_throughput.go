@@ -50,9 +50,9 @@ type PRThroughput struct {
 	// Opened counts PRs the hive's agents created (agent_pr_created).
 	Opened int `json:"opened"`
 	// Merged counts terminal merge states the hive observed for tracked PRs
-	// (pr_merged), split by attribution in MergedByPath: relay, sweep, human,
-	// other_automation, or unknown for entries written before attribution
-	// existed.
+	// (pr_merged), split by attribution in MergedByPath: relay, sweep, hive,
+	// human, other_automation, or unknown when no terminal actor/path was
+	// recorded.
 	Merged       int            `json:"merged"`
 	MergedByPath map[string]int `json:"merged_by_path"`
 	// Closed counts PRs observed closed without merging (pr_closed).

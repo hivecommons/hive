@@ -34,7 +34,9 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		"hive · human · other",
 		"function prtTrendSvg",
 		`<svg class="prt-trend-svg"`,
-		`stroke-width="1.5"`,
+		`class="area ${key}"`,
+		"100% stacked area trend",
+		"non-hive bots (dependabot, renovate, GitHub Actions, …)",
 		"function prtTrendCaption",
 		"No attribution data yet — counters start now.",
 		"setSectionSummary('pr-throughput-section'",
@@ -109,5 +111,40 @@ assert.match(out, /class="active"[^>]*data-action="setPRThroughputHours"[^>]*dat
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node Change Throughput window controls failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestPRThroughputTrendStackedAreaAndLegendTooltip(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Change Throughput actor trend helpers were not executed")
+	}
+	html := indexHTML(t)
+	script := `const assert = require('node:assert/strict');
+let prtRole = 'merged';
+function escapeHtml(v) { return String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+function prtTrendCaption() { return 'caption'; }
+` + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" + jsFunc(t, html, "prtActorTrend") + `
+const series = [
+  { hive: 4, human: 0, other: 6 },
+  { hive: 5, human: 0, other: 5 },
+  { hive: 7, human: 0, other: 3 },
+];
+const svg = prtTrendSvg(series);
+assert.match(svg, /class="area hive"/);
+assert.match(svg, /class="area other"/);
+assert.doesNotMatch(svg, /class="area human"/);
+assert.doesNotMatch(svg, /class="series /);
+assert.doesNotMatch(svg, /class="baseline"/);
+const paths = Array.from(svg.matchAll(/<path class="area ([^"]+)" d="([^"]+)"/g));
+assert.equal(paths.length, 2, svg);
+assert.notEqual(paths[0][2], paths[1][2], 'stacked bands must not render duplicate line paths');
+const trend = prtActorTrend({ series });
+assert.match(trend, /title="non-hive bots \(dependabot, renovate, GitHub Actions, …\)"/);
+assert.match(trend, /human · 0/);
+`
+	out, err := exec.Command(node, "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node Change Throughput actor trend failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }

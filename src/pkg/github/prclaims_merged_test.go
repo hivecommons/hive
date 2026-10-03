@@ -44,6 +44,7 @@ func mergedPR(number int, author, title, body string, mergedAt, updatedAt time.T
 	}
 	if !mergedAt.IsZero() {
 		m["merged_at"] = mergedAt.Format(time.RFC3339)
+		m["merged_by"] = map[string]any{"login": author}
 	}
 	return m
 }
