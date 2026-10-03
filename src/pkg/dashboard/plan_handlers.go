@@ -568,10 +568,26 @@ func (s *Server) resetRunLeaseAfterPlanReject(store *beads.Store, epicID string)
 	switch {
 	case leaseStageIndex(held.stage) > leaseStageIndex(StagePlan):
 		_, err = s.contributeHub.resetLeaseStage(held.identity, held.taskID, StagePlan, "plan rejected", now)
-	case held.stage == StagePlan && s.runCheckpointStageHeld(runKeyOfLease(leaseWorkKey(&held), held.repo), StagePlan, held.gen):
+	case held.stage == StagePlan && s.planCheckpointHeldForEpic(epic, held):
 		_, err = s.contributeHub.retryLeaseStage(held.identity, held.taskID, held.gen, now)
 	}
 	return err
+}
+
+// planCheckpointHeldForEpic reports whether the plan generation the epic's run
+// lease sits on is the one parked at the plan checkpoint. Stage receipts are
+// filed under the run key the stage ran with — the epic's `run_key` for a
+// Spektacular run — which an epic ImportRunPlan minted without an issue number
+// does not necessarily render back to from its lease key, so the recorded run
+// key is consulted first and the lease-derived one only as a fallback. Reading
+// the wrong receipts directory is what left the rejected plan holding the run
+// (hivecommons/hive#10063).
+func (s *Server) planCheckpointHeldForEpic(epic *beads.Bead, held taskLease) bool {
+	if runKey := strings.TrimSpace(epic.Meta(planning.MetaRunKey)); runKey != "" &&
+		s.runCheckpointStageHeld(runKey, StagePlan, held.gen) {
+		return true
+	}
+	return s.runCheckpointStageHeld(runKeyOfLease(leaseWorkKey(&held), held.repo), StagePlan, held.gen)
 }
 
 // planRejectRunLease finds the live run lease of a plan epic: by its issue
