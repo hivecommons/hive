@@ -194,10 +194,12 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "campaign lease not found", http.StatusNotFound)
 				return
 			}
-			if held.identity != requestUser(r) {
-				jsonError(w, "campaign lease held by "+held.identity, http.StatusConflict)
-				return
-			}
+			// A Spektacular run's lease owner is its stage-lease identity
+			// (hive-triage once admitted, then a contributor or executor),
+			// never a dashboard user; gating release on that identity
+			// refused every operator just like resume did
+			// (hivecommons/hive#10059). requireOwnerRole above already
+			// restricts this endpoint to owners.
 			s.contributeHub.revokeLease(held.identity, held.taskID)
 			campaign.LeaseOwner = ""
 			s.auditFromRequest(r, "campaign_release", auditDetail("campaign", campaign.ID, "type", campaign.Type), "")

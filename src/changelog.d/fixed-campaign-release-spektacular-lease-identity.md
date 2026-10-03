@@ -1,0 +1,1 @@
+- campaigns: `POST /api/campaigns/<id>/release` no longer requires the caller's identity to match a Spektacular run's stage-lease holder (e.g. the synthetic `hive-triage` admission identity); any owner can release it, matching resume's existing exemption (#10059)
