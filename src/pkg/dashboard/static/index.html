@@ -21675,6 +21675,11 @@ function burnAreaChart() {
     function renderRunDetailPanel(d) {
       const issue = d.issue || {}, run = d.run || {};
       const sourceKind = issue.source_type || (run.work_item && run.work_item.source_type) || 'github';
+      // The badge prefers the configured external display_name (ADR-0020,
+      // "Dashboard terminology", #10174) over the raw source_type key, which
+      // for an external provider is its stable name ("acme"), not a label fit
+      // for an operator to read.
+      const sourceBadge = issue.source_display_name || sourceKind;
       const issueLabel = issue.repo && issue.number ? (issue.repo + '#' + issue.number) : (issue.external_id || (run.work_item && run.work_item.external_id) || issue.key || d.key || '');
       const issueLink = issue.url ? `<a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issueLabel)}</a>` : escapeHtml(issueLabel);
       const repoLink = d.repo_url ? `<a href="${escapeHtml(d.repo_url)}" target="_blank" rel="noopener">${escapeHtml(run.repo || issue.repo || 'repo')}</a>` : escapeHtml(run.repo || issue.repo || 'repo');
@@ -21684,7 +21689,7 @@ function burnAreaChart() {
       const stages = (d.stages || []).map(renderRunDetailStage).join('') || '<div class="text-muted">No stage timeline recorded.</div>';
       const notes = (d.notes || []).map(n => `<div class="campaign-empty" style="text-align:left;padding:var(--sp-3)">${escapeHtml(n)}</div>`).join('');
       return `<div class="run-detail-grid">
-          <div class="run-detail-box"><h4>Source work item <span class="campaign-pill">${escapeHtml(sourceKind)}</span></h4><div class="run-detail-linklist"><div>${issueLink}</div><div>${escapeHtml(issue.title || run.title || '(untitled)')}</div><div>${repoLink}</div></div></div>
+          <div class="run-detail-box"><h4>Source work item <span class="campaign-pill">${escapeHtml(sourceBadge)}</span></h4><div class="run-detail-linklist"><div>${issueLink}</div><div>${escapeHtml(issue.title || run.title || '(untitled)')}</div><div>${repoLink}</div></div></div>
           <div class="run-detail-box"><h4>Pull requests</h4><div class="run-detail-linklist">${prs}</div></div>
           <div class="run-detail-box"><h4>Plan / assignee</h4><div class="run-detail-linklist"><div>${plan}</div><div>${escapeHtml(run.assignee || 'unassigned')}${run.waiting_on ? ' · waiting on ' + escapeHtml(run.waiting_on) : ''}</div></div></div>
           <div class="run-detail-box"><h4>Timestamps</h4><div class="run-detail-linklist">${times}</div></div>
@@ -34221,6 +34226,7 @@ function burnAreaChart() {
       const jira = ws.jira || {};
       const gitea = ws.gitea || {};
       const gitlab = ws.gitlab || {};
+      const ext = ws.external || {};
       const linTeams = Array.isArray(lin.teams) ? lin.teams : [];
       const linAgents = Array.isArray(_configState.data.agents) ? _configState.data.agents.slice().sort() : [];
 
@@ -34231,6 +34237,7 @@ function burnAreaChart() {
         ['jira', 'Jira'],
         ['gitea', 'Gitea / Forgejo'],
         ['gitlab', 'GitLab'],
+        ['external', 'External provider (HTTP)'],
       ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
 
       return `
@@ -34321,6 +34328,51 @@ function burnAreaChart() {
           <div class="config-field"><label>States</label><input type="text" placeholder="opened" value="${esc((gitlab.states||[]).join(', '))}" data-change-action="wsGitLabStatesChanged"></div>
           <div class="config-field"><label>Assignee</label><input type="text" placeholder="hive-bot" value="${esc(gitlab.assignee||'')}" data-change-action="markWorkSourceDirty" data-arg0="gitlab.assignee" data-arg-types="s,w"></div>
           <div class="config-field"><label>Hold labels</label><input type="text" placeholder="hold, blocked" value="${esc((gitlab.hold_labels||[]).join(', '))}" data-change-action="wsGitLabHoldLabelsChanged"></div>
+        </div>` : ''}
+
+        ${type === 'external' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">External provider (HTTP)</div>
+          <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 10px">
+            A tracker connected via a small HTTPS shim speaking <code>hive.worksource/v1</code>. Hive stays the
+            only authority over work identity, credentials, and admission — the provider only lists items.
+          </p>
+          <div class="config-field">
+            <label>Name <span class="config-info">i<span class="config-tooltip">Stable source type persisted in every work key. Lowercase letters, digits, underscore, starting with a letter (e.g. "acme"). Cannot be changed later without losing track of existing holds.</span></span></label>
+            <input type="text" placeholder="acme" value="${esc(ext.name||'')}" data-change-action="markWorkSourceDirty" data-arg0="external.name" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Display name <span class="config-info">i<span class="config-tooltip">Dashboard label for this source (the source badge and this tab). Defaults to Name when empty.</span></span></label>
+            <input type="text" placeholder="Acme Tracker" value="${esc(ext.display_name||'')}" data-change-action="markWorkSourceDirty" data-arg0="external.display_name" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Base URL <span class="config-info">i<span class="config-tooltip">Provider shim root, e.g. https://acme-shim.internal:8443. Must be https, except for a loopback host (a local sidecar shim).</span></span></label>
+            <input type="text" placeholder="https://acme-shim.internal:8443" value="${esc(ext.base_url||'')}" data-change-action="markWorkSourceDirty" data-arg0="external.base_url" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Auth token <span class="config-info">i<span class="config-tooltip">Bearer token sent to the provider. Must be written as an environment reference, e.g. $ACME_WORKSOURCE_TOKEN — a literal value is rejected so the resolved secret never reaches the saved config.</span></span></label>
+            <input type="text" placeholder="$ACME_WORKSOURCE_TOKEN" value="${esc(ext.auth_token||'')}" data-change-action="markWorkSourceDirty" data-arg0="external.auth_token" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>CA bundle <span class="config-info">i<span class="config-tooltip">Optional. PEM CA bundle for a private CA, also as an environment reference, e.g. $ACME_WORKSOURCE_CA. Leave empty to trust the system roots.</span></span></label>
+            <input type="text" placeholder="$ACME_WORKSOURCE_CA" value="${esc(ext.ca_bundle||'')}" data-change-action="markWorkSourceDirty" data-arg0="external.ca_bundle" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Source repositories <span class="config-info">i<span class="config-tooltip">Required allow-list of owner/name repositories the provider may route work to. An item naming anything else is dropped.</span></span></label>
+            <input type="text" placeholder="your-org/app, your-org/platform" value="${esc((ext.repos||[]).join(', '))}" data-change-action="wsExternalReposChanged">
+          </div>
+          <div class="config-field">
+            <label>Hold labels <span class="config-info">i<span class="config-tooltip">Comma-separated label values Hive treats as a hold, in addition to whatever the provider filters.</span></span></label>
+            <input type="text" placeholder="hold, blocked" value="${esc((ext.hold_labels||[]).join(', '))}" data-change-action="wsExternalHoldLabelsChanged">
+          </div>
+          <div class="config-field">
+            <label>Timeout (seconds) <span class="config-info">i<span class="config-tooltip">Bounds the whole ListIssues call, pagination included. 0 uses the default (30s); the hub-enforced ceiling is 300s.</span></span></label>
+            <input type="number" min="0" max="300" step="1" placeholder="30" value="${ext.timeout_seconds||''}" data-change-action="wsExternalTimeoutChanged">
+          </div>
+          <div class="config-field m-0">
+            <label>Dropped items this process <span class="config-info">i<span class="config-tooltip">How many items this source has withheld since the hub last restarted, for failing a validation rule (duplicate key, bad external_id, disallowed repo, …). Counts only; details are in the hub log.</span></span></label>
+            <div><span class="status-badge ${(ext.dropped_items||0) > 0 ? 'disabled' : 'done'}">${(ext.dropped_items||0)}</span></div>
+          </div>
         </div>` : ''}
 
         ${type === 'linear' ? `
@@ -38643,6 +38695,9 @@ function burnAreaChart() {
       wsGitLabLabelsChanged: function (event, A) { markWorkSourceDirty('gitlab.labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       wsGitLabStatesChanged: function (event, A) { markWorkSourceDirty('gitlab.states',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       wsGitLabHoldLabelsChanged: function (event, A) { markWorkSourceDirty('gitlab.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsExternalReposChanged: function (event, A) { markWorkSourceDirty('external.repos',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsExternalHoldLabelsChanged: function (event, A) { markWorkSourceDirty('external.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      wsExternalTimeoutChanged: function (event, A) { markWorkSourceDirty('external.timeout_seconds',Number(this.value)||0); },
     };
 
   </script>

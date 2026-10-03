@@ -104,3 +104,16 @@ type Commenter interface {
 type StatusTransitioner interface {
 	TransitionStatus(ctx context.Context, ref Ref, status string) error
 }
+
+// DisplaySource is optional. Adapters that have a dashboard-facing label
+// distinct from SourceType() and/or a per-source dropped-item tally implement
+// it so the dashboard can surface both (ADR-0020, "Dashboard terminology").
+// Currently only the external HTTP/JSON adapter implements it.
+type DisplaySource interface {
+	// DisplayName is the dashboard label, falling back to SourceType() when
+	// the operator has not set one.
+	DisplayName() string
+	// DroppedItems is how many items this source has withheld, this process,
+	// for failing a validation rule.
+	DroppedItems() int64
+}
