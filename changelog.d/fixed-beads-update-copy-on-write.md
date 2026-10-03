@@ -1,0 +1,1 @@
+- Fix a data race in the beads store: `Update` (and so `SetMetadata`, `Claim`, `Close`, `AddDependency`) now edits a private copy of the bead and swaps it in, so readers holding a bead from `Get`/`List` — e.g. the run checkpoint plan tree during a concurrent plan approval — see a stable snapshot instead of a map being written under them.
