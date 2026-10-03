@@ -26,24 +26,6 @@ import (
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
-// DocumentStatus is the #8301 `document_status` value.
-type DocumentStatus string
-
-const (
-	// DocumentDraft: the artifact is still being authored.
-	DocumentDraft DocumentStatus = "draft"
-	// DocumentFinal: the artifact is complete and the stage may advance.
-	DocumentFinal DocumentStatus = "final"
-	// DocumentStale: the artifact was invalidated by a later upstream change
-	// and must not advance until it is replanned or re-approved. Spektacular
-	// 0.23+ emits it; 0.22 has no stale status.
-	DocumentStale DocumentStatus = "stale"
-	// DocumentSuperseded: a newer document replaced the artifact.
-	DocumentSuperseded DocumentStatus = "superseded"
-	// DocumentArchived: the artifact was withdrawn and will not be finished.
-	DocumentArchived DocumentStatus = "archived"
-)
-
 // Artifact kinds accepted by the status verb.
 const (
 	KindSpec = "spec"
@@ -136,38 +118,6 @@ func markdownExt(name string) string {
 
 func hasMarkdownExt(name string) bool { return markdownExt(name) != "" }
 
-// ArtifactStatus is the parsed per-artifact status document
-// (spektacular#45):
-//
-//	{"error":false,"kind","name","artifact_id","document_status","current_step",
-//	 "completed_steps":[],"created_at","updated_at","closed_at","spec","plan"}
-//
-// Progress is decided by DocumentStatus, CurrentStep and CompletedSteps
-// only. UpdatedAt is informational: it is workflow activity only while the
-// in-progress workflow state matches this artifact, and a file mtime
-// otherwise (moved by a checkout, a reformat or a touch), and Spektacular
-// may omit it entirely. Nothing in this package reads it to decide progress
-// or staleness; whether a generation is spent is decided by the hub executor
-// that ran it (#9143). Spec and Plan are the frontmatter cross-references,
-// which are almost never populated; they are surfaced for diagnostics and
-// are never a join key.
-type ArtifactStatus struct {
-	Kind           string
-	Name           string
-	ArtifactID     string
-	DocumentStatus DocumentStatus
-	CurrentStep    string
-	CompletedSteps []string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	ClosedAt       time.Time
-	Spec           string
-	Plan           string
-	// Body is populated by the runner for a final Spec artifact via the
-	// Spektacular file-read verb. It is not part of the status JSON contract.
-	Body string
-}
-
 // artifactStatusWire is the on-the-wire shape. Timestamps are RFC3339
 // strings that Spektacular emits as "" when unknown (the frontmatter dates
 // are optional) and may omit or null altogether, so they are decoded through
@@ -214,13 +164,9 @@ func (t *flexTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON decodes the wire shape into ArtifactStatus.
-func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
-	var w artifactStatusWire
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	*s = ArtifactStatus{
+// status converts the wire shape into the neutral ArtifactStatus.
+func (w artifactStatusWire) status() ArtifactStatus {
+	return ArtifactStatus{
 		Kind:           w.Kind,
 		Name:           w.Name,
 		ArtifactID:     strings.TrimSpace(w.ArtifactID),
@@ -233,38 +179,34 @@ func (s *ArtifactStatus) UnmarshalJSON(data []byte) error {
 		Spec:           w.Spec,
 		Plan:           w.Plan,
 	}
-	return nil
 }
 
-// Final reports whether the artifact has reached document_status final.
-func (s ArtifactStatus) Final() bool { return s.DocumentStatus == DocumentFinal }
+// planWire is the on-the-wire `plan export` / tasks.json shape. Its tasks
+// decode through planTaskWire so both export shapes reach the neutral Plan.
+type planWire struct {
+	Kind  string         `json:"kind"`
+	Name  string         `json:"name"`
+	Tasks []planTaskWire `json:"tasks"`
+}
 
-// JoinKey returns the globally durable Spektacular artifact key. Older
-// Spektacular versions do not emit artifact_id, so Hive falls back to the
-// historical name only for backward compatibility.
-func (s ArtifactStatus) JoinKey() string {
-	if strings.TrimSpace(s.ArtifactID) != "" {
-		return strings.TrimSpace(s.ArtifactID)
+func (w planWire) plan() Plan {
+	plan := Plan{Kind: w.Kind, Name: w.Name}
+	if w.Tasks != nil {
+		plan.Tasks = make([]PlanTask, len(w.Tasks))
+		for i, task := range w.Tasks {
+			plan.Tasks[i] = PlanTask(task)
+		}
 	}
-	return s.Name
+	return plan
 }
 
-// PlanTask is one task of a final plan as exported by Spektacular. Ref is the
-// plan-local id (T1, T2, ...), DependsOn references other refs, Execution is
-// agent_suitable or human_required (empty means agent_suitable).
-type PlanTask struct {
-	ID        string   `json:"id,omitempty"`
-	Ref       string   `json:"ref"`
-	Repo      string   `json:"repo,omitempty"`
-	Title     string   `json:"title"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	Execution string   `json:"execution,omitempty"`
-}
+// planTaskWire decodes one exported plan task into the neutral PlanTask.
+type planTaskWire PlanTask
 
 // UnmarshalJSON accepts both export shapes: the pre-0.23 string fields and
 // Spektacular 0.23+'s objects, `repo: {"name","location"}` and
 // `execution: {"type","reason"}`.
-func (t *PlanTask) UnmarshalJSON(data []byte) error {
+func (t *planTaskWire) UnmarshalJSON(data []byte) error {
 	type planTaskAlias PlanTask
 	var raw struct {
 		planTaskAlias
@@ -274,7 +216,7 @@ func (t *PlanTask) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*t = PlanTask(raw.planTaskAlias)
+	*t = planTaskWire(raw.planTaskAlias)
 	var repo struct {
 		Name     string `json:"name"`
 		Location string `json:"location"`
@@ -326,14 +268,6 @@ func planTaskRepo(name, location string) string {
 	return name
 }
 
-// Plan is the structured plan export the runner hands to Hive's planner so no
-// LLM redecomposition happens.
-type Plan struct {
-	Kind  string     `json:"kind"`
-	Name  string     `json:"name"`
-	Tasks []PlanTask `json:"tasks"`
-}
-
 // ExecFunc runs the spektacular CLI with args in dir and returns its stdout. A
 // non-zero exit must be returned as a non-nil error while stdout is still
 // returned, so the caller can read the JSON error envelope the contract
@@ -374,90 +308,6 @@ func binaryExec(binary string, timeout, waitDelay time.Duration) ExecFunc {
 		return stdout.Bytes(), nil
 	}
 }
-
-// NotFoundError is returned when the status verb reports that the artifact
-// does not exist (error code artifact_not_found). Callers distinguish it from
-// transport failures because it is a signal about the document (it may have
-// been replaced by a new one), not about the CLI.
-type NotFoundError struct {
-	Kind    string
-	Name    string
-	Message string
-}
-
-func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("spektacular %s %q not found: %s", e.Kind, e.Name, e.Message)
-}
-
-// VerbError is a JSON error envelope the CLI printed for a reason other than
-// a missing artifact.
-type VerbError struct {
-	Kind    string
-	Name    string
-	Code    string
-	Message string
-}
-
-func (e *VerbError) Error() string {
-	return fmt.Sprintf("spektacular %s %q: %s (%s)", e.Kind, e.Name, e.Message, e.Code)
-}
-
-// WorkDirError means the stage runner could not resolve a repository checkout
-// for a run. It is typed so callers and tests can distinguish an intentional
-// park from a CLI/status failure.
-type WorkDirError struct {
-	RunKey string
-	Stage  string
-	Repo   string
-}
-
-func (e *WorkDirError) Error() string {
-	parts := []string{"spektacular: no repo workdir resolved"}
-	if e.RunKey != "" {
-		parts = append(parts, "run="+e.RunKey)
-	}
-	if e.Stage != "" {
-		parts = append(parts, "stage="+e.Stage)
-	}
-	if e.Repo != "" {
-		parts = append(parts, "repo="+e.Repo)
-	}
-	return strings.Join(parts, " ")
-}
-
-// PlanImportError means a final plan could not be turned into the run's task
-// list: the plan export failed or the registry rejected the import. It is a
-// fact about the plan (or the hub's configuration), not a transient poll
-// failure, so the runner parks the stage instead of retrying every poll.
-type PlanImportError struct {
-	RunKey   string
-	Artifact string
-	Err      error
-}
-
-func (e *PlanImportError) Error() string {
-	return fmt.Sprintf("spektacular: plan %q for run %q could not be imported: %v", e.Artifact, e.RunKey, e.Err)
-}
-
-func (e *PlanImportError) Unwrap() error { return e.Err }
-
-// ContractError means the CLI produced output that does not match the #8301
-// shape (unparseable JSON, unknown document_status, wrong kind or name).
-type ContractError struct {
-	Kind   string
-	Name   string
-	Reason string
-	Err    error
-}
-
-func (e *ContractError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("spektacular %s %q: contract violation: %s: %v", e.Kind, e.Name, e.Reason, e.Err)
-	}
-	return fmt.Sprintf("spektacular %s %q: contract violation: %s", e.Kind, e.Name, e.Reason)
-}
-
-func (e *ContractError) Unwrap() error { return e.Err }
 
 // errorEnvelope is the JSON error shape every Spektacular failure is
 // expressed in (internal/output.ErrorResponse):
@@ -531,10 +381,11 @@ func (r *Runner) statusInDir(ctx context.Context, dir, kind, name string) (Artif
 		// status; classify it the same way a non-zero exit would be.
 		return ArtifactStatus{}, classifyEnvelope(kind, name, env, message)
 	}
-	var st ArtifactStatus
-	if err := json.Unmarshal(trimmed, &st); err != nil {
+	var wire artifactStatusWire
+	if err := json.Unmarshal(trimmed, &wire); err != nil {
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: "status is not valid JSON", Err: err}
 	}
+	st := wire.status()
 	if st.Kind != kind {
 		return ArtifactStatus{}, &ContractError{Kind: kind, Name: name, Reason: fmt.Sprintf("kind %q does not match requested %q", st.Kind, kind)}
 	}
@@ -835,10 +686,11 @@ func isUnexpectedExtension(err error) bool {
 }
 
 func parsePlanJSON(name string, data []byte, source string) (Plan, error) {
-	var plan Plan
-	if err := json.Unmarshal(data, &plan); err != nil {
+	var wire planWire
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: source + " is not valid JSON", Err: err}
 	}
+	plan := wire.plan()
 	if ArtifactKey(plan.Name) != name {
 		if strings.TrimSpace(plan.Name) != "" {
 			return Plan{}, &ContractError{Kind: KindPlan, Name: name, Reason: fmt.Sprintf("%s name %q does not match requested %q", source, plan.Name, name)}
