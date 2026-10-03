@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -613,5 +614,125 @@ func TestContributorPublisherMarkerPath_MatchesJS(t *testing.T) {
 	got := ContributorPublisherMarkerPath("/base", "claude", "")
 	if want := "/base/1f49f53cdfcecfbc.publisher.json"; got != want {
 		t.Errorf("marker path = %q, want %q (drifted from quotaDefaultPublisherMarkerFile in contributor-relay.js)", got, want)
+	}
+}
+
+// The standalone contributor publisher (hivecommons/hive#10299) must write the
+// byte-identical reading the server-mode publisher writes — same pool key, same
+// normalization — or the relay reads a file it does not understand.
+func TestContributorBackendReadingPublisher_PublishesLikeServerMode(t *testing.T) {
+	dir := t.TempDir()
+	m, ok := NewContributorBackendReadingPublisher(dir, "", "codex")
+	if !ok {
+		t.Fatal("codex is a guard-supported backend and must get a publisher")
+	}
+	m.SetHeadroom(Headroom{
+		Provider:  "openai",
+		Available: true,
+		Limits:    []LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 41}},
+	})
+	var r ContributorReading
+	readJSONFile(t, ContributorReadingPath(dir, "codex", ""), &r)
+	if r.State != "available" || len(r.Limits) != 1 || r.Limits[0].PctRemaining != 41 {
+		t.Errorf("codex reading = %+v, want available/weekly/41", r)
+	}
+}
+
+// Scoping is the point: a standalone contributor runs ONE backend with ONE set
+// of credentials, so the manager must probe only the provider fronting that
+// backend rather than spawning every guard-supported CLI.
+func TestContributorBackendReadingPublisher_ProbesOnlyItsOwnProvider(t *testing.T) {
+	m, ok := NewContributorBackendReadingPublisher(t.TempDir(), "", "codex")
+	if !ok {
+		t.Fatal("codex must get a publisher")
+	}
+	if len(m.probers) != 1 || m.probers[0].Provider() != "openai" {
+		t.Fatalf("probers = %+v, want exactly the openai prober", m.probers)
+	}
+}
+
+// The not_installed skip must survive the scoping: an absent CLI publishes
+// nothing, keeping the pool on the non-stranding unprovisioned admit rather
+// than a permanent hold (#6951, #6987).
+func TestContributorBackendReadingPublisher_KeepsNotInstalledSkip(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := NewContributorBackendReadingPublisher(dir, "", "codex")
+	h := failOpen("openai", errors.New("codex: command not found"))
+	h.ProbeErrCause = ProbeCauseNotInstalled
+	m.SetHeadroom(h)
+	if _, err := os.Stat(ContributorReadingPath(dir, "codex", "")); !os.IsNotExist(err) {
+		t.Error("a not_installed probe must publish nothing in standalone mode too")
+	}
+}
+
+// Every backend the relay guard supports must resolve to a provider, and
+// nothing else may: an unsupported backend has to be reportable as unsupported
+// at contributor startup instead of waiting forever for a reading.
+func TestContributorGuardBackendProvider_CoversTheRelaySupportedSet(t *testing.T) {
+	want := map[string]string{
+		"claude": "anthropic",
+		"pi":     "anthropic",
+		"codex":  "openai",
+		"agy":    "google",
+		"gemini": "google",
+		"kiro":   "aws-kiro",
+	}
+	for backend, provider := range want {
+		got, ok := ContributorGuardBackendProvider(backend)
+		if !ok || got != provider {
+			t.Errorf("ContributorGuardBackendProvider(%q) = %q,%v; want %q,true", backend, got, ok, provider)
+		}
+	}
+	for _, backend := range []string{"copilot", "bob", "goose", "opencode", ""} {
+		if _, ok := ContributorGuardBackendProvider(backend); ok {
+			t.Errorf("backend %q has no guard reading and must report unsupported", backend)
+		}
+	}
+	if _, ok := NewContributorBackendReadingPublisher(t.TempDir(), "", "copilot"); ok {
+		t.Error("an unsupported backend must not get a publisher")
+	}
+}
+
+// StartPublishing's channel is the standalone publisher's only way to know the
+// loop has stopped writing (hivecommons/hive#10299). Cancelling the context
+// alone says "stop soon", not "the last atomic rename has landed" — a caller
+// that treated the two as the same tore down the pool directory under a live
+// publish. The channel must close, and must close only after the loop exits.
+func TestStartPublishing_ClosesDoneAfterTheLoopStops(t *testing.T) {
+	dir := t.TempDir()
+	m, ok := NewContributorBackendReadingPublisher(dir, "", "codex")
+	if !ok {
+		t.Fatal("codex must get a publisher")
+	}
+	stub := &stubProber{
+		name:   "openai",
+		h:      Headroom{Provider: "openai", Available: true, Limits: []LimitWindow{{ID: "weekly", Kind: "weekly", PctRemaining: 55}}},
+		probed: make(chan struct{}, 1),
+	}
+	m.SetProbers([]Prober{stub})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := m.StartPublishing(ctx)
+	select {
+	case <-stub.probed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher never probed")
+	}
+	select {
+	case <-done:
+		t.Fatal("done closed while the loop was still running")
+	default:
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("done never closed after the context was cancelled")
+	}
+	// The loop has stopped, so this read cannot race a publish.
+	var r ContributorReading
+	readJSONFile(t, ContributorReadingPath(dir, "codex", ""), &r)
+	if r.State != "available" {
+		t.Errorf("reading = %+v, want the published available reading", r)
 	}
 }
