@@ -177,6 +177,27 @@ func TestCampaignResumeSpektacularRunHeldByStageIdentity(t *testing.T) {
 	}
 }
 
+// Release on a Spektacular run is not gated on its stage-lease identity
+// either: an owner must be able to release a freshly admitted run held by
+// hive-triage, which no operator is (hivecommons/hive#10059).
+func TestCampaignReleaseSpektacularRunHeldByStageIdentity(t *testing.T) {
+	s, _ := runsTestServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	if err := s.contributeHub.recordLeaseForKeyStage(runAdmissionIdentity, "task-10059b", "myorg/repo1", 10060, "myorg/repo1!stable-spec-10060:spec", "contributor", StageSpec, 1, time.Now()); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	release := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-10060/release", "owner", map[string]string{})
+	if release.Code != http.StatusOK {
+		t.Fatalf("owner release of admitted run = %d body=%s", release.Code, release.Body.String())
+	}
+	if !strings.Contains(release.Body.String(), "Campaign lease released") {
+		t.Fatalf("release body missing confirmation: %s", release.Body.String())
+	}
+	if _, ok := s.contributeHub.runLeaseHolder("myorg/repo1!stable-spec-10060:spec", time.Now()); ok {
+		t.Fatalf("spektacular run lease still held after release")
+	}
+}
+
 func TestCampaignLeaseReleaseAndReviseFlows(t *testing.T) {
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)

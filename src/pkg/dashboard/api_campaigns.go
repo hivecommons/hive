@@ -194,7 +194,11 @@ func (s *Server) handleCampaignRelease(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "campaign lease not found", http.StatusNotFound)
 				return
 			}
-			if held.identity != requestUser(r) {
+			// A pending Spektacular stage lease is held by the server-side
+			// stage identity, not a dashboard user. Owners may clear those
+			// placeholders, while contributor-held leases still require the
+			// matching identity.
+			if !s.contributeHub.isPendingStageIdentity(held.identity) && held.identity != requestUser(r) {
 				jsonError(w, "campaign lease held by "+held.identity, http.StatusConflict)
 				return
 			}
