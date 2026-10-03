@@ -234,7 +234,7 @@ func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
 
 func TestDashboardNoticesContainReleaseAndPlanningAboveOverview(t *testing.T) {
 	html := indexHTML(t)
-	notices := strings.Index(html, `id="dashboard-notices"`)
+	notices := strings.Index(html, `id="dash-notices"`)
 	release := strings.Index(html, `id="release-status"`)
 	planning := strings.Index(html, `id="planning-intro"`)
 	overview := strings.Index(html, `data-dashboard-section="overview-section"`)
