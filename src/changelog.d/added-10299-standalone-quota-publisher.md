@@ -1,0 +1,1 @@
+- Standalone contributors now publish their own subscription quota readings: the contributor image entrypoint and `just contribute-hive <cli> local` start `hive-quota-publisher` beside the relay, so the quota guard protects headroom and resumes automatically without a custom reader or a local Hive server (opt out with `HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0`).
