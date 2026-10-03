@@ -14,12 +14,38 @@ func TestOverviewKPIValuesRenderFromChartSlices10139(t *testing.T) {
 	}
 	html := indexHTML(t)
 	script := `const assert = require('node:assert/strict');
+const OVERVIEW_KPI_LOCAL_PREFIX = 'hive.overviewKPI.local.';
+const OVERVIEW_KPI_LOCAL_MAX = 2016;
+const OVERVIEW_KPI_MIN_SAMPLE_MS = 5 * 60 * 1000;
+const OVERVIEW_KPI_WINDOW_KEY = 'hive.overviewKPI.window';
+const OVERVIEW_KPI_WINDOWS = { '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
+let _overviewKPIHistory = [];
+let _overviewKPIWindow = '24h';
+let _overviewKPILocalScope = 'all';
+let _overviewLastRepos = [];
+const window = { _lastStatus: {} };
+const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
+function fmtSparkVal(v){ return String(v); }
+function renderSparkline(){ throw new Error('renderSparkline should not be called in this test'); }
 ` + jsFunc(t, html, "esc") + `
 ` + jsFunc(t, html, "overviewItemAgeMinutes") + `
 ` + jsFunc(t, html, "overviewMedianAgeLabel") + `
+` + jsFunc(t, html, "overviewMedianAgeSeconds") + `
+` + jsFunc(t, html, "fmtDurationFromSeconds") + `
+` + jsFunc(t, html, "overviewKPIRepoScope") + `
+` + jsFunc(t, html, "overviewKPILocalKey") + `
+` + jsFunc(t, html, "overviewKPILoadLocal") + `
+` + jsFunc(t, html, "overviewKPISaveLocal") + `
+` + jsFunc(t, html, "overviewKPIRecordLocal") + `
+` + jsFunc(t, html, "overviewKPIHistoryEntries") + `
+` + jsFunc(t, html, "overviewKPICurrentSample") + `
+` + jsFunc(t, html, "overviewKPIWindowControls") + `
+` + jsFunc(t, html, "overviewKPISparkTitle") + `
+` + jsFunc(t, html, "overviewKPISpark") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
 const state = { showKPIs: true, timeBasis: 'updated' };
 const repos = [{ heldIssues: [{ number: 501 }], heldPrs: [] }];
+_overviewLastRepos = repos;
 const issueSlices = [
   { key: 'ready', count: 93, items: [{ updated_at: new Date(Date.now() - 7 * 60000).toISOString() }] },
   { key: 'in-progress', count: 4, items: [] },

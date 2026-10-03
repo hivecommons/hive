@@ -176,7 +176,7 @@ DASHBOARD_LAYOUT_TEMPLATE.main.forEach(id => { const el = new El(id, 'data-dashb
 const navGroup = new El('dashboard-section-nav-group');
 const oldGroup = new El('old-group');
 const helpGroup = new El('help-group');
-const navItems = ['faq-section','governor','overview-section','repos-section'].map((id, i) => { const el = new El('nav-'+id, 'data-section', id); (i < 2 ? navGroup : oldGroup).appendChild(el); return el; });
+const navItems = ['faq-section','governor','overview-section','pr-throughput-section'].map((id, i) => { const el = new El('nav-'+id, 'data-section', id); (i < 2 ? navGroup : oldGroup).appendChild(el); return el; });
 const help = new El('help-link'); help.attrs['class']='oc-nav-item'; helpGroup.appendChild(help);
 const groups = [navGroup, oldGroup, helpGroup];
 const layoutStatus = new El('oc-gh-menu-layout-status');
