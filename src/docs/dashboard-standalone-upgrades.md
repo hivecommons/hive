@@ -20,9 +20,48 @@ Podman/Quadlet also requires an explicit manager mode:
 - `HIVE_DEPLOYMENT_PODMAN_MODE=rootful` for the system manager
 
 New Compose assets set the Compose runtime in `src/docker-compose.yaml`. New
-Quadlet installs append the runtime and mode to `hive.env`. Existing installs
-must reconcile or add these values manually; until then the dashboard refuses
-to offer a standalone upgrade action.
+Quadlet installs set the runtime and mode in `hive.env`. For an existing
+Quadlet install, use the migration below rather than editing those values by
+hand.
+
+## Upgrading an existing Podman install
+
+From a current `v5` checkout containing the host request bridge, run **one**
+command as the account that owns the install (choose the matching manager):
+
+```sh
+# Rootless: run as the user who installed Hive, not with sudo.
+bin/hive-podman-update.sh reconcile migrate --rootless
+
+# Rootful: the script uses sudo for system-manager operations.
+bin/hive-podman-update.sh reconcile migrate --rootful
+```
+
+This is an explicit downtime operation: it reconciles repo-owned units and
+helpers, repairs/deduplicates `HIVE_DEPLOYMENT_RUNTIME`,
+`HIVE_DEPLOYMENT_PODMAN_MODE`, and `HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR` in
+`hive.env`, creates/repairs the host request directory with mode 770 and the
+container launch group (using `podman unshare` for rootless ownership), enables
+only `hive-upgrade.path`, and recreates Hive so the environment and writable
+request mount actually reach the container. The request path is read from the
+checkout's Quadlet mount, not guessed. Both host helpers are installed together
+so the drain can invoke the update script without depending on the checkout's
+location. Gateway health is checked before success is reported.
+
+`hive.yaml`, `secrets/`, and all other environment lines (including tokens) are
+preserved. A second run reports `already current`, changes no files, and exits
+0. A failed recreate leaves a pending marker so rerunning the same command
+retries activation even if the files already match. Missing bridge assets fail
+before modifying the install. This migrates host assets, not the image or its
+pin: the running image must also contain dashboard request-bridge support for
+the button to become available. No Podman or systemd socket is mounted.
+
+**Ownership:** `hive-podman-setup.sh` provisions new installs;
+`hive-podman-update.sh reconcile migrate` upgrades existing ones, delegating
+repo-owned file copying to its existing `reconcile apply` path. Ordinary
+`reconcile check` remains read-only and `reconcile apply` still leaves
+`hive.env` and the running Hive container untouched. Do not use `setup --force`
+for this migration: that can replace operator configuration and tokens.
 
 ## Host helper contract
 

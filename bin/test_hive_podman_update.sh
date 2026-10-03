@@ -80,7 +80,10 @@ case "${args[0]:-}" in
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;
   daemon-reload) : ;;
-  is-enabled)
+  is-enabled|is-active)
+    if [ "${args[1]:-}" = hive-upgrade.path ]; then
+      [ -f "$sd/bridge-enabled" ]; exit $?
+    fi
     # podman-auto-update.timer (#4411). FAKE_TIMER_STATE is what the manager
     # reports; FAKE_TIMER_RC lets a case model a host with no podman systemd
     # units installed, which is the `enable` failure path.
@@ -88,6 +91,10 @@ case "${args[0]:-}" in
     [ "${FAKE_TIMER_STATE:-disabled}" = "enabled" ] || exit 1
     ;;
   enable|disable)
+    if [ "${args[*]}" = 'enable --now hive-upgrade.path' ]; then
+      [ "${FAKE_TIMER_RC:-0}" = 0 ] || exit "$FAKE_TIMER_RC"
+      touch "$sd/bridge-enabled"
+    fi
     printf '%s\n' "${args[*]}" >>"${sd}/timer.log"
     exit "${FAKE_TIMER_RC:-0}"
     ;;
@@ -125,6 +132,15 @@ cat >"${FAKE_BIN}/podman" <<'EOF'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" >>"$PODMAN_CALL_LOG"
 case "${1:-}" in
+  unshare)
+    shift
+    if [ "${1:-}" = stat ]; then
+      [ -d "${!#}" ] || exit 1
+      printf '0:%s\n' "${HIVE_SETUP_LAUNCH_GID:-1002}"
+    elif [ "${1:-}" != chown ]; then
+      exec "$@"
+    fi
+    ;;
   pull)
     ref="${!#}"
     if [ -n "${FAKE_PULL_FAIL_SUBSTR:-}" ] && [ "${ref#*"$FAKE_PULL_FAIL_SUBSTR"}" != "$ref" ]; then
@@ -204,6 +220,9 @@ reset_env() {
   # The real checkout by default, so the comparison runs against the files this
   # PR actually ships; cases that want a host with no repo override it.
   export HIVE_UPDATE_SRC_ROOT="$ROOT"
+  export HIVE_UPDATE_BIN_DIR="${TEST_TMP}/installed-bin"
+  rm -rf "$HIVE_UPDATE_BIN_DIR"; mkdir -p "$HIVE_UPDATE_BIN_DIR"
+  unset HIVE_SETUP_LAUNCH_GID || true
 
   export STATE_DIR="${TEST_TMP}/state"
   rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
@@ -645,6 +664,14 @@ seed_managed_host() {
   for u in hive-boot.target hive-boot-gate.service; do
     install -Dm644 "${ROOT}/src/deploy/systemd/${u}" "${BOOT_UNIT_DIR}/${u}"
   done
+  if [ -f "${ROOT}/src/deploy/systemd/hive-upgrade.path" ]; then
+    for u in hive-upgrade.path hive-upgrade.service; do
+      install -Dm644 "${ROOT}/src/deploy/systemd/${u}" "${BOOT_UNIT_DIR}/${u}"
+    done
+    for u in hive-upgrade-request.sh hive-podman-update.sh; do
+      install -Dm755 "${ROOT}/bin/${u}" "${HIVE_UPDATE_BIN_DIR}/${u}"
+    done
+  fi
 }
 
 # The operator files reconcile must never write. Seeded with contents no
@@ -758,6 +785,92 @@ case_expect "and it says how to get one" 78 "git clone" reconcile check
 
 reset_env
 case_expect "reconcile rejects a bad action" 64 "reconcile takes check or apply" reconcile sideways
+
+echo
+echo "== existing-install upgrade bridge migration (#10419) =="
+
+# A complete bridge checkout fixture keeps these tests independent of whether
+# #10416 has merged yet. No fixture unit is ever loaded by a real manager.
+seed_bridge_checkout() {
+  export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/bridge-checkout"
+  rm -rf "$HIVE_UPDATE_SRC_ROOT"
+  mkdir -p "$HIVE_UPDATE_SRC_ROOT/src/deploy" "$HIVE_UPDATE_SRC_ROOT/bin"
+  cp -R "$ROOT/src/deploy/quadlet" "$ROOT/src/deploy/systemd" "$HIVE_UPDATE_SRC_ROOT/src/deploy/"
+  cp "$ROOT/src/deploy/nginx.conf" "$HIVE_UPDATE_SRC_ROOT/src/deploy/"
+  cp "$UPDATE" "$HIVE_UPDATE_SRC_ROOT/bin/hive-podman-update.sh"
+  printf '#!/bin/sh\nexit 0\n' >"$HIVE_UPDATE_SRC_ROOT/bin/hive-upgrade-request.sh"
+  chmod +x "$HIVE_UPDATE_SRC_ROOT/bin/hive-upgrade-request.sh"
+  printf '[Path]\nPathExistsGlob=%%E/hive/upgrade-requests/*.request\n' >"$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.path"
+  printf '[Service]\nType=oneshot\n' >"$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.service"
+  # Strip any real mount before adding exactly one fixture mount.
+  sed -i '\|^Volume=%E/hive/upgrade-requests:|d' "$HIVE_UPDATE_SRC_ROOT/src/deploy/quadlet/hive.container"
+  printf 'Volume=%%E/hive/upgrade-requests:/run/hive/upgrade-requests:rw,Z\n' >>"$HIVE_UPDATE_SRC_ROOT/src/deploy/quadlet/hive.container"
+}
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+printf '# keep this comment\nUNRELATED=value with spaces\nHIVE_DEPLOYMENT_RUNTIME=unknown\n HIVE_DEPLOYMENT_RUNTIME=compose\nHIVE_DEPLOYMENT_PODMAN_MODE=rootful\nHIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/wrong\n' >>"$CONF_DIR/hive.env"
+grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
+cp "$CONF_DIR/hive.yaml" "$TEST_TMP/operator.yaml"
+cp "$CONF_DIR/secrets/id_ed25519" "$TEST_TMP/operator.key"
+case_expect "one command migrates a pre-bridge rootless host" 0 "migration complete" reconcile migrate
+check "runtime is repaired without duplicate conflicting lines" \
+  '[ "$(grep -c HIVE_DEPLOYMENT_RUNTIME= "$CONF_DIR/hive.env")" = 1 ] && grep -qx HIVE_DEPLOYMENT_RUNTIME=podman-quadlet "$CONF_DIR/hive.env"'
+check "rootless mode and container-side request directory are repaired" \
+  'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootless "$CONF_DIR/hive.env" && grep -qx HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/run/hive/upgrade-requests "$CONF_DIR/hive.env"'
+grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
+check "non-Hive env lines and token are byte-preserved" 'cmp -s "$TEST_TMP/unrelated.env" "$TEST_TMP/unrelated.after"'
+check "yaml and secrets are untouched" 'cmp -s "$TEST_TMP/operator.yaml" "$CONF_DIR/hive.yaml" && cmp -s "$TEST_TMP/operator.key" "$CONF_DIR/secrets/id_ed25519"'
+check "request directory is private and mapped in the Podman namespace" \
+  '[ "$(stat -c %a "$CONF_DIR/upgrade-requests")" = 770 ] && grep -q "podman unshare chown 0:1002" "$PODMAN_CALL_LOG"'
+check "both host helpers are installed executable" \
+  '[ -x "$HIVE_UPDATE_BIN_DIR/hive-upgrade-request.sh" ] && [ -x "$HIVE_UPDATE_BIN_DIR/hive-podman-update.sh" ]'
+check "only the path is enabled and Hive is recreated" \
+  'grep -q "enable --now hive-upgrade.path" "$SYSTEMCTL_CALL_LOG" && ! grep -q "enable.*hive-upgrade.service" "$SYSTEMCTL_CALL_LOG" && grep -q "restart hive.service" "$SYSTEMCTL_CALL_LOG"'
+find "$CONF_DIR" "$QUADLET_DIR" "$BOOT_UNIT_DIR" "$HIVE_UPDATE_BIN_DIR" -type f -printf '%p %T@\n' | sort >"$TEST_TMP/before.times"
+: >"$SYSTEMCTL_CALL_LOG"; : >"$PODMAN_CALL_LOG"
+case_expect "second migration is already current and exits zero" 0 "already current" reconcile migrate
+find "$CONF_DIR" "$QUADLET_DIR" "$BOOT_UNIT_DIR" "$HIVE_UPDATE_BIN_DIR" -type f -printf '%p %T@\n' | sort >"$TEST_TMP/after.times"
+check "second migration writes no files" 'cmp -s "$TEST_TMP/before.times" "$TEST_TMP/after.times"'
+check "second migration reloads/restarts/enables nothing" \
+  '! grep -qE "(restart|daemon-reload|enable --now)" "$SYSTEMCTL_CALL_LOG" && ! grep -q chown "$PODMAN_CALL_LOG"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export HIVE_SETUP_LAUNCH_GID="$(id -g)"
+case_expect "rootful migration succeeds through sudo" 0 "migration complete" reconcile migrate --rootful
+check "rootful metadata and ownership match the system manager" \
+  'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootful "$CONF_DIR/hive.env" && [ "$(stat -c %g "$CONF_DIR/upgrade-requests")" = "$HIVE_SETUP_LAUNCH_GID" ] && grep -q "sudo systemctl restart hive.service" "$SUDO_CALL_LOG"'
+case_expect "rootful migration is idempotent too" 0 "already current" reconcile migrate --rootful
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_RESTART_RC=1
+case_expect "failed recreation fails migration" 78 "" reconcile migrate
+export FAKE_RESTART_RC=0
+case_expect "retry recreates even when files already match" 0 "migration complete" reconcile migrate
+check "successful retry clears pending migration" '[ ! -e "$CONF_DIR/.upgrade-bridge-migration-pending" ]'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+rm "$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.path"
+cp "$CONF_DIR/hive.env" "$TEST_TMP/preflight.env"
+case_expect "incomplete bridge checkout fails before modifying the install" 78 "migration needs the host bridge" reconcile migrate
+check "failed bridge preflight preserves env and creates no request directory" \
+  'cmp -s "$TEST_TMP/preflight.env" "$CONF_DIR/hive.env" && [ ! -e "$CONF_DIR/upgrade-requests" ]'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_TIMER_RC=1
+case_expect "path activation failure is not reported as success" 78 "" reconcile migrate
+check "path activation failure keeps a retry marker" '[ -f "$CONF_DIR/.upgrade-bridge-migration-pending" ]'
+export FAKE_TIMER_RC=0
+case_expect "path activation failure can be retried" 0 "migration complete" reconcile migrate
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+secrets_mode="$(stat -c %a "$CONF_DIR/secrets")"
+ln -s "$CONF_DIR/secrets" "$CONF_DIR/upgrade-requests"
+case_expect "symlinked request directories are rejected" 78 "refuses symlinked" reconcile migrate
+check "symlink rejection never changes secrets permissions" '[ "$(stat -c %a "$CONF_DIR/secrets")" = "$secrets_mode" ]'
+
+reset_env; seed_managed_host; seed_bridge_checkout
+case_expect "migration refuses an absent operator env rather than provisioning" 78 "needs an existing" reconcile migrate
+check "absent env remains absent" '[ ! -e "$CONF_DIR/hive.env" ]'
 
 echo
 echo "== drift is visible without being asked for (#6078) =="
