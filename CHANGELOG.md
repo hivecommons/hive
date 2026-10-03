@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-03 (v5.122.1)
+
+### Fixed
+
+- release: require current candidate soak before stable promotion (#10341)
+- dashboard: name the host `podman-auto-update.service` command in the disabled Upgrade reason when the Podman/Quadlet upgrade helper is unreachable or the runtime is unconfigured (#10344)
+
 ## 2026-10-03 (v5.122.0)
 
 ### Added
