@@ -1,9 +1,6 @@
 level: 6
 name: Fully Autonomous
-description: 'Multi-loop with external orchestration. Agents open issues, create PRs,
-  and auto-merge on green CI. No hold label. Adds outreach agent (+outreach) for community
-  engagement and external-facing actions. Thirteen agents total, including opt-in telemetry and operations. Highest trust — governor
-  at fastest cadence.
+description: 'Fully autonomous operation. Fourteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
 
   '
 governor:
@@ -16,7 +13,7 @@ governor:
   # Critical false-positive stalls that queue item until an operator clears it.
   # Override per hive with ioscan.fail_mode: open.
   ioscan_fail_mode: closed
-  merge_policy: 'Auto-merge on green CI. No hold label.
+  merge_policy: 'Auto-merge on green CI for eligible lanes; outreach remains held for human review.
 
     '
   eval_interval_s: 120

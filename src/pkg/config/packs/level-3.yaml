@@ -1,8 +1,6 @@
 level: 3
 name: Quality-Gated
-description: 'Feedback becomes visible (formerly ''Measured''). Quality opens issues AND hold-gated PRs about
-  testing gaps. All PRs get ''hold'' label; no agent merges. All other agents remain
-  advisory (beads only). CI-maintainer joins to monitor build health.
+description: 'Quality-gated feedback. Quality is the only write-enabled lane: it opens GitHub issues and hold-gated PRs about testing, coverage, and CI infrastructure. Supervisor, scanner, ci-maintainer, guide, and brainstorm remain advisory, and no agent merges.
 
   '
 governor:

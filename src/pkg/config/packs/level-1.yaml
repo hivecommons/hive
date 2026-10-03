@@ -1,11 +1,10 @@
 level: 1
 name: Inception
 description: >
-  Project inception (formerly "Assisted"). An interactive brainstorm agent turns raw ideas into
-  structured KB facts and project scaffolding. A guide agent audits
-  documentation. Supports greenfield (new project from an idea) and
-  brownfield (existing repo enrichment). All actions require human
-  approval. No feedback loops.
+  Project inception. Brainstorm turns raw ideas into structured KB facts and
+  project scaffolding while guide provides interactive documentation and setup
+  advice. Both agents remain advisory and conversational; no GitHub write
+  actions or feedback loops run without a human.
 governor:
   modes: none
   merge_policy: manual

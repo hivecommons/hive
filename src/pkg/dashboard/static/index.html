@@ -3562,10 +3562,9 @@
     .row-card { cursor: pointer; padding: var(--sp-5); margin-bottom: var(--sp-2); background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); transition: border-color var(--duration-fast); }
     .error-note { color: var(--red); font-size: var(--fs-base); }
     .repo-chip-btn { padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
-    /* ACMM level badges share level tinting. The sidebar/main badges open the
-       level selector; the topbar badge is display-only and jumps to ACMM Eval. */
-    #acmm-badge, #acmm-main-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
-    #acmm-main-badge:hover, #acmm-sidebar-badge:hover {
+    /* ACMM level badges share level tinting and open the level selector. */
+    #acmm-badge, #acmm-main-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-badge:hover, #acmm-main-badge:hover {
       background: color-mix(in srgb, var(--amber) 26%, transparent);
       border-color: var(--amber);
       text-decoration: underline;
@@ -4123,9 +4122,6 @@
         <div class="oc-logo-sub">GATEWAY DASHBOARD</div>
       </div>
     </div>
-    <div style="padding:var(--sp-2) var(--sp-6) var(--sp-4);text-align:center">
-      <span id="acmm-sidebar-badge" title="Click to change maturity level" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" data-action="openACMMDialog"></span>
-    </div>
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
@@ -4222,7 +4218,7 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name" class="oc-project-title"></span>
       <span class="nav-chip-group" aria-label="Hive status">
-        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="ocNavigate" data-arg0="acmm-eval-section" title="View the current ACMM autonomy level" aria-label="View ACMM autonomy level"></button>
+        <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay" title="Change the current ACMM autonomy level" aria-label="Change ACMM autonomy level"></button>
       <!-- Fleet breaker status chip. Kept in .oc-topbar-left, the shortest group,
            so it cannot wrap the topbar to a third row. State + owner-gating are
            rendered by _renderFleetBreaker; read-only viewers see the disabled
@@ -25671,7 +25667,6 @@ function burnAreaChart() {
             <div style="text-align:right;min-width:80px">
               <div style="font-size:0.7rem;color:var(--muted)">${p.agentCount} agent${p.agentCount !== 1 ? 's' : ''}</div>
               ${!isCurrent && p.level > 0 ? '<button class="hv-btn btn-primary btn-sm" data-action="applyACMMPack" data-arg0="' + p.level + '" data-arg-types="j" style="margin-top:var(--sp-2);padding:6px 14px;background:' + color + ';color:#fff;border:none;border-radius:var(--r);font-size:var(--fs-sm);font-weight:600;cursor:pointer">Apply</button>' : ''}
-              ${!isCurrent ? '<button class="hv-btn btn-primary" data-action="setACMMLevel" data-arg0="' + p.level + '" data-arg-types="j" style="margin-top:var(--sp-2);padding:5px 10px;background:transparent;color:' + color + ';border:1px solid ' + color + ';border-radius:var(--r);font-size:var(--fs-xs);font-weight:600;cursor:pointer" title="Preview this level — changes the display without affecting running agents">Preview</button>' : ''}
             </div>
           </div>
           ${p.governor ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-3)"><span style="font-weight:600">Governor:</span> ' + esc(p.governor.modes || 'none') + ' · <span style="font-weight:600">Merge:</span> ' + esc(p.governor.mergePolicy || 'manual') + '</div>' : ''}
@@ -25730,46 +25725,6 @@ function burnAreaChart() {
       }
     }
 
-    async function setACMMLevel(level) {
-      const errEl = document.getElementById('acmm-apply-error');
-      errEl.style.display = 'none';
-
-      const levelNames = ['', 'Inception', 'Advisory', 'Quality-Gated', 'Security-Aware', 'Semi-Autonomous', 'Fully Autonomous'];
-      const name = levelNames[level] || 'Level ' + level;
-      if (!(await hiveConfirm(`Preview ACMM Level ${level} (${name})?\n\nThis changes the dashboard display to show what this level looks like. Running agents are not affected — use Apply to create agents and change their state.`))) return;
-
-      showACMMLoading('Switching to Level ' + level + '…');
-      try {
-        const res = await fetch('/api/packs/level', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ level }) });
-        const data = await res.json();
-        hideACMMLoading();
-        if (!res.ok) {
-          errEl.textContent = data.error || 'Failed to set level';
-          errEl.style.display = 'block';
-          return;
-        }
-        const governorChanges = formatGovernorChanges(data.governor_changes);
-        closeACMMDialog();
-        // Server-confirmed level only — see applyACMMPack above (#5492).
-        const confirmedLevel = (data && Number.isFinite(Number(data.level))) ? Number(data.level) : level;
-        noteStatusMutation(data.minStatusSeq);
-        window._acmmOverride = { level: confirmedLevel, packAgents: data.packAgents || [] };
-        if (window._lastStatus) {
-          window._lastStatus.acmmLevel = confirmedLevel;
-          window._lastStatus.acmmLevelConfigured = true;
-          window._lastStatus.acmmPackAgents = data.packAgents || [];
-          render(window._lastStatus);
-        }
-        showToast(`ACMM level set to L${confirmedLevel} (${name})` + (governorChanges ? ' — governor settings changed' : ''), governorChanges ? 'info' : 'success');
-        if (governorChanges) await hiveAlert(governorChanges, 'Governor settings changed');
-        await maybeShowLevelAutoMergeActiveModal(data);
-        _acmmPacks = null;
-      } catch (err) {
-        hideACMMLoading();
-        errEl.textContent = 'Network error: ' + err.message;
-        errEl.style.display = 'block';
-      }
-    }
 
     // Packs reconcile scheduling as part of an explicit level apply. Show the
     // exact mutation instead of leaving an operator to discover it after restart.
@@ -25811,13 +25766,11 @@ function burnAreaChart() {
       const topbarBadge = document.getElementById('acmm-badge');
       if (topbarBadge) {
         topbarBadge.innerHTML = escapeHtml(acmmLevelLabel(level).replace(' ', ' · '));
-        topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to view ACMM Evaluation';
+        topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to change maturity level';
         tint(topbarBadge);
       }
       const badge = document.getElementById('acmm-main-badge');
       if (badge) { badge.innerHTML = html; tint(badge); }
-      const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) { sbBadge.innerHTML = html; tint(sbBadge); }
       applyACMMVisibility(level, packAgents);
     }
 

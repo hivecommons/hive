@@ -529,7 +529,7 @@ func TestStaticTopbarACMMAndSidebarVersionPlacement(t *testing.T) {
 	}
 	topbar := html[topbarStart : topbarStart+topbarEnd]
 	for _, want := range []string{
-		`id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="ocNavigate" data-arg0="acmm-eval-section"`,
+		`id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay"`,
 		`id="oc-version-chip"`,
 		`id="oc-version-menu"`,
 		`aria-expanded="false" aria-controls="oc-version-menu"`,
