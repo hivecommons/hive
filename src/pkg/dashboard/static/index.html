@@ -33836,10 +33836,10 @@ function burnAreaChart() {
           </div>
         </div>
 
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Upstream Watch <span class="config-info">i<span class="config-tooltip">Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Read-only — configure the watch under upstream_watch in hive.yaml.</span></span></div>
-          <div id="upstream-watch-panel" style="font-size:0.72rem;color:var(--muted)">Loading…</div>
-          <div class="config-field" style="margin-top:10px">
+        <div class="hv-upstream-watch">
+          <div class="hv-upstream-watch-title">Upstream Watch <span class="config-info">i<span class="config-tooltip">Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Read-only — configure the watch under upstream_watch in hive.yaml.</span></span></div>
+          <div id="upstream-watch-panel" class="hv-upstream-watch-panel">Loading…</div>
+          <div class="config-field mt-5">
             <button class="hv-btn btn-secondary btn" data-action="loadUpstreamWatch">Refresh</button>
           </div>
         </div>
@@ -34667,9 +34667,9 @@ function burnAreaChart() {
             const ref = it.upstream_url ? `<a class="text-accent" href="${esc(it.upstream_url)}" target="_blank" rel="noopener">${esc(it.upstream_ref || it.ref)}</a>` : esc(it.upstream_ref || it.ref);
             const issue = it.issue_number ? (it.issue_url ? `<a class="text-accent" href="${esc(it.issue_url)}" target="_blank" rel="noopener">#${it.issue_number}</a>` : `#${it.issue_number}`) : '—';
             const port = it.diff_url ? `<a class="text-accent" href="${esc(it.diff_url)}" target="_blank" rel="noopener">port this</a>` : '—';
-            return `<tr><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${ref}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${issue}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${esc(it.state || '')}</td><td style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">${esc(when(it.recorded_at))}</td><td style="padding:var(--sp-1) var(--sp-0)">${port}</td></tr>`;
+            return `<tr><td>${ref}</td><td>${issue}</td><td>${esc(it.state || '')}</td><td>${esc(when(it.recorded_at))}</td><td>${port}</td></tr>`;
           }).join('');
-          rows.push(`<table style="margin-top:var(--sp-2);border-collapse:collapse;font-size:0.72rem"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Upstream</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Fork issue</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">State</th><th style="padding:var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-0)">Recorded</th><th style="padding:var(--sp-1) var(--sp-0)">Patch</th></tr></thead><tbody>${cells}</tbody></table>`);
+          rows.push(`<table class="hv-upstream-watch-table"><thead><tr><th>Upstream</th><th>Fork issue</th><th>State</th><th>Recorded</th><th>Patch</th></tr></thead><tbody>${cells}</tbody></table>`);
         }
         out.innerHTML = rows.join('');
       } catch (err) {
