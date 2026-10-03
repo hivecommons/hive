@@ -18,6 +18,7 @@ import (
 
 func runInterviewTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
+	stubSpekHubExecutorCredential(t)
 	s, _ := runsTestServer(t)
 	setAgentWorkspaceRootForTest(t, t.TempDir())
 	runKey := "myorg/repo1#9024"
