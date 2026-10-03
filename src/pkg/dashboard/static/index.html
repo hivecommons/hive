@@ -31,6 +31,10 @@
       /* Radii / shadows / fonts — defined in Phase 0, applied in later phases. */
       --radius-sm: var(--r-sm); --radius: var(--r); --radius-lg: var(--r-lg);
       --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+      --modal-gap: var(--sp-8);
+      --modal-scrim: rgba(0, 0, 0, 0.55);
+      --modal-scrim-strong: rgba(0, 0, 0, 0.78);
+      --overlay-scrim: var(--modal-scrim);
       --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.45); /* toasts / floating chrome */
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
@@ -111,16 +115,17 @@
     /* Release channel + last upgrade attempt panel (#7092). */
     #dash-notices { margin: var(--sp-4) var(--sp-0) var(--sp-5); }
     #dash-notices:empty { display: none; }
-    .release-status { margin: 6px 0 10px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.5; }
-    .release-status-row { display: block; }
-    .release-status-row + .release-status-row { margin-top: var(--sp-2); }
-    .release-status-row--selector { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .release-status { margin: 6px 0 10px; padding: var(--sp-3) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--border) 12%, transparent); font-size: var(--fs-base); line-height: 1.35; display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+    .release-status-row { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .release-status-row + .release-status-row { margin-top: var(--sp-0); }
+    .release-status-row--selector { display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
     .release-status-row--info { color: var(--accent); }
     .release-status-row--warn { color: var(--yellow, #d4a017); }
     .release-status-row--success { color: var(--green); font-weight: 600; }
     .release-status-row--danger { color: var(--red); font-weight: 600; }
     .release-status-row--muted { color: var(--muted); font-weight: 600; }
-    .release-status-detail { margin-top: var(--sp-1); color: var(--muted); line-height: 1.4; }
+    .release-status-detail { color: var(--muted); line-height: 1.35; }
+    .release-status-hint { color: var(--muted); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-2); font-size: var(--fs-xs); cursor: help; }
     .release-channel-select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 8px; }
     .release-status code { font-family: var(--font-mono); font-size: 0.9em; }
     .dashboard-notice { border-radius: 8px; padding: var(--sp-5) var(--sp-6); margin-bottom: var(--sp-4); display: flex; align-items: center; gap: 10px; font-size: var(--fs-base); }
@@ -1113,7 +1118,7 @@
     .gh-auth-modal .gh-verify-link:hover { background: color-mix(in srgb, var(--green) 85%, #fff); }
     .gh-auth-modal .gh-poll-status { color: var(--muted); font-size: 0.8rem; margin-top: var(--sp-5); }
     .gh-auth-modal .gh-cancel { margin-top: var(--sp-5); } /* ghost button (system recipe) */
-    .gh-setup-modal { padding: var(--sp-9); max-width: 560px; width: 92%; text-align: left; max-height: 85vh; overflow-y: auto; } /* modal panel recipe */
+    .gh-setup-modal { padding: var(--sp-9); max-width: 560px; width: 92%; text-align: left; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow-y: auto; } /* modal panel recipe */
     .claude-auth-btn { background: #d97706; color: #fff; border: none; padding: var(--sp-3) var(--sp-6); border-radius: var(--r); cursor: pointer; font-weight: 600; font-size: 0.85rem; }
     .claude-auth-btn:hover { background: #f59e0b; }
     .claude-auth-status { font-size: 0.8rem; color: var(--muted); }
@@ -2416,7 +2421,7 @@
     .feedback-bug-btn { position:relative; min-width:34px; }
     .feedback-pill { position:absolute; top:-7px; right:-7px; min-width:16px; height:16px; padding:var(--sp-0) var(--sp-1); border-radius:var(--r-pill); background:var(--red); color:var(--text); font-size:var(--fs-2xs); font-weight:800; line-height:16px; text-align:center; box-shadow:var(--shadow-raised); }
     .feedback-pill[hidden] { display:none; }
-    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: auto; max-height: 90vh; overflow: hidden; padding: var(--sp-0); }
+    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: hidden; padding: var(--sp-0); }
     .feedback-header { position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
     .feedback-header h2 { margin:0 0 var(--sp-2); }
     .feedback-intro { color:var(--muted); margin:0; line-height:1.45; }
@@ -2490,8 +2495,8 @@
     @keyframes config-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .hive-dialog-overlay { z-index: 20000; }
     .acmm-dialog-overlay { z-index: 10000; } /* JS toggles inline display flex/none */
-    .acmm-dialog { padding: var(--sp-7); max-width: 600px; width: 92%; max-height: 80vh; overflow-y: auto; }
-    .hive-dialog { width: 460px; max-width: 92vw; padding: var(--sp-8); } /* modal panel recipe */
+    .acmm-dialog { padding: var(--sp-7); max-width: 600px; width: 92%; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow-y: auto; }
+    .hive-dialog { width: 460px; max-width: 92vw; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: auto; padding: var(--sp-8); } /* modal panel recipe */
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
     .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
@@ -2508,8 +2513,8 @@
     .level-automerge-toggle { flex: 0 0 auto; }
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
-      width: 1200px; max-width: 96vw;
-      height: 85vh; display: flex; flex-direction: column;
+      width: 1200px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));
+      height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
       font-family: var(--font-ui); font-size: var(--fs-base);
       contain: layout;
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2996,7 +3001,8 @@
     .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: var(--sp-2); max-height: 200px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .hive-chat-shortcuts {
       display:none; position:fixed; z-index:20001; inset:0; background:var(--overlay-scrim);
-      align-items:center; justify-content:center;
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+      align-items:center; justify-content:center; padding: var(--modal-gap);
     }
     .hive-chat-shortcuts.open { display:flex; }
     .hive-chat-shortcut-card { width:min(460px, calc(100vw - 32px)); background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-6); box-shadow:var(--shadow-lg); }
@@ -3057,7 +3063,7 @@
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
        (also reused by the kb modals via className); z-index stays. */
     .nous-config-overlay { z-index: 1000; }
-    .nous-config-dialog { width: 900px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; padding: var(--sp-0); }
+    .nous-config-dialog { width: 900px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
     .nous-config-dialog > h2 { flex-shrink: 0; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
     .nous-config-dialog > .nous-config-body { flex: 1; overflow-y: auto; padding: var(--sp-6) var(--sp-8); }
     .nous-config-dialog > .nous-config-footer { flex-shrink: 0; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
@@ -3437,9 +3443,16 @@
     .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: var(--overlay-scrim);
-      -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
       display: flex; align-items: center; justify-content: center;
+      padding: var(--modal-gap); overflow: auto;
       animation: config-fade-in 0.15s ease-out;
+    }
+    @media (prefers-reduced-transparency: reduce), (prefers-reduced-motion: reduce) {
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts {
+        background: var(--modal-scrim-strong);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+      }
     }
     /* Glass panel — hub recipe linear-gradient(#17212deb,#0c1219eb) +
        border #ffffff1a, expressed in tokens so the light-mode remap
@@ -3451,12 +3464,16 @@
       border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-modal);
+      max-height: calc(100vh - var(--modal-gap) - var(--modal-gap));
+      overflow: auto;
     }
+    .config-modal, .feedback-modal, .nous-config-dialog { overflow: hidden; }
     @media (max-width: 600px) {
       /* .config-modal already goes fullscreen (incl. border-radius:0) in the
          600px block above; the duplicate rule that used to live here was dead.
          The Strategy Lab dialog never got the same treatment — at 900px wide
          with only max-width:95vw it is cramped on a phone. */
+      .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
       .nous-config-dialog {
         width: 100vw; max-width: 100vw;
         height: 100vh; max-height: 100vh;
@@ -5030,7 +5047,7 @@
       ['feedback-submit-tab','feedback-reports-tab'].forEach(function(id) { const el = document.getElementById(id); if (!el) return; const active = (id === 'feedback-submit-tab') === (tab === 'submit'); el.classList.toggle('active', active); el.setAttribute('aria-selected', active ? 'true' : 'false'); });
       if (tab === 'reports') await loadFeedbackReports(true);
     }
-    function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); document.body.classList.remove('modal-open'); document.documentElement.classList.remove('modal-open'); }
+    function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); }
     async function feedbackAddFiles(files) {
       if (!files) return;
       for (const f of Array.from(files)) {
@@ -5989,7 +6006,7 @@
     // hive-dialog, nous) and any added later; per-modal open/close handlers
     // no longer need to touch body.style.overflow.
     (function installModalScrollLock() {
-      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts, #oc-drawer-backdrop';
       function anyOverlayOpen() {
         var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
         for (var i = 0; i < overlays.length; i++) {
@@ -9890,14 +9907,6 @@
       if (wrap && e.target && wrap.contains(e.target)) return;
       btn.setAttribute('aria-expanded', 'false');
     });
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      var btn = document.getElementById('gh-app-install-id-hint-btn');
-      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
-      btn.setAttribute('aria-expanded', 'false');
-      btn.focus();
-    });
-
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
@@ -22074,11 +22083,6 @@ function burnAreaChart() {
       }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && repoPillFilterActive() && e.target && e.target.closest && e.target.closest('#repos-section')) {
-        e.preventDefault();
-        clearRepoPillFilter();
-        return;
-      }
       if (e.key === 'Enter') {
         const el = e.target.closest('[data-enter-action]');
         if (el) {
@@ -22147,6 +22151,7 @@ function burnAreaChart() {
         overlay.remove();
         resolve(val);
       };
+      overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
         if (e.key === 'Enter') {
@@ -24975,49 +24980,52 @@ function burnAreaChart() {
       var chTone, chIcon, chLabel;
       if (ch.resolved && ch.channel) {
         chTone = 'info'; chIcon = '📡';
-        chLabel = 'Channel: <strong>' + escapeHtml(ch.channel) + '</strong>';
+        chLabel = 'Channel <strong>' + escapeHtml(ch.channel) + '</strong>';
         if (ch.pendingChannel && ch.pendingChannel !== ch.channel) {
-          chLabel += ' <span class="release-status-row--warn">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested; waiting for rollout/heartbeat)</span>';
+          chLabel += ' <span class="release-status-row--warn">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested)</span>';
         }
       } else {
         chTone = 'warn'; chIcon = '❔';
-        chLabel = 'Channel: <strong>unknown</strong>' +
+        chLabel = 'Channel <strong>unknown</strong>' +
           (ch.imageTag ? ' <span class="text-muted">(image tag <code>' + escapeHtml(ch.imageTag) + '</code> is not a release channel)</span>' :
           (ch.imageRef ? ' <span class="text-muted">(image <code>' + escapeHtml(ch.imageRef) + '</code> has no release-channel tag)</span>' : ' <span class="text-muted">(image reference unavailable)</span>'));
       }
-      var selectorHtml = '';
+      var channelHelp = ch.selectorDetail || 'Choose stable, candidate, or edge. The hub records your intent and applies it on rollout or heartbeat.';
+      var channelHtml = '<div class="release-status-row release-status-row--' + chTone + '" title="' + escapeHtml(channelHelp) + '">' + chIcon + ' ' + chLabel + '</div>';
       if (ch.selectorEnabled) {
-        selectorHtml = '<div class="release-status-row release-status-row--selector">' +
-          '<label class="text-muted" for="release-channel-select">Follow channel</label>' +
+        channelHtml = '<div class="release-status-row release-status-row--selector release-status-row--' + chTone + '" title="' + escapeHtml(channelHelp) + '">' +
+          chIcon + ' <label for="release-channel-select">Channel</label>' +
           '<select id="release-channel-select" class="release-channel-select" data-current="' + escapeHtml(ch.channel || '') + '" data-change-action="switchReleaseChannel" data-arg-types="t">' +
           ['stable','candidate','edge'].map(function(c) { return '<option value="' + c + '"' + (c === ch.channel ? ' selected' : '') + '>' + c + '</option>'; }).join('') +
           '</select>' +
-          '<span class="text-muted" id="release-channel-switch-msg">' + escapeHtml(ch.selectorDetail || '') + '</span>' +
+          (ch.pendingChannel && ch.pendingChannel !== ch.channel ? '<span class="release-status-row--warn">switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> pending</span>' : '') +
+          '<span class="release-status-hint" id="release-channel-switch-msg" title="' + escapeHtml(channelHelp) + '">?</span>' +
           '</div>';
       } else if (ch.selectorDetail) {
-        selectorHtml = '<div class="release-status-row mt-2 text-muted">Selection unavailable: ' + escapeHtml(ch.selectorDetail) + '</div>';
+        channelHtml += '<div class="release-status-row text-muted">Selection unavailable <span class="release-status-hint" title="' + escapeHtml(ch.selectorDetail) + '">?</span></div>';
       }
 
       // --- Last upgrade attempt (three distinct states) ---
       var at = rs.attempt || {};
       var aTone = 'muted', aIcon = 'ⓘ', aLabel = '';
       var hideAttemptRow = false;
+      var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
           aTone = 'success'; aIcon = '✅';
-          aLabel = 'Last upgrade: <strong>completed' + (at.target ? ' → ' + escapeHtml(versionShortSHA(at.target)) : '') + '</strong>';
+          aLabel = 'Last upgrade <strong>' + (targetShort ? escapeHtml(targetShort) : 'completed') + '</strong>';
           break;
         case 'failed':
           aTone = 'danger'; aIcon = '⚠';
-          aLabel = 'Last upgrade: <strong>FAILED</strong>';
+          aLabel = 'Last upgrade <strong>FAILED</strong>';
           break;
         case 'in_progress':
           aTone = 'warn'; aIcon = '⟳';
-          aLabel = 'Last upgrade: <strong>in progress</strong>';
+          aLabel = 'Last upgrade <strong>in progress' + (targetShort ? ' → ' + escapeHtml(targetShort) : '') + '</strong>';
           break;
         case 'superseded':
           aTone = 'muted'; aIcon = '↷';
-          aLabel = 'Last upgrade: <strong>superseded' + (at.target ? ' → ' + escapeHtml(versionShortSHA(at.target)) : '') + '</strong>';
+          aLabel = 'Last upgrade <strong>superseded' + (targetShort ? ' → ' + escapeHtml(targetShort) : '') + '</strong>';
           break;
         case 'never':
         default:
@@ -25030,15 +25038,15 @@ function burnAreaChart() {
           hideAttemptRow = true;
           break;
       }
-      // Timestamp — absolute always, relative age as a bonus so staleness is
-      // obvious at a glance.
+      // Timestamp — relative at a glance, absolute in the tooltip.
       var when = at.completedAt || at.at || '';
       var whenHtml = '';
       if (when) {
-        whenHtml = ' <span class="text-muted" title="' + escapeHtml(when) + '">at ' +
-          escapeHtml(when) + ' (' + escapeHtml(relativeAge(when)) + ')</span>';
+        whenHtml = ' · <span class="text-muted" title="' + escapeHtml(when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
       }
-      var detailHtml = at.detail ? '<div class="release-status-detail">' + escapeHtml(at.detail) + '</div>' : '';
+      var detail = at.detail || '';
+      if (targetShort && /hive is running/i.test(detail) && detail.toLowerCase().indexOf(targetShort.toLowerCase()) >= 0) detail = '';
+      var detailHtml = detail ? '<div class="release-status-detail">' + escapeHtml(detail) + '</div>' : '';
 
       // --- Staleness warning: never present stale data as current truth. ---
       var staleHtml = '';
@@ -25048,8 +25056,7 @@ function burnAreaChart() {
       }
 
       el.innerHTML =
-        '<div class="release-status-row release-status-row--' + chTone + '">' + chIcon + ' ' + chLabel + '</div>' +
-        selectorHtml +
+        channelHtml +
         (hideAttemptRow ? '' :
           '<div class="release-status-row release-status-row--' + aTone + '">' + aIcon + ' ' + aLabel + whenHtml + '</div>' +
           detailHtml) +
@@ -25493,23 +25500,75 @@ function burnAreaChart() {
     window.addEventListener('hashchange', () => { if (location.hash.startsWith('#plan=')) handlePlanHash(); });
     setTimeout(() => { if (location.hash.startsWith('#plan=')) handlePlanHash(); }, 1000);
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      const acmmOverlay = document.getElementById('acmm-dialog-overlay');
-      if (acmmOverlay && acmmOverlay.style.display === 'flex') { acmmCloseDialog(); return; }
-      const welcomeOverlay = document.getElementById('welcome-overlay');
-      if (welcomeOverlay && !welcomeOverlay.classList.contains('hidden')) { closeWelcomeDialog(); return; }
-      const feedbackOverlay = document.getElementById('feedback-overlay');
-      if (feedbackOverlay) { closeFeedbackModal(); return; }
-      if (_configModalOpen) { closeConfigDialog(); return; }
-      if (_acmmOpen) { closeACMMDialog(); return; }
+    function hiveOverlayIsOpen(el) {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.classList && el.classList.contains('hidden')) return false;
+      if (el.classList && el.classList.contains('hive-chat-shortcuts') && !el.classList.contains('open')) return false;
+      if (el.id === 'oc-drawer-backdrop') return el.classList && el.classList.contains('open');
+      const disp = el.style.display || getComputedStyle(el).display;
+      return disp !== 'none';
+    }
+    function hiveOverlayRank(el, fallback) {
+      if (!el) return fallback || 0;
+      const z = parseInt(getComputedStyle(el).zIndex || '', 10);
+      return Number.isFinite(z) ? z : (fallback || 0);
+    }
+    function hiveCloseGHUserMenu() {
+      const menu = document.getElementById('oc-gh-user-menu');
+      if (menu) menu.hidden = true;
+    }
+    function hiveDismissTopOverlay() {
+      const candidates = [];
+      function add(el, close, fallbackRank) {
+        if (!hiveOverlayIsOpen(el)) return;
+        candidates.push({ el: el, close: close, rank: hiveOverlayRank(el, fallbackRank), order: candidates.length });
+      }
+      const installHintBtn = document.getElementById('gh-app-install-id-hint-btn');
+      if (installHintBtn && installHintBtn.getAttribute('aria-expanded') === 'true') {
+        candidates.push({ el: installHintBtn, close: function() { installHintBtn.setAttribute('aria-expanded', 'false'); installHintBtn.focus(); }, rank: 30000, order: candidates.length });
+      }
+      if (repoPillFilterActive() && document.activeElement && document.activeElement.closest && document.activeElement.closest('#repos-section')) {
+        candidates.push({ el: document.activeElement, close: clearRepoPillFilter, rank: 30000, order: candidates.length });
+      }
+      const versionMenu = document.getElementById('oc-version-menu');
+      add(versionMenu, function() { closeVersionMenu(); const chip = document.getElementById('oc-version-chip'); if (chip) chip.focus(); }, 30000);
+      const avatarMenu = document.getElementById('oc-gh-user-menu');
+      add(avatarMenu, hiveCloseGHUserMenu, 30000);
+      add(document.getElementById('nps-survey-card'), dismissNPSSurvey, 30000);
+      add(document.getElementById('hiveChatShortcuts'), function() { document.getElementById('hiveChatShortcuts').classList.remove('open'); }, 20001);
+      document.querySelectorAll('.hive-dialog-overlay').forEach(function(el) { add(el, function() { if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose(); else el.remove(); }, 20000); });
+      add(document.getElementById('acmm-dialog-overlay'), acmmCloseDialog, 10000);
+      add(document.getElementById('feedback-overlay'), closeFeedbackModal, 10000);
+      add(document.getElementById('welcome-overlay'), closeWelcomeDialog, 10000);
+      add(document.getElementById('config-overlay'), closeConfigDialog, 10000);
+      add(document.getElementById('acmm-overlay'), closeACMMDialog, 10000);
       const nousOverlay = document.getElementById('nous-config-overlay');
-      if (nousOverlay && nousOverlay.style.display !== 'none') { nousOverlay.style.display = 'none'; return; }
+      add(nousOverlay, function() { if (typeof closeNousConfig === 'function') closeNousConfig(); else nousOverlay.style.display = 'none'; }, 1000);
       const ghAuth = document.getElementById('gh-auth-modal-overlay');
-      if (ghAuth && ghAuth.style.display === 'flex') { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; return; }
+      add(ghAuth, function() { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; }, 9999);
       const ghSetup = document.getElementById('gh-setup-overlay');
-      if (ghSetup && ghSetup.style.display === 'flex') { ghSetup.style.display = 'none'; return; }
-    });
+      add(ghSetup, function() { ghSetup.style.display = 'none'; }, 9999);
+      add(document.getElementById('oc-drawer-backdrop'), function() { if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer(); }, 100);
+      const chatPanel = document.getElementById('hiveChatPanel');
+      if (chatPanel && chatPanel.classList.contains('open')) {
+        candidates.push({ el: chatPanel, close: function() { chatPanel.classList.remove('open'); const fab = document.getElementById('hiveChatFab'); if (fab) fab.classList.remove('open'); }, rank: 50, order: candidates.length });
+      }
+      if (!candidates.length) return false;
+      candidates.sort(function(a, b) { return (b.rank - a.rank) || (b.order - a.order); });
+      candidates[0].close();
+      return true;
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      if (e.isComposing) return;
+      const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'select') return;
+      if (!hiveDismissTopOverlay()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    }, true);
 
     function openAddAgentDialog() {
       openConfigDialog('agent', null);
@@ -34440,8 +34499,6 @@ function burnAreaChart() {
     document.addEventListener('keydown', (e) => {
       const inEditable = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
       if (e.key === '?' && !inEditable) { e.preventDefault(); if (chatShortcuts) chatShortcuts.classList.add('open'); return; }
-      if (e.key === 'Escape' && chatShortcuts && chatShortcuts.classList.contains('open')) { chatShortcuts.classList.remove('open'); return; }
-      if (e.key === 'Escape' && chatPanel.classList.contains('open')) { chatPanel.classList.remove('open'); chatFab.classList.remove('open'); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); chatPanel.classList.add('open'); chatFab.classList.add('open'); chatInput.focus(); }
     });
 
@@ -34472,9 +34529,6 @@ function burnAreaChart() {
         setOpen(!isOpen());
       });
       backdrop.addEventListener('click', closeDrawer);
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeDrawer();
-      });
       // Rotating to landscape (or resizing past the breakpoint) must not strand
       // the drawer open — above 768px the sidebar is a normal static column and
       // a leftover .open would leave the backdrop covering the page.
@@ -34685,7 +34739,6 @@ function burnAreaChart() {
       const menu = document.getElementById('oc-version-menu');
       const chip = document.getElementById('oc-version-chip');
       if (!menu || menu.hidden) return;
-      if (e.key === 'Escape') { e.preventDefault(); closeVersionMenu(); if (chip) chip.focus(); return; }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       const items = Array.from(menu.querySelectorAll('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'));
       if (!items.length) return;
@@ -35654,6 +35707,7 @@ function burnAreaChart() {
       let selected = null;
 
       const card = npsText('div', 'nps-card');
+      card.id = 'nps-survey-card';
       card.setAttribute('role', 'dialog');
       card.setAttribute('aria-label', 'Feedback');
       const head = npsText('div', 'nps-card-head');
@@ -35743,10 +35797,6 @@ function burnAreaChart() {
         }
       });
 
-      _npsKeyHandler = (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); dismissNPSSurvey(); }
-      };
-      document.addEventListener('keydown', _npsKeyHandler);
       _npsCard = card;
       document.body.appendChild(card);
     }

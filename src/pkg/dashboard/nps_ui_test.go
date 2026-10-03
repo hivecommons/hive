@@ -134,7 +134,7 @@ func TestNPSPromptWiring(t *testing.T) {
 		"fetch('/api/feedback/nps', {",
 		"if (_npsShownThisLoad || _npsCard) return;",
 		"dismissNPSSurvey",
-		"e.key === 'Escape'",
+		"nps-survey-card",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("NPS block is missing %q", want)
