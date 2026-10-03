@@ -114,40 +114,62 @@ func childrenOf(store *beads.Store, epicID string) []*beads.Bead {
 // PlanTree returns the review view of a decomposed epic. It errors if the epic
 // does not exist or is not of type epic. An epic that was never decomposed
 // returns an empty PlanStatus and no children (not an error).
+//
+// The whole view is projected in one pass under the store's read lock
+// (Store.ReadEach): Get and List hand back the store's live *Bead pointers,
+// so reading the epic's metadata off them races any concurrent Update of the
+// same epic — a checkpoint payload built for one approver while another
+// approver's ApprovePlan rewrites plan_status (hivecommons/hive#10119).
 func GetPlanTree(store *beads.Store, epicID string) (*PlanTree, error) {
-	epic, err := loadEpic(store, epicID)
-	if err != nil {
-		return nil, err
+	if store == nil {
+		return nil, fmt.Errorf("planning: store is nil")
 	}
-	status := epic.Meta(MetaPlanStatus)
-	tree := &PlanTree{
-		EpicID:            epic.ID,
-		EpicTitle:         epic.Title,
-		PlanStatus:        status,
-		Approved:          status == PlanStatusApproved,
-		DesignStatus:      DesignStatus(epic),
-		DesignRevision:    DesignRevision(epic),
-		DesignVia:         epic.Meta(MetaDesignVia),
-		RunKey:            epic.Meta(MetaRunKey),
-		PendingDecompose:  DecomposePending(epic),
-		DecomposeFailed:   DecomposeStuck(epic),
-		DecomposeAttempts: DecomposeAttempts(epic),
+	var (
+		tree     *PlanTree
+		epicType beads.BeadType
+		children []PlanChild
+	)
+	store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
+		switch {
+		case b.ID == epicID:
+			epicType = b.Type
+			status := b.Meta(MetaPlanStatus)
+			tree = &PlanTree{
+				EpicID:            b.ID,
+				EpicTitle:         b.Title,
+				PlanStatus:        status,
+				Approved:          status == PlanStatusApproved,
+				DesignStatus:      DesignStatus(b),
+				DesignRevision:    DesignRevision(b),
+				DesignVia:         b.Meta(MetaDesignVia),
+				RunKey:            b.Meta(MetaRunKey),
+				PendingDecompose:  DecomposePending(b),
+				DecomposeFailed:   DecomposeStuck(b),
+				DecomposeAttempts: DecomposeAttempts(b),
+			}
+		case b.Meta(MetaParentEpic) == epicID:
+			children = append(children, PlanChild{
+				ID:        b.ID,
+				Title:     b.Title,
+				Execution: b.Meta(MetaExecution),
+				PlanRef:   b.Meta(MetaPlanRef),
+				Status:    b.Status,
+				DependsOn: append([]string(nil), b.DependsOn...),
+				ClaimedBy: b.Meta(MetaClaimedBy),
+				PRURL:     childPRURL(b),
+				Repo:      b.Meta(MetaPlanRepo),
+				RepoRole:  b.Meta(MetaPlanRepoRole),
+				Wave:      b.Meta(MetaPlanWave),
+			})
+		}
+	})
+	if tree == nil {
+		return nil, fmt.Errorf("planning: epic %s not found: bead %s not found", epicID, epicID)
 	}
-	for _, c := range childrenOf(store, epicID) {
-		tree.Children = append(tree.Children, PlanChild{
-			ID:        c.ID,
-			Title:     c.Title,
-			Execution: c.Meta(MetaExecution),
-			PlanRef:   c.Meta(MetaPlanRef),
-			Status:    c.Status,
-			DependsOn: c.DependsOn,
-			ClaimedBy: c.Meta(MetaClaimedBy),
-			PRURL:     childPRURL(c),
-			Repo:      c.Meta(MetaPlanRepo),
-			RepoRole:  c.Meta(MetaPlanRepoRole),
-			Wave:      c.Meta(MetaPlanWave),
-		})
+	if epicType != beads.TypeEpic {
+		return nil, fmt.Errorf("planning: bead %s is type %q, not an epic", epicID, epicType)
 	}
+	tree.Children = children
 	return tree, nil
 }
 
