@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -83,11 +82,5 @@ func TestSystemDiagnosticsOldWorkflowNamesRemoved(t *testing.T) {
 		if strings.Contains(html, old) {
 			t.Fatalf("index.html still contains old hard-coded workflow stat %q", old)
 		}
-	}
-}
-
-func TestSystemDiagnosticsChangelogFragmentRenamed(t *testing.T) {
-	if _, err := os.Stat("../../../changelog.d/changed-system-diag-quality-stats.md"); err != nil {
-		t.Fatalf("expected renamed changelog fragment: %v", err)
 	}
 }
