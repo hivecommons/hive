@@ -53,11 +53,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	launchCmdOverride := strings.TrimSpace(agent.Config.LaunchCmd)
-	if missing, ok := staleLaunchCmdBinary(launchCmdOverride, backend); ok {
+	launchCmdOverride, missing := effectiveLaunchCmd(agent, backend)
+	if missing != "" {
 		m.logger.Warn("launch_cmd names a backend binary path that does not exist; using the built-in launcher for this backend",
-			"name", agent.Name, "backend", backend, "missing", missing, "launch_cmd", launchCmdOverride)
-		launchCmdOverride = ""
+			"name", agent.Name, "backend", backend, "missing", missing, "launch_cmd", strings.TrimSpace(agent.Config.LaunchCmd))
 	}
 
 	binary := ""
@@ -1071,11 +1070,27 @@ func staleLaunchCmdBinary(launchCmd, backend string) (string, bool) {
 	return fields[0], true
 }
 
+// effectiveLaunchCmd returns the operator launch_cmd the launch path will
+// actually run for the given effective backend: empty when none is set or when
+// staleLaunchCmdBinary discards it, in which case missing is the absent path.
+// Launch and the kick/resume classification share it so they always agree.
+func effectiveLaunchCmd(agent *AgentProcess, backend string) (cmd, missing string) {
+	cmd = strings.TrimSpace(agent.Config.LaunchCmd)
+	if path, stale := staleLaunchCmdBinary(cmd, backend); stale {
+		return "", path
+	}
+	return cmd, ""
+}
+
 // agentUsesAgyHeadless reports whether an agent on the given effective backend
 // runs through the headless shim. An operator LaunchCmd replaces the shim, so
 // such an agent keeps the ordinary type-into-the-TUI kick path.
 func agentUsesAgyHeadless(backend string, agent *AgentProcess) bool {
-	return backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == ""
+	if backend != "agy" || !agyHeadlessEnabled() {
+		return false
+	}
+	cmd, _ := effectiveLaunchCmd(agent, backend)
+	return cmd == ""
 }
 
 // agyTurnRunnerBinary resolves the hive binary the pane runs `hive agy-turn`
