@@ -34,21 +34,22 @@ type eligibleEntry struct {
 }
 
 type failingEntry struct {
-	Number          int      `json:"number"`
-	Repo            string   `json:"repo"`
-	Agent           string   `json:"agent"`
-	HeadSHA         string   `json:"head_sha"`
-	FailingChecks   []string `json:"failing_checks"`
-	Excerpt         string   `json:"excerpt"`
-	Escalated       bool     `json:"escalated"`
-	HeadRef         string   `json:"head_ref"`
-	HeadRepo        string   `json:"head_repo"`
-	FromFork        bool     `json:"from_fork"`
-	ReachableAction string   `json:"reachable_action"`
-	Held            bool     `json:"held"`
-	MergeableState  string   `json:"mergeable_state"`
-	Conflict        bool     `json:"conflict"`
-	ReroutedFrom    string   `json:"rerouted_from"`
+	Number           int      `json:"number"`
+	Repo             string   `json:"repo"`
+	Agent            string   `json:"agent"`
+	HeadSHA          string   `json:"head_sha"`
+	FailingChecks    []string `json:"failing_checks"`
+	Excerpt          string   `json:"excerpt"`
+	Escalated        bool     `json:"escalated"`
+	HeadRef          string   `json:"head_ref"`
+	HeadRepo         string   `json:"head_repo"`
+	FromFork         bool     `json:"from_fork"`
+	ReachableAction  string   `json:"reachable_action"`
+	Held             bool     `json:"held"`
+	MergeableState   string   `json:"mergeable_state"`
+	Conflict         bool     `json:"conflict"`
+	ReroutedFrom     string   `json:"rerouted_from"`
+	DeferredIncident int      `json:"deferred_incident"`
 }
 
 type mergeEligibleInputs struct {
@@ -317,6 +318,29 @@ func TestWriteMergeEligible_FailingEntryCarriesEvidenceAndEscalation(t *testing.
 	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons"})
 	if len(failing) != 1 || failing[0].Escalated {
 		t.Fatalf("un-escalated PR reported escalated: %+v", failing)
+	}
+}
+
+// A red PR the enrichment pass found deferred to a still-open shared-CI
+// incident reaches ci-failing.json with deferred_incident set — including a
+// red PR that is also conflicted — so the kick builders can keep it out of
+// their repair lists (hivecommons/hive#10528). A red PR without one does not.
+func TestWriteMergeEligible_FailingEntryCarriesDeferredIncident(t *testing.T) {
+	prs := []github.PullRequest{
+		{Repo: "hive", Number: 10511, CIStatus: "failure", HeadSHA: "a", FailingChecks: []string{"build"}, SharedCIIncident: 10512},
+		{Repo: "hive", Number: 10514, CIStatus: "failure", HeadSHA: "b", FailingChecks: []string{"build"}, SharedCIIncident: 10512,
+			Mergeable: github.MergeableNo, MergeableState: "dirty", AppAuthored: true},
+		{Repo: "hive", Number: 10475, CIStatus: "failure", HeadSHA: "c", FailingChecks: []string{"build"}},
+	}
+	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons"})
+	want := map[int]int{10511: 10512, 10514: 10512, 10475: 0}
+	if len(failing) != len(want) {
+		t.Fatalf("failing=%+v, want %d rows", failing, len(want))
+	}
+	for _, f := range failing {
+		if f.DeferredIncident != want[f.Number] {
+			t.Errorf("#%d deferred_incident = %d, want %d", f.Number, f.DeferredIncident, want[f.Number])
+		}
 	}
 }
 
