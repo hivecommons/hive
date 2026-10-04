@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -260,19 +261,28 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		opts.SHA = expectSHA
 	}
 	var res *gh.PullRequestMergeResult
-	out, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	boundary := c.mutationBoundary()
+	claim := effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"method": mergeMethod, "expect_sha": expectSHA},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}
+	merge := func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, "", opts)
 		if apiErr != nil {
+			if isDefiniteMergeRefusal(apiErr) {
+				return effects.Result{}, effects.NotApplied(apiErr)
+			}
 			return effects.Result{}, apiErr
 		}
 		return effects.Result{Provenance: res.GetSHA()}, nil
-	})
+	}
+	out, err := effects.Execute(ctx, boundary, claim, merge)
+	if errors.Is(err, effects.ErrNeedsReconciliation) {
+		out, err = c.reconcileMerge(ctx, boundary, claim, owner, repo, number, merge, err)
+	}
 	if err != nil {
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
@@ -293,6 +303,43 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	// the merge-request watcher (the hive-merge relay), hence path=relay.
 	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, PRAuditPathRelay)
 	return MergePRResult{SHA: sha, Merged: merged, Message: res.GetMessage()}, nil
+}
+
+// isDefiniteMergeRefusal reports whether a merge API error is GitHub
+// definitively refusing the merge — 405 not mergeable, 409 head moved past the
+// expected SHA, 422 invalid — so the merge certainly did not happen and the
+// same logical merge may retry once the PR's state changes (#10536).
+func isDefiniteMergeRefusal(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	switch ghErr.Response.StatusCode {
+	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}
+
+// reconcileMerge resolves a merge the mutation journal holds as unresolved
+// (an earlier attempt errored ambiguously) from the PR's authoritative state,
+// then replays the same logical merge once: an already-merged PR replays as
+// idempotent success carrying the merge SHA, an unmerged PR retries the merge
+// so the requester sees GitHub's own answer rather than the journal sentinel.
+// When the PR cannot be read the original refusal stands.
+func (c *Client) reconcileMerge(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
+	pr, _, getErr := c.client.PullRequests.Get(ctx, owner, repo, number)
+	if getErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, getErr)
+	}
+	state := effects.ExternalState{Applied: pr.GetMerged(), Provenance: pr.GetMergeCommitSHA()}
+	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
+	}
+	c.logger.Info("MergePR: reconciled unresolved merge against GitHub",
+		slog.String("repo", owner+"/"+repo), slog.Int("number", number),
+		slog.Bool("merged", state.Applied), slog.String("sha", state.Provenance))
+	return effects.Execute(ctx, boundary, claim, merge)
 }
 
 // UpdateBranch syncs a PR's head branch with its base (PUT
