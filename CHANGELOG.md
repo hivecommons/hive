@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.6)
+
+### Fixed
+
+- Switching an agent to the `bob` backend from the dashboard no longer breaks its launch ([#10509](https://github.com/hivecommons/hive/issues/10509)). The CLI Pin Value switch rewrote a direct launch command such as `/usr/bin/copilot --allow-all --model …` to `/usr/bin/bob --allow-all --model …`, but the hive image installs bob under `/usr/local/bin`, so the pane failed with "No such file or directory" (and would have passed copilot's flags to bob anyway). The dashboard now clears a direct-path launch command on a CLI switch so hive builds the backend's own command, and at launch hive ignores a saved launch command whose backend binary path does not exist, falling back to the built-in launcher that resolves the binary via `PATH` — so agents already saved with `/usr/bin/bob` recover on their next restart. Sandbox-mode agents still run the saved `launch_cmd` verbatim inside the sandbox and are not recovered by this change.
+
+### Security
+
+- `bin/hive-upgrade-request.sh` no longer follows symlinks when archiving a handled dashboard upgrade request. The request directory is a bind mount the Hive container writes into, and the drain runs on the host — as root on a rootful install. A `done/` or `failed/` entry replaced by a symlink, or a pre-planted `<stamp>-<name>.json.result` link, previously steered the archive move and the result write onto whatever host path the link named. The archive directories are now rejected unless they are real directories, result files are created `O_EXCL`, a symlinked request directory refuses to drain, and the advisory `requester`/`requested_at` fields are stripped of control bytes before they reach the journal. Standalone Podman/Quadlet hosts with the upgrade bridge installed should re-run `bin/hive-podman-setup.sh` to pick up the new script.
+
 ## 2026-10-04 (v5.132.5)
 
 ### Fixed
