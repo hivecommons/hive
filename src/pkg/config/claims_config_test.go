@@ -35,3 +35,22 @@ func TestClaimsConfigYAML(t *testing.T) {
 		t.Fatalf("TTLs=%v %v", h, ct)
 	}
 }
+
+func TestClaimsEscalationThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		yaml string
+		want int
+	}{
+		{"", DefaultClaimEscalateAfter},
+		{"    escalate_after_claims: 3\n", 3},
+		{"    escalate_after_claims: -1\n", 0},
+	} {
+		var cfg Config
+		if err := yaml.Unmarshal([]byte("governor:\n  claims:\n    enabled: true\n"+tc.yaml), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Governor.Claims.EscalationThreshold(); got != tc.want {
+			t.Fatalf("%q: EscalationThreshold=%d want %d", tc.yaml, got, tc.want)
+		}
+	}
+}

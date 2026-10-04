@@ -3347,8 +3347,12 @@ func (b *boot) bootSupervision() {
 	// the pr-request watcher narrates opened PRs into the session.
 	// #8380: the worker-claim ledger is a second in-flight source — an issue a
 	// human, contributor or another agent holds is withheld from kicks too.
+	// #10527: a free issue an agent already claimed escalate_after_claims
+	// times with nothing moving is withheld and escalated instead of
+	// re-claimed.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
-		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
+		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org),
+		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
