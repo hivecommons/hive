@@ -33,7 +33,13 @@
 #     silently downgrade a deployment when the host returns;
 #   * a handled request is MOVED out of the watched directory before its result
 #     is recorded, so neither success nor failure can be replayed by the path
-#     unit re-triggering.
+#     unit re-triggering;
+#   * the request directory and its done/ and failed/ archives must be real
+#     directories, and a result is only ever written to a path that does not
+#     exist yet. The container can write anything into the bind mount,
+#     including symlinks; following one would let it steer this script's
+#     writes — which run as the HOST user, root on a rootful install — onto
+#     any host path it names.
 #
 # REQUEST FORMAT. One JSON object per file, written atomically (temp name in
 # the same directory, then rename(2)) so the path unit can never observe a
@@ -159,6 +165,14 @@ request_field() {
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n1
 }
 
+# The advisory fields are only ever echoed, but they are echoed into the
+# journal: strip control bytes (ESC included) so a request cannot smuggle
+# terminal escapes or fake lines into `systemctl status` / `journalctl`, and
+# bound the length so one request cannot flood the log.
+printable() {
+  printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-200
+}
+
 # Seconds since the file was last modified. mtime rather than the request's own
 # `requested_at`, because the timestamp in the file is written by the container
 # and the staleness guard must not be something the container can set.
@@ -169,16 +183,48 @@ request_age_seconds() {
   printf '%s\n' "$(( now - mtime ))"
 }
 
+# A directory under the bind mount is only used if it is a real directory,
+# not a symlink the container planted. Symlinks are rejected with -L BEFORE
+# -d, since -d follows them. Creation is `mkdir` without -p: -p treats a
+# symlink to an existing directory as success.
+real_dir() {
+  local dir="$1"
+  [ -L "$dir" ] && return 1
+  [ -d "$dir" ] && return 0
+  mkdir "$dir" 2>/dev/null || return 1
+  [ ! -L "$dir" ] && [ -d "$dir" ]
+}
+
+# Create the result file with O_EXCL (noclobber): the open fails if ANYTHING
+# already sits at that path, a pre-planted symlink included, instead of
+# following it and truncating whatever host file it points at.
+write_result() {
+  local path="$1" result="$2"
+  [ -e "$path" ] || [ -L "$path" ] && return 1
+  ( set -o noclobber; printf '%s\n' "$result" > "$path" ) 2>/dev/null
+}
+
 # Archive, then record. In this order: the file leaves the watched directory
 # before any result is written, so hive-upgrade.path cannot re-trigger on a
 # request that has already been handled.
 archive_request() {
-  local file="$1" dest_dir="$2" result="$3" stamp base
+  local file="$1" dest_dir="$2" result="$3" stamp base dest
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   base="$(basename "$file")"
-  mkdir -p "$dest_dir" 2>/dev/null
-  if mv -f "$file" "${dest_dir}/${stamp}-${base}" 2>/dev/null; then
-    printf '%s\n' "$result" > "${dest_dir}/${stamp}-${base}.result" 2>/dev/null
+  if ! real_dir "$dest_dir"; then
+    bad "archive directory is not a real directory: ${dest_dir}; deleting the request instead"
+    rm -f "$file" 2>/dev/null
+    return 1
+  fi
+  dest="${dest_dir}/${stamp}-${base}"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    # Same second, same name: a collision is more likely a planted entry than
+    # a double-click, and either way nothing of ours is ever written over it.
+    dest="${dest_dir}/${stamp}-$$-${base}"
+  fi
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ] && mv -f "$file" "$dest" 2>/dev/null; then
+    write_result "${dest}.result" "$result" \
+      || warn "could not record the result for $(basename "$dest"); something already occupied ${dest}.result"
   else
     # If it cannot be moved it must at least not be replayed.
     rm -f "$file" 2>/dev/null
@@ -220,15 +266,15 @@ apply_one() {
   # camelCase and bare spellings are accepted for hand-written requests.
   ref="$(request_field "$file" target_ref)"
   [ -n "$ref" ] || ref="$(request_field "$file" ref)"
-  requester="$(request_field "$file" requester)"
-  requested_at="$(request_field "$file" requested_at)"
-  [ -n "$requested_at" ] || requested_at="$(request_field "$file" requestedAt)"
+  requester="$(printable "$(request_field "$file" requester)")"
+  requested_at="$(printable "$(request_field "$file" requested_at)")"
+  [ -n "$requested_at" ] || requested_at="$(printable "$(request_field "$file" requestedAt)")"
   [ -n "$requester" ] || requester="unknown"
   [ -n "$requested_at" ] || requested_at="unknown"
 
   if ! [[ "$ref" =~ $REF_RE ]]; then
     bad "ref is not an allowed Hive image reference; refusing to run podman"
-    info "got: ${ref:-<missing>}"
+    info "got: $(printable "${ref:-<missing>}")"
     info "allowed: ghcr.io/hivecommons/hive:<tag> or ghcr.io/hivecommons/hive@sha256:<64 hex>"
     archive_request "$file" "$FAILED_DIR" "rejected: disallowed ref"
     return 1
@@ -270,6 +316,12 @@ cmd_apply() {
     say ""
     info "no request directory; nothing to do"
     return 0
+  fi
+  if [ -L "$REQUEST_DIR" ]; then
+    say ""
+    bad "request directory is a symlink; refusing to drain it"
+    info "bin/hive-podman-setup.sh creates ${REQUEST_DIR} as a real directory; replace the link and retry."
+    return "$EX_CONFIG"
   fi
 
   local rc=0 handled=0 file
