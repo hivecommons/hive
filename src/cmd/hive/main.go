@@ -1596,6 +1596,10 @@ func (b *boot) wireBootClosures() {
 					return
 				}
 				installReviewRelaySettings(b.ghClient, b.cfg, b.logger)
+				// review_bots.min_priority and fix_human_prs are edited
+				// through the same PUT; reinstall so the thread reconciler
+				// applies them without a restart (#10481).
+				installReviewBots(b.ghClient, b.cfg, b.logger)
 			},
 			EnumerateFunc: func() {
 				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
