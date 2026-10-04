@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.0)
+
+### Added
+
+- Make `classification.review_bots.min_priority` editable from the dashboard Review card (All / P0–P3) via the owner-only `PUT /api/config/review`, and include it in the `review_bots` section of `GET /api/config/governor`. The value is saved to `hive.yaml` and overrides the project file's threshold without copying its logins; review-bot logins stay read-only.
+- Show the effective `classification.review_bots` settings (logins, per-thread attempt limit, resolve-after-fix, project-file load errors) read-only in the dashboard Review card and the `GET /api/config/governor` settings bundle.
+
 ## 2026-10-03 (v5.131.0)
 
 ### Added
