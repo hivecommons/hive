@@ -224,23 +224,28 @@ const heldRedPRExemptAgent = "outreach"
 
 // formatRedPRFixData renders the fix-before-new section for one agent from
 // raw ci-failing.json bytes. Empty result means the agent has no open,
-// non-escalated red or conflicted PRs. A held red PR (hivecommons/hive#7438)
-// is listed like any other — with heldRedPRNote — except for outreach's.
+// non-escalated red or conflicted PRs it can repair. A held red PR
+// (hivecommons/hive#7438) is listed like any other — with heldRedPRNote —
+// except for outreach's. A red PR already deferred to a still-open shared-CI
+// incident (deferred_incident, hivecommons/hive#10528) has nothing to repair:
+// it is named in one line without repair instructions, and when every red PR
+// the agent owns is deferred there is no section — and no banner — at all.
 func formatRedPRFixData(data []byte, agent string) string {
 	type ciFailingRow struct {
-		Number         int      `json:"number"`
-		Repo           string   `json:"repo"`
-		Title          string   `json:"title"`
-		Agent          string   `json:"agent"`
-		FailingChecks  []string `json:"failing_checks"`
-		Excerpt        string   `json:"excerpt"`
-		Escalated      bool     `json:"escalated"`
-		FromFork       bool     `json:"from_fork"`
-		HeadRepo       string   `json:"head_repo"`
-		Held           bool     `json:"held"`
-		MergeableState string   `json:"mergeable_state"`
-		Conflict       bool     `json:"conflict"`
-		ReroutedFrom   string   `json:"rerouted_from"`
+		Number           int      `json:"number"`
+		Repo             string   `json:"repo"`
+		Title            string   `json:"title"`
+		Agent            string   `json:"agent"`
+		FailingChecks    []string `json:"failing_checks"`
+		Excerpt          string   `json:"excerpt"`
+		Escalated        bool     `json:"escalated"`
+		FromFork         bool     `json:"from_fork"`
+		HeadRepo         string   `json:"head_repo"`
+		Held             bool     `json:"held"`
+		MergeableState   string   `json:"mergeable_state"`
+		Conflict         bool     `json:"conflict"`
+		ReroutedFrom     string   `json:"rerouted_from"`
+		DeferredIncident int      `json:"deferred_incident"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -248,7 +253,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 	if json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
-	var mine []ciFailingRow
+	var mine, deferred []ciFailingRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -273,6 +278,10 @@ func formatRedPRFixData(data []byte, agent string) string {
 		if pr.Held && owner == heldRedPRExemptAgent {
 			continue // a human may already be reading it; leave it alone
 		}
+		if pr.DeferredIncident > 0 {
+			deferred = append(deferred, pr)
+			continue
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -283,6 +292,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (%d)\n\n", len(mine)))
 	if forks > 0 {
 		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
+	}
+	if len(deferred) > 0 {
+		refs := make([]string, 0, len(deferred))
+		for _, pr := range deferred {
+			refs = append(refs, fmt.Sprintf("%s#%d → incident #%d", pr.Repo, pr.Number, pr.DeferredIncident))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already deferred to a still-open shared-CI incident — do not repair or re-triage them; they return here when the incident closes: %s)\n", len(deferred), strings.Join(refs, ", ")))
 	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
