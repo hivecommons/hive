@@ -3385,6 +3385,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
+	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the

@@ -4219,6 +4219,11 @@ func (h *ContributeWSHub) cleanupLoop() {
 			if n := h.claimsLedger().Expire(); n > 0 {
 				h.logger.Info("[claims] expired claims released", "count", n)
 			}
+			// A needs-human/hold label added after assignment releases the
+			// automated claim rather than leaving a false In Flight state.
+			if n := h.claimsLedger().ReleaseBlocked(); n > 0 {
+				h.logger.Info("[claims] blocked claims released", "count", n)
+			}
 
 			// Deregister under the lock; CLOSE outside it.
 			//
