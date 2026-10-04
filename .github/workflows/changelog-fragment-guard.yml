@@ -69,8 +69,10 @@ jobs:
   changelog-fragment-guard:
     name: changelog-fragment-guard
     # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
-    # ones maintainers open when those conflict) live on sync/* branches and
-    # carry the source line's entire history. The three-dot diff below
+    # ones maintainers open when those conflict) live on sync/* branches —
+    # or on <lane>/sync-vN-to-vM when an agent opens the top-up, since the
+    # push broker only accepts <lane>/... heads (#10498) — and carry the
+    # source line's entire history. The three-dot diff below
     # re-attributes every src/ change and every release-time CHANGELOG.md
     # compilation edit to the sync PR, so it can never satisfy the guard —
     # each carried change already passed it on its own PR (#7783).
@@ -81,7 +83,10 @@ jobs:
         run: |
           HEAD_REF=${GITHUB_HEAD_REF:-}
           case "$HEAD_REF" in
-            sync/*) echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+            # Human-opened top-ups live on sync/*; agent-opened ones are
+            # forced onto <lane>/sync-vN-to-vM by the push broker. Keep in
+            # step with src/scripts/check-changelog-fragment.sh.
+            sync/*|*/sync-v[0-9]*-to-v[0-9]*) echo "skip=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "skip=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
