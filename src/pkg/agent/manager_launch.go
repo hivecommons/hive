@@ -53,8 +53,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
+	launchCmdOverride := strings.TrimSpace(agent.Config.LaunchCmd)
+	if missing, ok := staleLaunchCmdBinary(launchCmdOverride, backend); ok {
+		m.logger.Warn("launch_cmd names a backend binary path that does not exist; using the built-in launcher for this backend",
+			"name", agent.Name, "backend", backend, "missing", missing, "launch_cmd", launchCmdOverride)
+		launchCmdOverride = ""
+	}
+
 	binary := ""
-	if strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+	if launchCmdOverride == "" {
 		var err error
 		binary, err = m.backendBinary(backend)
 		if err != nil {
@@ -158,8 +165,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	m.installJevForAgent(agent, backend)
 
 	effort := agent.Config.ReasoningEffort
-	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {
-		launchCmd = strings.TrimSpace(agent.Config.LaunchCmd)
+	if launchCmdOverride != "" {
+		launchCmd = launchCmdOverride
 	} else if agent.Config.Tools != nil {
 		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference, effort)
 		if agent.Config.Tools != nil && agent.Config.Mode != "" {
@@ -1038,6 +1045,30 @@ func agyHeadlessFullLaunchCmd(envPrefix, launchCmd string) string {
 		return launchCmd
 	}
 	return "export " + envPrefix + "; " + launchCmd
+}
+
+// staleLaunchCmdBinary reports the missing path when launchCmd's leading token
+// is an absolute path to the backend's own CLI binary that does not exist.
+//
+// The dashboard used to rewrite "/usr/bin/copilot ..." to "/usr/bin/<cli>" on a
+// CLI switch, but the hive image installs npm-based CLIs (bob included) under
+// /usr/local/bin, so the saved command died in the pane with "No such file or
+// directory" (#10509). Such a command can never run, so the caller falls back
+// to the built-in launcher, which resolves the binary via PATH and builds the
+// backend's own flags. Any other launch_cmd is left untouched.
+func staleLaunchCmdBinary(launchCmd, backend string) (string, bool) {
+	fields := strings.Fields(launchCmd)
+	if len(fields) == 0 || !filepath.IsAbs(fields[0]) {
+		return "", false
+	}
+	want, err := backendBinaryName(backend)
+	if err != nil || filepath.Base(fields[0]) != want {
+		return "", false
+	}
+	if _, err := os.Stat(fields[0]); !os.IsNotExist(err) {
+		return "", false
+	}
+	return fields[0], true
 }
 
 // agentUsesAgyHeadless reports whether an agent on the given effective backend
