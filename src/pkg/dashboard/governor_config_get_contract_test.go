@@ -353,12 +353,19 @@ func TestHandleGovernorConfigGet_TopLevelSectionsPresent(t *testing.T) {
 	wantKeys := []string{
 		"agents", "thresholds", "effectiveThresholds", "pinnedThresholds", "repos", "primaryRepo",
 		"cadenceScope", "thresholdScaling", "notifications", "budget", "health", "sensing", "logging", "litellm",
-		"review", "auto_merge", "hub", "attribution",
+		"review", "review_bots", "auto_merge", "hub", "attribution",
 	}
 	for _, key := range wantKeys {
 		if _, present := result[key]; !present {
 			t.Errorf("response missing top-level key %q", key)
 		}
+	}
+	// The Review card's min_priority select (#10481) reads this key; it must
+	// be present (empty = route every finding), not omitted.
+	if rb, ok := result["review_bots"].(map[string]any); !ok {
+		t.Errorf("review_bots must be an object, got %T", result["review_bots"])
+	} else if _, present := rb["min_priority"]; !present {
+		t.Error("review_bots missing min_priority")
 	}
 	// Negative: a key the UI has never depended on should not be asserted as
 	// required — guard against a typo'd want list silently always passing by

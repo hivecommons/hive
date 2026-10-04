@@ -69,7 +69,9 @@ classification:
 
 The key lives in `hive-project.yaml` next to its sibling monitor's config
 (`classification.copilot_check`), and the Go binary also accepts the identical
-block in `hive.yaml`; when both name a login, `hive.yaml` wins. It is the one
+block in `hive.yaml`; when both name a login, `hive.yaml` wins. A
+`hive.yaml` `min_priority` (the field the dashboard edits) also overrides the
+project file's threshold on its own. It is the one
 key the Go side reads from the project file
 (`config.LoadProjectReviewBots`, path `HIVE_PROJECT_YAML` or
 `/etc/hive/hive-project.yaml`).
@@ -99,6 +101,27 @@ key the Go side reads from the project file
   resolved, outdated, human-authored, or attempt-capped threads). The
   reviewer's jq filter applies the same badge threshold, so it need not
   answer the lower-priority threads in its review.
+
+The dashboard's **Settings → Features → Review Gate** card displays the
+effective review-bot settings, including defaults (one attempt per thread and
+resolve after fix enabled). The governor settings bundle at
+`GET /api/config/governor` exposes them in `review_bots` — `logins`,
+`min_priority` (`P0`–`P3`, or empty when every finding is routed),
+`max_attempts_per_thread`, `resolve_after_fix`, and `enabled`; `load_error`
+reports an unreadable or malformed project file rather than hiding it as an
+unconfigured feature. Logins, attempts, and resolve-after-fix are read-only
+there: logins stay config-file-only because adding one grants agents
+thread-resolution rights.
+
+`min_priority` is editable from the same card (**Minimum bot-finding
+priority**: All, P0, P1, P2, P3). The owner-only `PUT /api/config/review`
+accepts it as `{"review_bots": {"min_priority": "P1"}}`; an absent key leaves
+it untouched, an empty string clears the dashboard override, `all` routes
+every finding, and any other value is rejected with 400. The value is written
+to `hive.yaml`'s `classification.review_bots.min_priority` and overrides the
+project file's threshold even when `hive.yaml` names no login — the project
+file's logins are never copied into `hive.yaml`. The change applies to the
+thread reconciler and the reviewer without a restart.
 
 `copilot_check` / `bin/copilot-comment-checker.sh` are untouched: they cover
 *merged* PRs; this covers *open* ones.

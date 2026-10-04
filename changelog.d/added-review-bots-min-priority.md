@@ -1,0 +1,1 @@
+- Make `classification.review_bots.min_priority` editable from the dashboard Review card (All / P0–P3) via the owner-only `PUT /api/config/review`, and include it in the `review_bots` section of `GET /api/config/governor`. The value is saved to `hive.yaml` and overrides the project file's threshold without copying its logins; review-bot logins stay read-only.

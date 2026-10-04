@@ -175,9 +175,44 @@ func LoadProjectReviewBots(path string) (ReviewBotsConfig, error) {
 // block can live next to its sibling monitor's config as #7360 specifies.
 // A project file that fails to parse yields the zero value AND the error, so
 // the caller can log it — the feature stays off rather than half-configured.
+//
+// One field crosses that boundary: a hive.yaml min_priority overrides the
+// project file's even when hive.yaml names no login. The dashboard edits it
+// there (hivecommons/hive#10481) without copying the project file's logins —
+// the trust grant — into hive.yaml. "all" is stored for an explicit
+// route-everything choice, since empty means "no override".
 func (c *Config) EffectiveReviewBots(projectPath string) (ReviewBotsConfig, error) {
 	if c != nil && c.Classification.ReviewBots.Enabled() {
 		return c.Classification.ReviewBots, nil
 	}
-	return LoadProjectReviewBots(projectPath)
+	rb, err := LoadProjectReviewBots(projectPath)
+	if err == nil && c != nil {
+		if p := strings.TrimSpace(c.Classification.ReviewBots.MinPriority); p != "" {
+			rb.MinPriority = p
+		}
+	}
+	return rb, err
+}
+
+// ReviewBotsMinPriorityAll is the explicit "route every finding" value for
+// min_priority. PriorityThreshold treats it like unset (-1); it exists so a
+// hive.yaml override can undo a project-file threshold.
+const ReviewBotsMinPriorityAll = "all"
+
+// NormalizeReviewBotsMinPriority canonicalises a min_priority value written
+// through the dashboard: "" (no override), "all", or P0-P3 (case and
+// surrounding whitespace ignored). ok is false for anything else so a typo is
+// refused at write time instead of silently routing every finding.
+func NormalizeReviewBotsMinPriority(v string) (string, bool) {
+	v = strings.TrimSpace(v)
+	switch {
+	case v == "":
+		return "", true
+	case strings.EqualFold(v, ReviewBotsMinPriorityAll):
+		return ReviewBotsMinPriorityAll, true
+	}
+	if t := (ReviewBotsConfig{MinPriority: v}).PriorityThreshold(); t >= 0 {
+		return fmt.Sprintf("P%d", t), true
+	}
+	return "", false
 }
