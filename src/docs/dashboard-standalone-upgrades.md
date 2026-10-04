@@ -246,6 +246,11 @@ untrusted input:
   archived **unapplied**, so a request left behind by a host that was down
   cannot silently install a stale ref days later. The age is the file's mtime,
   not the timestamp in the file, because the container writes the latter.
+- The request directory and its `done/` and `failed/` archives must be real
+  directories, and a result file is only created at a path that does not yet
+  exist (`O_EXCL`). The container can place symlinks in the bind mount; the
+  bridge never follows one, so its writes — which run as the host user, root
+  on a rootful install — cannot be steered onto another host path.
 - The container's entire capability across this boundary is "cause
   `hive-upgrade-request.sh` to run".
 

@@ -1106,6 +1106,90 @@ check "hive.yaml is never listed as a managed file" \
 check "hive.env is never listed as a managed file" \
   '! grep -qE "(match|STALE|missing) +[a-z ]*: .*hive[.]env" <<<"$out"'
 
+echo "== upgrade-request archive never follows a container-planted symlink =="
+
+# bin/hive-upgrade-request.sh drains a directory the Hive CONTAINER writes
+# into, as the HOST user (root on a rootful install). Everything in that
+# directory is untrusted — including symlinks. These cases plant the links a
+# container could and assert the drain refuses to write through any of them.
+REQUEST_SCRIPT="${ROOT}/bin/hive-upgrade-request.sh"
+run_request() {
+  NO_COLOR=1 HIVE_UPGRADE_REQUEST_DIR="$REQ_DIR" HIVE_PODMAN_UPDATE_SCRIPT="$FAKE_UPDATE" \
+    "$BASH_BIN" "$REQUEST_SCRIPT" "$@" 2>&1
+}
+request_expect() {
+  local name="$1" want_rc="$2" want_txt="$3"; shift 3
+  local out rc why=""
+  out="$(run_request "$@")"; rc=$?
+  [ "$rc" != "$want_rc" ] && why="exit $rc, wanted $want_rc"
+  if [ -n "$want_txt" ] && ! grep -qF -- "$want_txt" <<<"$out"; then
+    why="${why:+$why; }missing text: $want_txt"
+  fi
+  if [ -z "$why" ]; then
+    PASS=$((PASS + 1)); printf 'ok   %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf 'FAIL %s (%s)\n' "$name" "$why"
+    printf '%s\n' "$out" | sed 's/^/       | /'
+  fi
+}
+reset_request() {
+  export REQ_DIR="${TEST_TMP}/upgrade-requests"
+  export FAKE_UPDATE="${TEST_TMP}/fake-update.sh"
+  export VICTIM="${TEST_TMP}/host-victim"
+  export HOST_DIR="${TEST_TMP}/host-dir"
+  rm -rf "$REQ_DIR" "$VICTIM" "$HOST_DIR"; mkdir -p "$REQ_DIR" "$HOST_DIR"
+  printf 'host file\n' >"$VICTIM"
+  printf '#!/bin/sh\nexit %s\n' "${1:-0}" >"$FAKE_UPDATE"; chmod +x "$FAKE_UPDATE"
+}
+
+# A pre-planted `<stamp>-<name>.result` symlink, for every second the drain
+# could plausibly run in. Before the fix the result redirect followed it.
+reset_request 1
+mkdir -p "$REQ_DIR/failed"
+for i in 0 1 2 3 4 5 6 7 8; do
+  ln -s "$VICTIM" "$REQ_DIR/failed/$(date -u -d "+${i} sec" +%Y%m%dT%H%M%SZ)-evil.json.result"
+done
+printf '{"target_ref":"not-an-allowed-ref"}\n' >"$REQ_DIR/evil.json"
+request_expect "a planted .result symlink is not written through" 78 "something already occupied" apply --rootless
+check "the host file behind the planted .result link is untouched" '[ "$(cat "$VICTIM")" = "host file" ]'
+check "the rejected request is still removed from the watched directory" '[ -z "$(find "$REQ_DIR" -maxdepth 1 -name "*.json")" ]'
+
+# done/ or failed/ replaced by a symlink to a host directory: the archived
+# request file carries container-authored bytes and must not land there.
+reset_request 1
+ln -s "$HOST_DIR" "$REQ_DIR/failed"
+printf '{"target_ref":"not-an-allowed-ref"}\n' >"$REQ_DIR/payload.json"
+request_expect "a symlinked failed/ archive is refused" 78 "not a real directory" apply --rootless
+check "nothing is written into the directory the link points at" '[ -z "$(ls -A "$HOST_DIR")" ]'
+check "the request is deleted rather than left to replay" '[ ! -e "$REQ_DIR/payload.json" ]'
+
+reset_request 0
+ln -s "$HOST_DIR" "$REQ_DIR/done"
+printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/payload.json"
+request_expect "a symlinked done/ archive is refused after a successful upgrade" 0 "not a real directory" apply --rootless
+check "a successful upgrade still writes nothing through the done/ link" '[ -z "$(ls -A "$HOST_DIR")" ]'
+
+# The request directory itself as a symlink: refuse the whole drain, and never
+# call the update script.
+reset_request 0
+rm -rf "$REQ_DIR"; ln -s "$HOST_DIR" "$REQ_DIR"
+printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$HOST_DIR/payload.json"
+printf '#!/bin/sh\ntouch "%s/update-ran"\nexit 0\n' "$TEST_TMP" >"$FAKE_UPDATE"
+request_expect "a symlinked request directory is refused" 78 "request directory is a symlink" apply --rootless
+check "no upgrade runs from a symlinked request directory" '[ ! -e "$TEST_TMP/update-ran" ]'
+rm -f "$REQ_DIR"
+
+# The regular case still archives and records, so the guard costs nothing.
+reset_request 0
+printf '{"target_ref":"%s:abc","requester":"op\033[31mRED\033[0m","requested_at":"2026-01-01T00:00:00Z"}\n' "$REPO" >"$REQ_DIR/ok.json"
+out="$(run_request apply --rootless)"; rc=$?
+check "a real archive directory is created and the upgrade applied" '[ "$rc" = 0 ] && grep -qF "completed and ended healthy" <<<"$out"'
+check "the handled request is archived under done/" '[ -n "$(find "$REQ_DIR/done" -maxdepth 1 -name "*-ok.json")" ]'
+check "the result file records the upgrade" 'grep -qF "ok: upgraded to ${REPO}:abc" "$REQ_DIR"/done/*-ok.json.result'
+check "the requester is still reported, minus the escape bytes" 'grep -qF "requested by op[31mRED[0m at 2026-01-01T00:00:00Z" <<<"$out"'
+check "control bytes in advisory fields never reach the log" '! grep -q "$(printf "\033")" <<<"$out"'
+unset REQ_DIR FAKE_UPDATE VICTIM HOST_DIR
+
 echo "== invocation =="
 reset_env
 case_expect "an unknown command is EX_USAGE" 64 "unknown command" nonsense
