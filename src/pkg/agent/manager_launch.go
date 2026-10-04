@@ -53,8 +53,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
+	launchCmdOverride, missing := effectiveLaunchCmd(agent, backend)
+	if missing != "" {
+		m.logger.Warn("launch_cmd names a backend binary path that does not exist; using the built-in launcher for this backend",
+			"name", agent.Name, "backend", backend, "missing", missing, "launch_cmd", strings.TrimSpace(agent.Config.LaunchCmd))
+	}
+
 	binary := ""
-	if strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+	if launchCmdOverride == "" {
 		var err error
 		binary, err = m.backendBinary(backend)
 		if err != nil {
@@ -158,8 +164,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	m.installJevForAgent(agent, backend)
 
 	effort := agent.Config.ReasoningEffort
-	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {
-		launchCmd = strings.TrimSpace(agent.Config.LaunchCmd)
+	if launchCmdOverride != "" {
+		launchCmd = launchCmdOverride
 	} else if agent.Config.Tools != nil {
 		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference, effort)
 		if agent.Config.Tools != nil && agent.Config.Mode != "" {
@@ -1040,11 +1046,51 @@ func agyHeadlessFullLaunchCmd(envPrefix, launchCmd string) string {
 	return "export " + envPrefix + "; " + launchCmd
 }
 
+// staleLaunchCmdBinary reports the missing path when launchCmd's leading token
+// is an absolute path to the backend's own CLI binary that does not exist.
+//
+// The dashboard used to rewrite "/usr/bin/copilot ..." to "/usr/bin/<cli>" on a
+// CLI switch, but the hive image installs npm-based CLIs (bob included) under
+// /usr/local/bin, so the saved command died in the pane with "No such file or
+// directory" (#10509). Such a command can never run, so the caller falls back
+// to the built-in launcher, which resolves the binary via PATH and builds the
+// backend's own flags. Any other launch_cmd is left untouched.
+func staleLaunchCmdBinary(launchCmd, backend string) (string, bool) {
+	fields := strings.Fields(launchCmd)
+	if len(fields) == 0 || !filepath.IsAbs(fields[0]) {
+		return "", false
+	}
+	want, err := backendBinaryName(backend)
+	if err != nil || filepath.Base(fields[0]) != want {
+		return "", false
+	}
+	if _, err := os.Stat(fields[0]); !os.IsNotExist(err) {
+		return "", false
+	}
+	return fields[0], true
+}
+
+// effectiveLaunchCmd returns the operator launch_cmd the launch path will
+// actually run for the given effective backend: empty when none is set or when
+// staleLaunchCmdBinary discards it, in which case missing is the absent path.
+// Launch and the kick/resume classification share it so they always agree.
+func effectiveLaunchCmd(agent *AgentProcess, backend string) (cmd, missing string) {
+	cmd = strings.TrimSpace(agent.Config.LaunchCmd)
+	if path, stale := staleLaunchCmdBinary(cmd, backend); stale {
+		return "", path
+	}
+	return cmd, ""
+}
+
 // agentUsesAgyHeadless reports whether an agent on the given effective backend
 // runs through the headless shim. An operator LaunchCmd replaces the shim, so
 // such an agent keeps the ordinary type-into-the-TUI kick path.
 func agentUsesAgyHeadless(backend string, agent *AgentProcess) bool {
-	return backend == "agy" && agyHeadlessEnabled() && strings.TrimSpace(agent.Config.LaunchCmd) == ""
+	if backend != "agy" || !agyHeadlessEnabled() {
+		return false
+	}
+	cmd, _ := effectiveLaunchCmd(agent, backend)
+	return cmd == ""
 }
 
 // agyTurnRunnerBinary resolves the hive binary the pane runs `hive agy-turn`

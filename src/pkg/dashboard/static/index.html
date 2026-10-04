@@ -33629,12 +33629,13 @@ function burnAreaChart() {
       const input = document.getElementById('cfg-launch-cmd');
       if (!input) return;
       const current = input.value;
-      const CLI_PATHS = { copilot: '/usr/bin/copilot', claude: '/usr/bin/claude', aider: '/usr/bin/aider' };
-      const newBin = CLI_PATHS[cli] || `/usr/bin/${cli}`;
-      const updated = current.replace(/\/usr\/bin\/\S+|agent-launch\.sh\s+--backend\s+\S+/, (match) => {
-        if (match.startsWith('agent-launch.sh')) return `agent-launch.sh --backend ${cli}`;
-        return newBin;
-      });
+      // A direct "/usr/bin/<cli> <flags>" command cannot be retargeted by
+      // swapping the path: the image installs most CLIs under /usr/local/bin
+      // (so "/usr/bin/bob" does not exist, #10509) and the old CLI's flags
+      // are wrong for the new one. Clear it so hive builds the launch command.
+      const updated = /^\s*\/usr\/bin\/\S+/.test(current)
+        ? ''
+        : current.replace(/agent-launch\.sh\s+--backend\s+\S+/, `agent-launch.sh --backend ${cli}`);
       if (updated !== current) {
         input.value = updated;
         markDirty('general', 'launchCmd', updated);
