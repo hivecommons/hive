@@ -1,1 +1,0 @@
-- Run CI runner tool-cache integrity repair even when an earlier setup or PATH check fails, allowing missing npm/npx cache entries to recover on the next job (#10518).

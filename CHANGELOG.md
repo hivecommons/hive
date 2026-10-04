@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.5)
+
+### Fixed
+
+- Run CI runner tool-cache integrity repair even when an earlier setup or PATH check fails, allowing missing npm/npx cache entries to recover on the next job (#10518).
+
 ## 2026-10-04 (v5.132.4)
 
 ### Changed
