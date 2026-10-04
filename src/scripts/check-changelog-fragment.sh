@@ -9,6 +9,24 @@ if [ -z "$base_ref" ]; then
 fi
 has_no_changelog_label="${HAS_NO_CHANGELOG_LABEL:-false}"
 
+# Forward-merge sync PRs (v5-topup.yml / v6-topup.yml and the hand-rolled ones
+# opened when those conflict) carry the source line's whole history, so the
+# three-dot diff below re-attributes every carried src/ change and the
+# release-time CHANGELOG.md compilation edit to the sync PR — it can never
+# satisfy this guard, and each carried change already passed it on its own PR
+# (#7783). Human-opened top-ups live on sync/*; agent-opened ones are forced
+# onto <lane>/sync-vN-to-vM by the push broker, which the workflow's own
+# sync/* exemption missed and then autofixed with a bogus fragment (#10475).
+# Exempting here too keeps the autofix (gated on this script failing) from
+# ever pushing to a sync branch, whatever the workflow-level check does.
+head_ref="${HEAD_REF:-${GITHUB_HEAD_REF:-}}"
+case "$head_ref" in
+  sync/*|*/sync-v[0-9]*-to-v[0-9]*)
+    echo "OK: forward-merge sync branch '$head_ref' — carried changes passed the guard on their own PRs; no fragment needed."
+    exit 0
+    ;;
+esac
+
 # Two views of the diff: ALL changed paths (deletions included — a PR that only
 # removes code is still a code change an operator can see), and paths still
 # present at HEAD (a deleted fragment can be neither validated nor counted).
