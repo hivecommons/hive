@@ -1,0 +1,1 @@
+- check-changelog-fragment.sh now writes its scratch files to a temp dir; removed four empty scratch files accidentally committed to the repo root by #10499.

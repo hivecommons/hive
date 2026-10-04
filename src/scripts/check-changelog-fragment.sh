@@ -2,6 +2,9 @@
 # Deterministic changelog.d fragment guard shared by CI and the PR-open precheck.
 set -euo pipefail
 
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+
 base_ref="${BASE_REF:-${1:-}}"
 if [ -z "$base_ref" ]; then
   echo "BASE_REF (or first argument) is required" >&2
@@ -30,12 +33,12 @@ esac
 # Two views of the diff: ALL changed paths (deletions included — a PR that only
 # removes code is still a code change an operator can see), and paths still
 # present at HEAD (a deleted fragment can be neither validated nor counted).
-git diff --name-only "origin/${base_ref}...HEAD" > changed-files.txt
-git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" > present-files.txt
+git diff --name-only "origin/${base_ref}...HEAD" > "$work_dir"/changed-files.txt
+git diff --name-only --diff-filter=d "origin/${base_ref}...HEAD" > "$work_dir"/present-files.txt
 echo "Changed files vs merge base with origin/${base_ref}:"
-sed 's/^/  /' changed-files.txt
+sed 's/^/  /' "$work_dir"/changed-files.txt
 
-grep -E '^changelog\.d/[^/]+\.md$' present-files.txt | grep -v '^changelog\.d/README\.md$' > fragments.txt || true
+grep -E '^changelog\.d/[^/]+\.md$' "$work_dir"/present-files.txt | grep -v '^changelog\.d/README\.md$' > "$work_dir"/fragments.txt || true
 bad=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
@@ -53,25 +56,25 @@ while IFS= read -r f; do
       bad=1
       ;;
   esac
-done < fragments.txt
+done < "$work_dir"/fragments.txt
 if [ "$bad" -ne 0 ]; then
   exit 1
 fi
 
-grep -E '^src/' changed-files.txt \
+grep -E '^src/' "$work_dir"/changed-files.txt \
   | grep -vE '^src/docs/' \
   | grep -vE '_test\.go$' \
   | grep -vE '^src/(deploy|scripts)/test[-_][^/]+\.sh$' \
-  > code-files.txt || true
+  > "$work_dir"/code-files.txt || true
 
-if [ ! -s code-files.txt ]; then
+if [ ! -s "$work_dir"/code-files.txt ]; then
   echo "OK: no non-exempt code changes under src/ — no fragment needed."
   exit 0
 fi
 echo "Code files that make this PR changelog-relevant:"
-sed 's/^/  /' code-files.txt
+sed 's/^/  /' "$work_dir"/code-files.txt
 
-if [ -s fragments.txt ]; then
+if [ -s "$work_dir"/fragments.txt ]; then
   echo "OK: the PR adds a changelog.d fragment."
   exit 0
 fi
@@ -81,7 +84,7 @@ if [ "$has_no_changelog_label" = "true" ]; then
   exit 0
 fi
 
-if grep -qx 'CHANGELOG.md' changed-files.txt; then
+if grep -qx 'CHANGELOG.md' "$work_dir"/changed-files.txt; then
   echo "::error::This PR edits CHANGELOG.md's Unreleased section directly. Move the entry into a changelog.d/<category>-<slug>.md fragment (see below; #5675)."
 fi
 
