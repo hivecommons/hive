@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.7)
+
+### Fixed
+
+- Kicks no longer hand an agent red PRs it already deferred to a still-open shared-CI incident ([#10528](https://github.com/hivecommons/hive/issues/10528)). The governor now reads the newest `<!-- hive-shared-ci-<n> -->` marker on each red PR and, while incident `#<n>` is open, records it as `deferred_incident` in `ci-failing.json`; the FIX-BEFORE-NEW block and the CI-FAILING work list name such PRs only as deferred, with no repair instructions, and the FIX-BEFORE-NEW banner is not emitted when every red PR an agent owns is deferred. When the incident closes, the PR is listed for repair again.
+
 ## 2026-10-04 (v5.132.6)
 
 ### Fixed
