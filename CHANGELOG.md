@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.2)
+
+### Fixed
+
+- check-changelog-fragment.sh now writes its scratch files to a temp dir; removed four empty scratch files accidentally committed to the repo root by #10499.
+
 ## 2026-10-04 (v5.132.1)
 
 ### Fixed
