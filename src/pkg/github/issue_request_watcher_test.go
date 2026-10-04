@@ -815,6 +815,10 @@ func TestIssueRequestWatcher_RateLimitBackoffUsesReset(t *testing.T) {
 func TestIssueRequestWatcher_ClaimAppliesLabelAndAudits(t *testing.T) {
 	labeled := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42" {
+			_, _ = io.WriteString(w, `{"number":42,"labels":[]}`)
+			return
+		}
 		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels") {
 			labeled++
 			w.Header().Set("Content-Type", "application/json")
