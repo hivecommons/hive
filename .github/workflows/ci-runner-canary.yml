@@ -74,6 +74,9 @@ jobs:
           node --version
           npm --version
       - name: Tool cache integrity
+        # Missing npm fails the PATH probe above; still invalidate the broken
+        # cache marker so the next job can repair it (#10518).
+        if: ${{ always() }}
         # A `.complete` marker whose directory lacks bin/ makes setup-* report
         # "Found in cache" and then fail every job on that node (#10234). The
         # same happens when bin/node exists but bin/npm/npx do not (a
