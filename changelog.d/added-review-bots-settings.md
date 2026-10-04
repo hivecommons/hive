@@ -1,1 +1,0 @@
-- Show the effective `classification.review_bots` settings (logins, per-thread attempt limit, resolve-after-fix, project-file load errors) read-only in the dashboard Review card and the `GET /api/config/governor` settings bundle.
