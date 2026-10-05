@@ -71,7 +71,7 @@ diff's lines run." Line/function-level attribution is out of scope for phase 1
 The four design decisions, accepted in #3973:
 
 - **D1 — Aggregation is spoke-side and rides the heartbeat.** A span-backend
-  query can never see the pull-only spokes, and the `otel:` exporter is opt-in
+  query can never see the push-reported spokes, and the `otel:` exporter is opt-in
   — most spokes export nowhere. A hub-side span query would report ~0 reach
   for most of the fleet and call it "unused": the anchoring-rule trap, one
   level up. The heartbeat is the outbound channel every spoke already opens.

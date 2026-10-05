@@ -1,0 +1,1 @@
+- Changed hub cluster-health wording to call heartbeat-only clusters push-reported and explain missing node health from old spokes (#10601)

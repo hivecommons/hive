@@ -549,7 +549,7 @@ generation, and strand them when retirement fires **unconditionally** at
 into a 7-day-delayed outage".
 
 So `rotateMasterSecret` now refuses unless `FleetFullyObserved` — the last sweep
-saw every admitted hive with none unreachable. A pull-only cluster increments
+saw every admitted hive with none unreachable. A push-reported cluster increments
 `UnreachableHives` for every hive on it, so this is **false on the production hub
 today and stays false** until every spoke is reachable. The wiring lands now; the
 ability to fire it unlocks only when the thing that makes it safe exists.
