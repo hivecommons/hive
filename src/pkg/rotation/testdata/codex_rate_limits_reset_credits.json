@@ -1,0 +1,8 @@
+{
+  "rateLimits": {
+    "primary": {"usedPercent": 42, "resetsAt": 1789400000, "windowDurationMins": 300, "limitId": "codex-5h"},
+    "secondary": {"usedPercent": 68, "resetsAt": 1789900000, "windowDurationMins": 10080, "limitId": "codex-weekly"},
+    "planType": "pro"
+  },
+  "rateLimitResetCredits": {"availableCount": 3}
+}
