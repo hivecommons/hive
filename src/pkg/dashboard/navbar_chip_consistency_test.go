@@ -66,6 +66,47 @@ func TestNavbarIconOnlyChipsHaveAccessibleNames(t *testing.T) {
 	}
 }
 
+func TestNavbarStickyThreeZoneLayout(t *testing.T) {
+	html := indexHTML(t)
+	topbar := dashboardTopbarHTML(t)
+	for _, want := range []string{
+		`.oc-topbar {`,
+		`position: sticky; top: var(--sp-0);`,
+		`grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
+		`z-index: var(--navbar-sticky-z);`,
+		`scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5));`,
+		`#oc-drawer-backdrop {`,
+		`.config-overlay { z-index: 10000; }`,
+		`.dashboard-section-ghost { position:fixed; z-index:12000;`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("sticky navbar contract missing %q", want)
+		}
+	}
+	for _, want := range []string{`class="oc-topbar-left"`, `class="oc-topbar-center"`, `class="oc-topbar-right"`} {
+		if !strings.Contains(topbar, want) {
+			t.Fatalf("topbar three-zone container missing %q", want)
+		}
+	}
+	centerStart := strings.Index(topbar, `class="oc-topbar-center"`)
+	rightStart := strings.Index(topbar, `class="oc-topbar-right"`)
+	if centerStart < 0 || rightStart < 0 || centerStart > rightStart {
+		t.Fatalf("topbar center/right zones are not ordered as expected")
+	}
+	center := topbar[centerStart:rightStart]
+	right := topbar[rightStart:]
+	for _, want := range []string{`id="fleet-breaker-wrap"`, `id="agent-navbar-upnext"`} {
+		if !strings.Contains(center, want) {
+			t.Errorf("topbar center zone missing %q", want)
+		}
+	}
+	for _, want := range []string{`id="feedback-bug-btn"`, `id="oc-settings-btn"`, `id="oc-health"`} {
+		if !strings.Contains(right, want) {
+			t.Errorf("topbar right zone missing %q", want)
+		}
+	}
+}
+
 func TestNavbarRemovedChipSpecificMetricOverrides(t *testing.T) {
 	html := indexHTML(t)
 	for _, forbidden := range []string{
