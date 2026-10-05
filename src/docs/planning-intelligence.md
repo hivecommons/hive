@@ -160,7 +160,7 @@ task's `claimed_by` metadata and its PR link (`pr_url` metadata, or the bead's
 
 ### Seeing plan state from the issue itself
 
-Once an issue has a plan, its pill in **REPOSITORIES** stops showing the
+Once an issue has a plan, its pill in **PROJECTS** stops showing the
 ⧉ Plan button and shows a **state chip** instead — the same lifecycle the Plans
 modal uses, compressed to fit next to the issue number:
 

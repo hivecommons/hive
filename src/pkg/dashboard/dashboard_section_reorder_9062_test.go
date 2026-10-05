@@ -142,9 +142,9 @@ func TestDashboardSectionReorderTopLevelGrips(t *testing.T) {
 		}
 		if !strings.Contains(window, `data-dashboard-grip`) {
 			dynamicGrip := map[string]string{
-				"governor":    `aria-label="Move Governor section"`,
-				"token-panel": `aria-label="Move Token Usage section"`,
-				"cost-panel":  `aria-label="Move Cost section"`,
+				"governor":    `gripLabel: 'Governor'`,
+				"token-panel": `gripLabel: 'Tokens'`,
+				"cost-panel":  `gripLabel: 'Cost'`,
 			}[id]
 			if dynamicGrip == "" || !strings.Contains(html, dynamicGrip) {
 				t.Fatalf("section %q has no grip in its header/render template", id)
