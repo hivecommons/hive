@@ -1,1 +1,0 @@
-- Document Hive's positioning against OpenAI Symphony, section-by-section spec alignment boundaries, and reuse of the existing Linear work source.

@@ -11,6 +11,58 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-05 (v5.135.0)
+
+### Added
+
+- Label-driven repositories can opt out of Hive's un-park flow with `project.repo_policies[].label_driven: true`: the un-park sweep then posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction` (including via `/hive approve` / `/hive decision`), replying once with a pointer to the repository's labels instead, so Hive stops fighting repos whose own lifecycle bot owns those labels. Repos that do not opt in are unchanged. ([#10537](https://github.com/hivecommons/hive/issues/10537))
+- dashboard: Audit Log collapsed row shows entry rate, last entry, today's count and sensitive-action chip (#10614)
+- rotation: publish Codex rateLimitResetCredits availableCount in quota reading (#10628)
+- Spek recheck cadence for continuous convergence (#10655)
+- dashboard: open Overview settings in a modal (#10662)
+- knowledge: owner toggle for the public read-only MCP endpoint in dashboard (#10678)
+- add Spek recheck outward discovery sources (#10683)
+- dashboard: link the Level 6 operating guide from the ACMM level picker (#10684)
+- dashboard: 'outside' term tooltip  per-hive breakdown of excluded work with the settings that cause it (#10712)
+- Add an explicitly unreviewed ACMM Level 6 operating guide covering readiness, merge gates, weekly checks, and recovery, indexed as awaiting operator sign-off (#10516).
+- Add a report-only GitHub Agentic Workflows triage on-ramp with deterministic admission/classification, compile CI, and landscape/adoption guidance ([#10625](https://github.com/hivecommons/hive/issues/10625)).
+- Document Hive's positioning against OpenAI Symphony, section-by-section spec alignment boundaries, and reuse of the existing Linear work source.
+
+### Changed
+
+- Follow Goose's canonical release repository after its move to the Agentic AI Foundation without changing verified pins, and document unattended Goose operation as an independent Hive integration ([#10627](https://github.com/hivecommons/hive/issues/10627)).
+- Build arm64 release images on the self-hosted runner pool via QEMU while cross-compiling Go binaries on the build platform.
+- Move gh-free CI lanes that do not depend on hosted-only tools onto the fork-safe self-hosted runner expression.
+- Level 6 operating guide: add a per-repository auto-merge opt-out item to the pre-switch checklist and drop the "awaiting operator review" notice now that the guide is published; add H16 — enable issue claims so agents, contributors and humans do not open competing PRs. (#10704)
+- stable-soak-policy: state that promotion runs are serialised by the `stable-promotion-v5` Actions concurrency group and that the pre-publish generation re-read is a secondary, non-atomic guard (refs #10042).
+
+### Fixed
+
+- dashboard: Overview median-age KPI names its population and basis (#10658)
+- dashboard: distinct per-band palette for Overview charts (#10660)
+- dashboard: double Overview chart transition durations (#10661)
+- dashboard: version popover too narrow  values truncated (#10663)
+- dashboard: collapsed stats spacing/plurals; drop bogus FAQ count (#10670)
+- dashboard: topbar up-next tile truncates agent name (#10671)
+- upgrade: channel/image reference lost after self-upgrade; superseded history; next-update unknown (#10672)
+- dashboard: overview window pills overlap tiles  use in-flow toolbar like throughput (#10673)
+- dashboard: upgrade bees clipped behind topbar pill and version popover tile (#10674)
+- sync issue claim labels (#10675)
+- dashboard: version popover clipped behind main content after widening (#10685)
+- Most effective models now recognizes contributor PR attribution followed by Hive's identity footer, restoring merged counts and ranking eligibility on rescan while still rejecting attribution followed by ordinary prose ([#10686](https://github.com/hivecommons/hive/issues/10686)).
+- dashboard: hive-vs-human tile chart must mirror the expanded stacked chart; explain the share % (#10691)
+- dashboard: Overview 'Actionable now' shows the exact reconciling equation; drop median-age tile (#10697)
+- suppress claims on already-done issues (#10706)
+- hub: push-reported spoke shows no node stats  metrics-first collector dropped capacity (#10708)
+- close verified already-done PR verdicts (#10717)
+- LiteLLM Model Gateway form tests now show the same full proxy/gateway diagnostic as saved gateway tests, including observed server/content-type/final URL and hub egress details.
+- Contribute now shows an unavailable version state when the dashboard version API is inaccessible, fails, or takes longer than ten seconds, instead of remaining on loading (#10682).
+- Extend stable-promotion lookback so busy v5 queues do not hide the build that just crossed the 24-hour soak line.
+
+### Security
+
+- Dashboard feedback issues no longer treat a GitHub username typed into the form as the submitter's verified identity. A signed-in GitHub session now always wins over the typed value, and a self-reported handle is rendered as plain text labelled "self-reported GitHub username, unverified" on both the spoke and the hub, with no `/cc` mention — so the hive's own credential can no longer be used to notify or attribute feedback to an arbitrary GitHub account.
+
 ## 2026-10-05 (v5.134.0)
 
 ### Added
