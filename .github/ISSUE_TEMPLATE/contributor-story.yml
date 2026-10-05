@@ -8,6 +8,24 @@ body:
     attributes:
       value: |
         Thanks for sharing your story. Maintainers review issues with the `contributor-story` label and may promote verified stories to hivecommons.dev/stories.
+
+        <!--
+        FOR MAINTAINERS AND AGENTS PICKING THIS ISSUE UP — where the story goes:
+
+        * Published page: https://hivecommons.dev/stories/
+        * Source of that page: repository hivecommons/hivecommons.github.io,
+          file stories/index.html, section "Stories we can link today"
+          (<h2 id="real-stories-title">). It is a hand-edited static GitHub
+          Pages site (no build step); copy an existing story card verbatim and
+          fill in name, profile link, avatar (https://github.com/<handle>.png),
+          project, role, PR/issue link, and the quote (only if "Can we quote
+          you by name?" is checked). Run scripts/check-links.sh and
+          node --test scripts/*.test.mjs there, then open a PR against main
+          referencing this issue. It goes live when that PR merges.
+        * Do NOT add stories to this repository (hivecommons/hive): not to the
+          hub's static pages, not to src/docs. There is no stories page here
+          and one must not be created (see #10644 / #10653).
+        -->
   - type: input
     id: name
     attributes:
