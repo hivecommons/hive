@@ -13156,22 +13156,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewRepoOpenIssueCount(repo) {
       const n = overviewRepoNumber(repo, ['openIssues', 'open_issues', 'issues']);
-      if (n !== null) return n;
-      return (Array.isArray(repo && repo.actionableIssues) ? repo.actionableIssues.length : 0)
-        + (Array.isArray(repo && repo.heldIssues) ? repo.heldIssues.length : 0);
+      return n;
     }
 
     function overviewRepoOpenPRCount(repo) {
       const n = overviewRepoNumber(repo, ['openPRs', 'open_prs', 'prs']);
-      if (n !== null) return n;
-      return (Array.isArray(repo && repo.openPrs) ? repo.openPrs.length : 0)
-        + (Array.isArray(repo && repo.heldPrs) ? repo.heldPrs.length : 0);
+      return n;
     }
 
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
-      const openIssues = (repos || []).reduce((n, r) => n + overviewRepoOpenIssueCount(r), 0);
-      const openPRs = (repos || []).reduce((n, r) => n + overviewRepoOpenPRCount(r), 0);
+      const repoIssueCounts = (repos || []).map(overviewRepoOpenIssueCount).filter(n => n !== null);
+      const repoPRCounts = (repos || []).map(overviewRepoOpenPRCount).filter(n => n !== null);
+      const openIssues = repoIssueCounts.length ? repoIssueCounts.reduce((n, count) => n + count, 0) : (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const openPRs = repoPRCounts.length ? repoPRCounts.reduce((n, count) => n + count, 0) : (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
       const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
