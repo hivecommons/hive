@@ -507,7 +507,7 @@ github:
 
 ## ACMM Levels
 
-Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
+Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
 
 | Level | Name | Agents | What agents can do |
 |-------|------|--------|-------------------|
