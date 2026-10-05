@@ -30,14 +30,12 @@ function renderSparkline(){ return '<svg></svg>'; }
 const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
 const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 ` + jsFunc(t, html, "esc") + `
-` + jsFunc(t, html, "overviewItemAgeMinutes") + `
-` + jsFunc(t, html, "overviewMedianAgeLabel") + `
-` + jsFunc(t, html, "overviewMedianAgeSeconds") + `
-` + jsFunc(t, html, "fmtDurationFromSeconds") + `
 ` + jsFunc(t, html, "overviewBreakdownTotal") + `
 ` + jsFunc(t, html, "overviewRepoForgeTotals") + `
 ` + jsFunc(t, html, "overviewKPIForgeTotals") + `
 ` + jsFunc(t, html, "overviewKPIBreakdownSubline") + `
+` + jsFunc(t, html, "overviewKPITerm") + `
+` + jsFunc(t, html, "overviewKPIEquation") + `
 ` + jsFunc(t, html, "overviewKPIRepoScope") + `
 ` + jsFunc(t, html, "overviewKPILocalKey") + `
 ` + jsFunc(t, html, "overviewKPILoadLocal") + `
@@ -52,8 +50,8 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewRepoOpenIssueCount") + `
 ` + jsFunc(t, html, "overviewRepoOpenPRCount") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
-const state = { showKPIs: true, timeBasis: 'updated' };
-const repos = [{ heldIssues: [{ number: 501 }], heldPrs: [] }];
+const state = { showKPIs: true };
+const repos = [{ issues: 100, prs: 7, heldIssues: [{ number: 501 }], heldPrs: [] }];
 _overviewLastRepos = repos;
 const issueSlices = [
   { key: 'ready', count: 93, items: [{ updated_at: new Date(Date.now() - 7 * 60000).toISOString() }] },
@@ -72,16 +70,16 @@ const prSlices = [
 ];
 const out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
-assert.equal(values.length, 6);
+assert.equal(values.length, 5);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
 assert.deepEqual(Object.fromEntries(values), {
-  'Total open issues': '99',
+  'Total open issues': '100',
   'Total open PRs': '7',
   'Actionable now (issues and PRs)': '103',
   'Held': '1',
   'Blocked / needs-human': '1',
-  'Median actionable age (updated)': '7m',
 });
+assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ 1 held \+ 1 blocked\/needs-human \+ 2 confirm\/close</);
 
 repos[0].issues = 123;
 repos[0].prs = 45;
@@ -89,10 +87,7 @@ const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
 assert.equal(rawValues['Total open issues'], '123');
 assert.equal(rawValues['Total open PRs'], '45');
-assert.match(out, /title="Median time since updated for actionable open issues and PRs in the selected repos \(not MTTR, which measures time-to-resolve for closed items\)\."/);
-const createdOut = renderOverviewKPIs(repos, issueSlices, prSlices, { showKPIs: true, timeBasis: 'created' });
-assert.match(createdOut, />7m<\/span><span class="overview-kpi-label">Median actionable age \(created\)<\/span>/);
-assert.match(createdOut, /title="Median time since created for actionable open issues and PRs in the selected repos \(not MTTR, which measures time-to-resolve for closed items\)\."/);
+assert.doesNotMatch(out, /Median actionable age/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
