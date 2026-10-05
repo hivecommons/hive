@@ -736,10 +736,10 @@ func (s *Server) handleGovernorWorkSourceGet(w http.ResponseWriter, r *http.Requ
 
 // handleGovernorWorkSourcePut updates the work_source config. The type and
 // per-source credential/setting fields are accepted; for Linear the full
-// team→repo map (teams), session_agent and assigned_only are accepted too, so
-// a Linear-sourced hive can be configured end-to-end from the dashboard
-// without falling back to the ConfigMap seed. List-valued fields (hold_labels,
-// teams) replace the stored list when present and are left alone when absent.
+// team→repo map (teams), session_agent and assigned_only are accepted too, and
+// Wavefront's additive migration-graph block can be staged without hand-editing
+// YAML. List-valued fields (hold_labels, teams) replace the stored list when
+// present and are left alone when absent.
 func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -765,7 +765,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 			AssignedOnly *bool                           `json:"assigned_only"`
 			Teams        []config.LinearTeamSourceConfig `json:"teams"`
 		} `json:"linear"`
-		Jira *workSourceJiraPatch `json:"jira"`
+		Jira      *workSourceJiraPatch `json:"jira"`
+		Wavefront *struct {
+			Enabled     *bool   `json:"enabled"`
+			Path        *string `json:"path"`
+			URL         *string `json:"url"`
+			Repo        *string `json:"repo"`
+			ReceiptsDir *string `json:"receipts_dir"`
+		} `json:"wavefront"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -793,6 +800,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 		applyJiraWorkSourcePatch(&candidate, body.Jira)
 		if err := validateJiraWorkSourceTLSPatch(candidate); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Wavefront != nil {
+		candidate := cfg.Governor.WorkSource.Wavefront
+		applyWavefrontWorkSourcePatch(&candidate, body.Wavefront.Enabled, body.Wavefront.Path, body.Wavefront.URL, body.Wavefront.Repo, body.Wavefront.ReceiptsDir)
+		if msg := validateWavefrontWorkSource(candidate); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
 			return
 		}
 	}
@@ -844,6 +859,9 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 	if body.Jira != nil {
 		applyJiraWorkSourcePatch(&ws.Jira, body.Jira)
 	}
+	if body.Wavefront != nil {
+		applyWavefrontWorkSourcePatch(&ws.Wavefront, body.Wavefront.Enabled, body.Wavefront.Path, body.Wavefront.URL, body.Wavefront.Repo, body.Wavefront.ReceiptsDir)
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after work-source update", "error", err)
@@ -891,6 +909,13 @@ func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
 			"jql":                  ws.Jira.JQL,
 			"repo":                 ws.Jira.Repo,
 			"hold_labels":          ws.Jira.HoldLabels,
+		},
+		"wavefront": map[string]interface{}{
+			"enabled":      ws.Wavefront.Enabled,
+			"path":         ws.Wavefront.Path,
+			"url":          ws.Wavefront.URL,
+			"repo":         ws.Wavefront.Repo,
+			"receipts_dir": ws.Wavefront.ReceiptsDir,
 		},
 	}
 }
@@ -958,6 +983,50 @@ func applyJiraWorkSourcePatch(j *config.JiraSourceConfig, patch *workSourceJiraP
 }
 
 var dashboardSecretRefPattern = regexp.MustCompile(`^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$`)
+var dashboardOwnerRepoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+func applyWavefrontWorkSourcePatch(w *config.WavefrontSourceConfig, enabled *bool, path, url, repo, receiptsDir *string) {
+	if enabled != nil {
+		w.Enabled = *enabled
+	}
+	if path != nil {
+		w.Path = strings.TrimSpace(*path)
+	}
+	if url != nil {
+		w.URL = strings.TrimSpace(*url)
+	}
+	if repo != nil {
+		w.Repo = strings.TrimSpace(*repo)
+	}
+	if receiptsDir != nil {
+		w.ReceiptsDir = strings.TrimSpace(*receiptsDir)
+	}
+}
+
+func validateWavefrontWorkSource(w config.WavefrontSourceConfig) string {
+	if !w.Enabled {
+		return ""
+	}
+	graphPath := strings.TrimSpace(w.Path)
+	endpoint := strings.TrimSpace(w.URL)
+	switch {
+	case graphPath == "" && endpoint == "":
+		return "wavefront requires exactly one of path or url when enabled"
+	case graphPath != "" && endpoint != "":
+		return "wavefront path and url are mutually exclusive"
+	}
+	if endpoint != "" && !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		return "wavefront url must start with http:// or https://"
+	}
+	repo := strings.TrimSpace(w.Repo)
+	if repo == "" {
+		return "wavefront repo is required when enabled"
+	}
+	if !dashboardOwnerRepoPattern.MatchString(repo) {
+		return "wavefront repo must use owner/name"
+	}
+	return ""
+}
 
 func validateJiraWorkSourceTLSPatch(j config.JiraSourceConfig) error {
 	if !dashboardJiraIsDataCenter(j.Deployment) {

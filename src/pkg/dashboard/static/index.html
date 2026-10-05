@@ -2537,6 +2537,14 @@
       cursor: pointer; padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
     }
     .config-close:hover { color: var(--text); background: var(--border); }
+    .ws-wavefront-card { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); margin: var(--sp-5) 0; }
+    .ws-wavefront-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+    .ws-wavefront-kicker { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .ws-wavefront-help { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
+    .ws-wavefront-toggle { margin: var(--sp-0); }
+    .ws-wavefront-errors { font-size: var(--fs-xs); color: var(--red); margin-bottom: var(--sp-4); }
+    .ws-wavefront-source-options { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-sm); }
+    .ws-wavefront-radio { display: flex; align-items: center; gap: var(--sp-2); }
     .config-tabs {
       display: flex; flex-wrap: wrap; gap: var(--sp-0);
       border-bottom: 1px solid var(--border);
@@ -22772,6 +22780,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
@@ -33541,6 +33550,51 @@ function burnAreaChart() {
       markWorkSourceDirty('linear.assigned_only', el.classList.toggle('on'));
     }
 
+    function wsWavefrontSource(wf) {
+      wf = wf || {};
+      if (wf.source === 'url' || wf.source === 'path') return wf.source;
+      return wf.url ? 'url' : 'path';
+    }
+
+    function wsWavefrontErrors(wf) {
+      wf = wf || {};
+      if (!wf.enabled) return [];
+      const path = String(wf.path || '').trim();
+      const url = String(wf.url || '').trim();
+      const repo = String(wf.repo || '').trim();
+      const errors = [];
+      if ((path ? 1 : 0) + (url ? 1 : 0) !== 1) errors.push('Choose exactly one graph source: file path or URL.');
+      if (url && !/^https?:\/\//.test(url)) errors.push('URL must start with http:// or https://.');
+      if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) errors.push('Repo must use owner/name.');
+      return errors;
+    }
+
+    function wsWavefrontSetEnabled(el) {
+      markWorkSourceDirty('wavefront.enabled', el.classList.toggle('on'));
+      renderConfigTab('Work Source');
+    }
+
+    function wsWavefrontSetSource(source) {
+      markWorkSourceDirty('wavefront.source', source === 'url' ? 'url' : 'path');
+      if (source === 'url') {
+        markWorkSourceDirty('wavefront.path', '');
+      } else {
+        markWorkSourceDirty('wavefront.url', '');
+      }
+      renderConfigTab('Work Source');
+    }
+
+    function wsWavefrontSetLocation(source, value) {
+      markWorkSourceDirty('wavefront.source', source === 'url' ? 'url' : 'path');
+      if (source === 'url') {
+        markWorkSourceDirty('wavefront.url', value);
+        markWorkSourceDirty('wavefront.path', '');
+      } else {
+        markWorkSourceDirty('wavefront.path', value);
+        markWorkSourceDirty('wavefront.url', '');
+      }
+    }
+
     // renderGovWorkSource renders the work_source settings: which external planning
     // tool hive reads work items from (Step 01 of the loop). Saved to
     // /api/config/governor/work-source.
@@ -33550,6 +33604,9 @@ function burnAreaChart() {
       const ghp = ws.github_projects || {};
       const lin = ws.linear || {};
       const jira = ws.jira || {};
+      const wf = ws.wavefront || {};
+      const wfSource = wsWavefrontSource(wf);
+      const wfErrors = wsWavefrontErrors(wf);
       const linTeams = Array.isArray(lin.teams) ? lin.teams : [];
       const linAgents = Array.isArray(_configState.data.agents) ? _configState.data.agents.slice().sort() : [];
 
@@ -33725,7 +33782,45 @@ function burnAreaChart() {
         ${type === '' ? `
         <div style="font-size:var(--fs-sm);color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 20%,transparent);border-radius:var(--r);padding:10px 12px">
           <b>Using default issues</b> — hive reads open issues from the projects listed in the Projects tab. No additional work-source configuration is needed.
-        </div>` : ''}`;
+        </div>` : ''}
+
+        <div class="ws-wavefront-card">
+          <div class="ws-wavefront-head">
+            <div>
+              <div class="ws-wavefront-kicker">Wavefront (Crustify) migration graph</div>
+              <div class="ws-wavefront-help">
+                Adds ready nodes from a Crustify/Wavefront migration graph as Hive run-stage work items; see
+                <a class="text-accent" href="https://docs.hivecommons.dev/docs/hive/integrations" target="_blank" rel="noopener">Hive integrations</a>
+                and <a class="text-accent" href="https://github.com/crustify-rs/crustify" target="_blank" rel="noopener">crustify-rs/crustify</a>.
+                URL fetches plain JSON only today; there is no auth field.
+              </div>
+            </div>
+            <div class="config-toggle ws-wavefront-toggle">
+              <div class="config-toggle-switch ${wf.enabled ? 'on' : ''}" data-action="wsWavefrontSetEnabled" data-arg-types="t"></div>
+              <span class="config-toggle-label">Enabled</span>
+            </div>
+          </div>
+          ${wfErrors.length ? `<div class="ws-wavefront-errors">${wfErrors.map(esc).join('<br>')}</div>` : ''}
+          <div class="config-field">
+            <label>Source</label>
+            <div class="ws-wavefront-source-options">
+              <label class="ws-wavefront-radio"><input type="radio" name="wf-source" value="path" ${wfSource === 'path' ? 'checked' : ''} data-change-action="gh79"> File path</label>
+              <label class="ws-wavefront-radio"><input type="radio" name="wf-source" value="url" ${wfSource === 'url' ? 'checked' : ''} data-change-action="gh79"> URL</label>
+            </div>
+          </div>
+          <div class="config-field">
+            <label>${wfSource === 'url' ? 'Graph URL' : 'Graph file path'}</label>
+            <input type="text" placeholder="${wfSource === 'url' ? 'https://wavefront.example/graph.json' : '/data/wavefront/graph.json'}" value="${esc(wfSource === 'url' ? (wf.url||'') : (wf.path||''))}" data-change-action="gh80" data-source="${wfSource}">
+          </div>
+          <div class="config-field">
+            <label>Repo <span class="config-info">i<span class="config-tooltip">owner/name repository the migration nodes are scoped to.</span></span></label>
+            <input type="text" placeholder="acme/crust" value="${esc(wf.repo||'')}" data-change-action="markWorkSourceDirty" data-arg0="wavefront.repo" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Receipts directory <span class="config-info">i<span class="config-tooltip">Optional directory where Hive writes node-completion receipts. Empty keeps receipts in memory until restart.</span></span></label>
+            <input type="text" placeholder="/data/wavefront/receipts" value="${esc(wf.receipts_dir||'')}" data-change-action="markWorkSourceDirty" data-arg0="wavefront.receipts_dir" data-arg-types="s,w">
+          </div>
+        </div>`;
     }
 
     function addSensingItem(key, inputId) {
@@ -34457,6 +34552,12 @@ function burnAreaChart() {
         if (Array.isArray(d.repos) && d.repos.length > 0 && (!d.primaryRepo || !d.repos.includes(d.primaryRepo))) {
           showToast('Set a default repo before saving — click a ☆ star in the Repos tab.', 'error');
           renderConfigTab('Repos');
+          return;
+        }
+        const wfErrors = dirty['work-source'] ? wsWavefrontErrors((d.work_source || {}).wavefront || {}) : [];
+        if (wfErrors.length) {
+          showToast(wfErrors[0], 'error');
+          renderConfigTab('Work Source');
           return;
         }
       }
@@ -37365,6 +37466,8 @@ function burnAreaChart() {
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
       gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
+      gh79: function (event, A) { wsWavefrontSetSource(this.value); },
+      gh80: function (event, A) { wsWavefrontSetLocation(this.dataset.source || 'path', this.value); },
     };
 
   </script>
