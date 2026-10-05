@@ -166,6 +166,9 @@ type HeartbeatClusterHealthReport struct {
 	Summary     HeartbeatClusterSummary `json:"summary"`
 	GPUSummary  *HeartbeatGPUSummary    `json:"gpu_summary,omitempty"`
 	CollectedAt string                  `json:"collected_at"`
+	// NodeHealthError carries the spoke-side reason health is partial or
+	// absent, for example a missing metrics API or forbidden node list.
+	NodeHealthError string `json:"node_health_error,omitempty"`
 }
 
 type HeartbeatNodeMetric struct {

@@ -2655,6 +2655,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"hive_id", payload.HiveID,
 			"cluster_id", entry.ClusterID,
 			"nodes", len(payload.ClusterHealth.Nodes),
+			"node_health_error", payload.ClusterHealth.NodeHealthError,
 		)
 	}
 
