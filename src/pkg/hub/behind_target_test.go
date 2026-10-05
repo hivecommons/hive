@@ -35,6 +35,7 @@ func TestBehindTargetForBranchSpokeUsesBranchTip(t *testing.T) {
 func TestBehindTargetForStableSpokeUsesChannelCommit(t *testing.T) {
 	stubBranchHead(t, "v4", "87b2b02")
 	stubChannelRevisions(t, map[string]string{"stable": "df9b867"})
+	stubChannelImageVerificationUnavailable(t)
 	s := &HubServer{logger: targetingLogger()}
 	// Prime the cache the way the reconcile tick does.
 	if sha := channelRevisionSHA("stable", s.logger); sha != "df9b867" {
@@ -55,6 +56,7 @@ func TestBehindTargetForStableSpokeUsesChannelCommit(t *testing.T) {
 func TestBehindTargetForStableSpokeIsCacheOnly(t *testing.T) {
 	stubBranchHead(t, "v4", "87b2b02")
 	calls := stubChannelRevisions(t, map[string]string{"stable": "df9b867"})
+	stubChannelImageVerificationUnavailable(t)
 	s := &HubServer{logger: targetingLogger()}
 
 	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:stable"}, "")

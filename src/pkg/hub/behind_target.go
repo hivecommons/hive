@@ -20,6 +20,16 @@ type behindTarget struct {
 	// Channel is true when the spoke tracks a release channel rather than a
 	// branch tag.
 	Channel bool
+	// FloatingSHA is the commit currently carried by the channel's mutable tag,
+	// which can lag behind SHA when the immutable per-SHA image exists but the
+	// channel retag did not advance.
+	FloatingSHA string
+	// PendingImageCommits is how many newer commits on the channel's source
+	// branch were skipped because their immutable images are not published yet.
+	PendingImageCommits int
+	// VerificationUnavailable means the hub could not verify per-SHA image
+	// existence and fell back to the channel's floating tag.
+	VerificationUnavailable bool
 }
 
 // behindTargetSuffixBranch is appended to a branch name in a display ref.
@@ -27,11 +37,11 @@ const behindTargetSuffixBranch = " tip"
 
 // behindTargetFor resolves the target one registry entry is measured against.
 //
-// It is cache-only on purpose: handleMyHives runs it once per visible row on
-// every dashboard poll, and the channel revision cache is already refreshed by
-// the auto-upgrade tick (channelRevisionSHA), so a registry round-trip here
-// would only ever duplicate one that just happened or block a page render on
-// GHCR. An empty SHA means "not resolved yet"; the caller renders no count.
+// Branch targets are cache-only. Release-channel targets additionally consult
+// the bounded per-SHA image target cache: a channel tag can lag behind newer
+// immutable commit images, and the dashboard/upgrade engine must choose the
+// newest image the spoke can actually pull rather than the older floating tag.
+// An empty SHA means "not resolved yet"; the caller renders no count.
 //
 // trackedChannel is the hub-owned channel intent (MyHiveEntry.TrackedChannel,
 // from the SaaS record) — the fallback spokeReleaseChannel uses for spokes too
@@ -45,7 +55,7 @@ func (s *HubServer) behindTargetFor(e *RegistryEntry, trackedChannel string) beh
 	if channel == "" {
 		return behindTarget{SHA: getLatestSHAForBranch(branch), Ref: branch + behindTargetSuffixBranch}
 	}
-	return behindTarget{SHA: cachedChannelRevisionSHA(channel), Ref: ":" + channel, Channel: true}
+	return channelPublishedImageTarget(branch, channel, cachedChannelRevisionSHA(channel), s.logger)
 }
 
 // cachedChannelRevisionSHA returns the last commit a channel resolved to,

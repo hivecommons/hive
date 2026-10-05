@@ -92,8 +92,9 @@ func TestChannelCurrentButBranchImagePendingIsExplicit(t *testing.T) {
 	for _, want := range []string{
 		"var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
 		"' image is published at ' + behindSHA",
-		"'. Upgrade will appear after the channel image is published.'",
+		"'. Upgrade will appear after a newer immutable image is published.'",
 		`channelImagePending ? '<span style="color:var(--yellow);margin-left:3px"`,
+		"pendingImageCommits > 0",
 		"channelTipBehindCount + ' behind · '",
 		"imagePendingStatus === 'building' ? 'building' : 'image pending'",
 	} {
@@ -114,6 +115,8 @@ func TestVersionGlyphAndCountTooltipsNameTheirMeaning(t *testing.T) {
 		"Current: running commit matches ' + behindRef",
 		"Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')'",
 		"Badge measures running commit against ' + behindRef",
+		"channel tag still points at ' + h.behindTargetFloatingSHA",
+		"image verification unavailable; using the channel tag target",
 		"h.pendingRequestCount + (h.pendingRequestCount === 1 ? ' pending access request' : ' pending access requests')",
 	} {
 		if !strings.Contains(body, want) {
