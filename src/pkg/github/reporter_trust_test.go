@@ -446,6 +446,24 @@ func TestReporterTrustWaitMarkedAddedExact(t *testing.T) {
 	}
 }
 
+func TestReporterTrustWaitBudget(t *testing.T) {
+	var nilBudget *reporterTrustWaitBudget
+	if !nilBudget.reserve() {
+		t.Fatal("nil budget should fail open for direct helper callers")
+	}
+	budget := &reporterTrustWaitBudget{remaining: 2}
+	if !budget.reserve() || budget.remaining != 1 {
+		t.Fatalf("first reserve left remaining=%d, want 1", budget.remaining)
+	}
+	if !budget.reserve() || budget.remaining != 0 {
+		t.Fatalf("second reserve left remaining=%d, want 0", budget.remaining)
+	}
+	got := budget.reserve()
+	if got || budget.remaining != 0 {
+		t.Fatalf("exhausted budget reserve=%t remaining=%d, want false/0", got, budget.remaining)
+	}
+}
+
 func TestEnumerateActionable_ReporterTrustWaitTrustedReporterNoop(t *testing.T) {
 	h := newReporterTrustWaitHarness(t, wireIssue{
 		Number: 103, Title: "maintainer asks", User: wireUser{"maintainer"}, AuthorAssociation: "MEMBER", CreatedAt: hoursAgo(1),
