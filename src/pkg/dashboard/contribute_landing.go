@@ -7396,14 +7396,37 @@ poll();setInterval(poll,3000);
 </div>
 </div>
 <div style="margin-top:40px;padding:var(--sp-6) var(--sp-0);border-top:1px solid var(--line-strong);font-size:var(--fs-sm);color:var(--text-muted);display:flex;align-items:center;gap:var(--sp-4)">
-  <span id="hive-version">loading...</span>
+  <span id="hive-version" role="status">Hive version unavailable</span>
 </div>
 <script>
-fetch('/api/version').then(function(r){return r.json()}).then(function(d){
+function ccLoadVersion(){
   var el=document.getElementById('hive-version');
-  var dot=d.behind?'\u{1F7E1}':'\u{1F7E2}';
-  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
-}).catch(function(){});
+  if(!el)return;
+  var settled=false, controller=new AbortController();
+  el.textContent='Loading Hive version...';
+  function finish(text){
+    if(settled)return;
+    settled=true;
+    clearTimeout(timer);
+    el.textContent=text;
+  }
+  var timer=setTimeout(function(){
+    finish('Hive version unavailable');
+    controller.abort();
+  },10000);
+  // The public contribute page can be viewed without dashboard API access.
+  return Promise.resolve().then(function(){
+    return fetch('/api/version',{signal:controller.signal});
+  }).then(function(r){
+    if(!r.ok)throw new Error('Version request failed');
+    return r.json();
+  }).then(function(d){
+    if(!d||typeof d.version!=='string'||!d.version.trim()||typeof d.short!=='string'||!d.short.trim()||(d.behind!==undefined&&typeof d.behind!=='boolean'))throw new Error('Invalid version response');
+    var dot=d.behind===undefined?'⚪':(d.behind?'🟡':'🟢');
+    finish(dot+' Hive v'+d.version+' ('+d.short+')'+(d.behind===undefined?' · update status unavailable':(d.behind?' · update available':' · up to date')));
+  }).catch(function(){finish('Hive version unavailable');});
+}
+ccLoadVersion();
 </script>
 </body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), "{{DASHBOARD_ASSET_LINKS}}", contributeDashboardAssetLinksHTML), "{{CONTRIBUTOR_THEME_LINK}}", themeHeadHTML), projectName, webstatic.MichromaFontFaceCSS, "", customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())
