@@ -174,6 +174,10 @@
     .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
     .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
     .alert-panel-more { margin-top: var(--sp-4); font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: var(--sp-0); }
+    .cluster-health-message { margin: var(--sp-4) var(--sp-0); padding: 6px 10px; border-radius: var(--r); font-size: var(--fs-sm); }
+    .cluster-health-message.error { color: var(--red); background: var(--surface); border: 1px solid var(--red); }
+    .cluster-health-message.info { color: var(--muted); background: var(--surface); border: 1px solid var(--border); }
+    .cluster-health-message.warn { color: var(--amber); background: var(--surface); border: 1px solid var(--amber); }
 
     /* ── Hive search + facets ──
        The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
@@ -9271,7 +9275,14 @@
               wildcardLine = ' · <span class="text-danger" title="' + esc(wtTitle) + '">' +
                 esc(wtLabel) + '</span>';
             }
-            var errorLine = c.error ? '<div style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' + esc(c.error) + '</div>' : '';
+            var statusLine = '';
+            if (c.error) {
+              statusLine = '<div class="cluster-health-message error">' + esc(c.error) + '</div>';
+            } else if (c.status === 'awaiting_heartbeat' && c.note) {
+              statusLine = '<div class="cluster-health-message info">' + esc(c.note) + '</div>';
+            } else if ((c.status === 'stale_heartbeat' || c.data_stale) && c.note) {
+              statusLine = '<div class="cluster-health-message warn">' + esc(c.note) + '</div>';
+            }
             var headerHtml = '<div style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-6) var(--sp-0) var(--sp-4)">' +
               clusterBadge(c.id, c.name) +
               '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + esc(cLabel) + '</span>' +
@@ -9285,7 +9296,7 @@
             var nodesHtml = (c.nodes || []).length > 0
               ? '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-5)">' + (c.nodes || []).map(renderNodeCard).join('') + '</div>'
               : '';
-            return headerHtml + errorLine + nodesHtml;
+            return headerHtml + statusLine + nodesHtml;
           }).join('');
         } else {
           // Fallback: flat node list (single cluster / backward compat).
