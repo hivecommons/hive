@@ -10,7 +10,7 @@ Hive validates backend names in `src/pkg/config` and launches CLIs in `src/pkg/a
 | `litellm` | `claude` | Not a separate CLI: it launches the **claude** binary pointed at a LiteLLM proxy via `ANTHROPIC_BASE_URL`. Set `HIVE_LITELLM_ENDPOINT` (and `HIVE_LITELLM_API_KEY` if the proxy requires one); no separate login. Inherits claude's confinement posture — `just contribute-hive litellm local` uses Claude Code's native OS sandbox. The dashboard's /contribute page also offers this backend under four **flavor** names — see [LiteLLM flavors on /contribute](#litellm-flavors-on-contribute). |
 | `copilot` | `copilot` | Install GitHub Copilot CLI and authenticate with GitHub. On a hive, use the **Login** button on a copilot agent's dashboard card: it runs a GitHub device-flow login (`POST /api/copilot-auth/start`, `pkg/dashboard/copilot_auth.go`) and stores the token durably at `/data/copilot-user-token`, shared by every copilot agent on that hive. `COPILOT_GITHUB_TOKEN` is honored as an env-var alternative. Hive also probes Copilot model entitlements live (your plan's `/models` on the account's API host), so the model picker only offers models your subscription can actually use. | Launched with `--no-auto-update --allow-all`; write tools are denied by mode when needed. Copilot is a CLI backend, **not** a Model Gateway — it will not appear under Governor Config → Model Gateways (see [inference-backends.md](inference-backends.md)). |
 | `gemini` | `gemini` | Install Gemini CLI and configure its normal auth/API key. | Supported by the server-side manager; Hive launches `gemini` and passes `--model` when a model is configured. |
-| `goose` | `goose` | Install [Goose (AAIF)](https://github.com/aaif-goose/goose) and configure provider/model (`GOOSE_PROVIDER`, `GOOSE_MODEL`, or `goose configure`). | Hive launches `goose run -s` and appends `--model` when set. |
+| `goose` | `goose` | Install [Goose](https://github.com/aaif-goose/goose) from its canonical upstream and configure provider/model (`GOOSE_PROVIDER`, `GOOSE_MODEL`, or `goose configure`). | Hive launches `goose run -s` and appends `--model` when set. |
 | `pi` | `goose` in the Go manager; `pi` in contributor scripts | Contributor mode requires `AGENT_MODEL=provider/model` plus that provider's official credential variable or `~/.pi/agent/auth.json`. In the server-side manager, `backendBinary("pi")` maps to Goose. | Contributor Pi supports interactive and headless (`--print --mode json`) delivery. No generic Pi key/provider variable exists. |
 | `pi` + Kiro | `goose` in the Go manager; `pi` in contributor scripts | Set `KIRO_API_KEY` and use the Pi Kiro provider model id shape, for example `AGENT_MODEL=kiro-api-key/claude-opus-5:high`. Hive forwards `KIRO_API_KEY` into contributor containers and the dashboard's `pi` model picker includes common `kiro-api-key/*` IDs as a non-authoritative fallback. | This is the supported Kiro path for now instead of a first-class `kiro-cli` backend: Kiro's stable unattended/trust/login CLI contract is not verified in Hive, while `pi` + `pi-kiro-api` is already the adopter-proven path. Quota headroom remains separate from the `anthropic` pool until the Kiro quota work in #8726 lands. |
 | `bob` | `bob` | Provide `HIVE_BOB_API_KEY` or `/secrets/bob_api_key` for pods; contributor mode requires `BOBSHELL_API_KEY`. | Hive uses API-key auth headlessly and accepts the Bob license at launch. |
@@ -92,15 +92,17 @@ The dashboard **Test key** probe intentionally sends `User-Agent: bobshell`. IBM
 ## Goose upstream and unattended operation
 
 Goose's canonical repository and releases are now
-[`aaif-goose/goose`](https://github.com/aaif-goose/goose), following its move
-from Block to the [Agentic AI Foundation](https://aaif.io/). Both Hive images
-and `src/scripts/cli-pin-bump.sh` use that release source; the version and
+[`aaif-goose/goose`](https://github.com/aaif-goose/goose), following Goose's
+move from Block to the [Agentic AI Foundation](https://aaif.io/). Hive tracks
+that Goose upstream as an independent CNCF project; this is not AAIF membership,
+hosting, or endorsement. Both Hive images and
+`src/scripts/cli-pin-bump.sh` use that release source; the version and
 per-architecture SHA256 pins remain in the Dockerfiles.
 
 See [Running Goose unattended at scale with Hive](goose-at-scale.md) for
 headless invocation, environment-key credentials, and the local unconfined
-refusal gate. AAIF listing status and the upstream documentation contribution
-gate are tracked in the [landscape](../src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
+refusal gate. Goose upstream tracking and the documentation contribution gate
+are covered in the [landscape](../src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
 
 ## Contributor relay image
 

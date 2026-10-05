@@ -8,7 +8,7 @@ interactive `goose run -s` path.
 
 ## Provider credentials and a one-shot task
 
-Install Goose from its [canonical AAIF releases](https://github.com/aaif-goose/goose/releases).
+Install Goose from its [canonical upstream releases](https://github.com/aaif-goose/goose/releases).
 Select a provider and a model supported by that provider. For Anthropic,
 load `ANTHROPIC_API_KEY` into your environment from your secret manager;
 do not put the key in a command line, task prompt, or committed config.
@@ -75,6 +75,6 @@ This is Hive-maintained documentation, not an upstream Goose integration
 endorsement. Goose requires an issue in **Ready** status before an external
 PR, and its contribution guide asks a human to write the issue. A human
 sponsor must propose this page and obtain Ready status before submitting it
-upstream. Track that handoff and AAIF listing eligibility in
+upstream. Track that Goose documentation handoff in
 [Hive #10627](https://github.com/hivecommons/hive/issues/10627) and the
 [ecosystem landscape](../src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).

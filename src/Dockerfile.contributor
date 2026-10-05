@@ -326,7 +326,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
-# Install Goose CLI (AAIF's AI agent, originally from Block)
+# Install Goose CLI (originally from Block; canonical repo now aaif-goose/goose)
 # Version pinned — was fetching releases/latest which resolves to HEAD at
 # build time (sec-check issue #2919). Pin to a specific release tag and verify
 # the tarball before extraction. Download failures are tolerated because Goose
