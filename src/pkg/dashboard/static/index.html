@@ -3325,7 +3325,8 @@
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
-    @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot, .agent-navbar-tile.active .agent-tile-dot { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .agent-navbar-tile.active .agent-tile-dot { animation: none; } }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
     .mini-gauge-track { stroke: var(--line-subtle); }
