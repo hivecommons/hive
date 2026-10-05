@@ -7585,11 +7585,20 @@
 
     // ── Sparkline helper ──
     const SPARKLINE_STORAGE_KEY = 'hive_sparkline_history';
-    const SPARKLINE_MAX_POINTS = 200;
+    // Upper bound for any client-side time-series history (one week at the
+    // server's 5-min trend resolution). Every in-memory history array is
+    // trimmed through capHistory so a tab left open for hours stays bounded.
+    const CLIENT_HISTORY_MAX_SAMPLES = 2016;
+    function capHistory(arr, max) {
+      if (!Array.isArray(arr)) return [];
+      const limit = max || CLIENT_HISTORY_MAX_SAMPLES;
+      if (arr.length > limit) arr.splice(0, arr.length - limit);
+      return arr;
+    }
     let historyData = (() => {
       try {
         const stored = localStorage.getItem(SPARKLINE_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : [];
+        return capHistory(stored ? JSON.parse(stored) : []);
       } catch { return []; }
     })();
     function persistSparklineHistory() {
@@ -7631,7 +7640,17 @@
     const SPARKLINE_ANIMATION_MS = 620;
     const SPARKLINE_STAGGER_MS = 25;
     const SPARKLINE_MAX_STAGGER_MS = 325;
+    // Bounded: some sparkline ids embed their latest value, so an unbounded
+    // map would gain an entry per refresh for the life of the tab.
+    const SPARKLINE_KEY_CACHE_MAX = 500;
     const _sparklineLastKeys = new Map();
+    function rememberSparklineKey(id, key) {
+      _sparklineLastKeys.delete(id);
+      _sparklineLastKeys.set(id, key);
+      while (_sparklineLastKeys.size > SPARKLINE_KEY_CACHE_MAX) {
+        _sparklineLastKeys.delete(_sparklineLastKeys.keys().next().value);
+      }
+    }
 
     function sparklineSeriesKey(series) {
       if (!Array.isArray(series)) return '';
@@ -7714,7 +7733,10 @@
       return true;
     }
     function animateSparklineSvg(svg, length) {
-      const line = svg && svg.querySelector('.sparkline-line');
+      // A re-render may have replaced this svg before its staggered timeout
+      // fired; animating a detached node would only extend its lifetime.
+      if (!svg || !svg.isConnected) return;
+      const line = svg.querySelector('.sparkline-line');
       if (!line || sparklineReducedMotion()) return;
       const wrap = svg.closest('.sparkline') || svg;
       const area = svg.querySelector('.sparkline-area');
@@ -7744,7 +7766,7 @@
         const id = svg.getAttribute('data-sparkline-id') || '';
         const key = svg.getAttribute('data-sparkline-key') || '';
         if (!opts.force && id && _sparklineLastKeys.get(id) === key) continue;
-        _sparklineLastKeys.set(id, key);
+        rememberSparklineKey(id, key);
         const line = svg.querySelector('.sparkline-line');
         runnable.push({ svg, length: line && line.getTotalLength ? line.getTotalLength() : 0 });
       }
@@ -7946,6 +7968,7 @@
         historyData = historyData.concat(injected);
         historyData.sort((a, b) => (a.t || 0) - (b.t || 0));
       }
+      capHistory(historyData);
     }
 
     // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
@@ -8529,7 +8552,7 @@
           }
           evalEntries.sort((a, b) => (a.t || 0) - (b.t || 0));
         }
-        historyData = evalEntries || [];
+        historyData = capHistory(evalEntries || []);
         // Re-fold persisted governor/repo/beads trends into the freshly
         // reassigned historyData so those sparklines survive the 30s refresh.
         mergeTrendHistory();
@@ -20991,7 +21014,13 @@ function burnAreaChart() {
     }
 
     function connectCampaignJamLive(id) {
-      if (_campaignJamSocket) { _campaignJamSocket.close(); _campaignJamSocket = null; }
+      if (_campaignJamSocket) {
+        const prev = _campaignJamSocket;
+        _campaignJamSocket = null;
+        prev.onmessage = null;
+        prev.onclose = null;
+        prev.close();
+      }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const url = protocol + '//' + window.location.host + '/api/campaigns/' + encodeURIComponent(id) + '/jam/ws';
       try {
@@ -25431,8 +25460,15 @@ function burnAreaChart() {
     }
     // startVersionCheck() — deferred to _deferredInit
 
+    // Single live /api/events stream: connect() closes any previous source and
+    // pending reconnect timer first, so repeated errors never stack streams.
+    let _eventSource = null;
+    let _eventSourceReconnectTimer = null;
     function connect() {
+      if (_eventSourceReconnectTimer) { clearTimeout(_eventSourceReconnectTimer); _eventSourceReconnectTimer = null; }
+      if (_eventSource) { _eventSource.onerror = null; _eventSource.onmessage = null; _eventSource.close(); _eventSource = null; }
       const source = new EventSource('/api/events');
+      _eventSource = source;
       const conn = document.getElementById('conn');
 
       source.onmessage = (e) => {
@@ -25476,7 +25512,7 @@ function burnAreaChart() {
             snap.tokenModels[name] = (stats.input || 0) + (stats.output || 0) + (stats.cacheRead || 0);
           }
           historyData.push(snap);
-          if (historyData.length > SPARKLINE_MAX_POINTS) historyData.shift();
+          capHistory(historyData);
           persistSparklineHistory();
         } catch (err) {
           console.error('SSE parse error:', err);
@@ -25517,7 +25553,10 @@ function burnAreaChart() {
         conn.className = 'connection';
         conn.innerHTML = '<span class="dot-dead">●</span> reconnecting...';
         source.close();
-        setTimeout(connect, 3000);
+        if (_eventSource === source) _eventSource = null;
+        if (!_eventSourceReconnectTimer) {
+          _eventSourceReconnectTimer = setTimeout(() => { _eventSourceReconnectTimer = null; connect(); }, 3000);
+        }
       };
     }
 
