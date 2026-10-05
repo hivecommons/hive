@@ -280,7 +280,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
     node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs && \
     claude --version
 
-# --- Layer 8: Goose CLI (official AAIF upstream) ---
+# --- Layer 8: Goose CLI (canonical upstream after Goose's AAIF move) ---
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.

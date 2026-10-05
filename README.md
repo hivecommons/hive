@@ -613,11 +613,11 @@ See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
 
 ## Related projects
 
-- [Goose](https://github.com/aaif-goose/goose), an agent backend hosted by the
-  [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive orchestrates Goose;
-  it is not itself an AAIF member or hosted project. See
-  [unattended Goose with Hive](docs/goose-at-scale.md) and
-  [ecosystem listing status](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
+- [Goose](https://github.com/aaif-goose/goose), an agent backend whose upstream
+  moved to the [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive integrates
+  Goose as an independent CNCF project; Hive does not join AAIF, seek AAIF
+  membership, or rely on AAIF to host or govern Hive. See [unattended Goose with Hive](docs/goose-at-scale.md)
+  and [Goose upstream tracking](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
 
 ## Repositories
 

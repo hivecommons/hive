@@ -1,1 +1,1 @@
-- Follow Goose's canonical AAIF release repository without changing verified pins, and document unattended Goose operation and AAIF listing eligibility ([#10627](https://github.com/hivecommons/hive/issues/10627)).
+- Follow Goose's canonical release repository after its move to the Agentic AI Foundation without changing verified pins, and document unattended Goose operation as an independent Hive integration ([#10627](https://github.com/hivecommons/hive/issues/10627)).

@@ -16,16 +16,14 @@ The Linux Foundation's [Agentic AI Foundation](https://aaif.io/) hosts
 [Goose](https://github.com/aaif-goose/goose), originally developed at Block.
 Goose is an execution backend; Hive is a downstream orchestration layer that
 dispatches to Goose at fleet scale, with operator-controlled policy and
-contributor-compute relays. This is an integration relationship, not AAIF
-membership, hosting, or endorsement of Hive.
+contributor-compute relays. Hive integrates Goose as an independent CNCF
+project; Hive does not join AAIF, seek AAIF membership, rely on AAIF to host or
+govern Hive, or claim AAIF endorsement or compliance.
 
-The [AAIF landscape submission instructions](https://github.com/aaif/aaif-landscape#new-entries)
-ask for an alphabetical `landscape.yml` PR and an SVG logo, and generally
-require 1,000 GitHub stars. Hive had 63 stars when checked for
-[#10627](https://github.com/hivecommons/hive/issues/10627).
-[Listing eligibility request aaif/aaif-landscape#22](https://github.com/aaif/aaif-landscape/issues/22)
-asks whether Hive qualifies below that threshold and which category fits;
-it is a pending submission inquiry, not an accepted listing.
+This page tracks Goose's upstream move so Hive's backend documentation,
+Dockerfiles, and pin-bump tooling follow the correct release source. It does not
+request an AAIF landscape listing or describe Hive as part of the foundation's
+membership, governance, or project set.
 
 Review material: [OpenSSF Best Practices badge](https://www.bestpractices.dev/projects/14261),
 [Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md),
