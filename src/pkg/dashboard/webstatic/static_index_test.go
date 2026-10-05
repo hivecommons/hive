@@ -311,6 +311,30 @@ func TestStaticDashboardPRAuthorUserMenuWiring(t *testing.T) {
 	}
 }
 
+func TestStaticPublicKnowledgeToggleWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="public-knowledge-header-control" data-public-knowledge-control="header"`,
+		`id="public-knowledge-settings-control" data-public-knowledge-control="settings"`,
+		`case 'Knowledge': return renderGovKnowledgeSharing();`,
+		`fetch('/api/knowledge/public')`,
+		`fetch('/api/knowledge/public', {`,
+		`data-action="publicKnowledgeRequestToggle"`,
+		`data-action="publicKnowledgeConfirmEnable"`,
+		`data-action="publicKnowledgeCopyURL"`,
+		`Anyone with the URL can read operational facts (types `,
+		`Only the hive owner can change this`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("public knowledge toggle wiring missing %q", want)
+		}
+	}
+}
+
 func TestStaticAddAgentDiscoverabilityWiring(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {

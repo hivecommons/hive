@@ -126,6 +126,86 @@ func TestPublicKnowledgeMCPEnabledSpellings(t *testing.T) {
 	}
 }
 
+func TestPublicKnowledgeSettingGetEnvFallbackAndURL(t *testing.T) {
+	t.Setenv(publicKnowledgeEnabledEnv, "yes")
+	t.Setenv(publicKnowledgeTagsEnv, "Linux, public, linux")
+	s := publicKnowledgeServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/knowledge/public", nil)
+	req.Host = "hive.example.test"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/knowledge/public = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got publicKnowledgeSettingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.Source != "env" || got.Endpoint != publicKnowledgeMCPPath || got.URL != "https://hive.example.test/mcp/knowledge" {
+		t.Fatalf("GET env response = %+v", got)
+	}
+	if strings.Join(got.Tags, ",") != "linux,public" {
+		t.Fatalf("tags = %#v, want normalized env tags", got.Tags)
+	}
+}
+
+func TestPublicKnowledgeSettingPutRequiresOwner(t *testing.T) {
+	s := publicKnowledgeServer(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/knowledge/public", strings.NewReader(`{"enabled":true,"tags":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "read")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner PUT = %d, want 403 body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPublicKnowledgeSettingPrecedenceAndInstantOff(t *testing.T) {
+	t.Setenv(publicKnowledgeEnabledEnv, "1")
+	t.Setenv(publicKnowledgeTagsEnv, "envtag")
+	s := publicKnowledgeServer(t)
+
+	put := doPut(s, "/api/knowledge/public", map[string]any{"enabled": false, "tags": []string{"Team", " team "}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("owner PUT = %d body=%q", put.Code, put.Body.String())
+	}
+	var got publicKnowledgeSettingResponse
+	if err := json.Unmarshal(put.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled || got.Source != "setting" || strings.Join(got.Tags, ",") != "team" {
+		t.Fatalf("setting response = %+v, want setting override off with normalized tags", got)
+	}
+	if s.publicKnowledgeEnabled() {
+		t.Fatal("persisted false must override env=true immediately")
+	}
+	if s.isPublicPath(publicKnowledgeMCPPath) {
+		t.Fatal("persisted false must remove the anonymous public path immediately")
+	}
+	rec := mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("instant off MCP = %d, want non-200 body=%q", rec.Code, rec.Body.String())
+	}
+
+	put = doPut(s, "/api/knowledge/public", map[string]any{"enabled": true, "tags": []string{"public"}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("owner PUT on = %d body=%q", put.Code, put.Body.String())
+	}
+	if !s.publicKnowledgeEnabled() {
+		t.Fatal("persisted true should enable immediately")
+	}
+	if !s.isPublicPath(publicKnowledgeMCPPath) {
+		t.Fatal("persisted true should open the anonymous public path immediately")
+	}
+	rec = mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("instant on MCP = %d, want 200 body=%q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPublicKnowledgeMCPHandshakeAndToolsList(t *testing.T) {
 	t.Setenv(publicKnowledgeEnabledEnv, "1")
 	s := publicKnowledgeServer(t)
