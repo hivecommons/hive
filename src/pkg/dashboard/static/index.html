@@ -3349,6 +3349,16 @@
     @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     @media (prefers-reduced-motion: reduce) { .agent-navbar-tile.active .agent-tile-dot { animation: none; } }
+    .advisory-collapsed-advice { display: flex; align-items: stretch; gap: var(--sp-2); width: min(760px, 52vw); max-width: 760px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
+    .advice-collapsed-eyebrow { flex: 0 0 auto; align-self: center; color: var(--muted); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .advice-collapsed-pill, .acmm-collapsed-pill { flex: 0 0 auto; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; align-items: center; gap: var(--sp-2); min-width: 0; min-height: 24px; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; white-space: nowrap; }
+    .advice-collapsed-pill { grid-template-columns: minmax(0, 1fr) auto; max-width: 210px; }
+    .advice-collapsed-pill:hover, .advice-collapsed-pill:focus-visible, .acmm-collapsed-pill:hover, .acmm-collapsed-pill:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .advice-collapsed-pill.muted { color: var(--muted); cursor: default; }
+    .advice-pill-headline { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 800; color: inherit; }
+    .advice-pill-impact { color: var(--accent); font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+    .acmm-collapsed-pill { grid-template-columns: auto auto; color: var(--text); font-weight: 800; }
+    .acmm-collapsed-pill .acmm-pill-detail { color: var(--accent); font-weight: 900; }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
     .mini-gauge-track { stroke: var(--line-subtle); }
@@ -5386,6 +5396,8 @@
     }
     function sectionHeaderKey(ev, sectionId) {
       if (!ev || (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar')) return;
+      const header = this && this.nodeType === 1 ? this : null;
+      if (header && ev.target && ev.target !== header && ev.target.closest && ev.target.closest('button,a,input,select,textarea,[role="button"]')) return;
       ev.preventDefault();
       toggleSection(sectionId);
     }
@@ -5547,6 +5559,108 @@
       const title = label || `${n} contributors`;
       return `<svg class="mini-avatars" width="92" height="24" viewBox="0 0 92 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}${dots}<text x="90" y="16" text-anchor="end" fill="currentColor" font-size="10" font-weight="800">${escapeHtml(fmtSparkVal(n))}</text></svg>`;
     }
+    function adviceSignalNumber(rec, names) {
+      const wanted = new Set((Array.isArray(names) ? names : [names]).map(String));
+      const signals = Array.isArray(rec && rec.signals) ? rec.signals : [];
+      for (const sig of signals) {
+        if (!sig || !wanted.has(String(sig.name || ''))) continue;
+        const match = String(sig.value == null ? '' : sig.value).match(/\d+/);
+        if (match) return Number(match[0]) || 0;
+      }
+      return 0;
+    }
+    function advisoryCollapsedImpact(rec) {
+      const id = String((rec && rec.id) || '');
+      const items = Array.isArray(rec && rec.items) ? rec.items.length : 0;
+      const first = (names) => adviceSignalNumber(rec, names) || items || 1;
+      if (id === 'fix-failing-check') return { n: first('failing_prs'), label: `−${first('failing_prs')} CI` };
+      if (id === 'throttle-lane') return { n: first('blocked_from_lane'), label: `−${first('blocked_from_lane')} lane` };
+      if (id === 'clear-human-gate-prs') return { n: first('needs_human'), label: `−${first('needs_human')} waits` };
+      if (id === 'unblock-human-issues') return { n: first('needs_human'), label: `−${first('needs_human')} holds` };
+      if (id === 'review-stale-prs') return { n: first('stale_blocked'), label: `−${first('stale_blocked')} stale` };
+      if (id === 'confirm-and-close') return { n: first('agent_done'), label: `−${first('agent_done')} queue` };
+      if (id === 'enable-disabled-agent') return { n: first('disabled_agents'), label: `+${first('disabled_agents')} lane` };
+      if (id === 'add-agent-cadence') return { n: first('no_cadence_agents'), label: `+${first('no_cadence_agents')} kicks` };
+      if (id === 'fix-merge-blockers') return { n: first('open_holds'), label: `−${first('open_holds')} holds` };
+      if (id === 'reduce-blocked-prs') return { n: first('blocked'), label: `−${first('blocked')} queue` };
+      return { n: items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1, label: `−${items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1} queue` };
+    }
+    function advisoryCollapsedHeadline(rec, impact) {
+      const id = String((rec && rec.id) || '');
+      const title = String((rec && rec.title) || 'Act on advice').replace(/`/g, '');
+      const n = Math.max(1, Number(impact && impact.n) || 1);
+      const byId = {
+        'reduce-blocked-prs': `Fix ${n} blocked PRs`,
+        'fix-failing-check': title.replace(/^Fix check\s+/i, 'Fix '),
+        'throttle-lane': title.replace(/^Throttle lane\s+/i, 'Throttle '),
+        'clear-human-gate-prs': `Review ${n} waiting PRs`,
+        'unblock-human-issues': `Decide ${n} held issues`,
+        'review-stale-prs': `Review ${n} stale PRs`,
+        'confirm-and-close': `Close ${n} done issues`,
+        'enable-disabled-agent': `Enable ${n} disabled agent${n === 1 ? '' : 's'}`,
+        'add-agent-cadence': `Set cadence on ${n} agents`,
+        'fix-merge-blockers': `Drain ${n} held PRs`,
+        'throttle-pr-producing-lanes': 'Throttle PR-producing lanes',
+        'raise-budget-if-starving': 'Raise agent budget',
+        'watch-budget-before-cadence': 'Hold cadence changes',
+        'rebalance-merge-side': 'Prioritize review lanes',
+      };
+      const raw = byId[id] || title;
+      return raw.length <= 28 ? raw : raw.slice(0, 27).trimEnd() + '…';
+    }
+    function advisoryCollapsedRecommendations() {
+      const source = (typeof _lastHiveAdvice !== 'undefined' && _lastHiveAdvice) || ((window._lastStatus || {}).hiveAdvice) || {};
+      const recs = Array.isArray(source.recommendations) ? source.recommendations : [];
+      const actionable = recs.filter(r => r && !r.cleared && r.id !== 'observe-more-signals' && r.id !== 'widen-hive-repos' && r.id !== 'raise-acmm-level' && r.id !== 'document-agents-conventions');
+      return actionable.map((rec, index) => ({ rec, sourceIndex: recs.indexOf(rec), impact: advisoryCollapsedImpact(rec), score: Number(rec.score) || 0 }))
+        .sort((a, b) => (b.impact.n - a.impact.n) || (b.score - a.score) || (a.sourceIndex - b.sourceIndex))
+        .slice(0, 3);
+    }
+    function advisoryCollapsedAdviceHtml(text) {
+      const picks = advisoryCollapsedRecommendations();
+      if (!picks.length) {
+        return `<span class="advisory-collapsed-advice" role="group" aria-label="This week: nothing to do — queue healthy" title="${escapeHtml(text || 'Nothing to do — queue healthy')}"><button type="button" class="advice-collapsed-pill muted" data-action="openAdvisoryAdvicePill" data-arg0="" data-stop="1"><span class="advice-pill-headline">Nothing to do — queue healthy</span></button></span>`;
+      }
+      const eyebrow = picks.length > 1 ? '<span class="advice-collapsed-eyebrow">This week</span>' : '';
+      const pills = picks.map(p => {
+        const headline = advisoryCollapsedHeadline(p.rec, p.impact);
+        const full = [p.rec.title, p.rec.rationale].filter(Boolean).join('\n');
+        return `<button type="button" class="advice-collapsed-pill" data-action="openAdvisoryAdvicePill" data-arg0="${escapeHtml(String(p.sourceIndex))}" data-stop="1" title="${escapeHtml(full || headline)}" aria-label="${escapeHtml(full || headline)}"><span class="advice-pill-headline">${escapeHtml(headline)}</span><span class="advice-pill-impact">${escapeHtml(p.impact.label)}</span></button>`;
+      }).join('');
+      return `<span class="advisory-collapsed-advice" role="group" aria-label="${escapeHtml(text || 'This week advice')}">${eyebrow}${pills}</span>`;
+    }
+    function acmmCollapsedDimensions(data) {
+      const rows = Array.isArray(data && data.criteria_results) ? data.criteria_results : [];
+      if (rows.length) {
+        const byCat = new Map();
+        rows.forEach(r => {
+          const key = String((r && (r.category || r.Category)) || 'Criteria');
+          const cur = byCat.get(key) || { name: key, passed: 0, total: 0 };
+          cur.total++;
+          if (r && r.passed) cur.passed++;
+          byCat.set(key, cur);
+        });
+        return Array.from(byCat.values()).map(d => ({ name: d.name, passed: d.passed === d.total, detail: `${d.passed}/${d.total}` }));
+      }
+      const levels = Array.isArray(data && data.levels) ? data.levels : [];
+      return levels.map(l => ({ name: `L${l.level} ${l.name || ''}`.trim(), passed: !!l.passed, detail: `${Number(l.matched) || 0}/${Number(l.total) || 0}` }));
+    }
+    function acmmCollapsedEvalHtml(text) {
+      const data = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? ((typeof acmmGetActiveData === 'function' && acmmGetActiveData()) || _acmmEvalData) : null;
+      if (!data) return miniWrap('acmm-eval-section', text, miniText(text, text));
+      const codebase = Number(data.codebase_level);
+      const op = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? Number(_acmmEvalData.operational_level) : Number(data.operational_level);
+      const level = Number.isFinite(Number(data.overall_level)) ? Number(data.overall_level) : (Number.isFinite(codebase) && Number.isFinite(op) ? Math.min(codebase, op) : Number(text && String(text).match(/\d+/)));
+      const dims = acmmCollapsedDimensions(data);
+      const total = dims.length || Number(data.criteria_total) || 0;
+      const met = dims.length ? dims.filter(d => d.passed).length : Number(data.criteria_passed) || 0;
+      const gaps = Math.max(0, total - met);
+      const detail = total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'no criteria';
+      const tipLines = dims.length ? dims.map(d => `${d.passed ? '✓' : '•'} ${d.name}: ${d.detail}`) : [`criteria: ${met}/${total}`];
+      const scope = (typeof _acmmSelectedRepo !== 'undefined' && _acmmSelectedRepo) ? `Showing ${_acmmSelectedRepo}` : 'Aggregate ACMM evaluation';
+      const title = [`L${Number.isFinite(level) ? level : '—'} · ${detail}`, scope, ...tipLines].join('\n');
+      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>L${escapeHtml(Number.isFinite(level) ? String(level) : '—')}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
+    }
     function visualSectionSummary(sectionId, html, title) {
       const text = textOrDash(html);
       const data = window._lastStatus || {};
@@ -5565,7 +5679,9 @@
         const pressure = Number(gov.pressure || gov.total || ((gov.issues || 0) + (gov.prs || 0)) || 0) || 0;
         const max = Number(gov.surgeThreshold || gov.surge_threshold || gov.thresholds?.surge || 10) || 10;
         inner = miniDial(mode, ['idle','quiet','busy','surge'], text) + miniGauge(pressure, max, 'var(--yellow)', text);
-      } else if (sectionId === 'advisory-section' || sectionId === 'hive-advice-section') {
+      } else if (sectionId === 'advisory-section') {
+        return advisoryCollapsedAdviceHtml(title || text);
+      } else if (sectionId === 'hive-advice-section') {
         const series = hist('count', n0);
         inner = miniDelta(n0, series.length > 1 ? series[series.length - 2] : n0, text) + miniSpark(series, 'var(--blue)', text);
       } else if (sectionId === 'pr-throughput-section') {
@@ -5582,7 +5698,9 @@
         inner = typeof reposCollapsedTilesHtml === 'function' ? reposCollapsedTilesHtml(repos, data) : miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
       } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
         inner = miniText(text.replace(/\s+/g, ''), text);
-      } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
+      } else if (sectionId === 'acmm-eval-section') {
+        return acmmCollapsedEvalHtml(title || text);
+      } else if (sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
       } else if (sectionId === 'review-queue-section') {
         inner = miniGauge(n0, Math.max(10, n0), 'var(--purple)', text);
@@ -5635,6 +5753,7 @@
       const on = Math.max(0, activeAgents.length - off);
       return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
     }
+    let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
       const raw = String(value == null ? '' : value).trim();
       if (!raw) return null;
@@ -6642,6 +6761,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!expanded && isSectionCollapsed('repos-section')) toggleSection('repos-section', { collapsed: false, persist: false, navPeek: true });
       repaintReposForWidth();
       ocAfterNavLayoutSettles(['repos-section'], function() { scrollToRepoCard(repo, 'smooth') || ocScrollSectionIntoView('repos-section'); });
+    }
+    function openAdvisoryAdvicePill(index) {
+      const affected = [];
+      ['advisory-section', 'hive-advice-section'].forEach(sectionId => {
+        navPeekRestore(sectionId, { instant: true });
+        if (navPeekExpand(sectionId)) affected.push(sectionId);
+        if (isSectionCollapsed(sectionId)) {
+          toggleSection(sectionId, { collapsed: false, persist: false, navPeek: true });
+          affected.push(sectionId);
+        }
+      });
+      const raw = String(index == null ? '' : index).trim();
+      const targetId = raw === '' ? 'hive-advice-section' : 'hive-advice-rec-' + raw;
+      const after = () => {
+        const target = document.getElementById(targetId) || document.getElementById('hive-advice-section') || document.getElementById('advisory-section');
+        if (!target) return;
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.remove('anchor-highlight');
+        void target.offsetWidth;
+        target.classList.add('anchor-highlight');
+      };
+      ocAfterNavLayoutSettles(affected, after);
     }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
@@ -16091,7 +16232,9 @@ function burnAreaChart() {
       const card = document.getElementById('hive-advice-card');
       if (!section || !card) return;
       dto = dto || {};
+      _lastHiveAdvice = dto;
       const recs = Array.isArray(dto.recommendations) ? dto.recommendations : [];
+      setSectionSummary('advisory-section', `${recs.length} weekly advice${recs.length === 1 ? '' : ' items'}`, 'Weekly Hive Advice');
       setSectionSummary('hive-advice-section', `${recs.length} recommendation${recs.length === 1 ? '' : 's'}`);
       if (recs.length === 0) { section.style.display = 'none'; return; }
       const epoch = dto.epoch || {};
@@ -16105,7 +16248,7 @@ function burnAreaChart() {
       const items = recs.map((r, i) => {
         r = r || {};
         if (r.cleared) {
-          return `<li class="reco-crit met">
+          return `<li class="reco-crit met" id="hive-advice-rec-${i}">
           <span class="mark">✓</span>
           <div class="crit-body"><div class="crit-name"><s>${escapeHtml(r.title || r.id || 'Recommendation')}</s></div>
           <div class="crit-detail">${escapeHtml(r.rationale || '')}</div></div>
@@ -16121,7 +16264,7 @@ function burnAreaChart() {
         }).join(', ')}</div>` : '';
         const links = Array.isArray(r.links) ? r.links : [];
         const linkHtml = links.length ? `<div class="crit-cmp">Full list: ${links.map((l) => `<a href="${escapeHtml(l.url || '')}" target="_blank" rel="noopener noreferrer">${escapeHtml(l.label || l.url || '')}</a>`).join(', ')}</div>` : '';
-        return `<li class="reco-crit met">
+        return `<li class="reco-crit met" id="hive-advice-rec-${i}">
           <span class="mark">${i + 1}</span>
           <div class="crit-body"><div class="crit-name">${escapeHtml(r.title || r.id || 'Recommendation')}</div>
           <div class="crit-detail">${escapeHtml(r.rationale || '')}</div>${itemHtml}${linkHtml}${sigHtml}</div>

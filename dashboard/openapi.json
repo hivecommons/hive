@@ -18844,6 +18844,38 @@
       }
     },
 
+    "/api/feedback/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard feedback attribution status",
+        "description": "Returns the identity context the dashboard will attach to a feedback report, including whether a standalone hive still needs the user to enter a contact identity before submitting.",
+        "responses": {
+          "200": {
+            "description": "Feedback attribution context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential_login": { "type": "string" },
+                    "submitter_login": { "type": "string" },
+                    "submitter_name": { "type": "string" },
+                    "submitter_source": { "type": "string" },
+                    "hive_id": { "type": "string" },
+                    "hub_linked": { "type": "boolean" },
+                    "hub_name": { "type": "string" },
+                    "needs_identity": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
     "/api/feedback/report": {
       "post": {
         "tags": [
