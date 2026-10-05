@@ -149,6 +149,7 @@ func (s *Server) triggerCampaignRecheck(ctx context.Context, id, actor, reason s
 	evidence, _ := (codebaseHeadEvidenceSource{}).Evidence(ctx, base, priorCampaignHead(base))
 	evidence.PriorRevision = firstRunNonEmpty(base.RevisionOf, base.ID)
 	evidence.RecheckReason = reason
+	external, failures := s.collectRecheckDiscovery(ctx, base, parseCampaignTime(base.LastActivity))
 	revision.Drift = &knowledge.CampaignDrift{
 		CodebaseChanged: evidence.CodebaseChanged,
 		PriorHeadSHA:    evidence.PriorHeadSHA,
@@ -156,6 +157,9 @@ func (s *Server) triggerCampaignRecheck(ctx context.Context, id, actor, reason s
 		PriorRevision:   evidence.PriorRevision,
 		DeltaCount:      evidence.DeltaCount,
 		RecheckReason:   evidence.RecheckReason,
+		External:        external,
+		ExternalCount:   len(external),
+		SourcesFailed:   failures,
 	}
 	if _, err := s.deps.Inception.SetCampaignRecheck(revision.ID, revision.Recheck); err != nil {
 		return Campaign{}, err
@@ -282,7 +286,39 @@ func campaignDriftFromArchive(archive knowledge.InceptionCampaignArchive) *Campa
 		PriorRevision:   archive.Drift.PriorRevision,
 		DeltaCount:      archive.Drift.DeltaCount,
 		RecheckReason:   archive.Drift.RecheckReason,
+		External:        campaignExternalEvidenceFromKnowledge(archive.Drift.External),
+		ExternalCount:   archive.Drift.ExternalCount,
+		SourcesFailed:   campaignSourceFailuresFromKnowledge(archive.Drift.SourcesFailed),
 	}
+}
+
+func campaignExternalEvidenceFromKnowledge(in []knowledge.CampaignExternalEvidence) []CampaignExternalEvidence {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]CampaignExternalEvidence, 0, len(in))
+	for _, ev := range in {
+		out = append(out, CampaignExternalEvidence{
+			Source:      ev.Source,
+			Kind:        ev.Kind,
+			Title:       ev.Title,
+			URL:         ev.URL,
+			PublishedAt: formatRunTime(ev.PublishedAt),
+			Summary:     ev.Summary,
+		})
+	}
+	return out
+}
+
+func campaignSourceFailuresFromKnowledge(in []knowledge.CampaignSourceFailure) []CampaignSourceFailure {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]CampaignSourceFailure, 0, len(in))
+	for _, fail := range in {
+		out = append(out, CampaignSourceFailure{Name: fail.Name, Reason: fail.Reason})
+	}
+	return out
 }
 
 func (s *Server) importRecheckDelta(runKey, repo, taskList, source string) (bool, error) {

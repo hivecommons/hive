@@ -274,14 +274,64 @@ imports the first capped set and records `campaign_recheck_delta_capped`.
 Each revision carries a `drift` evidence block with `codebase_changed`,
 `prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
 The codebase signal compares the prior recorded head SHA with the current Git
-HEAD when available. Outward-looking external-source discovery (upstreams,
-competitors, standards trackers, landscape entries) is deliberately not in
-this PR; the Go extension point is `RecheckEvidenceSource`, with only the
-codebase-head source implemented. Follow-up: [#10667](https://github.com/hivecommons/hive/issues/10667).
+HEAD when available.
+
+### Outward-looking discovery
+
+Outward discovery is opt-in under `runs.spektacular.recheck.discovery`. Hive
+only reads operator-declared sources, bounded by `timeout` (default `30s`),
+each source's `max_items` (default `20`), and `max_total_items` (default
+`100`). It never searches the web, never crawls arbitrary or competitor
+websites, never applies findings automatically, and rejects any configured
+host that is not listed in `variables.security.http_allowlist`. GitHub-backed
+sources use the existing authenticated GitHub client; feed sources use GET
+through the normal proxy/egress path.
+
+Supported source kinds are:
+
+- `upstream_release`: GitHub releases for a named `owner/repo` since the prior
+  revision timestamp.
+- `repo_activity`: merged PRs and tagged releases for a named `owner/repo`
+  since the prior timestamp.
+- `standards_feed`: an Atom or RSS URL such as a spec repo's `releases.atom`
+  or a standards-body feed.
+- `landscape`: GitHub repositories linked from `docs/landscape.md`, checked
+  for new releases using the same release reader as `upstream_release`.
+
+Example:
+
+```yaml
+runs:
+  spektacular:
+    recheck:
+      discovery:
+        enabled: true
+        timeout: 30s
+        max_total_items: 100
+        sources:
+          - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
+          - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
+          - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
+          - {kind: landscape, name: project-landscape, max_items: 20}
+variables:
+  security:
+    http_allowlist: [api.github.com, www.ietf.org]
+```
+
+Findings are recorded on the revision as
+`drift.external[] = {source, kind, title, url, published_at, summary}` with
+summaries capped at 280 characters, plus `external_count` and
+`sources_failed[] = {name, reason}`. A failed source is non-fatal: Hive records
+the typed reason and continues with the rest. The same evidence is included in
+the `spec` stage assignment prompt as context so the spec generator can decide
+what, if anything, belongs in the revised spec; the spec and plan human
+checkpoints remain the only approval gates.
 
 Campaign list/detail JSON includes
-`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count}`;
-the dashboard Campaigns panel renders the cadence and provides an owner-only
+`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
+external_count, sources_failed}`; recheck revisions also include the `drift`
+block above. The dashboard Campaigns panel renders the cadence, shows
+`N external signals` with an expandable list, and provides an owner-only
 Recheck action.
 
 ## Defensive handling of the open questions

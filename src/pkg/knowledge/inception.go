@@ -784,12 +784,29 @@ type CampaignRecheck struct {
 
 // CampaignDrift records the evidence attached to a Spek recheck revision.
 type CampaignDrift struct {
-	CodebaseChanged bool   `json:"codebase_changed"`
-	PriorHeadSHA    string `json:"prior_head_sha,omitempty"`
-	CurrentHeadSHA  string `json:"current_head_sha,omitempty"`
-	PriorRevision   string `json:"prior_revision,omitempty"`
-	DeltaCount      int    `json:"delta_count"`
-	RecheckReason   string `json:"recheck_reason,omitempty"`
+	CodebaseChanged bool                       `json:"codebase_changed"`
+	PriorHeadSHA    string                     `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string                     `json:"current_head_sha,omitempty"`
+	PriorRevision   string                     `json:"prior_revision,omitempty"`
+	DeltaCount      int                        `json:"delta_count"`
+	RecheckReason   string                     `json:"recheck_reason,omitempty"`
+	External        []CampaignExternalEvidence `json:"external,omitempty"`
+	ExternalCount   int                        `json:"external_count,omitempty"`
+	SourcesFailed   []CampaignSourceFailure    `json:"sources_failed,omitempty"`
+}
+
+type CampaignExternalEvidence struct {
+	Source      string    `json:"source"`
+	Kind        string    `json:"kind"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url,omitempty"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+	Summary     string    `json:"summary,omitempty"`
+}
+
+type CampaignSourceFailure struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // CampaignLease is the dashboard-level lock that prevents two operators from

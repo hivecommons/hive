@@ -22059,6 +22059,10 @@ function burnAreaChart() {
         const engine = c.engine || 'unknown engine';
         const rc = c.recheck || {};
         const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
+        const drift = c.drift || {};
+        const external = Array.isArray(drift.external) ? drift.external : [];
+        const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
+        const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
         const recheckDisabled = rc.in_flight ? ' disabled' : '';
         return `<div class="campaign-row">
           <div>
@@ -22071,6 +22075,7 @@ function burnAreaChart() {
               <span>${escapeHtml(activity)}</span>
             </div>
             <div class="campaign-row-meta"><span>${recheckText}</span></div>
+            ${recheckExternal}
           </div>
           <div class="campaign-row-actions">
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
