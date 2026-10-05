@@ -1,0 +1,1 @@
+- ci: run lightweight per-PR checks on self-hosted runners (#10651)
