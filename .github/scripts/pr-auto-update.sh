@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Gate policy (#10443): push-triggered runs only call update-branch on PRs whose
+# changed files intersect the push. Incident recovery is served by the
+# marker-driven re-run (SHARED_CI_INCIDENT, #10442), which bypasses that gate.
+# An "N commits behind base" trigger (N~5) is deliberately not implemented; revisit
+# no earlier than 14 days after #10458 merges, sizing N from its update-branch
+# success / 422 / 403 counts.
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
