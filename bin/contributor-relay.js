@@ -535,6 +535,10 @@ const QUOTA_GUARD_MODE = (process.env.HIVE_CONTRIBUTOR_QUOTA_GUARD || 'ask').tri
 const QUOTA_GUARD_DEFAULT_RESERVE = parseQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT', 20);
 const QUOTA_GUARD_SHORT_RESERVE = parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_SHORT_MIN_REMAINING_PCT');
 const QUOTA_GUARD_WEEKLY_RESERVE = parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_WEEKLY_MIN_REMAINING_PCT');
+// Contributor-local opt-in (hivecommons/hive#10597): below the weekly reserve
+// but above 0%, admit while a fresh reading shows a provider reset credit.
+// Read only from the local env; hub prompts and assignments cannot enable it.
+const QUOTA_AUTO_USE_BANKED_RESET = parseQuotaBoolEnv('HIVE_CODEX_AUTO_USE_BANKED_RESET');
 const QUOTA_GUARD_TIER_RESERVES = {
   simple: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_SIMPLE_MIN_REMAINING_PCT'),
   medium: parseOptionalQuotaPctEnv('HIVE_CONTRIBUTOR_QUOTA_MEDIUM_MIN_REMAINING_PCT'),
@@ -815,6 +819,16 @@ function parseQuotaPctEnv(name, fallback) {
   return n;
 }
 
+function parseQuotaBoolEnv(name) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === '') return false;
+  const v = String(raw).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
+  console.error(`FATAL: ${name} must be true or false (got ${JSON.stringify(raw)})`);
+  process.exit(1);
+}
+
 function parseOptionalQuotaPctEnv(name) {
   return process.env[name] === undefined || String(process.env[name]).trim() === ''
     ? null
@@ -1007,6 +1021,12 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
   }
   if (state === 'unknown' || state === 'stale') return { admit: false, wait: true, reason: state };
   const complexity = normalizeTaskComplexity(task);
+  // Only a recognized-fresh reading with a positive provider-stated credit count
+  // can back the weekly-reserve exception (hivecommons/hive#10597). `stale` and
+  // `unknown` already held above; absence of the count is not evidence.
+  const resetBacked = QUOTA_AUTO_USE_BANKED_RESET && state === 'available'
+    && Number.isInteger(reading.reset_credits_available) && reading.reset_credits_available > 0;
+  let usedBankedReset = false;
   for (const window of (reading.limits || [])) {
     const kind = (window.kind || '').toString();
     // Every window is evaluated, including kinds this build has never heard of
@@ -1020,6 +1040,12 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     if (!Number.isFinite(remaining)) return { admit: false, wait: true, reason: 'unknown' };
     const required = opts.baseReserveOnly ? quotaWindowReserve(kind) : quotaRequiredReserve(window, complexity);
     if (remaining <= required) {
+      // Relaxes the weekly reserve only; 0% weekly still holds, and short-term
+      // windows are never relaxed.
+      if (resetBacked && remaining > 0 && QUOTA_WEEKLY_WINDOW_KINDS.includes(kind)) {
+        usedBankedReset = true;
+        continue;
+      }
       // A scoped continue-* override is a human's explicit consent to spend
       // below the reserve on THIS window. It admits, but records the scope it
       // relied on so the caller can expire a continue-once after exactly one
@@ -1048,7 +1074,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     return { admit: false, wait: true, reason: 'pool_reserved' };
   }
   contributorQuotaPaused = false;
-  return { admit: true };
+  return usedBankedReset ? { admit: true, reason: 'banked_reset_available' } : { admit: true };
 }
 
 // ── Guard resume (kubestellar/hive#6951) ─────────────────────────────────────
