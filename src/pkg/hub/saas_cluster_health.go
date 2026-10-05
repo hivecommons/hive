@@ -128,6 +128,8 @@ type PerClusterHealth struct {
 	GPUSummary *GPUSummary          `json:"gpu_summary,omitempty"`
 	HiveCount  int                  `json:"hive_count"`
 	Error      string               `json:"error,omitempty"`
+	Status     string               `json:"status,omitempty"`
+	Note       string               `json:"note,omitempty"`
 	DataSource string               `json:"data_source,omitempty"` // "heartbeat" when data comes from spoke heartbeat instead of kubectl
 	DataStale  bool                 `json:"data_stale,omitempty"`  // true when heartbeat data is older than heartbeatHealthStaleness
 	DataAge    string               `json:"data_age,omitempty"`    // human-readable age or collection timestamp
@@ -159,6 +161,12 @@ type PerClusterHealth struct {
 	// wildcard_tls_health.go.
 	WildcardTLS *WildcardTLSReport `json:"wildcard_tls,omitempty"`
 }
+
+const (
+	perClusterHealthStatusAwaitingHeartbeat = "awaiting_heartbeat"
+	perClusterHealthStatusStaleHeartbeat    = "stale_heartbeat"
+	clusterHealthHoursPerDay                = 24
+)
 
 type ClusterHealthResponse struct {
 	// Flat fields for backward compatibility (aggregate across all clusters).
@@ -293,7 +301,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		select {
 		case res := <-query.ch:
 			if res.err != nil {
-				if errors.Is(res.err, errClusterPullOnly) {
+				isPullOnly := errors.Is(res.err, errClusterPullOnly)
+				if isPullOnly {
 					s.logger.Info("cluster health: pull-only cluster, using the health its spokes report over the heartbeat", "cluster", cID)
 				} else {
 					s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
@@ -311,10 +320,23 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 					s.logger.Info("cluster health: using heartbeat fallback", "cluster", cID)
 					continue
 				}
+				if !isPullOnly {
+					perCluster = append(perCluster, PerClusterHealth{
+						ID:    cID,
+						Name:  s.clusterNameForID(cID),
+						Error: res.err.Error(),
+					})
+					continue
+				}
 				perCluster = append(perCluster, PerClusterHealth{
-					ID:    cID,
-					Name:  s.clusterNameForID(cID),
-					Error: res.err.Error(),
+					ID:        cID,
+					Name:      s.clusterNameForID(cID),
+					HiveCount: hiveCounts[cID],
+					Summary: ClusterHealthSummary{
+						HiveCount: hiveCounts[cID],
+					},
+					Status: perClusterHealthStatusAwaitingHeartbeat,
+					Note:   s.pullOnlyAwaitingHeartbeatNote(cID),
 				})
 				continue
 			}
@@ -804,6 +826,55 @@ func (s *HubServer) getHeartbeatHealthForCluster(clusterID string) *HeartbeatHea
 	return entry
 }
 
+func (s *HubServer) pullOnlyAwaitingHeartbeatNote(clusterID string) string {
+	age := s.latestRegistryHeartbeatAgeForCluster(clusterID)
+	if age == "" {
+		return "pull-only · awaiting spoke heartbeat"
+	}
+	return "pull-only · awaiting spoke heartbeat (last seen " + age + ")"
+}
+
+func (s *HubServer) latestRegistryHeartbeatAgeForCluster(clusterID string) string {
+	if s == nil {
+		return ""
+	}
+	var latest time.Time
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if h.ClusterID != clusterID || h.LastHeartbeat == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, h.LastHeartbeat)
+		if err != nil {
+			continue
+		}
+		if latest.IsZero() || t.After(latest) {
+			latest = t
+		}
+	}
+	s.mu.RUnlock()
+	if latest.IsZero() {
+		return ""
+	}
+	return formatClusterHealthAge(time.Since(latest))
+}
+
+func formatClusterHealthAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return "just now"
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm ago", int(age.Minutes()))
+	}
+	if age < clusterHealthHoursPerDay*time.Hour {
+		return fmt.Sprintf("%dh ago", int(age.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(age.Hours()/clusterHealthHoursPerDay))
+}
+
 // convertHeartbeatToPerClusterHealth converts heartbeat-reported health data
 // into the hub's PerClusterHealth format for display. If the data is older
 // than heartbeatHealthStaleness, it is marked with a staleness warning.
@@ -858,6 +929,8 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 	if age > heartbeatHealthStaleness {
 		pch.DataStale = true
 		pch.DataAge = fmt.Sprintf("%dm ago", int(age.Minutes()))
+		pch.Status = perClusterHealthStatusStaleHeartbeat
+		pch.Note = "heartbeat health is stale (" + pch.DataAge + ")"
 	} else if report.CollectedAt != "" {
 		pch.DataAge = report.CollectedAt
 	}

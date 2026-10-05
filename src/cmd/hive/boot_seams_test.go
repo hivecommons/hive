@@ -81,6 +81,15 @@ func TestResolveHubTarget(t *testing.T) {
 	})
 }
 
+func TestShouldCollectHeartbeatClusterHealthUsesResolvedClusterID(t *testing.T) {
+	if !shouldCollectHeartbeatClusterHealth("vllm-d") {
+		t.Fatal("configured cluster id should enable heartbeat cluster health without requiring HIVE_CLUSTER_ID")
+	}
+	if shouldCollectHeartbeatClusterHealth("  ") {
+		t.Fatal("blank cluster id should not collect cluster health")
+	}
+}
+
 func intp(n int) *int { return &n }
 
 var errTest = errors.New("test error")
