@@ -173,3 +173,8 @@ and does not fabricate a run.
 See [spektacular.md](spektacular.md) for runner configuration and stage
 advancement, and [work-sources.md](work-sources.md) for how pending run stages
 are listed as work items.
+
+Spek campaigns that opt into continuous convergence can mint linked recheck
+revisions after `implement` completes. See
+[spektacular.md#continuous-convergence](spektacular.md#continuous-convergence)
+for the cadence, generation, drift-evidence, and delta-import contract.

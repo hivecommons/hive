@@ -25064,6 +25064,44 @@
         }
       }
     },
+    "/api/campaigns/{id}/recheck": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create a Spek recheck revision",
+        "description": "Creates an immediate linked Spektacular recheck revision using the same cadence path. Returns 409 when a recheck revision is already in flight and 404 when recheck is disabled unless force=true is supplied.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spek recheck revision created"
+          },
+          "404": {
+            "description": "Campaign not found or recheck disabled"
+          },
+          "409": {
+            "description": "A recheck revision is already in flight"
+          }
+        }
+      }
+    },
     "/api/campaigns/{id}/jam": {
       "get": {
         "tags": [
