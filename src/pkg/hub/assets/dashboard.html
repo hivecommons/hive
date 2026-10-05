@@ -9294,7 +9294,7 @@
             var statusLine = '';
             if (c.error) {
               statusLine = '<div class="cluster-health-message error">' + esc(c.error) + '</div>';
-            } else if (c.status === 'awaiting_heartbeat' && c.note) {
+            } else if ((c.status === 'awaiting_heartbeat' || c.status === 'missing_heartbeat_health') && c.note) {
               statusLine = '<div class="cluster-health-message info">' + esc(c.note) + '</div>';
             } else if ((c.status === 'stale_heartbeat' || c.data_stale) && c.note) {
               statusLine = '<div class="cluster-health-message warn">' + esc(c.note) + '</div>';

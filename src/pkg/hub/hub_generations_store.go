@@ -521,7 +521,7 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	//
 	// F19 wires the derivation path to the live set, which means a rotation now
 	// actually reaches the fleet. F21 measured that 44 of the 70 hosted spokes
-	// sit on pull_only clusters (the heartbeat-only cluster, a spoke cluster) that the reconcile sweep
+	// sit on push-reported clusters (configured with pull_only) that the reconcile sweep
 	// structurally cannot read or patch — by design, and that is not changing
 	// until the Option D wrapped-master delivery path lands. Those two facts
 	// together are dangerous in a way neither is alone: before F19 a rotation
@@ -533,7 +533,7 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	//
 	// So: refuse to rotate unless the last sweep OBSERVED THE ENTIRE FLEET.
 	// FleetFullyObserved is (ConsideredHives > 0 && UnreachableHives == 0), and
-	// a pull-only cluster increments UnreachableHives for every hive on it, so
+	// a push-reported cluster increments UnreachableHives for every hive on it, so
 	// this is false on the production hub today and will stay false until every
 	// spoke is reachable by whatever delivery mechanism ships. That is the
 	// intended effect: the wiring lands now, and the ability to fire it unlocks

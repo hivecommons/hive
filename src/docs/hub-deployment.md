@@ -97,7 +97,13 @@ The hub's SaaS provisioner creates or records:
 3. `HIVE_ID`, `POD_NAMESPACE`, `HIVE_LEVEL`, `HIVE_HUB_URL`, `HIVE_HUB_SECRET`, optional `HIVE_AUTHORIZED_USERS`, and inference endpoint env vars in the spoke Deployment.
 4. `/data/saas/hives/<id>/meta.json` on the hub PVC. Heartbeats can be accepted without this record, but hub-driven upgrades and dashboard links need it.
 
-For heartbeat-only clusters where the hub cannot run `kubectl`, follow the manifest-level workflow in `manual-provisioning.md`; this guide intentionally keeps the hub setup consistent with that battle-tested path.
+For push-reported clusters where the hub cannot run `kubectl`, follow the manifest-level workflow in `manual-provisioning.md`; this guide intentionally keeps the hub setup consistent with that battle-tested path.
+
+### Push-reported cluster entries
+
+`/data/saas/clusters.json` keeps the historical compatibility key `pull_only`. Set `pull_only: true` when the hub cannot reach that cluster's Kubernetes API and the spokes must dial out to the hub instead. Operator-facing surfaces call these clusters **push-reported** because their node stats, dashboard token proofs, and liveness arrive in spoke heartbeats pushed from the cluster.
+
+A push-reported entry still needs its stable identity (for example `id`, `name`, `domain`, app/forge fields), but it does not need a usable `kubeconfig_path` for hub-side reads. If node stats are absent, upgrade the spokes to a build that sends heartbeat cluster health and then check spoke node-metrics RBAC and metrics-server in that cluster.
 
 ## API surface to know
 

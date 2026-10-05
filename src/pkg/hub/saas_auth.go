@@ -150,7 +150,7 @@ func (s *HubServer) trustedSpokeSelfServiceUser(r *http.Request, hiveID string) 
 	case spokeProofOK:
 		// verified — fall through to attribution below
 	case spokeProofUnverifiable:
-		return "", "not authenticated — the hub has no stored dashboard-token record for this hive and could not read its hive-secrets/dashboard-token secret (the hive's cluster is unreachable from the hub, e.g. pull-only); a spoke on a current build reports its token over the authenticated heartbeat — trigger this hive's upgrade from the hub dashboard once, and the spoke's Upgrade button will verify against the stored record from then on"
+		return "", "not authenticated — the hub has no stored dashboard-token record for this hive and could not read its hive-secrets/dashboard-token secret (the hive's cluster is unreachable from the hub, e.g. push-reported); a spoke on a current build reports its token over the authenticated heartbeat — trigger this hive's upgrade from the hub dashboard once, and the spoke's Upgrade button will verify against the stored record from then on"
 	default: // spokeProofMismatch
 		return "", "not authenticated — spoke self-service proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
 	}
@@ -186,7 +186,7 @@ const (
 	// the presented proof matched none of them.
 	spokeProofMismatch
 	// spokeProofUnverifiable: the hub has NO reference to check against — no
-	// stored DashboardTokenHash record and no readable secret (pull-only or
+	// stored DashboardTokenHash record and no readable secret (push-reported or
 	// otherwise unreachable cluster).
 	spokeProofUnverifiable
 )
@@ -197,7 +197,7 @@ const (
 //  1. The hub's OWN stored record (SaaSHive.DashboardTokenHash — written at
 //     provisioning when the hub mints the token, refreshed from the spoke's
 //     authenticated heartbeat). This needs no cluster access at all, which is
-//     the point: hosted spokes on pull-only clusters (e.g. fmaas) are reached
+//     the point: hosted spokes on push-reported clusters (e.g. fmaas) are reached
 //     only by their outbound heartbeat, and requiring a live kubectl secret
 //     read there made every proof unverifiable by design.
 //  2. A live read of the hive's hive-secrets/dashboard-token secret

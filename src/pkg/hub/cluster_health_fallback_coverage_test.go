@@ -65,7 +65,45 @@ func TestBuildClusterHealthHeartbeatFallback(t *testing.T) {
 	clusterHealthCacheMu.Unlock()
 }
 
-func TestBuildClusterHealthPullOnlyAwaitingHeartbeat(t *testing.T) {
+func TestBuildClusterHealthPushReportedAwaitingHeartbeat(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	clusterHealthCacheMu.Lock()
+	clusterHealthCache = nil
+	clusterHealthCacheMu.Unlock()
+
+	s := &HubServer{
+		logger: slog.Default(),
+		clusters: map[string]ClusterConfig{
+			"vllm-d": {ID: "vllm-d", Name: "vLLM-d", PullOnly: true},
+		},
+		heartbeatHealth: make(map[string]*HeartbeatHealthEntry),
+	}
+
+	resp, err := buildClusterHealth(s)
+	if err != nil {
+		t.Fatalf("buildClusterHealth: %v", err)
+	}
+	if len(resp.Clusters) != 1 {
+		t.Fatalf("clusters = %+v, want one push-reported cluster", resp.Clusters)
+	}
+	got := resp.Clusters[0]
+	if got.Error != "" {
+		t.Fatalf("push-reported awaiting heartbeat rendered as error %q", got.Error)
+	}
+	if got.Status != perClusterHealthStatusAwaitingHeartbeat {
+		t.Fatalf("status = %q, want %q", got.Status, perClusterHealthStatusAwaitingHeartbeat)
+	}
+	if got.HiveCount != 0 || got.Summary.HiveCount != 0 {
+		t.Fatalf("hive counts = cluster %d summary %d, want 0", got.HiveCount, got.Summary.HiveCount)
+	}
+	if got.Note != "push-reported · awaiting spoke heartbeat" {
+		t.Fatalf("note = %q", got.Note)
+	}
+}
+
+func TestBuildClusterHealthPushReportedOldSpokeExplainsMissingHealth(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
@@ -84,7 +122,9 @@ func TestBuildClusterHealthPullOnlyAwaitingHeartbeat(t *testing.T) {
 			Hives: []RegistryEntry{{
 				ID:            "hosted-vllmd",
 				ClusterID:     "vllm-d",
-				LastHeartbeat: now.Add(-time.Minute).Format(time.RFC3339),
+				Version:       "5.132.4-2-g80eec9a63",
+				GitHash:       "80eec9a",
+				LastHeartbeat: now.Format(time.RFC3339),
 			}},
 		},
 	}
@@ -94,20 +134,55 @@ func TestBuildClusterHealthPullOnlyAwaitingHeartbeat(t *testing.T) {
 		t.Fatalf("buildClusterHealth: %v", err)
 	}
 	if len(resp.Clusters) != 1 {
-		t.Fatalf("clusters = %+v, want one pull-only cluster", resp.Clusters)
+		t.Fatalf("clusters = %+v, want one push-reported cluster", resp.Clusters)
 	}
 	got := resp.Clusters[0]
-	if got.Error != "" {
-		t.Fatalf("pull-only awaiting heartbeat rendered as error %q", got.Error)
+	if got.Status != perClusterHealthStatusMissingHealth {
+		t.Fatalf("status = %q, want %q", got.Status, perClusterHealthStatusMissingHealth)
 	}
-	if got.Status != perClusterHealthStatusAwaitingHeartbeat {
-		t.Fatalf("status = %q, want %q", got.Status, perClusterHealthStatusAwaitingHeartbeat)
+	want := "push-reported · heartbeat carries no node health — spoke build predates #10567; upgrade spokes to ≥ v5.133.0 (last seen just now)"
+	if got.Note != want {
+		t.Fatalf("note = %q, want %q", got.Note, want)
 	}
-	if got.HiveCount != 1 || got.Summary.HiveCount != 1 {
-		t.Fatalf("hive counts = cluster %d summary %d, want 1", got.HiveCount, got.Summary.HiveCount)
+}
+
+func TestBuildClusterHealthPushReportedCurrentSpokeExplainsMissingHealth(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	clusterHealthCacheMu.Lock()
+	clusterHealthCache = nil
+	clusterHealthCacheMu.Unlock()
+
+	now := time.Now().UTC()
+	s := &HubServer{
+		logger: slog.Default(),
+		clusters: map[string]ClusterConfig{
+			"vllm-d": {ID: "vllm-d", Name: "vLLM-d", PullOnly: true},
+		},
+		heartbeatHealth: make(map[string]*HeartbeatHealthEntry),
+		registry: Registry{
+			Hives: []RegistryEntry{{
+				ID:            "hosted-vllmd",
+				ClusterID:     "vllm-d",
+				Version:       clusterHealthUpgradeVersion,
+				GitHash:       clusterHealthUpgradeFixSHA,
+				LastHeartbeat: now.Format(time.RFC3339),
+			}},
+		},
 	}
-	if got.Note == "" {
-		t.Fatal("awaiting heartbeat note should explain the neutral state")
+
+	resp, err := buildClusterHealth(s)
+	if err != nil {
+		t.Fatalf("buildClusterHealth: %v", err)
+	}
+	if len(resp.Clusters) != 1 {
+		t.Fatalf("clusters = %+v, want one push-reported cluster", resp.Clusters)
+	}
+	got := resp.Clusters[0]
+	want := "push-reported · heartbeat carries no node health — check spoke node-metrics RBAC and metrics-server (last seen just now)"
+	if got.Note != want {
+		t.Fatalf("note = %q, want %q", got.Note, want)
 	}
 }
 
