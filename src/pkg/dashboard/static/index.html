@@ -3222,7 +3222,6 @@
     .kb-stat .val { font-size: 1.2rem; font-weight: 700; color: var(--fg); }
     .kb-stat .lbl { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
     .kb-stat-spark { width: 100%; height: 28px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-top: var(--sp-1); }
-    .collapsed-with-headline .kb-summary-stats .kb-stat-spark { display: none; }
     .kb-stat-spark .sparkline { width: 100%; max-width: 100%; height: 20px; margin-left: 0; }
     .kb-stat-spark .sparkline svg { width: 100%; max-width: 100%; height: 20px; }
     .kb-stats-help { margin-bottom: var(--sp-5); }
@@ -5893,6 +5892,20 @@
       const title = [`L${Number.isFinite(level) ? level : '—'} · ${detail}`, scope, ...tipLines].join('\n');
       return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>L${escapeHtml(Number.isFinite(level) ? String(level) : '—')}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
     }
+    function knowledgeCollapsedSummary(text) {
+      const history = typeof _factHistory !== 'undefined' && Array.isArray(_factHistory) ? _factHistory : [];
+      const samples = history.filter(e => e && Number.isFinite(e.count) && e.count >= 0);
+      const label = samples.length
+        ? `Fact count · ${sparkSpanLabel(samples.map(e => e.t), samples.length)} · recorded history`
+        : 'Fact count · no history yet';
+      // Use recorded counts directly: zero is a real count, not a missing sample.
+      const spark = samples.length ? renderSparkline(null, samples.map(e => e.count), {
+        width: 96, height: 24, color: 'var(--blue)',
+        label: 'Fact count', title: label, ariaLabel: label,
+        id: 'knowledge:fact-count', svgClass: 'mini-knowledge-facts',
+      }) : '';
+      return miniWrap('knowledge-section', `${text} · ${label}`, spark + miniText(text, text));
+    }
     function visualSectionSummary(sectionId, html, title) {
       const text = textOrDash(html);
       const data = window._lastStatus || {};
@@ -5931,7 +5944,7 @@
       } else if (sectionId === 'audit-section') {
         return renderAuditCollapsedSummary(text, title);
       } else if (sectionId === 'knowledge-section') {
-        inner = miniText(text, text);
+        return knowledgeCollapsedSummary(text);
       } else if (sectionId === 'acmm-eval-section') {
         return acmmCollapsedEvalHtml(title || text);
       } else if (sectionId === 'acmm-reco-section') {
@@ -18945,6 +18958,7 @@ function burnAreaChart() {
         const prev = _kbCache;
         _kbCache = await r.json();
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
+        setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
         var kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
           var kbFacts = kbTotalFactsFromStats(_kbCache);
@@ -19734,7 +19748,7 @@ function burnAreaChart() {
       // Stats row
       const staleTotal = layers.reduce((sum, l) => sum + (l.stale || 0), 0);
       const orphanedTotal = layers.reduce((sum, l) => sum + (l.orphaned || 0), 0);
-      html += '<div class="kb-stat-grid kb-summary-stats sec-headline" data-collapsed-keep>';
+      html += '<div class="kb-stat-grid kb-summary-stats">';
       html += `<div class="kb-stat"><div class="val">${totalPages}</div><div class="lbl">Total Facts</div>${factSparkSvg()}</div>`;
       html += `<div class="kb-stat" title="Layers are knowledge sources (personal, project, org, community, vaults, or imported docs) that scope where facts come from and where new facts are written."><div class="val">${healthyCount}/${layers.length}</div><div class="lbl">Layers Online</div></div>`;
       html += `<div class="kb-stat"><div class="val">${escapeHtml(_kbCache.engine || 'n/a')}</div><div class="lbl">Engine</div></div>`;
