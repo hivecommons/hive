@@ -1193,9 +1193,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		// judged here.
 		if ra, ok := issueFilter.(ReporterAdmitter); ok && ra.ReporterTrustEnabled() && c.isHumanAuthor(issue.GetUser()) {
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
+				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra)
 				breakdown.ReporterTriage++
 				continue
 			}
+			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
 		}
 
 		if !issueFilter.Admits(labels) {

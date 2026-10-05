@@ -279,9 +279,12 @@ or PR history. The association alone is enough.
 **What exactly does `triage/accepted` unlock, and what does it not unlock?**
 It unlocks **admission**: an agent may now work the issue (open a PR about
 it, comment, classify it) the same as any other actionable issue. It does
-**not** unlock unattended merge. If the resulting PR's rationale traces back
-to that untrusted-reporter issue, the reporter-trust merge-side check still
-applies `hold` at every level — a human still has to remove that label.
+**not** unlock unattended merge. While the issue is waiting, Hive posts one
+marked explanation comment and applies `hive/awaiting-triage` (or the
+configured `awaiting_triage_label`); adding `triage/accepted` removes that
+waiting label and admits the issue. If the resulting PR's rationale traces
+back to that untrusted-reporter issue, the reporter-trust merge-side check
+still applies `hold` at every level — a human still has to remove that label.
 
 **How do I stop all auto-merges right now?**
 Drop below L6 — merge permission is not granted below L6 at the token/proxy

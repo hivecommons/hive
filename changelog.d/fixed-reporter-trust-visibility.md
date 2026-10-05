@@ -1,0 +1,1 @@
+- Make reporter-trust intake waits visible with a one-shot comment, an awaiting-triage label, and dashboard/docs wording.

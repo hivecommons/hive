@@ -34,6 +34,16 @@ type ReporterAdmitter interface {
 	ReporterTrustEnabled() bool
 }
 
+// ReporterTrustNoticeConfig is the optional user-facing side of
+// ReporterAdmitter. Config implementations provide the labels and toggles used
+// when an untrusted reporter's issue is held out of the queue.
+type ReporterTrustNoticeConfig interface {
+	ReporterTrustTrustedAssociationsForNotice() []string
+	ReporterTrustRequiredLabelsForNotice() []string
+	ReporterTrustAwaitingTriageLabel() string
+	ReporterTrustCommentEnabled() bool
+}
+
 // admitAllIssues is the filter used when none has been installed. It preserves
 // the pre-existing zero-value behaviour of config.IssueFilterConfig, where an
 // unset filter admits every issue.
