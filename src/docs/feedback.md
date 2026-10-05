@@ -27,7 +27,9 @@ When **Include diagnostics** is checked, the dashboard discloses the collected f
 - Recent browser console errors — so maintainers can see client-side failures that happened before submit.
 - Recent failed `/api` calls — so maintainers can see backend requests that failed before submit.
 
-The GitHub issue body always includes a **Submitted by** diagnostics row. If the dashboard knows a GitHub OAuth login, the row uses an `@login` mention and adds `/cc @login`; otherwise it records the authenticated dashboard user name or `anonymous dashboard session`.
+Before submit, the modal shows which credential path will open the issue and who it is being opened for: `Will be opened as @<credential-login> on behalf of @<user> · hive <hive-id> (<hub-linked: hub name | hub-less>)`. Hub-linked spokes show `the hub` until the hub records its actual GitHub credential in the created issue body. If the dashboard cannot resolve the submitter's GitHub login, it asks for an optional **GitHub username** and remembers it in browser local storage for the next report. The username is used only to attribute and `@`-mention the submitter on the issue.
+
+The GitHub issue body always starts with `Opened by @<credential-login> on behalf of @<user> from hive <hive-id> (<hub name | hub-less>)` and includes a **Submitted by** diagnostics row. If the issue is opened manually through the fallback GitHub URL, the first line is `Opened manually on GitHub on behalf of @<user> from hive <hive-id> (<hub name | hub-less>)`. If the dashboard knows a GitHub OAuth login or the submitter enters one, the row uses an `@login` mention and adds `/cc @login`; otherwise it records `an unidentified dashboard user`.
 
 Issue authorship depends on the deployment shape:
 

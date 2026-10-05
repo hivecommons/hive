@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 const (
@@ -39,6 +41,7 @@ const (
 )
 
 var feedbackGitHubAPIBase = "https://api.github.com"
+var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -88,6 +91,8 @@ type feedbackReportRequest struct {
 	RequestType        string                    `json:"request_type"`
 	TargetRepo         string                    `json:"target_repo"`
 	HiveID             string                    `json:"hive_id,omitempty"`
+	CredentialLogin    string                    `json:"credential_login,omitempty"`
+	HubName            string                    `json:"hub_name,omitempty"`
 	Submitter          feedbackSubmitterIdentity `json:"submitter,omitempty"`
 	OpenedByHive       bool                      `json:"opened_by_hive,omitempty"`
 	Screenshots        []string                  `json:"screenshots,omitempty"`
@@ -223,6 +228,7 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	req.CredentialLogin = hubGitHubLoginForMention(lookupHubFeedbackTokenLogin(token))
 	result, warning, err := createHubFeedbackIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
@@ -326,6 +332,8 @@ func sanitizeHubFeedbackRequest(req *feedbackReportRequest) {
 	req.Title = truncateRunes(hubFeedbackRedact(req.Title), 200)
 	req.Description = truncateRunes(hubFeedbackRedact(req.Description), 5000)
 	req.OpenedByHive = true
+	req.CredentialLogin = hubGitHubLoginForMention(req.CredentialLogin)
+	req.HubName = truncateRunes(sanitizeHubFeedbackIdentityValue(req.HubName), 160)
 	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	if len(req.ConsoleErrors) > 20 {
 		req.ConsoleErrors = req.ConsoleErrors[len(req.ConsoleErrors)-20:]
@@ -352,8 +360,8 @@ func sanitizeHubFeedbackSubmitter(s *feedbackSubmitterIdentity) {
 	s.GitHubLogin = hubGitHubLoginForMention(s.GitHubLogin)
 	s.Source = truncateRunes(sanitizeHubFeedbackIdentityValue(s.Source), 80)
 	if s.Name == "" {
-		s.Name = "anonymous dashboard session"
-		s.Source = "anonymous dashboard session"
+		s.Name = "an unidentified dashboard user"
+		s.Source = "unidentified dashboard user"
 	}
 }
 func sanitizeHubFeedbackIdentityValue(v string) string {
@@ -367,7 +375,7 @@ func sanitizeHubFeedbackIdentityValue(v string) string {
 	return hubFeedbackRedact(v)
 }
 
-var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$`)
 
 func hubGitHubLoginForMention(login string) string {
 	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
@@ -517,15 +525,14 @@ func createHubFeedbackIssue(ctx context.Context, client *http.Client, token stri
 func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	var b strings.Builder
+	b.WriteString(hubFeedbackOpenedByLine(req))
+	b.WriteString("\n\n")
 	b.WriteString(req.Description)
 	b.WriteString("\n\n---\nSubmitted from the Hive spoke dashboard feedback form.\n")
 	if req.TargetRepo == feedbackTargetDocs {
 		b.WriteString("Target: Documentation\n")
 	} else {
 		b.WriteString("Target: Hive\n")
-	}
-	if req.OpenedByHive {
-		b.WriteString(fmt.Sprintf("Opened by the hive on behalf of %s.\n", hubFeedbackSubmitterBodyText(req.Submitter)))
 	}
 	if req.Submitter.GitHubLogin != "" {
 		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
@@ -552,6 +559,43 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	}
 	return truncateRunes(b.String(), 60000)
 }
+
+func hubFeedbackOpenedByLine(req feedbackReportRequest) string {
+	credential := hubFeedbackCredentialBodyText(req.CredentialLogin)
+	submitter := hubFeedbackSubmitterBodyText(req.Submitter)
+	hiveID := strings.TrimSpace(req.HiveID)
+	if hiveID == "" && req.Diagnostics != nil {
+		hiveID = strings.TrimSpace(req.Diagnostics.HiveID)
+	}
+	if hiveID == "" {
+		hiveID = "unknown"
+	}
+	hub := strings.TrimSpace(req.HubName)
+	if hub == "" {
+		hub = "hub"
+	}
+	line := "Opened by " + credential
+	if !hubFeedbackSameActor(req.CredentialLogin, req.Submitter.GitHubLogin) {
+		line += " on behalf of " + submitter
+	}
+	line += " from hive " + hiveID + " (" + hub + ")"
+	return line
+}
+
+func hubFeedbackCredentialBodyText(login string) string {
+	login = hubGitHubLoginForMention(login)
+	if login == "" {
+		return "the hive"
+	}
+	return "@" + login
+}
+
+func hubFeedbackSameActor(credentialLogin, submitterLogin string) bool {
+	credentialLogin = hubGitHubLoginForMention(credentialLogin)
+	submitterLogin = hubGitHubLoginForMention(submitterLogin)
+	return credentialLogin != "" && strings.EqualFold(credentialLogin, submitterLogin)
+}
+
 func hubFeedbackSubmitterBodyText(s feedbackSubmitterIdentity) string {
 	if s.GitHubLogin != "" {
 		return "@" + s.GitHubLogin
