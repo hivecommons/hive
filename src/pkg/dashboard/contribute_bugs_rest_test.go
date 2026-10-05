@@ -176,10 +176,10 @@ func TestClientTileFirstClassBadgeRemoved(t *testing.T) {
 		}
 	}
 	if strings.Count(body, "peer:true") < 6 {
-		t.Errorf("expected 6 peer:true (ordering-only, no badge) clients, got %d", strings.Count(body, "peer:true"))
+		t.Errorf("expected >=6 peer:true (ordering-only, no badge) clients, got %d", strings.Count(body, "peer:true"))
 	}
 	// The remaining tiles stay non-first-class.
-	for _, nonPeer := range []string{"vllm:{name:'vLLM'", "'llm-d':{name:'llm-d'", "bob:{name:'Bob'", "other:{name:'Other'"} {
+	for _, nonPeer := range []string{"vllm:{name:'vLLM'", "'llm-d':{name:'llm-d'", "bob:{name:'Bob'", "openhands:{name:'OpenHands'", "other:{name:'Other'"} {
 		if !strings.Contains(body, nonPeer) {
 			t.Errorf("non-first-class tile missing/renamed: %q", nonPeer)
 		}
