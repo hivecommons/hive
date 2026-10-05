@@ -13596,7 +13596,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
-        { key: 'median-age', field: 'overviewMedianAgeSec', label: 'Median age', value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: 'Median selected actionable item age by the configured time basis.' }
+        { key: 'median-age', field: 'overviewMedianAgeSec', label: `Median actionable age (${state.timeBasis === 'created' ? 'created' : 'updated'})`, value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: `Median time since ${state.timeBasis === 'created' ? 'created' : 'updated'} for actionable open issues and PRs in the selected repos (not MTTR, which measures time-to-resolve for closed items).` }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
       return `<div class="overview-kpis sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${cards.map(card => {
