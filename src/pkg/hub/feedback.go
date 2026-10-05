@@ -544,7 +544,7 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	} else {
 		b.WriteString("Target: Hive\n")
 	}
-	if req.Submitter.GitHubLogin != "" {
+	if hubFeedbackSubmitterVerified(req.Submitter) {
 		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
 	}
 	b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
@@ -606,9 +606,24 @@ func hubFeedbackSameActor(credentialLogin, submitterLogin string) bool {
 	return credentialLogin != "" && strings.EqualFold(credentialLogin, submitterLogin)
 }
 
+// hubFeedbackSourceEntered mirrors dashboard.feedbackSourceEntered: a login
+// the user typed into the spoke's form, which nothing has verified.
+const hubFeedbackSourceEntered = "entered GitHub username"
+
+func hubFeedbackSubmitterVerified(s feedbackSubmitterIdentity) bool {
+	return s.GitHubLogin != "" && s.Source != hubFeedbackSourceEntered
+}
+
+// hubFeedbackSubmitterBodyText mirrors dashboard.feedbackSubmitterBodyText:
+// only a verified login is @-mentioned, because the hub opens the issue with
+// its own credential and must not notify or misattribute to an arbitrary
+// account on the strength of a self-reported handle.
 func hubFeedbackSubmitterBodyText(s feedbackSubmitterIdentity) string {
-	if s.GitHubLogin != "" {
+	if hubFeedbackSubmitterVerified(s) {
 		return "@" + s.GitHubLogin
+	}
+	if s.GitHubLogin != "" {
+		return "`" + s.GitHubLogin + "` (self-reported GitHub username, unverified)"
 	}
 	return s.Name
 }

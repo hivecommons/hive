@@ -96,6 +96,15 @@ func TestHubFeedbackIssueBodyAttributionShapes(t *testing.T) {
 			wantLine:        "Opened by @clubanderson on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
 			notWant:         []string{"/cc @"},
 		},
+		{
+			name:            "self-reported login is not mentioned",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "https://hub.example",
+			hiveID:          "hive-linked",
+			submitter:       feedbackSubmitterIdentity{Name: "mallory", GitHubLogin: "mallory", Source: hubFeedbackSourceEntered},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of `mallory` (self-reported GitHub username, unverified) from hive hive-linked (https://hub.example)",
+			notWant:         []string{"/cc @", "@mallory"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,8 +123,14 @@ func TestHubFeedbackIssueBodyAttributionShapes(t *testing.T) {
 			if !strings.HasPrefix(body, tt.wantLine+"\n\nSomething went wrong") {
 				t.Fatalf("feedback body prefix mismatch; want %q:\n%s", tt.wantLine, body)
 			}
-			if tt.submitter.GitHubLogin != "" && !strings.Contains(body, "| Submitted by | @"+tt.submitter.GitHubLogin+" (GitHub dashboard identity) |") {
-				t.Fatalf("feedback body missing Submitted by row:\n%s", body)
+			if tt.submitter.GitHubLogin != "" {
+				wantRow := "| Submitted by | @" + tt.submitter.GitHubLogin + " (GitHub dashboard identity) |"
+				if tt.submitter.Source == hubFeedbackSourceEntered {
+					wantRow = "| Submitted by | `" + tt.submitter.GitHubLogin + "` (self-reported GitHub username, unverified) (" + hubFeedbackSourceEntered + ") |"
+				}
+				if !strings.Contains(body, wantRow) {
+					t.Fatalf("feedback body missing Submitted by row %q:\n%s", wantRow, body)
+				}
 			}
 			for _, notWant := range tt.notWant {
 				if strings.Contains(body, notWant) {
