@@ -61,6 +61,14 @@ posture, and cadence controls for the hive. Its collapsible **PRs by model** nes
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
 collapsed summary shows the current top-ranked model plus model count.
+
+The Governor **actionable issues** and **actionable PRs** tiles use the shared
+server-side actionable partition described in [Repository card legend, issue
+bands, and PR bands](#repository-card-legend-issue-bands-and-pr-bands). Their
+subtitles show the per-kind reconciliation from total open work to the
+actionable split, and those two results always add back to the Overview
+**Actionable now** total.
+
 The cadence table starts each agent row with the same `1`/`0` Agent power
 rocker used in the agent settings panel, so owners can enable or disable an
 agent from the table; disabled rows are dimmed, and read-only viewers see the
@@ -188,18 +196,21 @@ client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
-shows total open issues, total open PRs, actionable now, held,
-blocked/needs-human, and the median actionable age. **Total open issues** and
-**Total open PRs** are forge totals for the selected configured repositories
-from the existing scanner tick: open GitHub issues exclude pull requests, while
-open GitHub pull requests include drafts. Their muted sub-lines name how many
-items are present in the Overview's actionable/held bands and how many were
-outside those bands because of hard-suppress labels, exempt filters, reporter
-triage, standing meta issues, dependency dashboards, drafts, or other scanner
-filters. **Actionable now** is the shared server-side count used by
-the Overview KPI and the Governor collapsed split: open enumerated issues plus
-open enumerated PRs after hold/exempt filters, excluding items in the waiting,
-done, draft, or blocked Overview bands. Its `actionableNow.issues` and
+shows total open issues, total open PRs, actionable now, held, and
+blocked/needs-human. This is the same partition used by the Governor
+actionable issue/PR subtitles. **Total open issues** and **Total open PRs** are
+forge totals for the selected configured repositories from the existing scanner tick:
+open GitHub issues exclude pull requests, while open GitHub pull requests
+include drafts. Their subtitles stay empty so the reconciliation is not split
+across tiles. **Actionable now** is the shared server-side count used by the
+Overview KPI and the Governor collapsed split: open enumerated issues plus open
+enumerated PRs after hold/exempt filters, excluding items in the waiting, done,
+draft, or blocked Overview bands. Its subtitle carries the complete partition,
+for example `41 issues + 17 PRs = 13 actionable + 13 held + 10
+blocked/needs-human + 22 outside`; the held and blocked/needs-human tiles use
+the same server-side terms, and outside covers scanner-filtered work such as
+hard-suppress labels other than needs-human, exempt filters, reporter triage, standing meta issues,
+dependency dashboards, drafts, or other filters. Its `actionableNow.issues` and
 `actionableNow.prs` splits always sum to `actionableNow.total`. Operators can
 view each Issues or PRs panel as a donut,
 pie, horizontal bar, single 100% stacked bar, line/spark trend, or age
@@ -223,12 +234,12 @@ pages include their API token in the download link's query string.
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel
 is enabled, the 5-second to 5-minute interval, transition style, duration, donut
-label mode, KPI visibility, export format, default age basis, and the bounded
+label mode, KPI visibility, export format, and the bounded
 client-side line/spark history. The repo multi-select is stored separately under
 `hive.overview.repos`, with All/None shortcuts and an Org shortcut when the
 hive spans multiple GitHub organizations. The default remains donut-only with
 the carousel off, a 30-second interval, fade transition, normal duration, KPI
-strip on, CSV exports, updated-time age basis, and all repos selected.
+strip on, CSV exports, and all repos selected.
 Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.

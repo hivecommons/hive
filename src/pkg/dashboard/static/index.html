@@ -11458,6 +11458,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issueCount = Number(sharedActionable.issues ?? gov.issues ?? 0) || 0;
       const prCount = Number(sharedActionable.prs ?? gov.prs ?? 0) || 0;
       const govPressure = Number(sharedActionable.total ?? (issueCount + prCount)) || 0;
+      const fallbackGovEquations = overviewKPIGovernorFallbackEquations(data, issueCount, prCount);
+      const issueEquation = sharedActionable.issueEquation || fallbackGovEquations.issueEq;
+      const prEquation = sharedActionable.prEquation || fallbackGovEquations.prEq;
+      const issueEquationText = issueEquation?.text || '';
+      const prEquationText = prEquation?.text || '';
+      const issueEquationTitle = issueEquation?.title || issueEquationText || 'ACTIONABLE ISSUES — issue work that can move without waiting.';
+      const prEquationTitle = prEquation?.title || prEquationText || 'ACTIONABLE PRS — pull requests that can move without waiting.';
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
 
@@ -11505,8 +11512,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="gov-grid sec-headline" data-collapsed-keep>
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: The mode comes from the governor's latest queue evaluation; the gauge uses the shared Overview Actionable now total so the Governor split and Overview KPI agree. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="ACTIONABLE ISSUES — issue work that can move without waiting.&#10;&#10;WHAT: The issue split of the Overview Actionable now set. The sparkline shows the recent governor issue trend.&#10;&#10;HOW: Count of open enumerated issues after hold/exempt filters, excluding waiting, done, draft, and blocked Overview bands."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
-          <div class="gov-stat" title="ACTIONABLE PRS — pull requests that can move without waiting.&#10;&#10;WHAT: The PR split of the Overview Actionable now set. The sparkline shows the recent governor PR trend.&#10;&#10;HOW: Count of open enumerated PRs after hold/exempt filters, excluding waiting, done, draft, and blocked Overview bands."><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div></div>
+          <div class="gov-stat" title="${escapeHtml(issueEquationTitle)}"><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div>${issueEquationText ? `<div class="overview-kpi-subline">${escapeHtml(issueEquationText)}</div>` : ''}</div>
+          <div class="gov-stat" title="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationText ? `<div class="overview-kpi-subline">${escapeHtml(prEquationText)}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${(() => {
@@ -13082,7 +13089,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const OVERVIEW_REPOS_KEY = 'hive.overview.repos';
     const OVERVIEW_EXPORT_FORMATS = ['csv', 'json'];
     const OVERVIEW_LABEL_MODES = ['both', 'counts', 'percent'];
-    const OVERVIEW_TIME_BASES = ['updated', 'created'];
     const OVERVIEW_BAR_MIN_PERCENT = 1.5;
     const OVERVIEW_STACK_W = 220, OVERVIEW_STACK_H = 98, OVERVIEW_STACK_X = 10, OVERVIEW_STACK_Y = 48, OVERVIEW_STACK_BAR_W = 200, OVERVIEW_STACK_BAR_H = 18, OVERVIEW_STACK_TOTAL_Y = 24;
     const OVERVIEW_LINE_W = 220, OVERVIEW_LINE_H = 150, OVERVIEW_LINE_PAD = 12;
@@ -13182,7 +13188,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function overviewDefaultChartState() {
       const enabled = {};
       OVERVIEW_CHART_TYPES.forEach(type => { enabled[type] = type === 'donut'; });
-      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, exportFormat: 'csv', timeBasis: 'updated' };
+      return { enabled, carousel: false, intervalMs: OVERVIEW_CAROUSEL_DEFAULT_MS, transition: 'fade', duration: 'normal', active: { issue: 'donut', pr: 'donut' }, history: { issue: [], pr: [] }, labelMode: 'both', showKPIs: true, exportFormat: 'csv' };
     }
 
     function overviewChartsState() {
@@ -13199,8 +13205,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const history = saved.history && typeof saved.history === 'object' ? saved.history : base.history;
       const labelMode = OVERVIEW_LABEL_MODES.includes(saved.labelMode) ? saved.labelMode : base.labelMode;
       const exportFormat = OVERVIEW_EXPORT_FORMATS.includes(saved.exportFormat) ? saved.exportFormat : base.exportFormat;
-      const timeBasis = OVERVIEW_TIME_BASES.includes(saved.timeBasis) ? saved.timeBasis : base.timeBasis;
-      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat, timeBasis };
+      return { enabled, carousel: !!saved.carousel, intervalMs, transition, duration, active, history, labelMode, showKPIs: saved.showKPIs !== false, exportFormat };
     }
 
     const OVERVIEW_KPI_WINDOWS = { '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
@@ -13498,32 +13503,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
-    function overviewMedianAgeLabel(slices, state) {
-      const median = overviewMedianAgeSeconds(slices, state);
-      if (!Number.isFinite(median)) return '—';
-      return fmtDurationFromSeconds(median);
-    }
-
-    function fmtDurationFromSeconds(seconds) {
-      if (!Number.isFinite(Number(seconds))) return '—';
-      const minutes = Math.max(0, Number(seconds)) / 60;
-      if (minutes < 60) return Math.round(minutes) + 'm';
-      if (minutes < 1440) return Math.round(minutes / 60) + 'h';
-      return Math.round(minutes / 1440) + 'd';
-    }
-
-    function overviewMedianAgeSeconds(slices, state) {
-      const ages = (slices || []).flatMap(s => (s.items || []).map(item => {
-        const raw = (item && (item.item || item.issue || item.pr)) || item || {};
-        const basis = state.timeBasis === 'created' ? (raw.created_at || raw.updated_at) : (raw.updated_at || raw.created_at);
-        const t = Date.parse(basis || '');
-        return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : overviewItemAgeMinutes(item);
-      })).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
-      if (!ages.length) return NaN;
-      const median = ages[Math.floor(ages.length / 2)];
-      return Math.round(median * 60);
-    }
-
     function overviewRepoNumber(repo, fields) {
       for (const field of fields) {
         if (!repo || !Object.prototype.hasOwnProperty.call(repo, field)) continue;
@@ -13627,6 +13606,66 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return bits.join(' · ');
     }
 
+    function overviewKPITerm(equation, key, fallback) {
+      const term = (equation?.terms || []).find(t => t && t.key === key);
+      const n = Number(term?.count);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
+      const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
+      const draft = (prSlices || []).filter(s => s.key === 'draft').reduce((n, s) => n + Number(s.count || 0), 0);
+      const totalOpen = Number(openIssues || 0) + Number(openPRs || 0);
+      const outsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
+      const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman;
+      const known = Number(actionable || 0) + Number(held || 0) + blockedTerm + confirmClose + draft;
+      const outside = Math.min(Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman), Math.max(0, totalOpen - known));
+      const terms = [
+        { key: 'actionable', label: 'actionable', count: actionable },
+        { key: 'held', label: 'held', count: held },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: blockedTerm },
+      ];
+      if (confirmClose > 0) terms.push({ key: 'confirm_close', label: 'confirm/close', count: confirmClose });
+      if (draft > 0) terms.push({ key: 'draft', label: 'draft', count: draft });
+      if (outside > 0) terms.push({ key: 'outside', label: 'outside', count: outside });
+      const sum = terms.reduce((n, t) => n + Number(t.count || 0), 0);
+      if (totalOpen > sum) terms.push({ key: 'other', label: 'other', count: totalOpen - sum });
+      const text = `${openIssues} issues + ${openPRs} PRs = ` + terms.filter(t => Number(t.count || 0) > 0).map(t => `${Number(t.count || 0)} ${t.label}`).join(' + ');
+      return { openIssues, openPrs: openPRs, totalOpen, terms, text, title: text };
+    }
+
+    function overviewKPIKindEquation(kind, open, actionable, terms) {
+      const kept = (terms || []).filter(t => Number(t?.count || 0) > 0);
+      const sum = kept.reduce((n, t) => n + Number(t.count || 0), Number(actionable || 0));
+      if (Number(open || 0) > sum) kept.push({ key: 'other', label: 'other', count: Number(open || 0) - sum });
+      const middle = kept.map(t => `− ${Number(t.count || 0)} ${t.label}`).join(' ');
+      const text = `${Number(open || 0)} open${middle ? ' ' + middle : ''} = ${Number(actionable || 0)}`;
+      return { kind, open, result: actionable, terms: kept, text, title: text };
+    }
+
+    function overviewKPIGovernorFallbackEquations(data, issueCount, prCount) {
+      const totals = data?.overviewTotals || {};
+      const bands = data?.overview_bands || {};
+      const issueCounts = Object.fromEntries((bands.issues || []).map(b => [b.key, Number(b.count || 0)]));
+      const prCounts = Object.fromEntries((bands.prs || []).map(b => [b.key, Number(b.count || 0)]));
+      const issueHeld = Number(totals.issues?.held || 0);
+      const prHeld = Number(totals.prs?.held || 0);
+      const outsideNeedsHuman = Number(totals.issues?.breakdown?.needs_human || 0);
+      const issueEq = overviewKPIKindEquation('issues', Number(totals.issues?.forge || issueCount || 0), Number(issueCount || 0), [
+        { key: 'held', label: 'held', count: issueHeld },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + outsideNeedsHuman },
+        { key: 'confirm_close', label: 'confirm/close', count: Number(issueCounts.done || 0) },
+        { key: 'outside', label: 'outside', count: Math.max(0, Number(totals.issues?.outside || 0) - outsideNeedsHuman) },
+      ]);
+      const prEq = overviewKPIKindEquation('PRs', Number(totals.prs?.forge || prCount || 0), Number(prCount || 0), [
+        { key: 'held', label: 'held', count: prHeld },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
+        { key: 'draft', label: 'draft', count: Number(prCounts.draft || 0) },
+        { key: 'outside', label: 'outside', count: Number(totals.prs?.outside || 0) },
+      ]);
+      return { issueEq, prEq };
+    }
+
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
@@ -13638,19 +13677,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
-      const held = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
-      const blockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
+      const computedHeld = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
+      const computedBlockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
-      const age = overviewMedianAgeLabel((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
-      const ageSec = overviewMedianAgeSeconds((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
+      const serverEquation = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.equation : null;
+      const equation = serverEquation || overviewKPIEquation(openIssues, openPRs, actionableNow, computedHeld, computedBlockedNeedsHuman, issueSlices, prSlices, forgeTotals);
+      const held = overviewKPITerm(equation, 'held', computedHeld);
+      const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
+      const equationText = equation?.text || '';
+      const equationTitle = equation?.title || equationText || 'Items in bands that can move without waiting.';
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.issues || { tracked: trackedIssues }, OVERVIEW_ISSUE_BREAKDOWN_LABELS) },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.prs || { tracked: trackedPRs }, OVERVIEW_PR_BREAKDOWN_LABELS) },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos.' },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts.' },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationText },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
-        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
-        { key: 'median-age', field: 'overviewMedianAgeSec', label: `Median actionable age (${state.timeBasis === 'created' ? 'created' : 'updated'})`, value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: `Median time since ${state.timeBasis === 'created' ? 'created' : 'updated'} for actionable open issues and PRs in the selected repos (not MTTR, which measures time-to-resolve for closed items).` }
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
@@ -13678,7 +13720,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const durationOptions = OVERVIEW_DURATIONS.map(d => `<option value="${esc(d)}"${state.duration === d ? ' selected' : ''}>${esc(d)}</option>`).join('');
       const exportOptions = OVERVIEW_EXPORT_FORMATS.map(f => `<option value="${esc(f)}"${state.exportFormat === f ? ' selected' : ''}>${esc(f.toUpperCase())}</option>`).join('');
       const labelOptions = OVERVIEW_LABEL_MODES.map(m => `<option value="${esc(m)}"${state.labelMode === m ? ' selected' : ''}>${esc(m === 'both' ? 'counts + percentages' : m)}</option>`).join('');
-      const timeOptions = OVERVIEW_TIME_BASES.map(t => `<option value="${esc(t)}"${state.timeBasis === t ? ' selected' : ''}>${esc(t)} time</option>`).join('');
       const seconds = Math.round(state.intervalMs / 1000);
       const cardControls = (kind, label) => {
         const enabled = overviewEnabledTypes(state);
@@ -13686,7 +13727,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const autoTitle = state.carousel ? 'Auto-play on — rotates every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's through the ticked charts. Click to pause.' : 'Auto-play off — click to rotate through the ticked charts every ' + Math.round(overviewCarouselDwellMs(state) / 1000) + 's';
         return `<div class="overview-settings-section" aria-label="${esc(label)} chart controls"><div class="overview-settings-card-title">${esc(label)}</div><div class="overview-chart-controls"><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselPrev" data-arg0="${kind}" data-stop="1" title="Previous ${esc(label)} chart" aria-label="Previous ${esc(label)} chart">◀</button><label class="overview-settings-field">Chart type<select class="overview-chart-select" data-change-action="setOverviewChartType" data-arg0="${kind}" data-arg-types="s,v" title="${esc(label)} chart type">${overviewChartTypeOptions(active)}</select></label><button type="button" class="overview-carousel-arrow" data-action="overviewCarouselNext" data-arg0="${kind}" data-stop="1" title="Next ${esc(label)} chart" aria-label="Next ${esc(label)} chart">▶</button>${renderOverviewDots(enabled, active)}<span class="overview-chart-controls-sep"></span><button type="button" class="overview-carousel-arrow" data-action="toggleOverviewCarousel" data-stop="1" aria-pressed="${state.carousel ? 'true' : 'false'}" title="${esc(autoTitle)}" aria-label="${esc(autoTitle)}">${state.carousel ? '⏸ auto' : '⏵ auto'}</button><label class="overview-settings-field">Transition<select class="overview-chart-select" data-change-action="setOverviewTransition" data-arg-types="v" title="Transition between charts">${overviewTransitionOptions(state.transition)}</select></label></div></div>`;
       };
-      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-field">Age basis<select data-change-action="setOverviewTimeBasis" data-arg-types="v">${timeOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label></div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
+      setIfChanged(el, `<div class="overview-settings-section"><div class="overview-settings-card-title">Overview charts</div><div class="overview-settings-grid">${typeRows}</div><div class="overview-settings-grid"><label class="overview-settings-field">Interval (seconds)<input type="number" min="5" max="300" step="5" value="${seconds}" data-change-action="setOverviewCarouselInterval" data-arg-types="N"></label><label class="overview-settings-field">Duration<select data-change-action="setOverviewDuration" data-arg-types="v">${durationOptions}</select></label><label class="overview-settings-field">Export format<select data-change-action="setOverviewExportFormat" data-arg-types="v">${exportOptions}</select></label><label class="overview-settings-field">Donut labels<select data-change-action="setOverviewLabelMode" data-arg-types="v">${labelOptions}</select></label><label class="overview-settings-row"><input type="checkbox" data-change-action="setOverviewKPIs" data-arg-types="c"${state.showKPIs ? ' checked' : ''}>Show KPI strip</label></div><div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="resetOverviewSettings" data-stop="1">Reset to defaults</button></div></div>${overviewRepoFilterHTML(_overviewLastRepos || [])}${cardControls('issue', 'Issues')}${cardControls('pr', 'PRs')}`);
     }
 
     function rerenderOverviewChartsFromState(state) {
@@ -13749,12 +13790,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function setOverviewLabelMode(value) {
       const state = overviewChartsState();
       if (OVERVIEW_LABEL_MODES.includes(value)) state.labelMode = value;
-      rerenderOverviewChartsFromState(state);
-    }
-
-    function setOverviewTimeBasis(value) {
-      const state = overviewChartsState();
-      if (OVERVIEW_TIME_BASES.includes(value)) state.timeBasis = value;
       rerenderOverviewChartsFromState(state);
     }
 
