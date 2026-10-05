@@ -38,9 +38,9 @@ updates:
       - "no-changelog"
     open-pull-requests-limit: 5
 
+  # v4 is feature-frozen since 2026-09-21 (#6346); npm bumps must follow the default branch.
   - package-ecosystem: "npm"
     directory: "/src/proxy"
-    target-branch: "v4"
     schedule:
       interval: "weekly"
       day: "monday"
