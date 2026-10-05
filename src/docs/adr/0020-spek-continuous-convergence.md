@@ -35,10 +35,22 @@ Each revision records drift evidence:
 - `prior_revision`
 - `delta_count`
 - `recheck_reason` (`cadence` or `manual`)
+- optional `external[]`, `external_count`, and `sources_failed[]` discovery
+  evidence when outward discovery is enabled
 
-The evidence source interface is `RecheckEvidenceSource`. This ADR accepts only
-the codebase-head source for now; external upstream/competitor/standards
-discovery remains a follow-up.
+The evidence source interface is `RecheckEvidenceSource`.
+
+### Discovery sources
+
+The outward-looking half is opt-in under
+`runs.spektacular.recheck.discovery`. Operators declare bounded sources of kind
+`upstream_release`, `repo_activity`, `standards_feed`, or `landscape`; Hive
+rejects undeclared kinds and hosts outside `variables.security.http_allowlist`.
+Discovery runs before the recheck `spec` stage generator, records evidence on
+the linked revision's `drift.external` block, and includes that evidence in the
+spec-stage prompt as context. It is read-only and non-fatal: source failures are
+recorded in `sources_failed` and never block the recheck. Evidence is never
+auto-applied; the existing spec and plan human checkpoints remain authoritative.
 
 ## Consequences
 
