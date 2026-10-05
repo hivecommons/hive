@@ -80,3 +80,35 @@ assert.equal(new Date(agentCollapsedParseNextKick('10/3 11:43 AM EDT', now)).get
 		t.Fatalf("agents collapsed tile sort helper failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
+
+func TestProjectsCollapsedSummaryRendersRepoTiles(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		"repos-collapsed-tiles",
+		"repo-collapsed-tile",
+		"repo-collapsed-owner",
+		"repo-collapsed-icons",
+		"repo-collapsed-am",
+		"function reposCollapsedTilesHtml(repos, data)",
+		"function openRepoCollapsedTile(repo)",
+		"function openRepoCollapsedMore()",
+		"data-action=\"openRepoCollapsedTile\"",
+		"data-arg0=\"${esc(parts.full)}\"",
+		"data-action=\"openRepoCollapsedMore\"",
+		"REPOS_COLLAPSED_TILE_LIMIT = 6",
+		"repoPillFilterRepoMatches",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("projects collapsed repo tile contract missing %q", want)
+		}
+	}
+	visual := jsFunctionBody(t, html, "function visualSectionSummary(sectionId, html, title)")
+	for _, want := range []string{
+		"reposCollapsedTilesHtml(repos, data)",
+		"sectionId === 'repos-section'",
+	} {
+		if !strings.Contains(visual, want) {
+			t.Fatalf("projects collapsed summary visual helper missing %q", want)
+		}
+	}
+}
