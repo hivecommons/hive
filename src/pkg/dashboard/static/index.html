@@ -1424,8 +1424,8 @@
     .prt-breakdown { color: var(--muted); font-size: var(--fs-xs); }
     .prt-breakdown b { color: var(--text); display:block; margin-bottom: var(--sp-1); }
     .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
-    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
-    .prt-matrix { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr) minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
+    .prt-matrix, .prt-trend { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
     .prt-matrix table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
     .prt-matrix th, .prt-matrix td { padding:var(--sp-2) var(--sp-2); border-top:1px solid var(--border); text-align:left; vertical-align:middle; }
     .prt-matrix th { color:var(--muted); font-weight:600; border-top:0; }
@@ -1433,11 +1433,17 @@
     .prt-stack .hive { fill:var(--prt-actor-hive); }
     .prt-stack .human { fill:var(--prt-actor-human); }
     .prt-stack .other { fill:var(--prt-actor-other); }
+    .prt-legend .hive { background:var(--prt-actor-hive); }
+    .prt-legend .human { background:var(--prt-actor-human); }
+    .prt-legend .other { background:var(--prt-actor-other); }
     .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
+    .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
+    .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
+    .prt-legend i { display:inline-block; width:8px; height:8px; border-radius:var(--r-pill); margin-right:var(--sp-1); vertical-align:middle; }
     .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
     @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -16812,6 +16818,7 @@ function burnAreaChart() {
         label: 'hive share',
         id: 'change-throughput:hive-share',
         wrapperClass: 'sparkline--flush',
+        area: true,
       });
     }
     function prtBucketMetricSeries(dto) {
@@ -16936,6 +16943,12 @@ function burnAreaChart() {
       const sub = stats.total ? `of ${stats.shortNoun}${stats.prevPct == null ? '' : ` · was ${stats.prevPct}%`}` : 'No attribution data yet';
       return `<div class="lc-fleet-stat prt-share-tile" title="${escapeHtml(tooltip)}"><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v" data-stop="1" title="Hive vs human mode">${opts}</select><div class="val merged">${stats.cur == null ? '—' : stats.cur + '%'}</div><div class="lbl">Hive vs human</div><div class="prt-caption">${escapeHtml(sub)}</div><span class="prt-tile-spark">${prtHiveShareSpark(series)}</span></div>`;
     }
+    function prtActorTrend(dto) {
+      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
+      const series = Array.isArray(dto.series) ? dto.series : [];
+      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
+      return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+    }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
       return `<div class="gov-pr-models-toggle prt-window-controls" data-stop="1">${buttons}</div>`;
@@ -16984,7 +16997,7 @@ function burnAreaChart() {
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
           ${prtHiveHumanTile(dto)}
-        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
+        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }
 

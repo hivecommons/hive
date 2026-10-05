@@ -38,8 +38,9 @@ func TestPRThroughputActorColorTokensAreDistinct(t *testing.T) {
 
 	for _, actor := range []string{"hive", "human", "other"} {
 		stackRule := `.prt-stack .` + actor + ` { fill:var(--prt-actor-` + actor + `); }`
+		legendRule := `.prt-legend .` + actor + ` { background:var(--prt-actor-` + actor + `); }`
 		trendRule := `.prt-trend-svg .area.` + actor + ` { fill:var(--prt-actor-` + actor + `);`
-		for _, want := range []string{stackRule, trendRule} {
+		for _, want := range []string{stackRule, legendRule, trendRule} {
 			if !strings.Contains(dashboardHTML, want) {
 				t.Fatalf("dashboardHTML is missing matching actor color rule %q", want)
 			}
