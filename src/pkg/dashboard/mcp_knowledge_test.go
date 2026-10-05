@@ -35,7 +35,7 @@ func publicKnowledgeServer(t *testing.T) *Server {
 		}
 	}
 	write("gotcha-nil-map.md", "---\ntitle: Nil Map Gotcha\ntype: gotcha\n---\nAlways initialize maps before use.\n")
-	write("pattern-caching.md", "---\ntitle: Caching Pattern\ntype: pattern\ntags:\n  - linux\n  - public\n---\nUse Redis for caching hot paths.\n")
+	write("pattern-caching.md", "---\ntitle: Caching Pattern\ntype: pattern\ntags: [linux, public]\n---\nUse Redis for caching hot paths.\n")
 	write("vision-world-domination.md", "---\ntitle: Secret Roadmap\ntype: vision\n---\nWe will acquire a competitor in Q3.\n")
 
 	api := knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true, Engine: "file"}, logger)
