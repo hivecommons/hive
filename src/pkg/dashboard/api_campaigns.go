@@ -32,6 +32,26 @@ type Campaign struct {
 	LeaseOwner   string             `json:"lease_owner,omitempty"`
 	RevisionOf   string             `json:"revision_of,omitempty"`
 	Revision     int                `json:"revision,omitempty"`
+	Recheck      *CampaignRecheck   `json:"recheck,omitempty"`
+	Drift        *CampaignDrift     `json:"drift,omitempty"`
+}
+
+type CampaignRecheck struct {
+	Enabled        bool   `json:"enabled"`
+	Interval       string `json:"interval,omitempty"`
+	LastAt         string `json:"last_at,omitempty"`
+	NextAt         string `json:"next_at,omitempty"`
+	InFlight       bool   `json:"in_flight"`
+	LastDeltaCount int    `json:"last_delta_count,omitempty"`
+}
+
+type CampaignDrift struct {
+	CodebaseChanged bool   `json:"codebase_changed"`
+	PriorHeadSHA    string `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string `json:"current_head_sha,omitempty"`
+	PriorRevision   string `json:"prior_revision,omitempty"`
+	DeltaCount      int    `json:"delta_count"`
+	RecheckReason   string `json:"recheck_reason,omitempty"`
 }
 
 type CampaignArtifact struct {
@@ -306,9 +326,16 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 		}
 		for _, run := range runs {
 			campaign := campaignFromRun(run)
+			if existing, ok := byID[campaign.ID]; ok {
+				campaign.RevisionOf = existing.RevisionOf
+				campaign.Revision = existing.Revision
+				campaign.Recheck = existing.Recheck
+				campaign.Drift = existing.Drift
+			}
 			byID[campaign.ID] = campaign
 		}
 	}
+	s.decorateCampaignRechecks(byID)
 	out := make([]Campaign, 0, len(byID))
 	for _, campaign := range byID {
 		out = append(out, campaign)
@@ -346,6 +373,9 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		}
 	} else if firstRunNonEmpty(archive.Type, "inception") == "spektacular" {
 		stage = StagePlan
+		if archive.Drift != nil {
+			stage = StageSpec
+		}
 		step = "revision"
 		runKey = strings.TrimSpace(archive.Source)
 		if runKey != "" {
@@ -365,6 +395,7 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		Artifacts: artifacts, LinkedIssues: linkedIssues, Contributors: contributors, LastActivity: formatRunTime(last),
 		Status: status, Engine: firstRunNonEmpty(archive.Engine, "Spec Kit"), Type: firstRunNonEmpty(archive.Type, "inception"),
 		RunKey: runKey, RunURL: runURL, LeaseOwner: leaseOwner, RevisionOf: archive.RevisionOf, Revision: archive.Revision,
+		Recheck: campaignRecheckFromArchive(archive, false), Drift: campaignDriftFromArchive(archive),
 	}
 }
 

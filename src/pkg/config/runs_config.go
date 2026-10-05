@@ -23,6 +23,12 @@ const (
 	// DefaultSpektacularPollS is how often, in seconds, the runner calls the
 	// status verb for each active stage lease.
 	DefaultSpektacularPollS = 30
+	// DefaultSpektacularRecheckInterval is the default continuous convergence
+	// cadence for campaigns that opt in without a per-campaign override.
+	DefaultSpektacularRecheckInterval = 168 * time.Hour
+	// DefaultSpektacularMaxDeltaTasks caps how many changed/new plan tasks a
+	// recheck imports into the planner in one generation.
+	DefaultSpektacularMaxDeltaTasks = 50
 
 	// DefaultRunsWaitTimeoutSeconds is how long a run checkpoint may wait for
 	// owner approval before escalation. It also floors how far a held plan
@@ -144,6 +150,21 @@ type SpektacularConfig struct {
 	// PollIntervalS is the seconds between status calls per active stage.
 	// Zero or negative means DefaultSpektacularPollS.
 	PollIntervalS int `yaml:"poll_interval_s,omitempty" json:"poll_interval_s,omitempty"`
+	// Recheck configures continuous convergence revisions. Default off.
+	Recheck SpektacularRecheckConfig `yaml:"recheck,omitempty" json:"recheck,omitempty"`
+}
+
+// SpektacularRecheckConfig controls cadence-driven Spek revision campaigns.
+type SpektacularRecheckConfig struct {
+	// Enabled turns scheduler-owned recheck cadence on. Manual recheck requires
+	// this too unless the request supplies force=true.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// DefaultInterval is the cadence for opted-in campaigns without their own
+	// interval. Zero means DefaultSpektacularRecheckInterval.
+	DefaultInterval time.Duration `yaml:"default_interval,omitempty" json:"default_interval,omitempty"`
+	// MaxDeltaTasks caps imported changed/new tasks. Zero or negative means
+	// DefaultSpektacularMaxDeltaTasks.
+	MaxDeltaTasks int `yaml:"max_delta_tasks,omitempty" json:"max_delta_tasks,omitempty"`
 }
 
 // MaxStageRetriesOrDefault returns the configured retry budget or the default.
@@ -200,4 +221,20 @@ func (s SpektacularConfig) PollInterval() time.Duration {
 		return time.Duration(DefaultSpektacularPollS) * time.Second
 	}
 	return time.Duration(s.PollIntervalS) * time.Second
+}
+
+// DefaultRecheckInterval returns the configured continuous convergence cadence.
+func (s SpektacularConfig) DefaultRecheckInterval() time.Duration {
+	if s.Recheck.DefaultInterval <= 0 {
+		return DefaultSpektacularRecheckInterval
+	}
+	return s.Recheck.DefaultInterval
+}
+
+// MaxDeltaTasks returns the configured cap for new/changed recheck tasks.
+func (s SpektacularConfig) MaxDeltaTasks() int {
+	if s.Recheck.MaxDeltaTasks <= 0 {
+		return DefaultSpektacularMaxDeltaTasks
+	}
+	return s.Recheck.MaxDeltaTasks
 }

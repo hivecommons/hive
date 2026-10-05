@@ -496,6 +496,13 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...stri
 			return errors.New("planning engine name is required")
 		}
 	}
+	if handled, err := s.importRecheckDelta(runKey, repo, taskList, source); handled {
+		return err
+	}
+	return s.importRunPlanDirect(runKey, repo, taskList, source)
+}
+
+func (s *Server) importRunPlanDirect(runKey, repo, taskList, source string) error {
 	store, epic := s.findRunEpic(runKey)
 	// Never take over a run epic owned by another planner, even when its
 	// plan-status marker is absent. Keep lookup shared with approval/reset.

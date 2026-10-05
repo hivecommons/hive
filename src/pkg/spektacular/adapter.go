@@ -55,6 +55,10 @@ type LeaseRegistry interface {
 	ImportRunPlan(runKey, repo, taskList string, engineName ...string) error
 }
 
+type recheckTicker interface {
+	TickCampaignRechecks(context.Context, time.Time)
+}
+
 // leaseAdapter implements Registry over a LeaseRegistry.
 type leaseAdapter struct {
 	reg LeaseRegistry
@@ -181,6 +185,11 @@ func (h *HubRunner) Tick(ctx context.Context, now time.Time) {
 		return
 	}
 	h.runner.Tick(ctx, now)
+	if ticker, ok := h.runner.Registry.(*leaseAdapter); ok {
+		if rechecks, ok := ticker.reg.(recheckTicker); ok {
+			rechecks.TickCampaignRechecks(ctx, now)
+		}
+	}
 }
 
 // Runner exposes the underlying poll loop (tests and diagnostics).
