@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -33,9 +34,9 @@ const (
 	// publicKnowledgeMCPPath is the spoke endpoint external agents connect to.
 	publicKnowledgeMCPPath = "/mcp/knowledge"
 
-	// publicKnowledgeEnabledEnv is the owner switch. Same spelling as
-	// HIVE_METRICS_ENABLED: 1|true|yes|on. Read on each request so an owner
-	// can close the surface without a pod roll.
+	// publicKnowledgeEnabledEnv is the legacy env owner switch. Same spelling
+	// as HIVE_METRICS_ENABLED: 1|true|yes|on. It is the fallback when no
+	// dashboard setting is saved.
 	publicKnowledgeEnabledEnv = "HIVE_PUBLIC_KNOWLEDGE"
 
 	// publicKnowledgeTagsEnv optionally narrows the public projection to facts
@@ -101,8 +102,8 @@ var publicKnowledgeTypeLabels = map[string]string{
 	"general":       "General",
 }
 
-// publicKnowledgeEnabled reports whether the owner has opened the read-only
-// knowledge endpoint.
+// publicKnowledgeEnabled reports whether the env fallback opens the read-only
+// knowledge endpoint. Server methods layer the dashboard setting above it.
 func publicKnowledgeEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(publicKnowledgeEnabledEnv))) {
 	case "1", "true", "yes", "on":
@@ -111,19 +112,113 @@ func publicKnowledgeEnabled() bool {
 	return false
 }
 
-// publicKnowledgeTags returns the lower-cased tag allow-list, or nil for "all".
+func publicKnowledgeEnabledFromEnv() bool {
+	return publicKnowledgeEnabled()
+}
+
+// publicKnowledgeTags returns the lower-cased env tag allow-list, or nil for "all".
 func publicKnowledgeTags() []string {
-	raw := strings.TrimSpace(os.Getenv(publicKnowledgeTagsEnv))
-	if raw == "" {
-		return nil
-	}
+	return normalizePublicKnowledgeTags(strings.Split(strings.TrimSpace(os.Getenv(publicKnowledgeTagsEnv)), ","))
+}
+
+func normalizePublicKnowledgeTags(rawTags []string) []string {
 	var tags []string
-	for _, t := range strings.Split(raw, ",") {
+	seen := map[string]struct{}{}
+	for _, t := range rawTags {
 		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			if _, ok := seen[t]; ok {
+				continue
+			}
+			seen[t] = struct{}{}
 			tags = append(tags, t)
 		}
 	}
 	return tags
+}
+
+type publicKnowledgeSettingResponse struct {
+	Enabled  bool     `json:"enabled"`
+	Tags     []string `json:"tags"`
+	Source   string   `json:"source"`
+	Endpoint string   `json:"endpoint"`
+	URL      string   `json:"url,omitempty"`
+}
+
+func (s *Server) publicKnowledgeSetting() (enabled bool, tags []string, source string) {
+	if s != nil && s.deps != nil && s.deps.Config != nil && s.deps.Config.Knowledge.Public.Enabled != nil {
+		return *s.deps.Config.Knowledge.Public.Enabled, normalizePublicKnowledgeTags(s.deps.Config.Knowledge.Public.Tags), "setting"
+	}
+	return publicKnowledgeEnabledFromEnv(), publicKnowledgeTags(), "env"
+}
+
+func (s *Server) publicKnowledgeEnabled() bool {
+	enabled, _, _ := s.publicKnowledgeSetting()
+	return enabled
+}
+
+func (s *Server) publicKnowledgeTags() []string {
+	_, tags, _ := s.publicKnowledgeSetting()
+	return tags
+}
+
+func publicKnowledgeURL(r *http.Request) string {
+	if r == nil || r.Host == "" {
+		return ""
+	}
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = strings.TrimSpace(r.Header.Get("X-Forwarded-Protocol"))
+	}
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return (&url.URL{Scheme: scheme, Host: r.Host, Path: publicKnowledgeMCPPath}).String()
+}
+
+func (s *Server) publicKnowledgeSettingResponse(r *http.Request) publicKnowledgeSettingResponse {
+	enabled, tags, source := s.publicKnowledgeSetting()
+	if tags == nil {
+		tags = []string{}
+	}
+	return publicKnowledgeSettingResponse{
+		Enabled:  enabled,
+		Tags:     tags,
+		Source:   source,
+		Endpoint: publicKnowledgeMCPPath,
+		URL:      publicKnowledgeURL(r),
+	}
+}
+
+func (s *Server) handlePublicKnowledgeGet(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.publicKnowledgeSettingResponse(r))
+}
+
+func (s *Server) handlePublicKnowledgePut(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	var body struct {
+		Enabled bool     `json:"enabled"`
+		Tags    []string `json:"tags"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	enabled := body.Enabled
+	tags := normalizePublicKnowledgeTags(body.Tags)
+	s.deps.Config.Knowledge.Public.Enabled = &enabled
+	s.deps.Config.Knowledge.Public.Tags = tags
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after public knowledge toggle", "error", err)
+	}
+	s.auditFromRequest(r, "public_knowledge_toggle", auditDetail("enabled", fmt.Sprintf("%v", enabled), "tags", strings.Join(tags, ",")), "")
+	s.refreshAndPersist()
+	jsonResponse(w, s.publicKnowledgeSettingResponse(r))
 }
 
 // publicFact is the outward projection of a knowledge.Fact. Sources (PR,
@@ -351,10 +446,10 @@ func publicKnowledgeToolDefs() []mcpToolDef {
 }
 
 // handlePublicKnowledgeMCP serves POST /mcp/knowledge. It is the ONLY
-// anonymous entry point into knowledge and fails closed when the owner switch
+// anonymous entry point into knowledge and fails closed when the owner setting
 // is off, regardless of what the auth middleware admitted.
 func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request) {
-	if !publicKnowledgeEnabled() {
+	if !s.publicKnowledgeEnabled() {
 		http.NotFound(w, r)
 		return
 	}
@@ -445,7 +540,7 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	if !s.ensureKnowledge() {
 		return toolText("Knowledge base not available."), nil
 	}
-	tags := publicKnowledgeTags()
+	tags := s.publicKnowledgeTags()
 
 	switch params.Name {
 	case "knowledge_search":

@@ -1508,7 +1508,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
-		if isPublicPath(r.URL.Path) {
+		if s.isPublicPath(r.URL.Path) {
 			// Public endpoints remain reachable anonymously, but identity headers are
 			// visible to handlers only when backed by the hub's proxy proof.
 			trustProxyIdentity(true)
@@ -1836,7 +1836,7 @@ func (s *Server) hubProxied() bool {
 // isPublicPath returns true for paths that should be accessible without
 // authentication even when DASHBOARD_AUTH_TOKEN is set. This covers health
 // checks, the snapshot preview, the contribute flow, and auth negotiation.
-func isPublicPath(path string) bool {
+func (s *Server) isPublicPath(path string) bool {
 	switch {
 	case strings.HasPrefix(path, "/api/health"):
 		return true
@@ -1850,10 +1850,11 @@ func isPublicPath(path string) bool {
 		return true
 	case path == "/auth/return":
 		return true
-	case path == publicKnowledgeMCPPath && publicKnowledgeEnabled():
+	case path == publicKnowledgeMCPPath && s.publicKnowledgeEnabled():
 		// Owner-switched, read-only MCP knowledge endpoint (#10615). Public only
-		// while HIVE_PUBLIC_KNOWLEDGE is on; handlePublicKnowledgeMCP re-checks
-		// the switch and 404s otherwise, and serves no write method at all.
+		// while the dashboard setting or HIVE_PUBLIC_KNOWLEDGE is on;
+		// handlePublicKnowledgeMCP re-checks the switch and 404s otherwise,
+		// and serves no write method at all.
 		return true
 	case path == "/metrics" && metricsEnabled():
 		// Prometheus scrape target — bypasses dashboard auth only when
@@ -1943,6 +1944,10 @@ func isPublicPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isPublicPath(path string) bool {
+	return (&Server{}).isPublicPath(path)
 }
 
 // loginPage is a self-contained HTML page served to unauthenticated browser

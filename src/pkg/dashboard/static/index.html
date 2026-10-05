@@ -3150,6 +3150,19 @@
     .nous-trust-step .step-desc { color: var(--muted); font-size: 0.65rem; }
 
     /* Knowledge Panel */
+    .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+    .public-knowledge-control--settings { align-items: stretch; flex-direction: column; }
+    .public-knowledge-label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+    .public-knowledge-pill { border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 800; color: var(--bg); }
+    .public-knowledge-pill[data-enabled="true"] { background: var(--green); }
+    .public-knowledge-pill[data-enabled="false"] { background: var(--muted); color: var(--bg); }
+    .public-knowledge-switch { display: inline-flex; align-items: center; gap: var(--sp-2); border: var(--line-width) solid var(--border); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); padding: var(--sp-1) var(--sp-2); cursor: pointer; font-size: var(--fs-xs); font-weight: 700; }
+    .public-knowledge-switch[aria-checked="true"] { border-color: var(--green); color: var(--green); }
+    .public-knowledge-switch-knob { display: inline-block; inline-size: 1.1em; block-size: 1.1em; border-radius: var(--r-pill); background: currentColor; }
+    .public-knowledge-url { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .public-knowledge-url code { overflow-wrap: anywhere; }
+    .public-knowledge-confirm { border: var(--line-width) solid var(--yellow); border-radius: var(--r); padding: var(--sp-3); color: var(--yellow); background: color-mix(in srgb, var(--yellow) 10%, transparent); font-size: var(--fs-sm); }
+    .public-knowledge-tags { min-width: min(24em, 100%); }
     .kb-layout { display: grid; grid-template-columns: 240px 1fr; gap: var(--sp-6); min-height: 320px; }
     .kb-sidebar { display: flex; flex-direction: column; gap: 10px; }
     .kb-layer-list { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -4665,7 +4678,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="knowledge-section" data-dashboard-section="knowledge-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span><span id="public-knowledge-header-control" data-public-knowledge-control="header" data-stop="1"></span></h2>
     <div class="section-body">
       <div id="knowledge-panel"></div>
     </div>
@@ -18535,6 +18548,130 @@ function burnAreaChart() {
     // fetchNousStatus() — deferred to _deferredInit
 
     // ── Knowledge Base ──
+    let _publicKnowledgeState = { loaded: false, enabled: false, tags: [], source: 'env', endpoint: '/mcp/knowledge', url: '' };
+    let _publicKnowledgeConfirmEnable = false;
+    let _publicKnowledgeMessage = '';
+
+    function viewerIsOwner() {
+      return window._hiveRole === 'owner';
+    }
+
+    function publicKnowledgeTypesText() {
+      return 'pattern, gotcha, regression, test_scaffold, integration, coverage_rule, general';
+    }
+
+    function publicKnowledgeTagsValue() {
+      return ((_publicKnowledgeState && _publicKnowledgeState.tags) || []).join(', ');
+    }
+
+    async function fetchPublicKnowledgeSetting() {
+      try {
+        const r = await fetch('/api/knowledge/public');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        _publicKnowledgeState = Object.assign({ loaded: true, enabled: false, tags: [], source: 'env', endpoint: '/mcp/knowledge', url: '' }, data || {}, { loaded: true });
+        _publicKnowledgeConfirmEnable = false;
+        renderPublicKnowledgeControls();
+      } catch (e) {
+        _publicKnowledgeState.loaded = false;
+        renderPublicKnowledgeControls();
+      }
+    }
+
+    function renderPublicKnowledgeControl(context) {
+      const st = _publicKnowledgeState || {};
+      const on = !!st.enabled;
+      const owner = viewerIsOwner();
+      const label = 'Public read-only MCP: ' + (on ? 'On' : 'Off');
+      const source = st.source === 'setting' ? 'dashboard setting' : 'environment';
+      let html = '<div class="public-knowledge-control public-knowledge-control--' + esc(context) + '" data-public-knowledge-placement="' + esc(context) + '">';
+      html += '<span class="public-knowledge-label">Public read-only MCP</span>';
+      html += '<span class="public-knowledge-pill" data-enabled="' + (on ? 'true' : 'false') + '" title="' + (owner ? 'Source: ' + esc(source) : 'Only the hive owner can change this') + '">' + (on ? 'On' : 'Off') + '</span>';
+      if (!owner) {
+        html += '<span class="muted" title="Only the hive owner can change this">Only the hive owner can change this</span>';
+        html += '</div>';
+        return html;
+      }
+      html += '<button type="button" class="public-knowledge-switch" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" data-action="publicKnowledgeRequestToggle" data-arg0="' + (!on) + '" data-arg-types="j,t" data-stop="1" title="' + esc(label) + '"><span class="public-knowledge-switch-knob" aria-hidden="true"></span><span>' + (on ? 'Turn off' : 'Turn on') + '</span></button>';
+      html += '<label class="public-knowledge-url"><span class="muted">Tags</span><input class="public-knowledge-tags" type="text" value="' + esc(publicKnowledgeTagsValue()) + '" placeholder="optional tags, comma-separated" data-keydown-action="publicKnowledgeSaveTagsOnEnter" data-keys="Enter" data-arg-types="v"></label>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="publicKnowledgeSaveTags" data-arg-types="t" data-stop="1">Save tags</button>';
+      const endpoint = st.url || st.endpoint || '/mcp/knowledge';
+      html += '<span class="public-knowledge-url"><code>' + esc(endpoint) + '</code><button type="button" class="hv-btn btn-secondary btn-sm" data-action="publicKnowledgeCopyURL" data-stop="1">Copy URL</button></span>';
+      if (_publicKnowledgeConfirmEnable && !on) {
+        html += '<div class="public-knowledge-confirm">Anyone with the URL can read operational facts (types ' + esc(publicKnowledgeTypesText()) + ') — no credentials required. <button type="button" class="hv-btn btn-primary btn-sm" data-action="publicKnowledgeConfirmEnable" data-arg-types="t" data-stop="1">Enable public read-only MCP</button> <button type="button" class="hv-btn btn-secondary btn-sm" data-action="publicKnowledgeCancelEnable" data-stop="1">Cancel</button></div>';
+      }
+      if (_publicKnowledgeMessage) html += '<span class="muted">' + esc(_publicKnowledgeMessage) + '</span>';
+      html += '</div>';
+      return html;
+    }
+
+    function renderPublicKnowledgeControls() {
+      document.querySelectorAll('[data-public-knowledge-control]').forEach(el => {
+        el.innerHTML = renderPublicKnowledgeControl(el.dataset.publicKnowledgeControl || 'header');
+      });
+    }
+
+    function publicKnowledgeDraftTags(value) {
+      _publicKnowledgeMessage = value ? 'Unsaved tag changes' : '';
+      renderPublicKnowledgeControls();
+    }
+
+    function publicKnowledgeTagsFromDOM(el) {
+      const root = el && el.closest ? el.closest('.public-knowledge-control') : null;
+      const input = (root && root.querySelector('.public-knowledge-tags')) || document.querySelector('.public-knowledge-tags');
+      return (input && input.value ? input.value : '').split(',').map(t => t.trim()).filter(Boolean);
+    }
+
+    async function publicKnowledgeSave(enabled, tags) {
+      const r = await fetch('/api/knowledge/public', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: !!enabled, tags: tags || []})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      _publicKnowledgeState = Object.assign({ loaded: true }, data || {});
+      _publicKnowledgeConfirmEnable = false;
+      _publicKnowledgeMessage = 'Saved';
+      renderPublicKnowledgeControls();
+    }
+
+    function publicKnowledgeRequestToggle(enable, el) {
+      if (enable && !_publicKnowledgeState.enabled) {
+        _publicKnowledgeConfirmEnable = true;
+        _publicKnowledgeMessage = '';
+        renderPublicKnowledgeControls();
+        return;
+      }
+      publicKnowledgeSave(false, publicKnowledgeTagsFromDOM(el)).catch(e => showToast('Public knowledge update failed: ' + e.message, 'error'));
+    }
+
+    function publicKnowledgeConfirmEnable(el) {
+      publicKnowledgeSave(true, publicKnowledgeTagsFromDOM(el)).catch(e => showToast('Public knowledge update failed: ' + e.message, 'error'));
+    }
+
+    function publicKnowledgeCancelEnable() {
+      _publicKnowledgeConfirmEnable = false;
+      renderPublicKnowledgeControls();
+    }
+
+    function publicKnowledgeSaveTags(el) {
+      publicKnowledgeSave(!!_publicKnowledgeState.enabled, publicKnowledgeTagsFromDOM(el)).catch(e => showToast('Public knowledge tags failed: ' + e.message, 'error'));
+    }
+
+    function publicKnowledgeSaveTagsOnEnter(value) {
+      publicKnowledgeSave(!!_publicKnowledgeState.enabled, (value || '').split(',').map(t => t.trim()).filter(Boolean)).catch(e => showToast('Public knowledge tags failed: ' + e.message, 'error'));
+    }
+
+    function publicKnowledgeCopyURL() {
+      const text = _publicKnowledgeState.url || _publicKnowledgeState.endpoint || '/mcp/knowledge';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => showToast('Public MCP URL copied', 'success')).catch(() => showToast(text, 'info'));
+      } else {
+        showToast(text, 'info');
+      }
+    }
+
     let _kbCache = null;
     let _kbSelectedLayer = 'all';
     let _kbSelectedType = '';
@@ -19334,6 +19471,7 @@ function burnAreaChart() {
 
     function renderKnowledge() {
       refreshSectionCardShell('knowledge-section');
+      renderPublicKnowledgeControls();
       const panel = document.getElementById('knowledge-panel');
       const badge = document.getElementById('kb-status-badge');
       if (!panel) return;
@@ -23296,6 +23434,7 @@ function burnAreaChart() {
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const action = el.dataset.action;
+      if (action === 'toggleSection' && e.target.closest('[data-public-knowledge-control]')) return;
       const agent = el.dataset.agent || '';
       switch (action) {
         case 'toggleAgent': toggleAgent(agent, el.dataset.paused === 'true'); break;
@@ -26709,7 +26848,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -27350,6 +27489,7 @@ function burnAreaChart() {
         // configured" when upstream_watch is off.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
+        if (tabId === 'Knowledge') renderPublicKnowledgeControls();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -27533,6 +27673,7 @@ function burnAreaChart() {
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
+        case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
@@ -27543,6 +27684,14 @@ function burnAreaChart() {
         case 'Variables': return renderGovVariables();
         default: return '';
       }
+    }
+
+    function renderGovKnowledgeSharing() {
+      return '<div class="config-section">' +
+        '<h3>Knowledge sharing</h3>' +
+        '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials.</p>' +
+        '<div id="public-knowledge-settings-control" data-public-knowledge-control="settings">' + renderPublicKnowledgeControl('settings') + '</div>' +
+      '</div>';
     }
 
     var _themeState = { loaded:false, theme:'hive', theme_overrides:{}, catalog:[], effective:null };
@@ -36152,6 +36301,7 @@ function burnAreaChart() {
         if (topBtn) topBtn.style.display = '';
         if (avatarWrap) avatarWrap.hidden = true;
       }
+      if (typeof renderPublicKnowledgeControls === 'function') renderPublicKnowledgeControls();
     }
 
     /* renderMyHivesMenuItem (#9696): point the user menu's "My hives" entry at
@@ -37855,6 +38005,7 @@ function burnAreaChart() {
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); }),
           () => ensureNousPolling(),
+          () => fetchPublicKnowledgeSetting(),
           () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); }),
           () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
           () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
