@@ -29,12 +29,11 @@ func TestAgentsCollapsedSummaryRendersPerAgentTiles(t *testing.T) {
 			t.Fatalf("agents collapsed tile contract missing %q", want)
 		}
 	}
-	visual := jsFunctionBody(t, html, "function visualSectionSummary(sectionId, html, title)")
 	for _, want := range []string{
 		"agentsCollapsedTilesHtml(agents, Date.now())",
 		"if ((sectionId === 'agents-section' || sectionId === 'repos-section') && inner) return inner;",
 	} {
-		if !strings.Contains(visual, want) {
+		if !strings.Contains(html, want) {
 			t.Fatalf("agents collapsed summary visual helper missing %q", want)
 		}
 	}

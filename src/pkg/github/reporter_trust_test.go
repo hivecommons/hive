@@ -446,6 +446,79 @@ func TestReporterTrustWaitMarkedAddedExact(t *testing.T) {
 	}
 }
 
+type reporterTrustBasicAdmitter struct{}
+
+func (reporterTrustBasicAdmitter) AdmitsReporter([]string, string, string) bool { return false }
+func (reporterTrustBasicAdmitter) ReporterTrustEnabled() bool                   { return true }
+
+type reporterTrustNoticeStub struct {
+	reporterTrustBasicAdmitter
+	trusted  []string
+	required []string
+	label    string
+	comment  bool
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustTrustedAssociationsForNotice() []string {
+	return s.trusted
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustRequiredLabelsForNotice() []string {
+	return s.required
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustAwaitingLabel() string { return s.label }
+func (s reporterTrustNoticeStub) ReporterTrustCommentEnabled() bool  { return s.comment }
+
+func TestReporterTrustWaitNoticeConfigDefaultsAndFormatting(t *testing.T) {
+	basic := reporterTrustBasicAdmitter{}
+	if got := reporterTrustAwaitingLabel(basic); got != "needs-triage" {
+		t.Fatalf("default awaiting label = %q, want needs-triage", got)
+	}
+	if !reporterTrustCommentEnabled(basic) {
+		t.Fatal("basic reporter-trust admitter should comment by default")
+	}
+	if got := reporterTrustRequiredLabelsForNotice(basic); len(got) != 1 || got[0] != "triage/accepted" {
+		t.Fatalf("default required labels = %v", got)
+	}
+	if got := reporterTrustTrustedAssociationsForNotice(basic); strings.Join(got, ",") != "OWNER,MEMBER,COLLABORATOR" {
+		t.Fatalf("default trusted associations = %v", got)
+	}
+
+	custom := reporterTrustNoticeStub{
+		trusted:  []string{" ", "OWNER", "TRIAGER"},
+		required: []string{"", "triage/accepted", "security/accepted"},
+		label:    " custom-wait ",
+		comment:  false,
+	}
+	if got := reporterTrustAwaitingLabel(custom); got != "custom-wait" {
+		t.Fatalf("custom awaiting label = %q", got)
+	}
+	if reporterTrustCommentEnabled(custom) {
+		t.Fatal("custom comment toggle should be honored")
+	}
+	body := reporterTrustWaitComment("o/r", "custom wait/label", custom)
+	for _, want := range []string{"added-label=custom+wait%2Flabel", "OWNER, TRIAGER", "one of the labels `triage/accepted`, `security/accepted`"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("custom wait comment missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestReporterTrustLabelHelpers(t *testing.T) {
+	labels := []string{" Bug ", "needs-triage", "Area/Core"}
+	if !hasExactLabel(labels, "bug") || !hasExactLabel(labels, "NEEDS-TRIAGE") {
+		t.Fatalf("hasExactLabel failed case/space-insensitive match for %v", labels)
+	}
+	if hasExactLabel(labels, "needs-triage-old") {
+		t.Fatalf("hasExactLabel allowed a prefix match for %v", labels)
+	}
+	got := withoutExactLabel(append([]string(nil), labels...), " NEEDS-TRIAGE ")
+	if strings.Join(got, "|") != " Bug |Area/Core" {
+		t.Fatalf("withoutExactLabel = %q, want Bug and Area/Core only", strings.Join(got, "|"))
+	}
+}
+
 func TestReporterTrustWaitBudget(t *testing.T) {
 	var nilBudget *reporterTrustWaitBudget
 	if !nilBudget.reserve() {
