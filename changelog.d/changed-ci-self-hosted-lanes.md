@@ -1,0 +1,1 @@
+- Move gh-free CI lanes that do not depend on hosted-only tools onto the fork-safe self-hosted runner expression.
