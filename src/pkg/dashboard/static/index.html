@@ -17330,23 +17330,11 @@ function burnAreaChart() {
       })}</span>`;
     }
     function prtHiveShareSpark(series) {
-      if (!Array.isArray(series) || series.length < 2) return '';
-      const values = series.map((p) => {
-        const hive = Math.max(0, Number(p && p.hive) || 0);
-        const human = Math.max(0, Number(p && p.human) || 0);
-        const other = Math.max(0, Number(p && p.other) || 0);
-        const total = hive + human + other;
-        return total ? Math.round((hive / total) * 100) : 0;
-      });
-      return renderSparkline(null, values, {
-        color: 'var(--prt-actor-hive)',
-        title: prtSparkTitle(values, v => `${Math.round(v)}%`),
-        svgTitle: prtSparkTitle(values, v => `${Math.round(v)}%`),
-        ariaLabel: 'hive share trend',
-        label: 'hive share',
-        id: 'change-throughput:hive-share',
-        wrapperClass: 'sparkline--flush',
-        area: true,
+      return prtTrendSvg(series, {
+        width: 150,
+        height: 30,
+        pad: 1,
+        ariaLabel: 'miniature 100% stacked area trend for hive, human, and other automation actor shares',
       });
     }
     function prtBucketMetricSeries(dto) {
@@ -17415,10 +17403,11 @@ function burnAreaChart() {
     function prtSeriesAllZero(series, key) {
       return Array.isArray(series) && series.length > 0 && !series.some(p => (Number(p && p[key]) || 0) !== 0);
     }
-    function prtTrendSvg(series) {
+    function prtTrendSvg(series, opts) {
       if (!Array.isArray(series) || series.length < 2) return '';
-      const w = 360, h = 120, pad = 10;
-      const innerH = h - pad*2;
+      opts = opts || {};
+      const w = Number(opts.width) || 360, h = Number(opts.height) || 120, pad = opts.pad == null ? 10 : Number(opts.pad);
+      const innerH = Math.max(1, h - pad*2);
       const pts = series.map((p, i) => {
         const hive = Math.max(0, Number(p.hive) || 0);
         const human = Math.max(0, Number(p.human) || 0);
@@ -17442,40 +17431,63 @@ function burnAreaChart() {
         const bottom = pts.slice().reverse().map(p => `L${p.x.toFixed(1)},${p.bands[key].y0.toFixed(1)}`).join(' ');
         return `<path class="area ${key}" d="${top}${bottom}Z"><title>${key === 'other' ? 'other automation' : key} share</title></path>`;
       };
-      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="100% stacked area trend for hive, human, and other automation actor shares">${['other','human','hive'].map(area).join('')}</svg>`;
+      const label = opts.ariaLabel || '100% stacked area trend for hive, human, and other automation actor shares';
+      return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(label)}">${['other','human','hive'].map(area).join('')}</svg>`;
+    }
+    function prtRoleNoun(role) {
+      role = role || prtRole;
+      switch (role) {
+      case 'created': return { noun: 'PRs/issues opened by hive', short: 'hive-opened PRs/issues' };
+      case 'reviewed': return { noun: 'PR reviews and issue triage', short: 'reviews/triage' };
+      case 'closed': return { noun: 'PRs closed without merging + issues closed', short: 'closed PRs/issues' };
+      default: return { noun: 'PRs merged + issues closed', short: 'PR merges + issue closes' };
+      }
+    }
+    function prtWindowPhrase(dto, previous) {
+      const h = Number(dto && dto.hours) || 0;
+      if (!h) return previous ? 'previous recorded window' : 'recorded history';
+      const label = h % 24 === 0 ? `${h / 24}d` : `${h}h`;
+      return previous ? `previous ${label}` : `last ${label}`;
+    }
+    function prtActorDefinition() {
+      return "Hive means this hive's sweep/queue/relay or hive/App bot actor; human means a non-bot login; other automation means a non-hive bot. Unknown actors are excluded.";
     }
     function prtTrendStats(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
       const totals = series.reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), human:a.human+(Number(p.human)||0), other:a.other+(Number(p.other)||0) }), {hive:0,human:0,other:0});
       const total = totals.hive + totals.human + totals.other;
-      if (!total) return { totals, total, cur: null, prevPct: null, noun: '', shortNoun: '', caption: 'No attribution data yet — counters start now.' };
+      const roleNoun = prtRoleNoun();
+      const windowPhrase = prtWindowPhrase(dto, false);
+      const prevPoint = dto && dto.previous_actor ? dto.previous_actor : null;
+      const prevTotal = prevPoint ? (Number(prevPoint.hive)||0) + (Number(prevPoint.human)||0) + (Number(prevPoint.other)||0) : 0;
+      const prevPct = prevTotal ? Math.round(((Number(prevPoint.hive)||0) / prevTotal) * 100) : null;
+      const prevWindow = prtWindowPhrase(dto, true);
+      if (!total) return { totals, total, cur: null, prevPct, noun: roleNoun.noun, shortNoun: roleNoun.short, windowPhrase, prevWindow, caption: 'No attribution data yet — counters start now.', definition: prtActorDefinition() };
       const cur = Math.round((totals.hive / total) * 100);
-      const half = Math.floor(series.length / 2);
-      const prev = series.slice(0, half).reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), total:a.total+(Number(p.hive)||0)+(Number(p.human)||0)+(Number(p.other)||0) }), {hive:0,total:0});
-      const prevPct = prev.total ? Math.round((prev.hive / prev.total) * 100) : null;
-      const noun = prtRole === 'created' ? 'created changes' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
-      const shortNoun = prtRole === 'created' ? 'created' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
-      const caption = `hive ${cur}% of ${noun} this window${prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}%`}`;
-      return { totals, total, cur, prevPct, noun, shortNoun, caption };
+      const movement = prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}% in ${prevWindow}`;
+      const caption = `hive ${cur}% of ${roleNoun.noun} in ${windowPhrase}${movement}`;
+      return { totals, total, cur, prevPct, noun: roleNoun.noun, shortNoun: roleNoun.short, windowPhrase, prevWindow, caption, definition: prtActorDefinition() };
     }
     function prtTrendCaption(dto) {
       return prtTrendStats(dto).caption;
     }
     function prtHiveHumanTile(dto) {
-      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
+      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged'],['closed','Closed']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
       const stats = prtTrendStats(dto);
       const tooltip = stats.total
-        ? `hive ${stats.totals.hive} · human ${stats.totals.human} · other automation ${stats.totals.other} · ${stats.caption}`
-        : `hive · human · other automation · ${stats.caption}`;
-      const sub = stats.total ? `of ${stats.shortNoun}${stats.prevPct == null ? '' : ` · was ${stats.prevPct}%`}` : 'No attribution data yet';
+        ? `${stats.cur}% = hive share of ${stats.noun} in ${stats.windowPhrase}. ${stats.definition} Previous compares with ${stats.prevWindow}. Counts: hive ${stats.totals.hive} · human ${stats.totals.human} · other automation ${stats.totals.other}.`
+        : `Hive share of ${stats.noun}. ${stats.definition} ${stats.caption}`;
+      const sub = stats.total ? `hive share of ${stats.shortNoun} · ${stats.windowPhrase}${stats.prevPct == null ? '' : ` · prev ${stats.prevPct}%`}` : 'No attribution data yet';
       return `<div class="lc-fleet-stat prt-share-tile" title="${escapeHtml(tooltip)}"><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v" data-stop="1" title="Hive vs human mode">${opts}</select><div class="val merged">${stats.cur == null ? '—' : stats.cur + '%'}</div><div class="lbl">Hive vs human</div><div class="prt-caption">${escapeHtml(sub)}</div><span class="prt-tile-spark">${prtHiveShareSpark(series)}</span></div>`;
     }
     function prtActorTrend(dto) {
-      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
+      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged'],['closed','Closed']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
       const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
-      return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+      const stats = prtTrendStats(dto);
+      const trendTitle = stats.total ? `${stats.caption}. ${stats.definition} Previous compares with ${stats.prevWindow}.` : `${stats.caption} ${stats.definition}`;
+      return `<div class="prt-trend" title="${escapeHtml(trendTitle)}"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
     }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
@@ -17558,7 +17570,7 @@ function burnAreaChart() {
       return fetchPRThroughput();
     }
     function setPRThroughputRole(role) {
-      prtRole = ['created','reviewed','merged'].includes(String(role)) ? String(role) : 'merged';
+      prtRole = ['created','reviewed','merged','closed'].includes(String(role)) ? String(role) : 'merged';
       return fetchPRThroughput();
     }
     function exportPRThroughputCSV() {
