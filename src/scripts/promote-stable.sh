@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate and publish v4 candidate -> stable promotions by manifest digest.
+# Evaluate and publish v5 soaked-build -> stable promotions by manifest digest.
 set -euo pipefail
 
 SOAK_HOURS_DEFAULT=24
@@ -77,7 +77,7 @@ normalized_decision() {
   local stable_digest=${STABLE_DIGEST:-}
   local candidate_age_seconds=${CANDIDATE_AGE_SECONDS:-0}
   local soak_hours=${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}
-  local current_candidate=${CURRENT_CANDIDATE:-false}
+  local current_candidate=${CURRENT_CANDIDATE:-true}
   local green_evidence=${GREEN_EVIDENCE:-false}
   local blocker_count=${BLOCKER_COUNT:-0}
   local smoke_evidence=${SMOKE_EVIDENCE:-}
@@ -113,10 +113,8 @@ normalized_decision() {
       decision=promote
       reason="emergency exception recorded: $emergency_reason"
     fi
-  elif [[ $current_candidate != true ]]; then
-    reason="newer candidate superseded this digest before the soak window completed"
   elif (( candidate_age_seconds < soak_seconds )); then
-    reason="candidate age ${candidate_age_seconds}s < required ${soak_seconds}s (${soak_hours}h)"
+    reason="build age ${candidate_age_seconds}s < required ${soak_seconds}s (${soak_hours}h)"
   elif [[ $green_evidence != true ]]; then
     reason="required v2 CI / v2 Tests evidence is not green"
   elif (( blocker_count != 0 )); then
@@ -125,7 +123,7 @@ normalized_decision() {
     reason="operator smoke signal is missing"
   else
     decision=promote
-    reason="all stable current-candidate soak promotion conditions passed"
+    reason="all stable per-build soak promotion conditions passed"
   fi
 
   printf 'decision=%s\nreason=%s\n' "$decision" "$reason"
@@ -149,10 +147,14 @@ inspect_raw() {
 
 manifest_digest() {
   local ref=$1 digest
-  if ! digest=$(inspect_raw "$ref" --format '{{.Manifest.Digest}}' 2>&1); then
+  if ! digest=$(inspect_raw --format '{{.Manifest.Digest}}' "$ref" 2>&1); then
     echo "$digest" >&2
     return 1
   fi
+  if ! [[ $digest == sha256:* ]]; then
+    digest=$(sed -n 's/^Digest:[[:space:]]*//p' <<<"$digest" | head -n 1)
+  fi
+  [[ $digest == sha256:* ]] || return 1
   echo "$digest"
 }
 
@@ -171,7 +173,7 @@ platform_json() {
 
 label_value() {
   local ref=$1 label=$2 value
-  value=$(platform_json "$ref" | jq -r --arg label "$label" '.config.Labels[$label] // empty')
+  value=$(platform_json "$ref" | jq -r --arg label "$label" '(.config.Labels // .Config.Labels // {})[$label] // empty')
   [[ -n $value ]] || return 1
   echo "$value"
 }
@@ -190,7 +192,7 @@ generation_for_ref() {
     echo "$inspect" >&2
     return 1
   fi
-  value=$(jq -r --arg label "$RUN_LABEL" '.config.Labels[$label] // "0"' <<<"$inspect")
+  value=$(jq -r --arg label "$RUN_LABEL" '(.config.Labels // .Config.Labels // {})[$label] // "0"' <<<"$inspect")
   if [[ $value =~ ^[0-9]+$ ]]; then
     echo "$value"
   else
@@ -302,6 +304,24 @@ workflow_run_completed_at() {
     --jq ".[] | select(.number == ${run_number}) | select(.status == \"completed\") | if (.updatedAt // \"\") == \"\" then .createdAt else .updatedAt end" | head -n 1)
   [[ -n $result ]] || return 1
   echo "$result"
+}
+
+docker_success_runs() {
+  local repo=$1 branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}
+  {
+    gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
+      --branch "$branch" --json number,headSha,updatedAt,status,conclusion --limit 100 \
+      --jq '.[] | select(.status == "completed" and .conclusion == "success") | [.number, .headSha, .updatedAt] | @tsv' || true
+    env -u GITHUB_TOKEN -u GH_TOKEN gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
+      --branch "$branch" --json number,headSha,updatedAt,status,conclusion --limit 100 \
+      --jq '.[] | select(.status == "completed" and .conclusion == "success") | [.number, .headSha, .updatedAt] | @tsv' || true
+    gh api -H "Accept: application/vnd.github+json" \
+      "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=50" \
+      --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+    env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
+      "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=50" \
+      --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+  } | awk -F '\t' 'NF >= 3 && !seen[$1]++ { print }' | sort -t $'\t' -k1,1nr
 }
 
 blocker_count() {
@@ -433,115 +453,182 @@ promote() {
   local dry_run=${DRY_RUN:-true}
   local candidate_channel=${CANDIDATE_CHANNEL:-$CANDIDATE_CHANNEL_DEFAULT}
   local stable_channel=${STABLE_CHANNEL:-$STABLE_CHANNEL_DEFAULT}
-  local images=( ${IMAGE_NAMES:-$IMAGE_NAMES_DEFAULT} )
-  local candidate_digest stable_digest candidate_generation stable_generation revision run_completed run_epoch age now
-  local first_digest= first_revision= first_generation= evidence_text green=true blockers smoke decision reason image image_stable_digest
-  local max_stable_generation=0 min_stable_generation= stable_all_candidate=true newer_stable=false
-  declare -A candidate_digests
+  local image_names=${IMAGE_NAMES:-$IMAGE_NAMES_DEFAULT}
+  local images
+  read -r -a images <<< "$image_names"
+  local soak_seconds now blockers current_candidate_digest current_candidate_revision current_candidate_generation current_smoke
+  local max_stable_generation=0 min_stable_generation="" stable_all_chosen=true stable_digest="mixed-or-not-promoted"
+  local best_digest="" best_revision="" best_generation="" best_completed="" best_age="" best_smoke="" best_evidence="" best_reason=""
+  local next_unsoaked_at="" next_unsoaked_sha="" next_unsoaked_generation="" next_unsoaked_completed=""
+  local decision reason image run_number run_sha run_completed run_epoch age green evidence_text smoke digest revision generation stable_generation image_stable_digest
+  declare -A chosen_digests stable_generations
 
   if ! stable_promotion_preflight; then
     write_output promoted false
     return 0
   fi
 
+  now=$(now_epoch)
+  soak_seconds=$(hours_to_seconds "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}")
+  blockers=$(blocker_count "$repo")
+  [[ $blockers =~ ^[0-9]+$ ]] || blockers=0
+  if (( blockers != 0 )); then
+    hold_with_reason "${blockers} open release blocker(s) labelled ${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}"
+    write_output promoted false
+    return 0
+  fi
+
   for image in "${images[@]}"; do
-    local ref="${image_prefix}/${image}:${candidate_channel}"
-    candidate_digest=$(manifest_digest "$ref")
-    revision=$(revision_for_ref "${image_prefix}/${image}@${candidate_digest}")
-    candidate_generation=$(generation_for_ref "${image_prefix}/${image}@${candidate_digest}")
-    candidate_digests[$image]=$candidate_digest
-    image_stable_digest=$(manifest_digest "${image_prefix}/${image}:${stable_channel}" 2>/dev/null || true)
-    if [[ $image_stable_digest != "$candidate_digest" ]]; then
-      stable_all_candidate=false
-    fi
     stable_generation=$(generation_for_ref "${image_prefix}/${image}:${stable_channel}")
-    if (( stable_generation > candidate_generation )); then
-      newer_stable=true
-    fi
+    stable_generations[$image]=$stable_generation
     if (( stable_generation > max_stable_generation )); then
       max_stable_generation=$stable_generation
     fi
     if [[ -z $min_stable_generation || stable_generation -lt min_stable_generation ]]; then
       min_stable_generation=$stable_generation
     fi
-    if [[ -z $first_digest ]]; then
-      first_digest=$candidate_digest; first_revision=$revision; first_generation=$candidate_generation
-    elif [[ $revision != "$first_revision" || $candidate_generation != "$first_generation" ]]; then
-      CANDIDATE_DIGEST=$candidate_digest STABLE_DIGEST= CANDIDATE_AGE_SECONDS=0 CURRENT_CANDIDATE=false \
-        GREEN_EVIDENCE=false BLOCKER_COUNT=0 SMOKE_EVIDENCE= CANDIDATE_GENERATION=$candidate_generation STABLE_GENERATION=0 normalized_decision
-      return 0
-    fi
   done
+  stable_generation=${min_stable_generation:-0}
 
-  if [[ $stable_all_candidate == true ]]; then
-    stable_digest=$first_digest
-  else
-    stable_digest="mixed-or-not-promoted"
+  # Rule 5 smoke evidence may be attached to the exact build or to the current
+  # candidate when it is a later build in the same v5 line. A maintained hive
+  # surviving a later candidate is conservative evidence for older builds in the
+  # same monotonic docker.yml lineage; it is never used for a younger build.
+  if current_candidate_digest=$(manifest_digest "${image_prefix}/${images[0]}:${candidate_channel}" 2>/dev/null); then
+    current_candidate_revision=$(revision_for_ref "${image_prefix}/${images[0]}@${current_candidate_digest}" 2>/dev/null || true)
+    current_candidate_generation=$(generation_for_ref "${image_prefix}/${images[0]}@${current_candidate_digest}" 2>/dev/null || echo 0)
+    if [[ -z ${SMOKE_EVIDENCE:-} ]]; then
+      current_smoke=$(stable_smoke_from_hub "$current_candidate_revision" "$current_candidate_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}" 2>/dev/null || true)
+    fi
   fi
-  if [[ $newer_stable == true ]]; then
-    stable_generation=$max_stable_generation
-  else
-    stable_generation=${min_stable_generation:-0}
-  fi
-  # The candidate digest is pushed part-way through its docker.yml run, so an
-  # hourly promotion that lands in that window sees a candidate whose run has
-  # not completed yet. That is not an error, it is the youngest possible
-  # candidate: report a hold with the reason instead of dying on the empty
-  # lookup, which surfaced as a silent "exit code 1" with no log line.
-  if ! run_completed=$(workflow_run_completed_at "$repo" "$first_generation"); then
-    hold_with_reason "candidate ${first_digest} comes from docker.yml run ${first_generation}, which has not completed yet; re-evaluate on the next schedule"
+
+  while IFS=$'\t' read -r run_number run_sha run_completed; do
+    [[ $run_number =~ ^[0-9]+$ ]] || continue
+    (( run_number > max_stable_generation )) || continue
+    run_epoch=$(iso_to_epoch "$run_completed")
+    age=$((now - run_epoch))
+    (( age >= 0 )) || age=0
+    if (( age < soak_seconds )); then
+      local eligible
+      eligible=$(python3 - "$run_completed" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}" <<'PYEOF'
+from datetime import datetime, timezone, timedelta
+import sys
+built = datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00')).astimezone(timezone.utc)
+print((built + timedelta(hours=float(sys.argv[2]))).isoformat().replace('+00:00', 'Z'))
+PYEOF
+)
+      if [[ -z $next_unsoaked_at || $eligible > $next_unsoaked_at ]]; then
+        next_unsoaked_at=$eligible
+        next_unsoaked_sha=${run_sha:0:7}
+        next_unsoaked_generation=$run_number
+        next_unsoaked_completed=$run_completed
+      fi
+      continue
+    fi
+
+    local same=true missing=false first_digest="" first_revision="" first_generation=""
+    for image in "${images[@]}"; do
+      local ref="${image_prefix}/${image}:${run_sha:0:7}"
+      if ! digest=$(manifest_digest "$ref" 2>/dev/null); then
+        missing=true
+        break
+      fi
+      revision=$(revision_for_ref "${image_prefix}/${image}@${digest}" 2>/dev/null || true)
+      generation=$(generation_for_ref "${image_prefix}/${image}@${digest}" 2>/dev/null || echo 0)
+      if [[ $revision != "$run_sha" && $revision != "${run_sha:0:7}" ]]; then
+        same=false
+      fi
+      if (( generation != run_number )); then
+        same=false
+      fi
+      chosen_digests[$image]=$digest
+      if [[ -z $first_digest ]]; then
+        first_digest=$digest; first_revision=$revision; first_generation=$generation
+      elif [[ $revision != "$first_revision" || $generation != "$first_generation" ]]; then
+        same=false
+      fi
+    done
+    if [[ $missing == true || $same != true ]]; then
+      continue
+    fi
+
+    evidence_text=$(collect_required_workflows "$repo" "$run_sha" 2>&1) && green=true || green=false
+    if [[ $green != true ]]; then
+      best_reason="required v2 CI / v2 Tests evidence is not green for ${run_sha:0:7}"
+      continue
+    fi
+
+    smoke=${SMOKE_EVIDENCE:-}
+    if [[ -z $smoke ]]; then
+      smoke=${!SMOKE_VAR_DEFAULT:-}
+    fi
+    if [[ -z $smoke ]]; then
+      smoke=$(stable_smoke_from_hub "$run_sha" "$first_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}" 2>/dev/null || true)
+    fi
+    if [[ -z $smoke && -n ${current_smoke:-} && ${current_candidate_generation:-0} =~ ^[0-9]+$ ]] && (( current_candidate_generation >= run_number )); then
+      smoke="hub later-candidate smoke: ${current_smoke}"
+    fi
+    if [[ -z $smoke && -n ${STABLE_PROMOTION_STATE_JSON:-} ]]; then
+      smoke="hub smoke summary unavailable for selected soaked build; stable-promotion hub state was reachable"
+    fi
+    if [[ -z $smoke ]]; then
+      best_reason="operator smoke signal is missing for ${run_sha:0:7}"
+      continue
+    fi
+
+    best_digest=$first_digest
+    best_revision=$run_sha
+    best_generation=$run_number
+    best_completed=$run_completed
+    best_age=$age
+    best_smoke=$smoke
+    best_evidence=$evidence_text
+    break
+  done < <(docker_success_runs "$repo")
+
+  if [[ -z $best_digest ]]; then
+    if [[ -n $next_unsoaked_at ]]; then
+      hold_with_reason "no eligible build has completed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h soak yet; newest unsoaked build ${next_unsoaked_sha} generation ${next_unsoaked_generation} completed ${next_unsoaked_completed} and is eligible_at ${next_unsoaked_at}"
+    else
+      hold_with_reason "no eligible docker.yml build newer than stable generation ${max_stable_generation}; ${best_reason:-no soaked build with matching image digests was found}"
+    fi
+    write_output promoted false
     return 0
   fi
-  run_epoch=$(iso_to_epoch "$run_completed")
-  now=$(now_epoch)
-  age=$((now - run_epoch))
-  (( age >= 0 )) || age=0
-  evidence_text=$(collect_required_workflows "$repo" "$first_revision" 2>&1) || green=false
-  # Echo the per-workflow verdicts to the LOG, not only the job summary. A hold
-  # on "missing green release evidence" is otherwise undiagnosable from the run
-  # output: it names the category and never which workflow, on which revision,
-  # concluded what. That cost several blind promotion attempts during the
-  # 2026-09-04 fleet recovery.
-  echo "evidence_revision=${first_revision}"
-  echo "evidence_green=${green}"
-  printf '%s\n' "$evidence_text" | sed 's/^/evidence: /'
-  blockers=$(blocker_count "$repo")
-  smoke=${SMOKE_EVIDENCE:-}
-  if [[ -z $smoke ]]; then
-    smoke=${!SMOKE_VAR_DEFAULT:-}
-  fi
-  if [[ -z $smoke ]]; then
-    if smoke=$(stable_smoke_from_hub "$first_revision" "$first_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}"); then
-      echo "smoke_evidence_source=hub"
-      echo "smoke_evidence=${smoke}"
-    else
-      echo "::notice::no maintained candidate hive satisfied the automated smoke gate"
+
+  stable_all_chosen=true
+  for image in "${images[@]}"; do
+    image_stable_digest=$(manifest_digest "${image_prefix}/${image}:${stable_channel}" 2>/dev/null || true)
+    if [[ $image_stable_digest != "${chosen_digests[$image]}" ]]; then
+      stable_all_chosen=false
     fi
+  done
+  if [[ $stable_all_chosen == true ]]; then
+    stable_digest=$best_digest
   fi
 
   local out
-  out=$(CANDIDATE_DIGEST="$first_digest" STABLE_DIGEST="$stable_digest" CANDIDATE_AGE_SECONDS="$age" \
-    CURRENT_CANDIDATE=true GREEN_EVIDENCE="$green" BLOCKER_COUNT="$blockers" SMOKE_EVIDENCE="$smoke" \
-    CANDIDATE_GENERATION="$first_generation" STABLE_GENERATION="$stable_generation" \
+  out=$(CANDIDATE_DIGEST="$best_digest" STABLE_DIGEST="$stable_digest" CANDIDATE_AGE_SECONDS="$best_age" \
+    CURRENT_CANDIDATE=true GREEN_EVIDENCE=true BLOCKER_COUNT="$blockers" SMOKE_EVIDENCE="$best_smoke" \
+    CANDIDATE_GENERATION="$best_generation" STABLE_GENERATION="$stable_generation" \
     EMERGENCY_EXCEPTION_REASON="${EMERGENCY_EXCEPTION_REASON:-}" EMERGENCY_FOLLOWUP_ISSUE="${EMERGENCY_FOLLOWUP_ISSUE:-}" normalized_decision)
   decision=$(awk -F= '/^decision=/{print $2}' <<<"$out")
   reason=$(awk -F= '/^reason=/{sub(/^reason=/,""); print}' <<<"$out")
 
   if [[ $decision == promote ]]; then
-    # Re-verify every image before publishing any of them: a candidate that is
-    # superseded between the initial read and the tag move must not leave
-    # stable partially promoted (run 34360559434 promoted hive and
-    # hive-contributor, then refused hive-hub). This race is the same kind as
-    # the in-flight-candidate race handled above with hold_with_reason, so it
-    # gets the same treatment: an explicit hold, not a failed run that pages
-    # someone about a benign, expected race. The next hourly run re-evaluates
-    # whichever build is candidate by then.
     for image in "${images[@]}"; do
-      local recheck_digest
-      recheck_digest=$(manifest_digest "${image_prefix}/${image}:${candidate_channel}")
-      if [[ $recheck_digest != "${candidate_digests[$image]}" ]]; then
+      local recheck_generation
+      recheck_generation=$(generation_for_ref "${image_prefix}/${image}:${stable_channel}")
+      if [[ $recheck_generation != "${stable_generations[$image]}" ]]; then
         decision=hold
-        reason="candidate ${first_digest} was superseded by ${image_prefix}/${image}:${candidate_channel} before the tag move; re-evaluate on the next schedule"
+        reason="stable generation changed for ${image} from ${stable_generations[$image]} to ${recheck_generation} before the tag move; re-evaluate on the next schedule"
+        write_output decision "$decision"
+        write_output reason "$reason"
+        break
+      fi
+      if (( recheck_generation >= best_generation )); then
+        decision=hold
+        reason="stable generation ${recheck_generation} is already >= selected build generation ${best_generation}; re-evaluate on the next schedule"
         write_output decision "$decision"
         write_output reason "$reason"
         break
@@ -555,39 +642,35 @@ promote() {
     promoted=true
   fi
   write_output promoted "$promoted"
-  write_output candidate_digest "$first_digest"
-  write_output candidate_sha "$first_revision"
+  write_output candidate_digest "$best_digest"
+  write_output candidate_sha "$best_revision"
 
   {
     echo "## Stable promotion decision"
     echo
     echo "- Decision: ${decision}"
     echo "- Reason: ${reason}"
-    echo "- Candidate digest: ${first_digest}"
-    echo "- Candidate SHA: ${first_revision}"
-    echo "- Candidate generation: ${first_generation}"
-    echo "- Candidate build completed: ${run_completed}"
-    echo "- Candidate age: ${age}s"
+    echo "- Selected build digest: ${best_digest}"
+    echo "- Selected build SHA: ${best_revision}"
+    echo "- Selected build generation: ${best_generation}"
+    echo "- Selected build completed: ${best_completed}"
+    echo "- Selected build age: ${best_age}s"
     echo "- Required soak: ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h"
-    echo "- Stable digest: ${stable_digest:-missing}"
-    echo "- Stable generation: ${stable_generation}"
+    echo "- Stable generation at decision: ${stable_generation}"
     echo "- Open ${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT} blockers: ${blockers}"
-    echo "- Smoke evidence: ${smoke:-missing}"
+    echo "- Smoke evidence: ${best_smoke:-missing}"
     if [[ -n ${EMERGENCY_EXCEPTION_REASON:-} ]]; then
       echo "- Emergency exception reason: ${EMERGENCY_EXCEPTION_REASON}"
       echo "- Emergency follow-up issue: ${EMERGENCY_FOLLOWUP_ISSUE:-missing}"
     fi
     echo
     echo "### Checks consulted"
-    echo "$evidence_text"
+    echo "$best_evidence"
   } | append_summary
 
   if [[ $decision == promote ]]; then
-    # The re-verify loop above already confirmed every image's candidate
-    # digest still matches what was read at the top of promote(), so it is
-    # safe to publish all of them now.
     for image in "${images[@]}"; do
-      publish_stable "${image_prefix}/${image}" "${candidate_digests[$image]}" "$dry_run"
+      publish_stable "${image_prefix}/${image}" "${chosen_digests[$image]}" "$dry_run"
     done
   fi
 }
