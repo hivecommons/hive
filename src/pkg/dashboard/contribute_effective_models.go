@@ -24,11 +24,23 @@ const (
 )
 
 type contributeEffectiveModelsResponse struct {
-	Window       string                        `json:"window"`
-	Filter       string                        `json:"filter"`
-	MinMergedPRs int                           `json:"min_merged_prs"`
-	Ranked       []contributeEffectiveModelRow `json:"ranked"`
-	Insufficient []contributeEffectiveModelRow `json:"insufficient"`
+	Window       string                            `json:"window"`
+	Filter       string                            `json:"filter"`
+	MinMergedPRs int                               `json:"min_merged_prs"`
+	Ranked       []contributeEffectiveModelRow     `json:"ranked"`
+	Insufficient []contributeEffectiveModelRow     `json:"insufficient"`
+	Coverage     contributeEffectiveModelsCoverage `json:"coverage"`
+}
+
+// contributeEffectiveModelsCoverage reports how much history fed the table.
+// Closed attributed PRs come from a bounded rolling scan and runs from the
+// task-run log plus its single rotated predecessor, so a 30d/All window can
+// ask for more than is retained; the *_partial flags say so explicitly.
+type contributeEffectiveModelsCoverage struct {
+	ClosedPRLookbackDays int    `json:"closed_pr_lookback_days"`
+	ClosedPRsPartial     bool   `json:"closed_prs_partial"`
+	RunsSince            string `json:"runs_since,omitempty"`
+	RunsPartial          bool   `json:"runs_partial"`
 }
 
 type contributeEffectiveModelRow struct {
@@ -69,8 +81,11 @@ func (s *Server) handleContributeEffectiveModels(w http.ResponseWriter, r *http.
 	}
 
 	prs := s.lastActionableForPRModels().PRs.Attributed
-	runs, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
-	resp := aggregateContributeEffectiveModels(prs, runs, window, filter, minMergedPRs, time.Now())
+	windowDur := governorPRModelsWindowDuration(window)
+	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), windowDur)
+	now := time.Now()
+	resp := aggregateContributeEffectiveModels(prs, runs, window, filter, minMergedPRs, now)
+	resp.Coverage = effectiveModelsCoverage(windowDur, ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -114,22 +129,28 @@ func (s *Server) effectiveModelTaskRunLogPath() string {
 	return taskRunLogPath
 }
 
-func readEffectiveModelRuns(path string, window time.Duration) ([]TaskRunRecord, error) {
+// readEffectiveModelRuns reads the rotated ".1" predecessor and the live
+// task-run log (oldest first) so 30d/All windows see every retained run, not
+// just the records written since the last rotation. rotated reports whether a
+// rotation has happened, i.e. whether older history may have been discarded.
+func readEffectiveModelRuns(path string, window time.Duration) ([]TaskRunRecord, bool, error) {
 	taskRunMu.Lock()
+	prev, prevErr := os.ReadFile(path + ".1")
 	data, err := os.ReadFile(path)
 	taskRunMu.Unlock()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
+	rotated := prevErr == nil
+	if prevErr != nil && !os.IsNotExist(prevErr) {
+		return nil, false, prevErr
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, rotated, err
 	}
 	cutoff := ""
 	if window > 0 {
 		cutoff = time.Now().UTC().Add(-window).Format(time.RFC3339)
 	}
 	var out []TaskRunRecord
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(string(prev)+"\n"+string(data), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -142,7 +163,31 @@ func readEffectiveModelRuns(path string, window time.Duration) ([]TaskRunRecord,
 		}
 		out = append(out, rec)
 	}
-	return out, nil
+	return out, rotated, nil
+}
+
+// effectiveModelsCoverage describes the history behind a response. Closed PRs
+// are partial whenever the window (All = unbounded) reaches past the scan's
+// lookback. Runs are partial only once the log has rotated and the oldest
+// retained run is newer than the window start.
+func effectiveModelsCoverage(window, closedPRLookback time.Duration, runs []TaskRunRecord, rotated bool, now time.Time) contributeEffectiveModelsCoverage {
+	cov := contributeEffectiveModelsCoverage{
+		ClosedPRLookbackDays: int(closedPRLookback / (24 * time.Hour)),
+		ClosedPRsPartial:     window <= 0 || window > closedPRLookback,
+	}
+	for _, rec := range runs {
+		if rec.TS != "" && (cov.RunsSince == "" || rec.TS < cov.RunsSince) {
+			cov.RunsSince = rec.TS
+		}
+	}
+	if rotated {
+		if window <= 0 || cov.RunsSince == "" {
+			cov.RunsPartial = true
+		} else {
+			cov.RunsPartial = cov.RunsSince > now.UTC().Add(-window).Format(time.RFC3339)
+		}
+	}
+	return cov
 }
 
 func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunRecord, window, filter string, minMergedPRs int, now time.Time) contributeEffectiveModelsResponse {
@@ -154,7 +199,7 @@ func aggregateContributeEffectiveModels(prs []ghpkg.PullRequest, runs []TaskRunR
 	contributorPRs := contributorPRKeysFromRuns(runs)
 	filtered := make([]ghpkg.PullRequest, 0, len(prs))
 	for _, pr := range prs {
-		key := effectivePRKey(pr.Repo, pr.Number)
+		key := effectivePRKey(effectivePRRepo(pr), pr.Number)
 		isContributor := contributorPRs[key]
 		if filter == effectiveModelsFilterContributor && !isContributor {
 			continue
@@ -293,17 +338,52 @@ func parsePRURL(raw string) (string, int) {
 	return parts[0] + "/" + parts[1], n
 }
 
+// effectivePRRepo returns the canonical owner/repo for a PR record. pr.Repo
+// may be a short configured name ("documentation") while run-log keys come
+// from full PR URLs, so the URL is authoritative when it parses; it also keeps
+// same-named repositories under different owners distinct.
+func effectivePRRepo(pr ghpkg.PullRequest) string {
+	if repo, n := parsePRURL(pr.URL); repo != "" && n == pr.Number {
+		return repo
+	}
+	return pr.Repo
+}
+
 func effectivePRKey(repo string, number int) string {
 	return strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
 }
 
+// effectiveModelHostedProviders are Pi provider prefixes ("provider/model")
+// whose inference runs on a hosted API even though the Pi CLI runs locally.
+var effectiveModelHostedProviders = map[string]bool{
+	"anthropic":      true,
+	"azure-openai":   true,
+	"github-copilot": true,
+	"google":         true,
+	"groq":           true,
+	"mistral":        true,
+	"openai":         true,
+	"openai-codex":   true,
+	"openrouter":     true,
+	"xai":            true,
+}
+
+// effectiveModelRuntime classifies where inference runs, not where the CLI
+// runs: a Pi row is local only when its model names a local provider, hosted
+// when it names a hosted one, and unknown otherwise.
 func effectiveModelRuntime(model, backend string) string {
 	b := strings.ToLower(strings.TrimSpace(backend))
 	m := strings.ToLower(strings.TrimSpace(model))
+	provider := ""
+	if i := strings.Index(m, "/"); i > 0 {
+		provider = m[:i]
+	}
 	switch {
-	case b == "pi" || strings.Contains(m, "gguf") || strings.Contains(m, "lemonade/") || strings.Contains(m, "ollama"):
+	case strings.Contains(m, "gguf") || strings.Contains(m, "lemonade/") || strings.Contains(m, "ollama"):
 		return "local"
 	case b == "copilot" || b == "claude" || b == "openai" || b == "gemini":
+		return "hosted"
+	case b == "pi" && effectiveModelHostedProviders[provider]:
 		return "hosted"
 	default:
 		return "unknown"

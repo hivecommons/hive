@@ -127,3 +127,137 @@ func TestContributeOperationsEffectiveModelsPanelCollapsiblePersists(t *testing.
 		t.Fatal("expanded effective models body must not clip long ranked/insufficient tables")
 	}
 }
+
+func TestAggregateContributeEffectiveModelsContributorFilterShortRepoNames(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	prs := []ghpkg.PullRequest{
+		{Repo: "documentation", Number: 7, URL: "https://github.com/projectbluefin/documentation/pull/7", HiveAttributed: true, HiveModel: "opus", HiveBackend: "copilot", CreatedAt: now, MergedAt: now},
+		{Repo: "projectbluefin/bluefin", Number: 8, URL: "https://github.com/projectbluefin/bluefin/pull/8", HiveAttributed: true, HiveModel: "opus", HiveBackend: "copilot", CreatedAt: now, MergedAt: now},
+		{Repo: "documentation", Number: 9, URL: "https://github.com/otherorg/documentation/pull/9", HiveAttributed: true, HiveModel: "sonnet", HiveBackend: "copilot", CreatedAt: now, MergedAt: now},
+	}
+	runs := []TaskRunRecord{
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "opus", Outcome: outcomeCompleted, PRVerified: true, PRURL: "https://github.com/projectbluefin/documentation/pull/7"},
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "opus", Outcome: outcomeCompleted, PRVerified: true, PRURL: "https://github.com/projectbluefin/bluefin/pull/8"},
+		{TS: now.Format(time.RFC3339), Backend: "copilot", Model: "sonnet", Outcome: outcomeCompleted, PRVerified: true, PRURL: "https://github.com/projectbluefin/documentation/pull/9"},
+	}
+	prCount := func(resp contributeEffectiveModelsResponse) map[string]int {
+		out := map[string]int{}
+		for _, row := range append(append([]contributeEffectiveModelRow{}, resp.Ranked...), resp.Insufficient...) {
+			out[row.Model] += row.PRs
+		}
+		return out
+	}
+	contrib := prCount(aggregateContributeEffectiveModels(prs, runs, "7d", "contributor", 1, now))
+	if contrib["opus"] != 2 || contrib["sonnet"] != 0 {
+		t.Fatalf("contributor PRs = %v, want short and qualified repo PRs matched, other owner excluded", contrib)
+	}
+	hive := prCount(aggregateContributeEffectiveModels(prs, runs, "7d", "hive", 1, now))
+	if hive["opus"] != 0 || hive["sonnet"] != 1 {
+		t.Fatalf("hive PRs = %v, want contributor PRs excluded and same-name repo under other owner kept", hive)
+	}
+}
+
+func TestReadEffectiveModelRunsIncludesRotatedHistory(t *testing.T) {
+	path := t.TempDir() + "/" + taskRunLogFileName
+	old := time.Now().UTC().Add(-20 * 24 * time.Hour).Format(time.RFC3339)
+	recent := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	if err := os.WriteFile(path, []byte(`{"ts":"`+recent+`","model":"opus","backend":"copilot"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runs, rotated, err := readEffectiveModelRuns(path, 30*24*time.Hour)
+	if err != nil || rotated || len(runs) != 1 {
+		t.Fatalf("live only: runs=%d rotated=%v err=%v, want 1/false/nil", len(runs), rotated, err)
+	}
+	if err := os.WriteFile(path+".1", []byte(`{"ts":"`+old+`","model":"opus","backend":"copilot"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runs, rotated, err = readEffectiveModelRuns(path, 30*24*time.Hour)
+	if err != nil || !rotated || len(runs) != 2 || runs[0].TS != old {
+		t.Fatalf("with rotation: runs=%+v rotated=%v err=%v, want rotated history first", runs, rotated, err)
+	}
+	runs, _, _ = readEffectiveModelRuns(path, 7*24*time.Hour)
+	if len(runs) != 1 {
+		t.Fatalf("7d window runs = %d, want rotated run outside window dropped", len(runs))
+	}
+}
+
+func TestEffectiveModelsCoverageReportsPartialHistory(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	lookback := 14 * 24 * time.Hour
+	runs := []TaskRunRecord{{TS: now.Add(-3 * 24 * time.Hour).Format(time.RFC3339)}, {TS: now.Add(-time.Hour).Format(time.RFC3339)}}
+
+	week := effectiveModelsCoverage(7*24*time.Hour, lookback, runs, true, now)
+	if week.ClosedPRLookbackDays != 14 || week.ClosedPRsPartial || !week.RunsPartial || week.RunsSince != runs[0].TS {
+		t.Fatalf("7d coverage = %+v, want full PRs, partial rotated runs since oldest run", week)
+	}
+	month := effectiveModelsCoverage(30*24*time.Hour, lookback, runs, false, now)
+	if !month.ClosedPRsPartial || month.RunsPartial {
+		t.Fatalf("30d coverage = %+v, want partial closed PRs and complete unrotated runs", month)
+	}
+	all := effectiveModelsCoverage(0, lookback, runs, true, now)
+	if !all.ClosedPRsPartial || !all.RunsPartial {
+		t.Fatalf("all coverage = %+v, want both partial", all)
+	}
+	full := effectiveModelsCoverage(7*24*time.Hour, lookback, []TaskRunRecord{{TS: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339)}}, true, now)
+	if full.RunsPartial {
+		t.Fatalf("coverage = %+v, want runs complete when retained history predates window", full)
+	}
+}
+
+func TestHandleContributeEffectiveModelsReportsCoverage(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Scheduler = metricsSchedulerStub{actionable: &ghpkg.ActionableResult{}}
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/effective-models?window=all", nil)
+	rec := httptest.NewRecorder()
+	s.handleContributeEffectiveModels(rec, req)
+	var got contributeEffectiveModelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body %s", err, rec.Body.String())
+	}
+	if got.Coverage.ClosedPRLookbackDays <= 0 || !got.Coverage.ClosedPRsPartial {
+		t.Fatalf("coverage = %+v, want closed-PR lookback reported and All marked partial", got.Coverage)
+	}
+}
+
+func TestEffectiveModelRuntimeClassifiesInferenceLocation(t *testing.T) {
+	for _, tc := range []struct{ model, backend, want string }{
+		{"openai-codex/gpt-6-astra", "pi", "hosted"},
+		{"anthropic/claude-opus", "pi", "hosted"},
+		{"lemonade/qwen3-coder", "pi", "local"},
+		{"ollama/llama3", "pi", "local"},
+		{"qwen3-coder-gguf", "pi", "local"},
+		{"mystery-model", "pi", "unknown"},
+		{"claude-sonnet-5", "copilot", "hosted"},
+		{"gpt-6-astra", "codex", "unknown"},
+	} {
+		if got := effectiveModelRuntime(tc.model, tc.backend); got != tc.want {
+			t.Errorf("effectiveModelRuntime(%q, %q) = %q, want %q", tc.model, tc.backend, got, tc.want)
+		}
+	}
+}
+
+func TestContributeOperationsEffectiveModelsUnmeasuredRunRates(t *testing.T) {
+	raw, err := os.ReadFile("contribute_landing.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+	for _, want := range []string{
+		`function effectiveRunPct(x,v){return Number(x&&x.runs||0)>0?effectivePct(v):'—';}`,
+		`effectiveRunPct(x,x.verified_pr_run_rate)`,
+		`effectiveRunPct(x,x.failure_rate)`,
+		`effectiveRunPct(x,x.nothing_to_ship_rate)`,
+		`Run columns come from the contributor task-run log only`,
+		`id="effective-models-coverage"`,
+		`effectiveCoverageText(data.coverage)`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("effective models panel missing %q", want)
+		}
+	}
+	for _, bad := range []string{`effectivePct(x.verified_pr_run_rate)`, `effectivePct(x.failure_rate)`, `effectivePct(x.nothing_to_ship_rate)`} {
+		if strings.Contains(page, bad) {
+			t.Fatalf("run-derived rate still rendered unconditionally: %q", bad)
+		}
+	}
+}
