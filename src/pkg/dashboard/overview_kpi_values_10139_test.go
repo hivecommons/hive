@@ -74,7 +74,7 @@ assert.deepEqual(Object.fromEntries(values), {
   'Actionable now (issues and PRs)': '103',
   'Held': '1',
   'Blocked / needs-human': '1',
-  'Median age': '7m',
+  'Median actionable age (updated)': '7m',
 });
 
 repos[0].issues = 123;
@@ -83,6 +83,10 @@ const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
 assert.equal(rawValues['Total open issues'], '123');
 assert.equal(rawValues['Total open PRs'], '45');
+assert.match(out, /title="Median time since updated for actionable open issues and PRs in the selected repos \(not MTTR, which measures time-to-resolve for closed items\)\."/);
+const createdOut = renderOverviewKPIs(repos, issueSlices, prSlices, { showKPIs: true, timeBasis: 'created' });
+assert.match(createdOut, />7m<\/span><span class="overview-kpi-label">Median actionable age \(created\)<\/span>/);
+assert.match(createdOut, /title="Median time since created for actionable open issues and PRs in the selected repos \(not MTTR, which measures time-to-resolve for closed items\)\."/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
