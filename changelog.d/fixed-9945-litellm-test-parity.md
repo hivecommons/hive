@@ -1,1 +1,0 @@
-- LiteLLM Model Gateway form tests now show the same full proxy/gateway diagnostic as saved gateway tests, including observed server/content-type/final URL and hub egress details.

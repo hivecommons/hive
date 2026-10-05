@@ -1,1 +1,0 @@
-- Most effective models now recognizes contributor PR attribution followed by Hive's identity footer, restoring merged counts and ranking eligibility on rescan while still rejecting attribution followed by ordinary prose ([#10686](https://github.com/hivecommons/hive/issues/10686)).

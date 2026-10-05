@@ -1,1 +1,0 @@
-- Add an explicitly unreviewed ACMM Level 6 operating guide covering readiness, merge gates, weekly checks, and recovery, indexed as awaiting operator sign-off (#10516).

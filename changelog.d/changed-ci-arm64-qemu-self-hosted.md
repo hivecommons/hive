@@ -1,1 +1,0 @@
-- Build arm64 release images on the self-hosted runner pool via QEMU while cross-compiling Go binaries on the build platform.

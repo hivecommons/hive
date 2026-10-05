@@ -1,1 +1,0 @@
-- stable-soak-policy: state that promotion runs are serialised by the `stable-promotion-v5` Actions concurrency group and that the pre-publish generation re-read is a secondary, non-atomic guard (refs #10042).
