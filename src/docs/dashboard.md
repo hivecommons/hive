@@ -260,7 +260,9 @@ in exactly one band, while non-winning states remain as badges on the pill:
 1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
    nothing claimed it, and no human gate applies. This does not by itself mean
    agents will pick it up.
-2. **Claimed** (`claimed`) — assignee set, `claimed`, or `hive/claimed-by-*`.
+2. **Claimed** (`claimed`) — a claim is a comment; the `claimed` label is a
+   mirror Hive keeps in sync. The display band also recognises assignees and
+   `hive/claimed-by-*`.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
    human assignee (the snapshot's `human_acknowledged`; a human *comment* only

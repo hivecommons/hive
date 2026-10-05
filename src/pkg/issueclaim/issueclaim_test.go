@@ -41,22 +41,30 @@ func TestParseMarker_FindsMarkerInsideLongerComment(t *testing.T) {
 	}
 }
 
+func TestParseMarker_AcceptsLegacyMarker(t *testing.T) {
+	body := LegacyMarker("agent-1", started, expires) + "\nClaimed by agent-1."
+	claim, ok := ParseMarker(body)
+	if !ok || claim.Identity != "agent-1" || !claim.StartedAt.Equal(started) || !claim.ExpiresAt.Equal(expires) {
+		t.Fatalf("legacy marker did not parse, got ok=%v claim=%+v", ok, claim)
+	}
+}
+
 // A malformed marker is not a claim. Every one of these must be rejected
 // rather than withholding an issue on garbage.
 func TestParseMarker_RejectsMalformed(t *testing.T) {
 	for name, body := range map[string]string{
-		"no marker":          "just a comment",
-		"unterminated":       MarkerPrefix + " who 2026-09-23T01:30:00Z 2026-09-23T05:30:00Z",
-		"too few fields":     MarkerPrefix + " who 2026-09-23T01:30:00Z " + MarkerSuffix,
-		"too many fields":    MarkerPrefix + " who a b c " + MarkerSuffix,
-		"bad started":        MarkerPrefix + " who yesterday 2026-09-23T05:30:00Z " + MarkerSuffix,
-		"bad expires":        MarkerPrefix + " who 2026-09-23T01:30:00Z later " + MarkerSuffix,
-		"empty record":       MarkerPrefix + " " + MarkerSuffix,
-		"different marker":   "<!-- hive:preempt target=bot issue=1 -->",
-		"pr claim ledger":    "Fixes #8380",
-		"prefix only":        MarkerPrefix,
-		"suffix before":      MarkerSuffix + " " + MarkerPrefix + " who 2026-09-23T01:30:00Z 2026-09-23T05:30:00Z",
-		"identity has space": MarkerPrefix + " two words 2026-09-23T01:30:00Z 2026-09-23T05:30:00Z " + MarkerSuffix,
+		"no marker":             "just a comment",
+		"unterminated":          MarkerPrefix + " who=who at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z",
+		"missing who":           MarkerPrefix + " at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z " + MarkerSuffix,
+		"missing until":         MarkerPrefix + " who=who at=2026-09-23T01:30:00Z " + MarkerSuffix,
+		"bare field":            MarkerPrefix + " who at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z " + MarkerSuffix,
+		"bad started":           MarkerPrefix + " who=who at=yesterday until=2026-09-23T05:30:00Z " + MarkerSuffix,
+		"bad expires":           MarkerPrefix + " who=who at=2026-09-23T01:30:00Z until=later " + MarkerSuffix,
+		"empty record":          MarkerPrefix + " " + MarkerSuffix,
+		"different marker":      "<!-- hive:preempt target=bot issue=1 -->",
+		"pr claim ledger":       "Fixes #8380",
+		"prefix only":           MarkerPrefix,
+		"legacy too few fields": LegacyMarkerPrefix + " who 2026-09-23T01:30:00Z " + MarkerSuffix,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if claim, ok := ParseMarker(body); ok {

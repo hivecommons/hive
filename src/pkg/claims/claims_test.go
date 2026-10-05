@@ -433,3 +433,23 @@ func TestLazyExpiryFiresOnReleased(t *testing.T) {
 		t.Fatalf("OnReleased on Release path = %v", released)
 	}
 }
+
+func TestClaimAfterExpiryDoesNotReleaseSameIssueMirror(t *testing.T) {
+	var released []string
+	l, now := newTestLedger(t, Hooks{OnReleased: func(c Claim, reason string) {
+		released = append(released, c.Key()+":"+reason)
+	}})
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "relay", Kind: KindContributor}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 2, Holder: "relay", Kind: KindContributor}); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(DefaultContributorTTL + time.Second)
+	if _, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: KindHuman}); err != nil {
+		t.Fatal(err)
+	}
+	if len(released) != 1 || released[0] != "o/r#2:expired" {
+		t.Fatalf("expired release hooks = %v, want only unrelated expired issue", released)
+	}
+}
