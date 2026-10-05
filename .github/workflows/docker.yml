@@ -238,15 +238,12 @@ jobs:
 
   build:
     needs: gate
-    # Runs only when `gate` decided push=true, i.e. a long-lived branch or a
-    # workflow_dispatch release. Skipped for `pull_request` (#4965): that
-    # trigger exists only so the required `gate` context attaches to a fork
-    # PR's head SHA. Also skipped for feature-branch pushes: a PR is not left
-    # unbuilt by this, because v2-ci.yml already runs on pull_request and
-    # builds src/Dockerfile (with a real `hive --version` smoke test),
-    # src/Dockerfile.hub and src/Dockerfile.contributor (`docker` matrix),
-    # plus `build-and-test` (go build + go vet) and `overlayfs-exec-guard`.
-    # Building here too would be a third image build of the same commit.
+    # Runs when `gate` decided push=true, i.e. a long-lived branch or a
+    # workflow_dispatch release, and on same-repo PRs so Dockerfile/platform
+    # changes prove both release architectures before merge. Fork PRs still
+    # get only the required `gate` context here (#4965); they cannot safely use
+    # the self-hosted fleet. Feature-branch pushes are skipped because the PR
+    # event supplies the image compile gate.
     # `release-gate/*` is excluded for the same reason `merge*` already skips
     # it (gate forces push=false there): these builds publish NOTHING for the
     # scratch branch. They are not merely wasted — branch protection evaluates
@@ -264,17 +261,23 @@ jobs:
     # there); the explicit clause is kept because test-release-push-retry.sh
     # asserts it (#5339) and it makes the intent readable.
     if: >-
-      needs.gate.outputs.push == 'true' &&
+      (needs.gate.outputs.push == 'true' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository)) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
             self_hosted: true
+            qemu: false
+            timeout_minutes: 60
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.self_hosted && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') || matrix.runner }}
+            self_hosted: true
+            qemu: true
+            timeout_minutes: 75
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -286,12 +289,19 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Set up QEMU for arm64 emulation
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: network=host
 
       - name: Log in to GHCR
+        if: needs.gate.outputs.push == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -630,22 +640,34 @@ jobs:
     # there); the explicit clause is kept because test-release-push-retry.sh
     # asserts it (#5339) and it makes the intent readable.
     if: >-
-      needs.gate.outputs.push == 'true' &&
+      (needs.gate.outputs.push == 'true' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository)) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
             self_hosted: true
+            qemu: false
+            timeout_minutes: 60
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.self_hosted && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') || matrix.runner }}
+            self_hosted: true
+            qemu: true
+            timeout_minutes: 75
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up QEMU for arm64 emulation
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -653,6 +675,7 @@ jobs:
           driver-opts: network=host
 
       - name: Log in to GHCR
+        if: needs.gate.outputs.push == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -820,17 +843,23 @@ jobs:
     # there); the explicit clause is kept because test-release-push-retry.sh
     # asserts it (#5339) and it makes the intent readable.
     if: >-
-      needs.gate.outputs.push == 'true' &&
+      (needs.gate.outputs.push == 'true' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository)) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
             self_hosted: true
+            qemu: false
+            timeout_minutes: 60
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.self_hosted && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') || matrix.runner }}
+            self_hosted: true
+            qemu: true
+            timeout_minutes: 75
+    runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -842,12 +871,19 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Set up QEMU for arm64 emulation
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: network=host
 
       - name: Log in to GHCR
+        if: needs.gate.outputs.push == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
