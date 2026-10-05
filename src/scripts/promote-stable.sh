@@ -14,6 +14,7 @@ REVISION_LABEL=org.opencontainers.image.revision
 DOCKER_WORKFLOW_DEFAULT=docker.yml
 REQUIRED_WORKFLOWS_DEFAULT="v2-ci.yml v2-tests.yml"
 STABLE_PROMOTION_URL_DEFAULT="https://hive.hivecommons.dev/api/hub/release/stable-promotion"
+DOCKER_RUN_LOOKBACK_DEFAULT=500
 
 usage() {
   cat >&2 <<USAGE
@@ -308,21 +309,20 @@ workflow_run_completed_at() {
 
 docker_success_runs() {
   local repo=$1 branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}
+  local lookback=${DOCKER_RUN_LOOKBACK:-$DOCKER_RUN_LOOKBACK_DEFAULT}
+  local page pages
+  pages=$(( (lookback + 99) / 100 ))
   {
     gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
-      --branch "$branch" --json number,headSha,updatedAt,status,conclusion --limit 100 \
+      --branch "$branch" --json number,headSha,updatedAt,status,conclusion --limit "$lookback" \
       --jq '.[] | select(.status == "completed" and .conclusion == "success") | [.number, .headSha, .updatedAt] | @tsv' || true
-    env -u GITHUB_TOKEN -u GH_TOKEN gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
-      --branch "$branch" --json number,headSha,updatedAt,status,conclusion --limit 100 \
-      --jq '.[] | select(.status == "completed" and .conclusion == "success") | [.number, .headSha, .updatedAt] | @tsv' || true
-    gh api -H "Accept: application/vnd.github+json" \
-      "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=50" \
-      --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
-    env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
-      "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=50" \
-      --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
-    curl -fsSL "https://api.github.com/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=100" \
-      | jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+    for (( page = 1; page <= pages; page++ )); do
+      gh api -H "Accept: application/vnd.github+json" \
+        "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=100&page=${page}" \
+        --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+      curl -fsSL "https://api.github.com/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=100&page=${page}" \
+        | jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+    done
   } | awk -F '\t' 'NF >= 3 && !seen[$1]++ { print }' | sort -t $'\t' -k1,1nr
 }
 

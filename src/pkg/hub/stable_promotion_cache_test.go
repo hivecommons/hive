@@ -182,9 +182,12 @@ func TestStablePromotionEligibleBuildBoundsAndCachesVerification(t *testing.T) {
 
 func TestStablePromotionFetchRunsCarriesHubToken(t *testing.T) {
 	var auth, path string
+	var perPage, page string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth = r.Header.Get("Authorization")
 		path = r.URL.Path
+		perPage = r.URL.Query().Get("per_page")
+		page = r.URL.Query().Get("page")
 		_, _ = w.Write([]byte(`{"workflow_runs":[{"run_number":9,"head_sha":"abc"}]}`))
 	}))
 	defer srv.Close()
@@ -202,5 +205,46 @@ func TestStablePromotionFetchRunsCarriesHubToken(t *testing.T) {
 	}
 	if path != "/repos/hivecommons/hive/actions/workflows/docker.yml/runs" {
 		t.Errorf("path = %q", path)
+	}
+	if perPage != "100" || page != "1" {
+		t.Errorf("pagination query = per_page %q page %q, want 100/1", perPage, page)
+	}
+}
+
+func TestStablePromotionFetchRunsPaginatesPastBusyQueues(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{"workflow_runs":[`))
+			for i := 0; i < stablePromotionRunsPerPage; i++ {
+				if i > 0 {
+					_, _ = w.Write([]byte(`,`))
+				}
+				_, _ = fmt.Fprintf(w, `{"run_number":%d,"head_sha":"new%04d"}`, 1000-i, i)
+			}
+			_, _ = w.Write([]byte(`]}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"workflow_runs":[{"run_number":800,"head_sha":"old"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		}
+	}))
+	defer srv.Close()
+	oldBase := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = oldBase })
+
+	runs := stablePromotionFetchRuns(slog.Default())
+	if len(runs) != stablePromotionRunsPerPage+1 {
+		t.Fatalf("runs = %d, want %d", len(runs), stablePromotionRunsPerPage+1)
+	}
+	if runs[len(runs)-1].RunNumber != 800 {
+		t.Fatalf("last run = %+v, want page-2 run 800", runs[len(runs)-1])
+	}
+	if fmt.Sprint(pages) != "[1 2]" {
+		t.Fatalf("pages = %v, want [1 2]", pages)
 	}
 }

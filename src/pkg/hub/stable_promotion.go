@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -143,38 +144,52 @@ type stablePromotionWorkflowRun struct {
 	Conclusion string `json:"conclusion"`
 }
 
+const stablePromotionRunsPerPage = 100
+const stablePromotionRunPages = 5
+
 // stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
 // through stablePromotionRuns, which caches the answer.
 var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
 	client := &http.Client{Timeout: 5 * time.Second}
-	runsURL := githubAPIBase + "/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=50"
-	req, err := http.NewRequest(http.MethodGet, runsURL, nil)
-	if err != nil {
-		return nil
+	var runs []stablePromotionWorkflowRun
+	for page := 1; page <= stablePromotionRunPages; page++ {
+		runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=%d&page=%d", githubAPIBase, stablePromotionRunsPerPage, page)
+		req, err := http.NewRequest(http.MethodGet, runsURL, nil)
+		if err != nil {
+			return runs
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		authGitHubRequest(req)
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
+			return runs
+		}
+		var body struct {
+			WorkflowRuns []stablePromotionWorkflowRun `json:"workflow_runs"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
+			return runs
+		}
+		if err != nil {
+			logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
+			return runs
+		}
+		if len(body.WorkflowRuns) == 0 {
+			break
+		}
+		runs = append(runs, body.WorkflowRuns...)
+		if len(body.WorkflowRuns) < stablePromotionRunsPerPage {
+			break
+		}
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	authGitHubRequest(req)
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
-		return nil
+	if runs == nil {
+		runs = []stablePromotionWorkflowRun{}
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
-		return nil
-	}
-	var body struct {
-		WorkflowRuns []stablePromotionWorkflowRun `json:"workflow_runs"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body); err != nil {
-		logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
-		return nil
-	}
-	if body.WorkflowRuns == nil {
-		body.WorkflowRuns = []stablePromotionWorkflowRun{}
-	}
-	return body.WorkflowRuns
+	return runs
 }
 
 // stablePromotionEligibleBuild returns the newest verified build newer than
