@@ -28,6 +28,12 @@ func TestReporterTrust_Defaults(t *testing.T) {
 	if got := r.EffectiveUntrustedRequireLabels(); !equalStringSlices(got, []string{"triage/accepted"}) {
 		t.Errorf("default triage labels = %v", got)
 	}
+	if got := r.EffectiveAwaitingTriageLabel(); got != "hive/awaiting-triage" {
+		t.Errorf("default awaiting triage label = %q", got)
+	}
+	if !r.CommentOn() {
+		t.Error("reporter-trust wait comments must default on")
+	}
 	// CONTRIBUTOR is deliberately NOT trusted by default: one merged typo
 	// fix does not make a stranger a maintainer.
 	if r.Trusted("carol", "CONTRIBUTOR") {
@@ -126,6 +132,9 @@ func TestValidateReporterTrust(t *testing.T) {
 	}
 	if err := ValidateReporterTrust(ReporterTrustConfig{UntrustedRequireLabels: []string{" "}}); err == nil {
 		t.Error("a blank triage label must be rejected")
+	}
+	if err := ValidateReporterTrust(ReporterTrustConfig{AwaitingTriageLabel: " "}); err == nil {
+		t.Error("a blank awaiting triage label must be rejected")
 	}
 }
 
