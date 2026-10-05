@@ -1,1 +1,0 @@
-- docs: credit Crustify/Wavefront in integration guide (#10620)
