@@ -186,6 +186,38 @@ func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
 	}
 }
 
+func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"function renderAuditCollapsedSummary(text, title)",
+		"renderSparkline(null, sparkValues",
+		"Audit entries per hour over the last 24h",
+		"audit-entry-rate-spark",
+		"audit-last-entry",
+		"audit-today-count",
+		"audit-sensitive-chip ${chipClass}",
+		"const chipClass = sensitive > 0 ? 'warning' : 'muted';",
+		"window._auditSummary = _auditSummary;",
+		"return renderAuditCollapsedSummary(text, title);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard audit collapsed summary missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		".audit-sensitive-chip.warning",
+		".audit-sensitive-chip.muted",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard audit sensitive chip CSS missing %q", want)
+		}
+	}
+}
+
 // TestStaticTerminalHostedApexWiring pins the two hosted-hive terminal defects
 // that shipped alongside the proxy's single-apex /terminal gate.
 //
