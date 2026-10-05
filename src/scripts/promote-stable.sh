@@ -514,7 +514,7 @@ built = datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00')).astimezone(ti
 print((built + timedelta(hours=float(sys.argv[2]))).isoformat().replace('+00:00', 'Z'))
 PYEOF
 )
-      if [[ -z $next_unsoaked_at || $eligible > $next_unsoaked_at ]]; then
+      if [[ -z $next_unsoaked_at || $eligible < $next_unsoaked_at ]]; then
         next_unsoaked_at=$eligible
         next_unsoaked_sha=${run_sha:0:7}
         next_unsoaked_generation=$run_number
@@ -586,10 +586,10 @@ PYEOF
   done < <(docker_success_runs "$repo")
 
   if [[ -z $best_digest ]]; then
-    if [[ -n $next_unsoaked_at ]]; then
-      hold_with_reason "no eligible build has completed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h soak yet; newest unsoaked build ${next_unsoaked_sha} generation ${next_unsoaked_generation} completed ${next_unsoaked_completed} and is eligible_at ${next_unsoaked_at}"
-    elif [[ -n $best_reason ]]; then
+    if [[ -n $best_reason ]]; then
       hold_with_reason "$best_reason"
+    elif [[ -n $next_unsoaked_at ]]; then
+      hold_with_reason "no eligible build has completed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h soak yet; next unsoaked build ${next_unsoaked_sha} generation ${next_unsoaked_generation} completed ${next_unsoaked_completed} and is eligible_at ${next_unsoaked_at}"
     else
       hold_with_reason "no docker.yml build newer than stable generation ${max_stable_generation} has crossed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h line"
     fi

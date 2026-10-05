@@ -196,7 +196,7 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 		if !eligible.After(now) {
 			return build, now.UTC().Format(time.RFC3339)
 		}
-		if nextAt == "" || eligible.After(mustParseRFC3339(nextAt)) {
+		if nextAt == "" || eligible.Before(mustParseRFC3339(nextAt)) {
 			nextAt = eligible.Format(time.RFC3339)
 			nextBuild = build
 		}

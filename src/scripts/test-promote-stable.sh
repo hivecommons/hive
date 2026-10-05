@@ -363,8 +363,8 @@ else
   bad "hard-gate failure must not fall back to an older build (rc=${rc}; output: ${out})"
 fi
 
-# If there is no soaked build newer than stable, the hold reason names the
-# future eligible_at for the newest unsoaked build.
+# If there is no soaked build newer than stable, the hold reason names the next
+# future eligible_at across the unsoaked builds.
 no_eligible="$tmp/no-eligible"
 mkdir -p "$no_eligible/bin"
 cp "$select_build/bin/docker" "$no_eligible/bin/docker"
@@ -378,7 +378,7 @@ for a in "$@"; do
   prev=$a
 done
 if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
-  json='{"workflow_runs":[{"run_number":300,"head_sha":"new1234","updated_at":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"}]}'
+  json='{"workflow_runs":[{"run_number":300,"head_sha":"new1234","updated_at":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"},{"run_number":200,"head_sha":"old1234","updated_at":"2033-05-18T01:00:00Z","status":"completed","conclusion":"success"}]}'
   jq -r "$jqexpr" <<<"$json"
   exit 0
 fi
@@ -388,10 +388,10 @@ MOCK
 chmod +x "$no_eligible/bin/gh"
 out=$(PATH="$no_eligible/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
   STABLE_PROMOTION_STATE_JSON='{"auto_promote":true}' "$promoter" promote 2>&1) && rc=0 || rc=$?
-if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'eligible_at 2033-05-19T03:00:00Z' <<<"$out"; then
-  pass "no eligible build holds with a reason naming eligible_at"
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'next unsoaked build old1234 generation 200' <<<"$out" && grep -q 'eligible_at 2033-05-19T01:00:00Z' <<<"$out"; then
+  pass "no eligible build holds with a reason naming the next eligible_at"
 else
-  bad "no eligible build must hold with eligible_at (rc=${rc}; output: ${out})"
+  bad "no eligible build must hold with the next eligible_at (rc=${rc}; output: ${out})"
 fi
 
 echo
