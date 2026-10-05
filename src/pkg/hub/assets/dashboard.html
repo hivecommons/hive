@@ -478,6 +478,9 @@
       .hive-modal { padding: 14px; }
       h1 { font-size: 1.2rem; }
     }
+    .admin-collapsible-section { margin-top: 48px; }
+    .admin-collapsible-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-6); }
+    .admin-collapsible-title { color: var(--hub-dashboard-accent); margin: var(--sp-0); cursor: pointer; user-select: none; display: flex; align-items: center; gap: var(--sp-4); }
     /* NPS feedback card (#9610). Admin-only; every value is set with
        textContent, so this block only lays out plain text nodes. Tokens only,
        per the style ratchet. */
@@ -628,6 +631,24 @@
       <div id="public-hives-container"></div>
     </div>
 
+    <div id="nps-section" class="admin-collapsible-section" hidden>
+      <div class="admin-collapsible-head">
+        <h2 id="nps-header" class="admin-collapsible-title" role="button" tabindex="0" aria-expanded="false" aria-controls="nps-body"
+            onclick="toggleAdminNPSSection()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminNPSSection();}">
+          <span id="nps-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; NPS feedback</span>
+          <span id="nps-summary" class="fs-sm text-muted"></span>
+        </h2>
+      </div>
+      <div id="nps-body" hidden>
+        <!-- NPS feedback from every hive's dashboard (#9610). Double gated:
+             this section is hidden until the admin check passes, and
+             /api/admin/nps is behind requireAdmin. Free text is rendered with
+             textContent only, never as markup. Empty/disabled fleets still show
+             the existing no-responses state instead of hiding the section. -->
+        <div id="nps-container"></div>
+      </div>
+    </div>
+
     <div id="admin-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
         <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
@@ -662,11 +683,6 @@
              Rendered as a plain ranked bar list; no map, no charting library,
              no external asset (the hub forbids external CDNs/images). -->
         <div class="mt-7" id="user-countries-container"></div>
-        <!-- NPS feedback from every hive's dashboard (#9610). Same double
-             gating as the country rollup: inside the admin section, and fed
-             by /api/admin/nps, which is behind requireAdmin. Free text is
-             rendered with textContent only, never as markup. -->
-        <div class="mt-7" id="nps-container"></div>
       </div>
     </div>
 
@@ -9779,6 +9795,39 @@
       } catch(e) { hiveToast('Cannot remove admin', 'error'); }
     }
 
+    /* --- Collapsible "Hub Admin — NPS feedback" section ---
+       Kept as its own admin-only section immediately above Users. It follows
+       the same persisted-collapse convention as Users: collapsed by default,
+       and only an explicit localStorage 'false' expands it. */
+    var ADMIN_NPS_COLLAPSED_KEY = 'hive-admin-nps-collapsed';
+    var _adminNPSCollapsed = localStorage.getItem(ADMIN_NPS_COLLAPSED_KEY) !== 'false';
+
+    function applyAdminNPSCollapsed() {
+      var body = document.getElementById('nps-body');
+      var toggle = document.getElementById('nps-toggle');
+      var header = document.getElementById('nps-header');
+      if (body) body.hidden = _adminNPSCollapsed;
+      if (toggle) toggle.innerHTML = _adminNPSCollapsed ? '&#9656;' : '&#9662;';
+      if (header) header.setAttribute('aria-expanded', _adminNPSCollapsed ? 'false' : 'true');
+    }
+
+    function persistAdminNPSCollapsed() {
+      try {
+        localStorage.setItem(ADMIN_NPS_COLLAPSED_KEY, _adminNPSCollapsed ? 'true' : 'false');
+      } catch(e) {}
+    }
+
+    function toggleAdminNPSSection() {
+      _adminNPSCollapsed = !_adminNPSCollapsed;
+      persistAdminNPSCollapsed();
+      applyAdminNPSCollapsed();
+    }
+
+    function updateAdminNPSSummary(text) {
+      var el = document.getElementById('nps-summary');
+      if (el) el.textContent = text || '';
+    }
+
     /* --- Collapsible "Hub Admin — Users" section ---
        The roster runs to ~90 records, so an expanded users table pushes the
        Hub Banner and Cluster Health sections far below the fold. An operator
@@ -9901,16 +9950,18 @@
       try {
         var resp = await fetch('/api/saas/admin/users');
         if (resp.status === 403) {
-          if (!_adminLoaded) { document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; document.getElementById('btn-send-banner-top').style.display = 'none'; }
+          if (!_adminLoaded) { document.getElementById('nps-section').hidden = true; document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; document.getElementById('btn-send-banner-top').style.display = 'none'; }
           return;
         }
         _adminLoaded = true;
+        document.getElementById('nps-section').hidden = false;
         document.getElementById('admin-section').style.display = '';
         var navFleet = document.getElementById('nav-fleet');
         if (navFleet) navFleet.style.display = '';
         /* The section is display:none until the admin check passes, so this is
            the first point at which the persisted collapse state can be pushed
            onto real DOM. Idempotent, so running it on every poll is fine. */
+        applyAdminNPSCollapsed();
         applyAdminUsersCollapsed();
         document.getElementById('hub-banner-section').style.display = '';
         document.getElementById('btn-send-banner-top').style.display = '';
@@ -9927,7 +9978,7 @@
         /* NPS card (#9610): same admin poll, same not-awaited rule. */
         loadAdminNPS();
       } catch(e) {
-        if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
+        if (!_adminLoaded) { document.getElementById('nps-section').hidden = true; document.getElementById('admin-section').style.display = 'none'; }
       } finally {
         _adminLoading = false;
       }
@@ -10122,18 +10173,23 @@
         ' \u00b7 avg ' + (Number(t && t.average_score) || 0);
     }
 
+    function npsHeadlineText(data) {
+      var scoreMax = Number(data && data.score_max) || 0;
+      return npsTallyText(data) + ' / ' + scoreMax;
+    }
+
     function renderAdminNPS(data) {
       var el = document.getElementById('nps-container');
       if (!el) return;
       while (el.firstChild) el.removeChild(el.firstChild);
-      el.appendChild(npsEl('div', 'nps-admin-title', 'NPS feedback'));
       var total = Number(data && data.total) || 0;
+      var scoreMax = Number(data && data.score_max) || 0;
+      updateAdminNPSSummary(npsHeadlineText(data));
       if (total <= 0) {
         el.appendChild(npsEl('div', 'fs-sm text-muted', 'No NPS responses yet.'));
         return;
       }
-      var scoreMax = Number(data.score_max) || 0;
-      el.appendChild(npsEl('div', 'nps-admin-summary', npsTallyText(data) + ' / ' + scoreMax));
+      el.appendChild(npsEl('div', 'nps-admin-summary', npsHeadlineText(data)));
       el.appendChild(npsEl('div', 'nps-admin-summary',
         'Promoters ' + (Number(data.promoters) || 0) + ' (' + (Number(data.promoter_pct) || 0) + '%) \u00b7 ' +
         'Passives ' + (Number(data.passives) || 0) + ' (' + (Number(data.passive_pct) || 0) + '%) \u00b7 ' +
