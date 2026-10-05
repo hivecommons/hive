@@ -3,7 +3,7 @@
 # src/Dockerfile: resolve via auth.docker.io token + HEAD manifest for repo
 # library/golang, tag 1.27-alpine) and update both the tag and the @sha256
 # digest together.
-FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -27,6 +27,8 @@ ARG GIT_BRANCH=unknown
 # git describe needs. See the longer comment in src/Dockerfile and
 # src/docs/releases.md, "The version constant".
 ARG VERSION=""
+ARG TARGETOS
+ARG TARGETARCH
 RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
@@ -34,7 +36,7 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     RESOLVED_VERSION="$VERSION" && \
     if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always 2>/dev/null || echo ""); fi && \
     if [ -n "$RESOLVED_VERSION" ]; then VERSION_LDFLAG="-X main.version=${RESOLVED_VERSION}"; fi && \
-    CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive
 
 # Named `runtime` so the CI hub build step can list it in `no-cache-filters`
 # alongside `builder`. Busting only `builder` rebuilt a fresh /hive but let

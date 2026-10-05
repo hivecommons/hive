@@ -27,6 +27,7 @@
 # QEMU emulation for the foreign arch costs minutes per build for no benefit —
 # a pure-Go static binary cross-compiles exactly.
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS quota-publisher-builder
+ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
 COPY src/go.mod src/go.sum ./
@@ -35,7 +36,7 @@ RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
 COPY src/ .
 RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /hive-quota-publisher ./cmd/hive-quota-publisher
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
