@@ -78,7 +78,7 @@ jobs:
   # This runs the real setpriv from the real base image, with NET_ADMIN in the
   # bounding set (--cap-add), and asserts bit 12 survives the drop to dev.
   ambient-cap-runtime:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -98,7 +98,7 @@ jobs:
   # This is the coverage #3895 did not have: that PR proposed dropping
   # SETUID/SETGID, which breaks agent launch in the pod, and CI stayed green.
   manifest-cap-runtime:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -119,7 +119,7 @@ jobs:
   # su-exec as `dev` to prove the one surviving setuid bit still switches UID,
   # and as an agent UID to prove the hive-launch gate still refuses.
   image-suid-inventory:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

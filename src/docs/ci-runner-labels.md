@@ -91,8 +91,8 @@ The current runner image has the Go/Node toolchains and a Docker daemon, so
 gh-free Docker, coverage, license and shell-test lanes can use the same
 fork-safe fleet expression as the rest of CI. This includes `docker.yml`'s
 `gate` and manifest `merge*` jobs, the remaining `v2-ci.yml` Docker smoke
-job, `suid-contract.yml`'s runtime checks, `coverage-hourly.yml`,
-`dco-post-merge.yml`, `fossa.yml`, `pr-auto-update-test.yml`,
+job, `coverage-hourly.yml`, `dco-post-merge.yml`, `fossa.yml`,
+`pr-auto-update-test.yml`,
 `promote-stable.yml` and `notice-autofix.yml`.
 
 A few jobs are still pinned to `ubuntu-latest` on purpose:
@@ -104,6 +104,9 @@ A few jobs are still pinned to `ubuntu-latest` on purpose:
   rolled out to the pool.
 - `v2-ci.yml` `overlayfs-exec-guard` needs the hosted VM's systemd-managed
   containerd service and overlayfs snapshotter.
+- `suid-contract.yml` runtime jobs stay hosted: their capability-removal
+  assertions rely on hosted Docker's runtime isolation; the self-hosted DIND
+  path leaves those checks vacuous.
 - `podman-rootless-lane.yml`, `podman-rootful-lane.yml` and
   `quadlet-gate.yml` require the hosted runner's Podman/rootless stack or the
   pinned Podman container workflow they explicitly assert.
