@@ -58,6 +58,18 @@ func TestDashboardSectionEmojisMatchSidebar(t *testing.T) {
 	}
 }
 
+func TestDashboardSectionTitlesMatchSidebarLabels(t *testing.T) {
+	html := indexHTML(t)
+	config := jsConstObject(t, html, "const DASHBOARD_SECTION_CARD_CONFIG")
+	for sectionID, label := range sidebarSectionLabels(html) {
+		entry := dashboardSectionConfigEntry(t, config, sectionID)
+		title := dashboardSectionTitleLabel(dashboardSectionConfigTitle(t, entry))
+		if !strings.EqualFold(title, label) {
+			t.Fatalf("section %q title %q does not match sidebar label %q", sectionID, title, label)
+		}
+	}
+}
+
 func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
@@ -317,6 +329,25 @@ func sidebarSectionEmojis(html string) map[string]string {
 		out[m[1]] = m[2]
 	}
 	return out
+}
+
+func sidebarSectionLabels(html string) map[string]string {
+	re := regexp.MustCompile(`data-section="([^"]+)"[^>]*>\s*<span class="oc-nav-emoji">[^<]+</span><span class="oc-nav-text">([^<]+)</span>`)
+	out := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(html, -1) {
+		out[m[1]] = strings.TrimSpace(m[2])
+	}
+	return out
+}
+
+func dashboardSectionTitleLabel(title string) string {
+	title = strings.TrimSpace(title)
+	for i, r := range title {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return strings.TrimSpace(title[i:])
+		}
+	}
+	return ""
 }
 
 func startsWithEmoji(s string) bool {

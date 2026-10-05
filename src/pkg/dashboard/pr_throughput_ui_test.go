@@ -15,7 +15,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 	for _, snippet := range []string{
 		`id="pr-throughput-section"`,
 		`id="pr-throughput-card"`,
-		`📊 Change Throughput`,
+		`📊 Throughput`,
 		`pull/merge requests across tracked forges`,
 		`data-arg0="pr-throughput-section"`,
 		"function renderPRThroughput",
@@ -25,7 +25,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		`data-action="setPRThroughputHours"`,
 		"window.setPRThroughputHours = setPRThroughputHours",
 		"window.setPRThroughputRole = setPRThroughputRole",
-		"'pr-throughput-section': { title: '📊 Change Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
+		"'pr-throughput-section': { title: '📊 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
 		`<div class="lbl">Opened</div>`,
 		`<div class="lbl">Merged</div>`,
 		`<div class="lbl">Closed without merging</div>`,
