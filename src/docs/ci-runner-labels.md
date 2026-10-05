@@ -87,25 +87,45 @@ use it.
 
 ## What still runs on GitHub-hosted runners, and why
 
-The fleet runs in Kubernetes pods (ARC) with no Docker daemon and no
-privileged mounts, so a few jobs are pinned to `ubuntu-latest` on purpose:
+The current runner image has the Go/Node toolchains and a Docker daemon, so
+gh-free Docker, coverage, license and shell-test lanes can use the same
+fork-safe fleet expression as the rest of CI. This includes `docker.yml`'s
+`gate`, amd64 image build legs, and manifest `merge*` jobs, the remaining
+`v2-ci.yml` Docker smoke job, `coverage-hourly.yml`, `dco-post-merge.yml`, `fossa.yml`,
+`pr-auto-update-test.yml`,
+`promote-stable.yml` and `notice-autofix.yml`.
 
-- `v2-ci.yml` `docker (hive|hub|contributor)` — `docker build` of each
-  Dockerfile. This matrix is the only pre-merge image compile gate;
-  `docker.yml` builds nothing for feature branches any more (it used to build
-  all six platform images per push, ~20 hosted-runner minutes, and that queue
-  contention was routinely the last check to finish on a PR).
-- `v2-ci.yml` `overlayfs-exec-guard` — needs containerd + overlayfs on a VM.
-- `docker.yml` `build*`/`merge*` — publish jobs; run only when `gate` decides
-  `push=true` (release-line branches and `workflow_dispatch`).
+A few jobs are still pinned to `ubuntu-latest` on purpose:
 
-Everything else Go-shaped (`build-and-test`, `v2 Tests` shards, `govulncheck`,
-`gosec`, `golangci-lint`, `NOTICE matches the module graph`, …) uses the
-fleet expression. When moving a Go job to the fleet, set `cache: false` on
-`actions/setup-go` and `skip-cache: true` on `golangci-lint-action`: the
-runners mount a persistent `GOCACHE`/`GOMODCACHE`, and the actions' post-step
-cache save would otherwise tar that multi-GB shared cache on every run
-(#8762).
+- Jobs that invoke the `gh` CLI (`tagged-release.yml`, `prune-ghcr*.yml`,
+  issue/PR command workflows, refs/cache/changelog/docs reminders,
+  `gh-aw-compile.yml`, `ci-infra-*.yml`, `hive-of-the-week.yml` and similar)
+  stay hosted until the self-hosted image includes `gh` and that image is
+  rolled out to the pool.
+- `docker.yml` arm64 image build legs stay on `ubuntu-24.04-arm`: the LKE
+  runner pool is amd64-only, and `publish-image-tags.sh` verifies both
+  `linux/amd64` and `linux/arm64` before advancing candidate/stable tags.
+- `v2-ci.yml` `overlayfs-exec-guard` needs the hosted VM's systemd-managed
+  containerd service and overlayfs snapshotter.
+- `suid-contract.yml` runtime jobs stay hosted: their capability-removal
+  assertions rely on hosted Docker's runtime isolation; the self-hosted DIND
+  path leaves those checks vacuous.
+- `podman-rootless-lane.yml`, `podman-rootful-lane.yml` and
+  `quadlet-gate.yml` require the hosted runner's Podman/rootless stack or the
+  pinned Podman container workflow they explicitly assert.
+- `formal-verify.yml` installs Spin at runtime; the self-hosted image does not
+  carry the formal-verification toolchain yet.
+- `ci-runner-image.yml` builds the image the pool runs on, so it remains hosted
+  to avoid a chicken-and-egg dependency on the image being rebuilt.
+- `ci-runner-canary.yml` keeps its watchdog and reporter hosted by design:
+  those jobs diagnose the self-hosted pool and must not depend on it.
+- `cli-pin-bump.yml` stays hosted because its smoke path still depends on the
+  hosted image contract and `gh` CLI.
+
+When moving a Go job to the fleet, set `cache: false` on `actions/setup-go` and
+`skip-cache: true` on `golangci-lint-action`: the runners mount a persistent
+`GOCACHE`/`GOMODCACHE`, and the actions' post-step cache save would otherwise
+tar that multi-GB shared cache on every run (#8762).
 
 ## Clearing runs already wedged
 

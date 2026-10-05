@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     # Hard cap so a hung runner / stuck -race build auto-fails instead of
     # blocking PR merges indefinitely (the go test -timeout only bounds the test
     # step, not checkout/setup/build/post-processing or a wedged runner). #3615.
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          cache: false
       - name: Guard shared Go cache (fall back when the runner volume is full)
         # The checkout above is pinned to the MEASURED ref, not the branch this
         # workflow file lives on, so the helper script only exists when that ref
@@ -391,7 +391,7 @@ jobs:
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
     if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: coverage
     permissions:
       contents: read
