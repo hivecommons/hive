@@ -1012,10 +1012,11 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// hand an agent work on it (#6203). Enumeration is the choke point every
 	// one of those paths runs through.
 	repos := c.activeRepos()
+	reporterTrustWaitBudget := newReporterTrustWaitBudget()
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
-		issues, held, issueTotal, issueBreakdown, err := c.fetchIssues(ctx, repo, now)
+		issues, held, issueTotal, issueBreakdown, err := c.fetchIssues(ctx, repo, now, reporterTrustWaitBudget)
 		if err != nil {
 			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
 			failedRepos++
@@ -1099,7 +1100,7 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 	return c.org, repo
 }
 
-func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
+func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
 
@@ -1193,7 +1194,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		// judged here.
 		if ra, ok := issueFilter.(ReporterAdmitter); ok && ra.ReporterTrustEnabled() && c.isHumanAuthor(issue.GetUser()) {
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
-				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra)
+				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
 				continue
 			}
