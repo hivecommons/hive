@@ -21844,6 +21844,9 @@ function burnAreaChart() {
         const repo = (c.repos || []).join(', ') || 'no repo';
         const activity = c.last_activity || 'no activity';
         const engine = c.engine || 'unknown engine';
+        const rc = c.recheck || {};
+        const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
+        const recheckDisabled = rc.in_flight ? ' disabled' : '';
         return `<div class="campaign-row">
           <div>
             <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
@@ -21854,9 +21857,11 @@ function burnAreaChart() {
               <span>${escapeHtml(engine)}</span>
               <span>${escapeHtml(activity)}</span>
             </div>
+            <div class="campaign-row-meta"><span>${recheckText}</span></div>
           </div>
           <div class="campaign-row-actions">
             <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
             <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
             <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
@@ -22094,6 +22099,16 @@ function burnAreaChart() {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
+        await loadCampaigns();
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    }
+
+    async function recheckCampaign(id) {
+      if (!id) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/recheck', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
+        const data = await r.json();
+        if (!data.ok) { showToast(data.error || 'Failed to recheck campaign', 'error'); return; }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }

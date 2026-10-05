@@ -19,10 +19,19 @@ func TestRunsConfigDefaults(t *testing.T) {
 	if got := r.Spektacular.PollInterval(); got != time.Duration(DefaultSpektacularPollS)*time.Second {
 		t.Fatalf("PollInterval() = %s, want %ds", got, DefaultSpektacularPollS)
 	}
+	if r.Spektacular.Recheck.Enabled {
+		t.Fatal("spektacular recheck must be off by default")
+	}
+	if got := r.Spektacular.DefaultRecheckInterval(); got != DefaultSpektacularRecheckInterval {
+		t.Fatalf("DefaultRecheckInterval() = %s, want %s", got, DefaultSpektacularRecheckInterval)
+	}
+	if got := r.Spektacular.MaxDeltaTasks(); got != DefaultSpektacularMaxDeltaTasks {
+		t.Fatalf("MaxDeltaTasks() = %d, want %d", got, DefaultSpektacularMaxDeltaTasks)
+	}
 }
 
 func TestRunsConfigOverrides(t *testing.T) {
-	r := RunsConfig{MaxStageRetries: 5, Spektacular: SpektacularConfig{Enabled: true, Binary: "  /opt/bin/spektacular ", PollIntervalS: 7}}
+	r := RunsConfig{MaxStageRetries: 5, Spektacular: SpektacularConfig{Enabled: true, Binary: "  /opt/bin/spektacular ", PollIntervalS: 7, Recheck: SpektacularRecheckConfig{Enabled: true, DefaultInterval: 24 * time.Hour, MaxDeltaTasks: 7}}}
 	if got := r.MaxStageRetriesOrDefault(); got != 5 {
 		t.Fatalf("MaxStageRetriesOrDefault() = %d, want 5", got)
 	}
@@ -31,6 +40,12 @@ func TestRunsConfigOverrides(t *testing.T) {
 	}
 	if got := r.Spektacular.PollInterval(); got != 7*time.Second {
 		t.Fatalf("PollInterval() = %s, want 7s", got)
+	}
+	if got := r.Spektacular.DefaultRecheckInterval(); got != 24*time.Hour {
+		t.Fatalf("DefaultRecheckInterval() = %s, want 24h", got)
+	}
+	if got := r.Spektacular.MaxDeltaTasks(); got != 7 {
+		t.Fatalf("MaxDeltaTasks() = %d, want 7", got)
 	}
 	neg := RunsConfig{MaxStageRetries: -1, Spektacular: SpektacularConfig{PollIntervalS: -3}}
 	if neg.MaxStageRetriesOrDefault() != DefaultMaxStageRetries || neg.Spektacular.PollInterval() != time.Duration(DefaultSpektacularPollS)*time.Second {

@@ -244,6 +244,46 @@ lists `implement` only after `ApprovePlan` (`POST /api/plans/{id}/approve`)
 sets `plan_status` to `approved`. A run whose epic already carries a plan is
 not re-imported.
 
+## Continuous convergence
+
+Spek campaigns can opt into a scheduler-owned recheck cadence without changing
+the one-shot default. The feature is off unless
+`runs.spektacular.recheck.enabled: true`; opted-in campaigns use
+`runs.spektacular.recheck.default_interval` (default `168h`) unless their
+retained campaign record carries `recheck.interval`, and imported delta tasks
+are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
+
+When a completed `implement` campaign is due, or an owner posts
+`POST /api/campaigns/{id}/recheck`, Hive creates a linked Spektacular revision
+(`revision_of`, `revision`) and starts that revision at the `spec` stage. The
+original campaign is never overwritten; the revision is a new generation with
+the prior final spec/plan treated as prior artifacts by convention. Manual
+requests return `409 Conflict` when another revision is already in flight and
+`404 Not Found` when recheck is disabled unless `?force=true` is supplied.
+
+The recheck follows the same human checkpoints as any Spek run. A final spec
+still waits at the spec boundary when that checkpoint is enabled, and a final
+plan imports as a draft plan until approval. At final-plan import Hive compares
+the revision task list with the prior final plan by normalized task-content
+hash. Unchanged tasks reuse the prior logical operation identity and are not
+imported again; only new or changed tasks become planner children. If the
+codebase and prior plan are unchanged, the delta is empty and Hive creates no
+new planner tasks or issues. If the delta exceeds `max_delta_tasks`, Hive
+imports the first capped set and records `campaign_recheck_delta_capped`.
+
+Each revision carries a `drift` evidence block with `codebase_changed`,
+`prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
+The codebase signal compares the prior recorded head SHA with the current Git
+HEAD when available. Outward-looking external-source discovery (upstreams,
+competitors, standards trackers, landscape entries) is deliberately not in
+this PR; the Go extension point is `RecheckEvidenceSource`, with only the
+codebase-head source implemented.
+
+Campaign list/detail JSON includes
+`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count}`;
+the dashboard Campaigns panel renders the cadence and provides an owner-only
+Recheck action.
+
 ## Defensive handling of the open questions
 
 The #8227 questions were answered on jumppad-labs/spektacular#45. The runner

@@ -565,6 +565,10 @@ governor:
 #     enabled: false
 #     binary: spektacular
 #     poll_interval_s: 30
+#     recheck:
+#       enabled: false
+#       default_interval: 168h
+#       max_delta_tasks: 50
 #   max_stage_retries: 2
 #   max_worktrees: 8
 
