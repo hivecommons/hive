@@ -70,6 +70,34 @@ The `/fixed` workflow uses the reporter-confirmation labels and comments
 described above. `/reopen`, label-helper, and assignment-helper commands are
 single-comment workflows; repeat comments can repeat their documented action.
 
+## Label-driven repositories
+
+Some repositories accept and park issues entirely with labels and their own
+lifecycle bot (for example `needs-triage` → `triage/accepted`, with the bot
+removing `needs-human`). Clearing those labels from Hive would fight that
+workflow, so an operator can opt a repository out per repo:
+
+```yaml
+project:
+  repo_policies:
+    - repo: projectbluefin/common
+      label_driven: true
+```
+
+On an opted-in repository the un-park sweep:
+
+- posts no "What to reply" notice (`<!-- hive:unpark-notice:9879 -->`);
+- never removes `needs-human`, `needs-decision` or `needs-direction` and never
+  adds `approved-direction`, including for `/hive approve` and
+  `/hive decision <text>`;
+- answers `/hive approve`, `/hive decision <text>` and `/hive help` once
+  (same per-comment marker) with one line pointing at the repository's labels;
+- posts no hint for prose assent.
+
+Parked issues are still filtered from enumeration, and Hive may still add
+`needs-decision` with a comment asking the question. Repositories without
+`label_driven: true` behave exactly as described above.
+
 ## How the hive sees comments
 
 The un-park path is polling, not a webhook: every sweep lists open issues, keeps
