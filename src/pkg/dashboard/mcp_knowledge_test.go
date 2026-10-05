@@ -325,3 +325,11 @@ func TestPublicKnowledgeTypeListExcludesGovernance(t *testing.T) {
 		t.Errorf("public type list = %s", got)
 	}
 }
+
+// The route is registered with a literal so docs/api-reference.md citations
+// can verify it; keep the literal and the constant in lock-step.
+func TestPublicKnowledgeMCPPathConstantMatchesRoute(t *testing.T) {
+	if publicKnowledgeMCPPath != "/mcp/knowledge" {
+		t.Fatalf("publicKnowledgeMCPPath = %q; update the HandleFunc literal in api.go and docs/api-reference.md", publicKnowledgeMCPPath)
+	}
+}
