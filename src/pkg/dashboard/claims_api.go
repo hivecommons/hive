@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // Issue claims (hivecommons/hive#8380).
@@ -159,10 +161,38 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 	l := h.claimsLedger()
 	if l == nil || identity == "" {
+		if l == nil && identity != "" {
+			h.removeLegacyClaimLabelForLease(key)
+		}
 		return
 	}
 	for _, c := range l.ReleaseByHolderID(identity, reason, key) {
 		h.logger.Info("[claims] contributor claim released with lease", "issue", c.Key(), "holder", c.Holder, "reason", reason)
+	}
+}
+
+func (h *ContributeWSHub) removeLegacyClaimLabelForLease(key string) {
+	if !h.claimLabelsEnabled() {
+		return
+	}
+	ref, ok := worksource.ParseKey(key)
+	if !ok || !ref.IsGitHubIssue() || ref.Repo == "" || ref.Number <= 0 {
+		return
+	}
+	var remover claimLabelRemover
+	if h.claimCommenter != nil {
+		remover, _ = h.claimCommenter.(claimLabelRemover)
+	}
+	if remover == nil && h.server != nil && h.server.deps != nil && h.server.deps.GHClient != nil {
+		remover = h.server.deps.GHClient
+	}
+	if remover == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), claimCommentTimeout)
+	defer cancel()
+	if err := remover.RemoveLabel(ctx, ref.Repo, ref.Number, claims.LabelClaimed); err != nil {
+		h.logger.Warn("[claims] legacy claim label not removed after lease release", "issue", key, "error", err)
 	}
 }
 

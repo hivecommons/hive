@@ -656,7 +656,7 @@ Withheld rows carry a stable reason code and, where the refusing gate had one, t
 | Reason | Meaning | Evidence |
 |---|---|---|
 | `open_pr_claim` | An open pull request already claims the issue. | Claiming PR URL and author |
-| `issue_claim` | Someone has claimed the issue on the issue itself - a `hive-claim` marker comment posted by the hive's own App bot, or an assignee - and the claim has not expired ([#8380](https://github.com/hivecommons/hive/issues/8380)). Only while `governor.claims.enabled` is on. | `claimed_by` and `claim_expires_at` |
+| `issue_claim` | Someone has claimed the issue on the issue itself - a `hive:claim` marker comment posted by the hive's own App bot, or an assignee - and the claim has not expired ([#8380](https://github.com/hivecommons/hive/issues/8380)). Only while `governor.claims.enabled` is on. | `claimed_by` and `claim_expires_at` |
 | `merged_claim_stale` | A merged pull request (or a verified `no_work_needed` verdict) has claimed to fix the issue for 7+ days and the issue is still open; the next step is a maintainer's — close it, or say what remains ([#8003](https://github.com/hivecommons/hive/issues/8003)). | Fixing PR URL and author; the age in days |
 | `issue_churn` | The issue has already absorbed several merged or abandoned pull requests without settling, so what is left is a maintainer's call ([#7995](https://github.com/hivecommons/hive/issues/7995)). | Merged / closed-unmerged counts and the PR numbers |
 | `workflow_blocked` | The issue carries the `blocked` workflow label. | Matched label |
