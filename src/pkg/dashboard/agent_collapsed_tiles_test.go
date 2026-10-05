@@ -75,9 +75,9 @@ func TestAgentsCollapsedTileCountdownAndUpNext(t *testing.T) {
 		"agent-tile-upnext",
 		"agent-tile-cd",
 		"function agentCollapsedCountdownText(a, nextMs, nowMs)",
-		"function agentCollapsedTickCountdowns()",
+		"function agentCollapsedMaybeTickCountdowns(nowMs)",
 		"agentCollapsedTileHtml(a, nowMs, i === 0)",
-		"agentCollapsedTickCountdowns();",
+		"agentCollapsedMaybeTickCountdowns(now.getTime());",
 		"'logged out'",
 	} {
 		if !strings.Contains(html, want) {

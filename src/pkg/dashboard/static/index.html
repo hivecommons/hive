@@ -5600,8 +5600,14 @@
       if (delta <= 30000) return 'now';
       return `in ${Math.max(1, Math.round(delta / 60000))}m`;
     }
-    function agentCollapsedTickCountdowns() {
-      const now = Date.now();
+    let _agentTileTickAt = 0;
+    function agentCollapsedMaybeTickCountdowns(nowMs) {
+      if (nowMs - _agentTileTickAt < 30000) return;
+      _agentTileTickAt = nowMs;
+      agentCollapsedTickCountdowns(nowMs);
+    }
+    function agentCollapsedTickCountdowns(nowMs) {
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
       document.querySelectorAll('.agent-tile-cd[data-next-ms]').forEach(el => {
         const ms = Number(el.dataset.nextMs);
         const text = agentCollapsedCountdownText({}, ms, now);
@@ -20657,12 +20663,8 @@ function burnAreaChart() {
       if (!_navbarClockTimeZone) _navbarClockTimeZone = browserDashboardTimeZone();
       setNavbarClockText(formatNavbarClock(now, _navbarClockTimeZone));
       updateStatusStaleness(now.getTime());
-      if (now.getTime() - _agentTileTickAt >= 30000) {
-        _agentTileTickAt = now.getTime();
-        if (typeof agentCollapsedTickCountdowns === 'function') agentCollapsedTickCountdowns();
-      }
+      if (typeof agentCollapsedMaybeTickCountdowns === 'function') agentCollapsedMaybeTickCountdowns(now.getTime());
     }
-    let _agentTileTickAt = 0;
 
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
