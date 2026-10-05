@@ -28,6 +28,9 @@ func TestDashboardVisualSummaryWidgets(t *testing.T) {
 
 	script := `
 const store = new Map();
+var _factHistory = [{t: 1000, count: 1500}, {t: 2000, count: 1526}];
+var lastSparkSeries;
+function sparkSpanLabel(times) { return 'recorded time span'; }
 var window = { _lastStatus: {
   hiveId: 'hive-visual-test',
   governor: { mode: 'busy', prs: 4, issues: 3, thresholds: { surge: 12 } },
@@ -50,7 +53,7 @@ var document = { getElementById: id => ({ textContent: id === 'repos-needs-human
 var prtLast = { buckets: [{ opened: 1, merged: 0 }, { opened: 2, merged: 1 }, { opened: 3, merged: 2 }] };
 function escapeHtml(v) { return String(v == null ? '' : v).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
 function fmtSparkVal(v) { return Number.isFinite(Number(v)) ? String(Number(v)) : '—'; }
-function renderSparkline(_el, series, opts) { return '<span class="sparkline"><svg class="' + opts.svgClass + '" role="img"><title>' + escapeHtml(opts.title || '') + '</title><polyline class="sparkline-line" points="0,0 1,1"/></svg></span>'; }
+function renderSparkline(_el, series, opts) { lastSparkSeries = series; return '<span class="sparkline"><svg class="' + opts.svgClass + '" role="img"><title>' + escapeHtml(opts.title || '') + '</title><polyline class="sparkline-line" points="0,0 1,1"/></svg></span>'; }
 function _getAgentColor() { return 'var(--cyan)'; }
 function costHist() { return [{ usd: 1 }, { usd: 2 }]; }
 function computeHourlyBurnRates() { return [{ rate: 4 }, { rate: 8 }]; }
@@ -89,6 +92,19 @@ for (const [section, text] of Object.entries(fixtures)) {
 const knowledge = visualSectionSummary('knowledge-section', '1,526 facts');
 if (!knowledge.includes('1,526 facts')) throw new Error('knowledge summary should preserve spaced fact count: ' + knowledge);
 if (knowledge.includes('1,526facts')) throw new Error('knowledge summary collapsed number and label: ' + knowledge);
+if (!knowledge.includes('mini-knowledge-facts') || !knowledge.includes('Fact count') || !knowledge.includes('recorded time span')) throw new Error('knowledge chart must identify its metric and time span');
+if (JSON.stringify(lastSparkSeries) !== '[1500,1526]') throw new Error('knowledge must use server history');
+_factHistory = [{t: 1000, count: 12}, {t: 2000, count: 0}, {t: 3000, count: 4}];
+visualSectionSummary('knowledge-section', '4 facts');
+if (JSON.stringify(lastSparkSeries) !== '[12,0,4]') throw new Error('zero fact counts must not be filled forward');
+_factHistory = [{t: 1000, count: 7}];
+visualSectionSummary('knowledge-section', '7 facts');
+if (JSON.stringify(lastSparkSeries) !== '[7]') throw new Error('single sample must not fabricate growth from zero');
+_factHistory = [];
+const emptyKnowledge = visualSectionSummary('knowledge-section', '0 facts');
+if (!emptyKnowledge.includes('0 facts') || !emptyKnowledge.includes('no history yet') || emptyKnowledge.includes('mini-knowledge-facts')) throw new Error('empty history must retain count without invented trend');
+_factHistory = [{count: null}, {count: -1}, {count: 'bad'}];
+if (!visualSectionSummary('knowledge-section', '0 facts').includes('no history yet')) throw new Error('invalid samples must be ignored');
 window._auditSummary = { histogram: [], sensitive_24h: 0, today: 0, last: null };
 const audit = visualSectionSummary('audit-section', '99 events today');
 if (!audit.includes('>0 events today<')) throw new Error('audit summary should use live today count and spaced label: ' + audit);
