@@ -20,7 +20,7 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`data-action="reviewQueuePrevPage"`,
 		`data-action="reviewQueueNextPage"`,
 		`fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset)`,
-		`() => fetchReviewQueue().then(() => { setInterval(fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
+		`() => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html is missing review-queue wiring %q", want)
