@@ -45,13 +45,14 @@ func TestCollectClusterHealthNoCluster(t *testing.T) {
 	cachedClusterHealthTime = time.Time{}
 	cachedClusterHealthMu.Unlock()
 
-	// No SA token -> collectClusterHealthUncached returns nil (metrics API fails).
-	if got := CollectClusterHealth(slog.Default()); got != nil {
-		t.Errorf("expected nil report without k8s API access, got %+v", got)
+	// No SA token -> collectClusterHealthUncached returns an error report so the
+	// hub can display the precise spoke-side failure.
+	got := CollectClusterHealth(slog.Default())
+	if got == nil || got.NodeHealthError == "" {
+		t.Fatalf("expected node-health error report without k8s API access, got %+v", got)
 	}
 
-	// Second call hits the cache branch (cachedClusterHealth is nil though, so
-	// TTL check short-circuits to false; still exercises the lock path).
+	// Second call hits the cache branch.
 	_ = CollectClusterHealth(slog.Default())
 }
 

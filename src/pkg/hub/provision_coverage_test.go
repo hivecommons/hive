@@ -2,6 +2,7 @@ package hub
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -39,6 +40,22 @@ func TestProvisionHiveSuccess(t *testing.T) {
 
 	if err := provisionHive(h, req, dynamicCluster(), nil, slog.Default()); err != nil {
 		t.Fatalf("provisionHive: %v", err)
+	}
+}
+
+func TestProvisionManifestIncludesNodeHealthRBAC(t *testing.T) {
+	for _, want := range []string{
+		"kind: ClusterRole",
+		"name: hive-node-health-reader-{{.Namespace}}",
+		`resources: ["nodes"]`,
+		`resources: ["nodes/proxy"]`,
+		`resources: ["pods"]`,
+		`apiGroups: ["metrics.k8s.io"]`,
+		"kind: ClusterRoleBinding",
+	} {
+		if !strings.Contains(k8sManifestTemplate, want) {
+			t.Fatalf("k8sManifestTemplate missing %q", want)
+		}
 	}
 }
 

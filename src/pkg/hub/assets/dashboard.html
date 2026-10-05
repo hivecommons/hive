@@ -9221,6 +9221,8 @@
             if (cs.total_disk_percent != null) {
               var cDiskColor = healthBarColor(cs.total_disk_percent, CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT);
               cDiskSegment = '<span style="color:' + cDiskColor + '">' + cs.total_disk_percent + '% disk</span> · ';
+            } else if (cs.total_disk_gb != null) {
+              cDiskSegment = '<span class="text-muted" title="Disk capacity reported; live disk usage unavailable">—% of ' + cs.total_disk_gb + ' GiB disk</span> · ';
             } else {
               cDiskSegment = '<span class="text-muted" title="No node in this cluster reported live disk usage">— disk</span> · ';
             }

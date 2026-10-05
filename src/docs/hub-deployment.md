@@ -103,7 +103,16 @@ For push-reported clusters where the hub cannot run `kubectl`, follow the manife
 
 `/data/saas/clusters.json` keeps the historical compatibility key `pull_only`. Set `pull_only: true` when the hub cannot reach that cluster's Kubernetes API and the spokes must dial out to the hub instead. Operator-facing surfaces call these clusters **push-reported** because their node stats, dashboard token proofs, and liveness arrive in spoke heartbeats pushed from the cluster.
 
-A push-reported entry still needs its stable identity (for example `id`, `name`, `domain`, app/forge fields), but it does not need a usable `kubeconfig_path` for hub-side reads. If node stats are absent, upgrade the spokes to a build that sends heartbeat cluster health and then check spoke node-metrics RBAC and metrics-server in that cluster.
+A push-reported entry still needs its stable identity (for example `id`, `name`, `domain`, app/forge fields), but it does not need a usable `kubeconfig_path` for hub-side reads. If node stats are absent, upgrade the spokes to a build that sends heartbeat cluster health and then check the error reason shown in the Clusters panel.
+
+Heartbeat node health needs read-only cluster-scoped RBAC for:
+
+- core `nodes` `get,list` (capacity, allocatable, readiness, GPU labels)
+- core `nodes/proxy` `get` (best-effort kubelet `stats/summary` disk usage)
+- core `pods` `list` (per-node pod and hosted-hive counts)
+- `metrics.k8s.io` `nodes` `list` (live CPU/memory usage from metrics-server)
+
+When `metrics.k8s.io` is unavailable or forbidden, spokes still report node count, vCPU, memory and disk capacity from the core Node API. The hub marks only the live-usage data partial and carries the precise `node_health_error` reason, such as `metrics API failed: ... HTTP 403` or a missing metrics API, instead of the generic "check RBAC and metrics-server" note.
 
 ## API surface to know
 

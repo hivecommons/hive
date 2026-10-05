@@ -46,9 +46,9 @@ var (
 )
 
 // CollectClusterHealth gathers node-level CPU, memory, pod, and GPU metrics
-// by running kubectl in-cluster on the spoke. Results are cached for
-// metricsCollectionCacheTTL to avoid excessive kubectl calls.
-// Returns nil if metrics-server is not installed or kubectl fails.
+// from the in-cluster Kubernetes API on the spoke. Results are cached for
+// metricsCollectionCacheTTL to avoid excessive API calls. If metrics-server is
+// unavailable, the report still carries node capacity plus NodeHealthError.
 func CollectClusterHealth(logger *slog.Logger) *HeartbeatClusterHealthReport {
 	cachedClusterHealthMu.Lock()
 	if cachedClusterHealth != nil && time.Since(cachedClusterHealthTime) < metricsCollectionCacheTTL {
@@ -69,18 +69,13 @@ func CollectClusterHealth(logger *slog.Logger) *HeartbeatClusterHealthReport {
 }
 
 func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthReport {
-	// Query metrics API for node resource usage (requires metrics-server).
-	topOut, err := k8sAPIGet("/apis/metrics.k8s.io/v1beta1/nodes")
-	if err != nil {
-		logger.Debug("spoke metrics: metrics API failed (metrics-server may not be installed)", "error", err)
-		return nil
-	}
-
-	// Query nodes API for capacity, allocatable, conditions, GPU resources.
+	// Query nodes first. The core Node API has the capacity/allocatable data
+	// needed for useful totals even when metrics-server is absent or forbidden.
 	getOut, err := k8sAPIGet("/api/v1/nodes")
 	if err != nil {
-		logger.Debug("spoke metrics: nodes API failed", "error", err)
-		return nil
+		reason := nodeHealthErrorReason("nodes API failed", err)
+		logNodeHealthWarning(logger, reason)
+		return partialClusterHealthReport(reason)
 	}
 
 	// Parse node metadata from kubectl get nodes.
@@ -104,13 +99,15 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(getOut, &nodesJSON); err != nil {
-		logger.Debug("spoke metrics: failed to parse nodes JSON", "error", err)
-		return nil
+		reason := nodeHealthErrorReason("failed to parse nodes JSON", err)
+		logNodeHealthWarning(logger, reason)
+		return partialClusterHealthReport(reason)
 	}
 
 	type nodeInfo struct {
 		cpuAllocatable int64 // millicores
 		memAllocatable int64 // bytes
+		diskCapacity   int64 // bytes; capacity preferred, allocatable fallback
 		podCapacity    int
 		gpuCapacity    int
 		gpuAllocatable int
@@ -121,15 +118,23 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		diskPressure   bool
 	}
 	nodeMap := make(map[string]*nodeInfo)
+	nodeNames := make([]string, 0, len(nodesJSON.Items))
 	var totalGPUCapacity, totalGPUAllocatable int
 	gpuTypes := map[string]bool{}
 
 	for _, item := range nodesJSON.Items {
+		if item.Metadata.Name == "" {
+			continue
+		}
 		ni := &nodeInfo{}
 		// Allocatable (not raw capacity) is what the scheduler can place
 		// pods against, so hive capacity math below uses these values.
 		ni.cpuAllocatable = parseK8sCPU(item.Status.Allocatable["cpu"])
 		ni.memAllocatable = parseK8sMemory(item.Status.Allocatable["memory"])
+		ni.diskCapacity = parseK8sMemory(item.Status.Capacity["ephemeral-storage"])
+		if ni.diskCapacity == 0 {
+			ni.diskCapacity = parseK8sMemory(item.Status.Allocatable["ephemeral-storage"])
+		}
 		ni.unschedulable = item.Spec.Unschedulable
 		ni.podCapacity = parseInt(item.Status.Capacity["pods"])
 		ni.gpuCapacity = parseInt(item.Status.Capacity[gpuResourceKey])
@@ -158,46 +163,58 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			ni.conditions = []string{"Unknown"}
 		}
 		nodeMap[item.Metadata.Name] = ni
+		nodeNames = append(nodeNames, item.Metadata.Name)
 	}
 
-	// Parse metrics API JSON response.
-	var metricsJSON struct {
-		Items []struct {
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
-			Usage map[string]string `json:"usage"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(topOut, &metricsJSON); err != nil {
-		logger.Debug("spoke metrics: failed to parse metrics API response", "error", err)
-		return nil
+	// Query metrics API for live CPU/memory usage. If it is absent, forbidden or
+	// malformed, keep capacity totals from the Node API and carry the reason to
+	// the hub so the UI can tell operators exactly what to fix.
+	metricsByNode := make(map[string]map[string]string)
+	nodeHealthError := ""
+	topOut, err := k8sAPIGet("/apis/metrics.k8s.io/v1beta1/nodes")
+	if err != nil {
+		nodeHealthError = nodeHealthErrorReason("metrics API failed", err)
+		logNodeHealthWarning(logger, nodeHealthError)
+	} else {
+		var metricsJSON struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Usage map[string]string `json:"usage"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(topOut, &metricsJSON); err != nil {
+			nodeHealthError = nodeHealthErrorReason("failed to parse metrics API response", err)
+			logNodeHealthWarning(logger, nodeHealthError)
+		} else {
+			for _, item := range metricsJSON.Items {
+				metricsByNode[item.Metadata.Name] = item.Usage
+			}
+		}
 	}
 
 	var nodes []HeartbeatNodeMetric
-	for _, item := range metricsJSON.Items {
-		name := item.Metadata.Name
-		cpuUsed := parseK8sCPU(item.Usage["cpu"])
-		memUsed := parseK8sMemory(item.Usage["memory"])
-
-		ni, ok := nodeMap[name]
-		if !ok {
-			continue
-		}
-
+	for _, name := range nodeNames {
+		ni := nodeMap[name]
 		cpuCores := int(ni.cpuAllocatable / millicoresPerCore)
+		cpuUsed := int64(0)
 		cpuPct := 0
-		if ni.cpuAllocatable > 0 {
-			cpuPct = int(cpuUsed * percentMultiplier / ni.cpuAllocatable)
+		memUsed := int64(0)
+		memPct := 0
+		if usage, ok := metricsByNode[name]; ok {
+			cpuUsed = parseK8sCPU(usage["cpu"])
+			memUsed = parseK8sMemory(usage["memory"])
+			if ni.cpuAllocatable > 0 {
+				cpuPct = int(cpuUsed * percentMultiplier / ni.cpuAllocatable)
+			}
+			if ni.memAllocatable > 0 {
+				memPct = int(memUsed * percentMultiplier / ni.memAllocatable)
+			}
 		}
 
 		memTotalMB := ni.memAllocatable / bytesPerMB
 		memUsedMB := memUsed / bytesPerMB
-		memPct := 0
-		if ni.memAllocatable > 0 {
-			memPct = int(memUsed * percentMultiplier / ni.memAllocatable)
-		}
-
 		node := HeartbeatNodeMetric{
 			Name:          name,
 			CPUCores:      cpuCores,
@@ -211,16 +228,22 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			Conditions:    ni.conditions,
 			DiskPressure:  ni.diskPressure,
 		}
+		if ni.diskCapacity > 0 {
+			totalMB := ni.diskCapacity / bytesPerMB
+			node.DiskTotalMB = &totalMB
+		}
 		if ni.gpuCapacity > 0 {
 			node.GPUs = ni.gpuCapacity
 			node.GPUType = ni.gpuType
 		}
 		// LIVE node filesystem usage from the kubelet stats/summary endpoint.
-		// The node object's ephemeral-storage capacity is only the declared
-		// size and cannot tell us how full the disk is. Best-effort per node:
-		// a failure leaves the disk fields nil (rendered as unknown).
+		// The node object's ephemeral-storage capacity cannot tell us how full the
+		// disk is. Best-effort per node: a failure leaves usage/percent nil while
+		// retaining capacity above.
 		if rawStats, statsErr := k8sAPIGet(nodeStatsSummaryPath(name)); statsErr != nil {
-			logger.Debug("spoke metrics: node disk stats unavailable", "node", name, "error", statsErr)
+			if logger != nil {
+				logger.Debug("spoke metrics: node disk stats unavailable", "node", name, "error", statsErr)
+			}
 		} else if usage, ok := parseNodeStatsSummaryDisk(rawStats); ok {
 			totalMB := usage.capacityBytes / bytesPerMB
 			usedMB := usage.usedBytes / bytesPerMB
@@ -239,6 +262,16 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	// can be marginally optimistic.
 	var cpuRequestedPerNode, memRequestedPerNode map[string]int64
 	podOut, err := k8sAPIGet("/api/v1/pods?fieldSelector=status.phase%3DRunning")
+	if err != nil {
+		if nodeHealthError == "" {
+			nodeHealthError = nodeHealthErrorReason("pods API failed", err)
+			logNodeHealthWarning(logger, nodeHealthError)
+		} else {
+			if logger != nil {
+				logger.Warn("spoke node health partial: pods API failed", "error", err)
+			}
+		}
+	}
 	if err == nil && len(podOut) > 0 {
 		var podsJSON struct {
 			Items []struct {
@@ -279,6 +312,9 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 				nodes[i].Pods = podCounts[nodes[i].Name]
 				nodes[i].HiveCount = len(hiveNamespacesPerNode[nodes[i].Name])
 			}
+		} else if nodeHealthError == "" {
+			nodeHealthError = "failed to parse pods API response"
+			logNodeHealthWarning(logger, nodeHealthError)
 		}
 	}
 
@@ -311,9 +347,10 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	var totalMemAlloc int64
 	var totalMemUsed int64
 	var totalPods int
-	// Disk totals accumulate only over nodes that actually reported usage, so
-	// partial coverage stays honest instead of averaging in phantom zeros.
-	var totalDiskBytes, totalDiskUsedBytes int64
+	// Disk capacity is available from the Node API. Disk percentage is computed
+	// only over nodes that reported live usage, so partial coverage stays honest
+	// instead of averaging in phantom zeros.
+	var totalDiskCapacityBytes, totalDiskUsageBytes, totalDiskUsedBytes int64
 	readyNodes := 0
 
 	for _, n := range nodes {
@@ -323,9 +360,12 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		if n.Ready {
 			readyNodes++
 		}
-		if n.DiskTotalMB != nil && n.DiskUsedMB != nil {
-			totalDiskBytes += *n.DiskTotalMB * bytesPerMB
-			totalDiskUsedBytes += *n.DiskUsedMB * bytesPerMB
+		if n.DiskTotalMB != nil {
+			totalDiskCapacityBytes += *n.DiskTotalMB * bytesPerMB
+			if n.DiskUsedMB != nil {
+				totalDiskUsageBytes += *n.DiskTotalMB * bytesPerMB
+				totalDiskUsedBytes += *n.DiskUsedMB * bytesPerMB
+			}
 		}
 		if ni, ok := nodeMap[n.Name]; ok {
 			totalCPUAlloc += ni.cpuAllocatable
@@ -344,13 +384,16 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	}
 	totalMemGB := int(totalMemAlloc / giToBytes)
 
-	// nil when no node reported disk usage, so the hub omits disk for this
-	// cluster rather than displaying a misleading 0%.
+	// TotalDiskGB can come from node capacity alone. TotalDiskPct stays nil
+	// when no node reported live usage, so the hub renders the percentage as
+	// unavailable rather than displaying a misleading 0%.
 	var totalDiskGB, totalDiskPct *int
-	if totalDiskBytes > 0 {
-		gb := int(totalDiskBytes / giToBytes)
-		pct := int(totalDiskUsedBytes * percentMultiplier / totalDiskBytes)
+	if totalDiskCapacityBytes > 0 {
+		gb := int(totalDiskCapacityBytes / giToBytes)
 		totalDiskGB = &gb
+	}
+	if totalDiskUsageBytes > 0 {
+		pct := int(totalDiskUsedBytes * percentMultiplier / totalDiskUsageBytes)
 		totalDiskPct = &pct
 	}
 
@@ -368,7 +411,8 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			TotalPods:             totalPods,
 			HiveCapacityRemaining: hiveCapacityRemaining,
 		},
-		CollectedAt: time.Now().UTC().Format(time.RFC3339),
+		CollectedAt:     time.Now().UTC().Format(time.RFC3339),
+		NodeHealthError: nodeHealthError,
 	}
 
 	// Include GPU summary if the cluster has GPUs.
@@ -385,6 +429,34 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	}
 
 	return report
+}
+
+func partialClusterHealthReport(reason string) *HeartbeatClusterHealthReport {
+	return &HeartbeatClusterHealthReport{
+		CollectedAt:     time.Now().UTC().Format(time.RFC3339),
+		NodeHealthError: reason,
+	}
+}
+
+func nodeHealthErrorReason(prefix string, err error) string {
+	if err == nil {
+		return prefix
+	}
+	detail := strings.TrimSpace(err.Error())
+	if detail == "" {
+		return prefix
+	}
+	const maxNodeHealthErrorDetail = 240
+	if len(detail) > maxNodeHealthErrorDetail {
+		detail = detail[:maxNodeHealthErrorDetail] + "…"
+	}
+	return prefix + ": " + detail
+}
+
+func logNodeHealthWarning(logger *slog.Logger, reason string) {
+	if logger != nil {
+		logger.Warn("spoke node health partial", "reason", reason)
+	}
 }
 
 // These are vars (not consts) purely so tests can redirect the in-cluster K8s

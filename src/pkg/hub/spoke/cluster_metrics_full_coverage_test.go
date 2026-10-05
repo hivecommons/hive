@@ -75,23 +75,18 @@ func TestCollectClusterHealthUncachedFull(t *testing.T) {
 }
 
 func TestCollectClusterHealthUncachedMetricsFail(t *testing.T) {
-	// Metrics API returns 500 -> nil report (metrics-server unavailable path).
+	// Metrics API returns 500 -> capacity-only report with a precise error.
+	nodesJSON := `{"items":[{
+		"metadata":{"name":"node-a","labels":{}},
+		"status":{
+			"allocatable":{"cpu":"4","memory":"8Gi","ephemeral-storage":"100Gi","pods":"110"},
+			"capacity":{"cpu":"4","memory":"8Gi","ephemeral-storage":"100Gi","pods":"110"},
+			"conditions":[{"type":"Ready","status":"True"}]
+		}
+	}]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	withFakeK8sAPI(t, srv)
-
-	if report := collectClusterHealthUncached(slog.Default()); report != nil {
-		t.Errorf("expected nil report when metrics API fails, got %+v", report)
-	}
-}
-
-func TestCollectClusterHealthUncachedNodesFail(t *testing.T) {
-	// Metrics OK but nodes API fails -> nil.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "metrics.k8s.io") {
-			w.Write([]byte(`{"items":[]}`))
+		if strings.Contains(r.URL.Path, "/api/v1/nodes") {
+			w.Write([]byte(nodesJSON))
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
@@ -99,8 +94,41 @@ func TestCollectClusterHealthUncachedNodesFail(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	if report := collectClusterHealthUncached(slog.Default()); report != nil {
-		t.Errorf("expected nil report when nodes API fails, got %+v", report)
+	report := collectClusterHealthUncached(slog.Default())
+	if report == nil {
+		t.Fatal("expected capacity-only report when metrics API fails")
+	}
+	if report.Summary.TotalNodes != 1 || report.Summary.TotalCPUCores != 4 || report.Summary.TotalMemGB != 8 {
+		t.Fatalf("summary = %+v, want node/cpu/memory capacity", report.Summary)
+	}
+	if report.Summary.TotalDiskGB == nil || *report.Summary.TotalDiskGB != 100 || report.Summary.TotalDiskPct != nil {
+		t.Fatalf("disk summary = %+v/%+v, want 100GiB capacity with unknown percent", report.Summary.TotalDiskGB, report.Summary.TotalDiskPct)
+	}
+	if report.NodeHealthError == "" || !strings.Contains(report.NodeHealthError, "metrics API failed") {
+		t.Fatalf("node health error = %q, want metrics API failure", report.NodeHealthError)
+	}
+	if len(report.Nodes) != 1 || report.Nodes[0].DiskTotalMB == nil {
+		t.Fatalf("nodes = %+v, want disk capacity from node allocatable/capacity", report.Nodes)
+	}
+}
+
+func TestCollectClusterHealthUncachedNodesFail(t *testing.T) {
+	// Nodes API fails -> report contains the precise reason for the hub.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	report := collectClusterHealthUncached(slog.Default())
+	if report == nil {
+		t.Fatal("expected error report when nodes API fails")
+	}
+	if report.Summary.TotalNodes != 0 {
+		t.Fatalf("summary = %+v, want no nodes", report.Summary)
+	}
+	if report.NodeHealthError == "" || !strings.Contains(report.NodeHealthError, "nodes API failed") {
+		t.Fatalf("node health error = %q, want nodes API failure", report.NodeHealthError)
 	}
 }
 
@@ -115,8 +143,12 @@ func TestCollectClusterHealthUncachedBadNodesJSON(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	if report := collectClusterHealthUncached(slog.Default()); report != nil {
-		t.Errorf("expected nil report on bad nodes JSON, got %+v", report)
+	report := collectClusterHealthUncached(slog.Default())
+	if report == nil {
+		t.Fatal("expected error report on bad nodes JSON")
+	}
+	if report.NodeHealthError == "" || !strings.Contains(report.NodeHealthError, "failed to parse nodes JSON") {
+		t.Fatalf("node health error = %q, want bad nodes JSON", report.NodeHealthError)
 	}
 }
 
