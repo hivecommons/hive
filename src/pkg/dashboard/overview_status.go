@@ -97,8 +97,79 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		repo.OpenPrs = prs(repo.OpenPrs, false)
 		repo.HeldPrs = prs(repo.HeldPrs, true)
 	}
+	out.OverviewTotals = overviewTotals(&out)
 	out.ActionableNow = overviewActionableNow(&out)
 	return &out
+}
+
+func overviewTotals(status *StatusPayload) FrontendOverviewTotals {
+	var totals FrontendOverviewTotals
+	if status == nil {
+		return totals
+	}
+	totals.Issues.Breakdown = map[string]int{}
+	totals.PRs.Breakdown = map[string]int{}
+	for _, repo := range status.Repos {
+		totals.Issues.Tracked += len(repo.ActionableIssues) + len(repo.HeldIssues)
+		totals.Issues.Held += len(repo.HeldIssues)
+		totals.PRs.Tracked += len(repo.OpenPrs) + len(repo.HeldPrs)
+		totals.PRs.Held += len(repo.HeldPrs)
+		if repo.WorkBreakdown != nil {
+			ib := repo.WorkBreakdown.Issues
+			totals.Issues.Forge += ib.Total()
+			addOverviewBreakdown(totals.Issues.Breakdown, "actionable", ib.Actionable)
+			addOverviewBreakdown(totals.Issues.Breakdown, "hold", ib.Hold)
+			addOverviewBreakdown(totals.Issues.Breakdown, "needs_human", ib.NeedsHuman)
+			addOverviewBreakdown(totals.Issues.Breakdown, "needs_direction", ib.NeedsDirection)
+			addOverviewBreakdown(totals.Issues.Breakdown, "needs_decision", ib.NeedsDecision)
+			addOverviewBreakdown(totals.Issues.Breakdown, "needs_spec", ib.NeedsSpec)
+			addOverviewBreakdown(totals.Issues.Breakdown, "exempt", ib.Exempt)
+			addOverviewBreakdown(totals.Issues.Breakdown, "filtered", overviewGenericIssueFiltered(ib))
+			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_triage", ib.ReporterTriage)
+			addOverviewBreakdown(totals.Issues.Breakdown, "hive_advisory", ib.HiveAdvisory)
+			addOverviewBreakdown(totals.Issues.Breakdown, "dependency_dashboard", ib.DependencyDashboard)
+			addOverviewBreakdown(totals.Issues.Breakdown, "other", ib.Other)
+
+			pb := repo.WorkBreakdown.PRs
+			totals.PRs.Forge += pb.Total()
+			addOverviewBreakdown(totals.PRs.Breakdown, "actionable", pb.Actionable)
+			addOverviewBreakdown(totals.PRs.Breakdown, "hold", pb.Hold)
+			addOverviewBreakdown(totals.PRs.Breakdown, "draft", pb.Draft)
+			addOverviewBreakdown(totals.PRs.Breakdown, "filtered", pb.Filtered)
+			addOverviewBreakdown(totals.PRs.Breakdown, "other", pb.Other)
+			continue
+		}
+		issueForge := repo.Issues
+		if issueForge == 0 {
+			issueForge = len(repo.ActionableIssues) + len(repo.HeldIssues)
+		}
+		prForge := repo.PRs
+		if prForge == 0 {
+			prForge = len(repo.OpenPrs) + len(repo.HeldPrs)
+		}
+		totals.Issues.Forge += issueForge
+		totals.PRs.Forge += prForge
+	}
+	totals.Issues.Outside = max(0, totals.Issues.Forge-totals.Issues.Tracked)
+	totals.PRs.Outside = max(0, totals.PRs.Forge-totals.PRs.Tracked)
+	if len(totals.Issues.Breakdown) == 0 {
+		totals.Issues.Breakdown = nil
+	}
+	if len(totals.PRs.Breakdown) == 0 {
+		totals.PRs.Breakdown = nil
+	}
+	return totals
+}
+
+func addOverviewBreakdown(dst map[string]int, key string, count int) {
+	if count > 0 {
+		dst[key] += count
+	}
+}
+
+func overviewGenericIssueFiltered(b github.RepoIssueBreakdown) int {
+	named := b.NeedsHuman + b.NeedsDirection + b.NeedsDecision + b.NeedsSpec + b.Exempt
+	return max(0, b.Filtered-named)
 }
 
 func overviewActionableNow(status *StatusPayload) FrontendActionableNow {

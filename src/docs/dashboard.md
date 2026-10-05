@@ -188,8 +188,15 @@ client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
-shows open issues, open PRs, actionable now, held, blocked/needs-human, and the
-median actionable age. **Actionable now** is the shared server-side count used by
+shows total open issues, total open PRs, actionable now, held,
+blocked/needs-human, and the median actionable age. **Total open issues** and
+**Total open PRs** are forge totals for the selected configured repositories
+from the existing scanner tick: open GitHub issues exclude pull requests, while
+open GitHub pull requests include drafts. Their muted sub-lines name how many
+items are present in the Overview's actionable/held bands and how many were
+outside those bands because of hard-suppress labels, exempt filters, reporter
+triage, standing meta issues, dependency dashboards, drafts, or other scanner
+filters. **Actionable now** is the shared server-side count used by
 the Overview KPI and the Governor collapsed split: open enumerated issues plus
 open enumerated PRs after hold/exempt filters, excluding items in the waiting,
 done, draft, or blocked Overview bands. Its `actionableNow.issues` and

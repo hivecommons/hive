@@ -135,6 +135,8 @@ global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} }
 let _overviewKPIHistory = [
   {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3, overviewMedianAgeSec: 3600}
 ];
+const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
+const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 function overviewKPILoadLocal(){ return []; }
 function overviewKPIRecordLocal(){}
 function overviewKPIWindowControls(){ return '<span class="overview-kpi-range"></span>'; }
@@ -145,6 +147,7 @@ function overviewItemAgeMinutes(){ return NaN; }
 		"fmtDurationFromSeconds", "overviewMedianAgeSeconds", "overviewMedianAgeLabel", "overviewKPIRepoScope", "overviewKPIHistoryEntries",
 		"overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewFilterRepos",
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
+		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
 		"overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))

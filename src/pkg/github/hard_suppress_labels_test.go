@@ -47,3 +47,21 @@ func TestHasHardSuppressIssueLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestHardSuppressBreakdownNamesLabel(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		want  RepoIssueBreakdown
+	}{
+		{"needs-human", RepoIssueBreakdown{NeedsHuman: 1}},
+		{"needs-direction", RepoIssueBreakdown{NeedsDirection: 1}},
+		{"needs-decision", RepoIssueBreakdown{NeedsDecision: 1}},
+		{"needs-spec", RepoIssueBreakdown{NeedsSpec: 1}},
+	} {
+		var got RepoIssueBreakdown
+		got.addHardSuppress(tc.label)
+		if got != tc.want {
+			t.Fatalf("addHardSuppress(%q) = %+v, want %+v", tc.label, got, tc.want)
+		}
+	}
+}

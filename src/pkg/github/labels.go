@@ -25,15 +25,19 @@ var hardSuppressIssueLabels = []string{
 }
 
 func hasHardSuppressIssueLabel(labels []string) bool {
+	return hardSuppressIssueLabel(labels) != ""
+}
+
+func hardSuppressIssueLabel(labels []string) string {
 	for _, label := range labels {
 		label = strings.TrimSpace(label)
 		for _, suppress := range hardSuppressIssueLabels {
 			if strings.EqualFold(label, suppress) {
-				return true
+				return suppress
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{

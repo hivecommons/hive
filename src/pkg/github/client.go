@@ -1170,8 +1170,14 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			continue
 		}
 
-		if c.isExempt(labels) || hasHardSuppressIssueLabel(labels) {
+		if c.isExempt(labels) {
 			breakdown.Filtered++
+			breakdown.Exempt++
+			continue
+		}
+		if suppress := hardSuppressIssueLabel(labels); suppress != "" {
+			breakdown.Filtered++
+			breakdown.addHardSuppress(suppress)
 			continue
 		}
 
@@ -3151,6 +3157,11 @@ type RepoIssueBreakdown struct {
 	HiveAdvisory        int `json:"hive_advisory"`
 	DependencyDashboard int `json:"dependency_dashboard"`
 	Filtered            int `json:"filtered"`
+	NeedsHuman          int `json:"needs_human,omitempty"`
+	NeedsDirection      int `json:"needs_direction,omitempty"`
+	NeedsDecision       int `json:"needs_decision,omitempty"`
+	NeedsSpec           int `json:"needs_spec,omitempty"`
+	Exempt              int `json:"exempt,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter
@@ -3161,6 +3172,19 @@ type RepoIssueBreakdown struct {
 
 func (b RepoIssueBreakdown) Total() int {
 	return b.Actionable + b.Hold + b.HiveAdvisory + b.DependencyDashboard + b.Filtered + b.ReporterTriage + b.Other
+}
+
+func (b *RepoIssueBreakdown) addHardSuppress(label string) {
+	switch label {
+	case issueNeedsHumanLabel:
+		b.NeedsHuman++
+	case issueNeedsDirectionLabel:
+		b.NeedsDirection++
+	case issueNeedsDecisionLabel:
+		b.NeedsDecision++
+	case issueNeedsSpecLabel:
+		b.NeedsSpec++
+	}
 }
 
 type RepoPRBreakdown struct {

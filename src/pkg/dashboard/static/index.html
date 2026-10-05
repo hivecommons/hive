@@ -1772,6 +1772,7 @@
     .overview-kpi:hover { border-color: var(--accent); }
     .overview-kpi-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
     .overview-kpi-label { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .overview-kpi-subline { color: var(--muted); font-size: var(--fs-2xs); line-height: 1.25; }
     .overview-kpi-spark { min-height: 24px; display: flex; align-items: end; margin-top: var(--sp-1); }
     .overview-kpi-spark .sparkline { width: 100%; }
     .overview-kpi-spark svg { width: 100%; height: 24px; }
@@ -13317,22 +13318,105 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewRepoOpenIssueCount(repo) {
-      const n = overviewRepoNumber(repo, ['openIssues', 'open_issues', 'issues']);
-      return n;
+      return overviewRepoNumber(repo, ['openIssues', 'open_issues', 'issues']);
     }
 
     function overviewRepoOpenPRCount(repo) {
-      const n = overviewRepoNumber(repo, ['openPRs', 'open_prs', 'prs']);
-      return n;
+      return overviewRepoNumber(repo, ['openPRs', 'open_prs', 'prs']);
+    }
+
+    const OVERVIEW_ISSUE_BREAKDOWN_LABELS = {
+      needs_human: 'needs-human',
+      needs_direction: 'needs-direction',
+      needs_decision: 'needs-decision',
+      needs_spec: 'needs-spec',
+      exempt: 'exempt',
+      filtered: 'filtered',
+      reporter_triage: 'reporter triage',
+      hive_advisory: 'hive advisory',
+      dependency_dashboard: 'dependency dashboard',
+      other: 'other'
+    };
+    const OVERVIEW_PR_BREAKDOWN_LABELS = {
+      hold: 'held',
+      draft: 'draft',
+      filtered: 'filtered',
+      other: 'other'
+    };
+
+    function overviewBreakdownTotal(bd, keys) {
+      return (keys || []).reduce((n, key) => n + Number((bd || {})[key] || 0), 0);
+    }
+
+    function overviewRepoForgeTotals(repos) {
+      const totals = {
+        issues: { forge: 0, tracked: 0, held: 0, outside: 0, breakdown: {} },
+        prs: { forge: 0, tracked: 0, held: 0, outside: 0, breakdown: {} }
+      };
+      (repos || []).forEach(r => {
+        const ib = r.workBreakdown?.issues || {};
+        const pb = r.workBreakdown?.prs || {};
+        const trackedIssues = (r.actionableIssues || []).length + (r.heldIssues || []).length;
+        const trackedPRs = (r.openPrs || []).length + (r.heldPrs || []).length;
+        const rawIssues = overviewRepoOpenIssueCount(r);
+        const rawPRs = overviewRepoOpenPRCount(r);
+        const issueForge = Object.keys(ib).length ? ['actionable', 'hold', 'hive_advisory', 'dependency_dashboard', 'filtered', 'reporter_triage', 'other'].reduce((n, key) => n + Number(ib[key] || 0), 0) : (rawIssues ?? trackedIssues);
+        const prForge = Object.keys(pb).length ? ['actionable', 'hold', 'draft', 'filtered', 'other'].reduce((n, key) => n + Number(pb[key] || 0), 0) : (rawPRs ?? trackedPRs);
+        totals.issues.forge += issueForge;
+        totals.issues.tracked += trackedIssues;
+        totals.issues.held += (r.heldIssues || []).length;
+        totals.prs.forge += prForge;
+        totals.prs.tracked += trackedPRs;
+        totals.prs.held += (r.heldPrs || []).length;
+        Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
+          let v = Number(ib[key] || 0);
+          if (key === 'filtered') {
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'exempt']));
+          }
+          if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
+        });
+        Object.keys(OVERVIEW_PR_BREAKDOWN_LABELS).forEach(key => {
+          const v = Number(pb[key] || 0);
+          if (v > 0) totals.prs.breakdown[key] = (totals.prs.breakdown[key] || 0) + v;
+        });
+      });
+      totals.issues.outside = Math.max(0, totals.issues.forge - totals.issues.tracked);
+      totals.prs.outside = Math.max(0, totals.prs.forge - totals.prs.tracked);
+      return totals;
+    }
+
+    function overviewKPIForgeTotals(repos) {
+      if (_overviewKPILocalScope === 'all' && window._lastStatus?.overviewTotals?.issues && window._lastStatus?.overviewTotals?.prs) {
+        return window._lastStatus.overviewTotals;
+      }
+      if (!(repos || []).some(r => r && (r.workBreakdown || overviewRepoOpenIssueCount(r) !== null || overviewRepoOpenPRCount(r) !== null))) {
+        return null;
+      }
+      return overviewRepoForgeTotals(repos);
+    }
+
+    function overviewKPIBreakdownSubline(total, labels) {
+      const parts = Object.entries(labels || {}).map(([key, label]) => {
+        const n = Number(total?.breakdown?.[key] || 0);
+        return n > 0 ? `${n} ${label}` : '';
+      }).filter(Boolean);
+      const outside = Number(total?.outside || 0);
+      const held = Number(total?.held || 0);
+      const tracked = Number(total?.tracked || 0);
+      const bits = [`${tracked} in Overview bands`];
+      if (held > 0) bits.push(`${held} held`);
+      if (outside > 0) bits.push(`${outside} outside${parts.length ? ': ' + parts.join(' · ') : ''}`);
+      return bits.join(' · ');
     }
 
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
-      const repoIssueCounts = (repos || []).map(overviewRepoOpenIssueCount).filter(n => n !== null);
-      const repoPRCounts = (repos || []).map(overviewRepoOpenPRCount).filter(n => n !== null);
-      const openIssues = repoIssueCounts.length ? repoIssueCounts.reduce((n, count) => n + count, 0) : (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
-      const openPRs = repoPRCounts.length ? repoPRCounts.reduce((n, count) => n + count, 0) : (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const forgeTotals = overviewKPIForgeTotals(repos);
+      const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);
+      const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);
       const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
@@ -13343,8 +13427,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ageSec = overviewMedianAgeSeconds((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open issues in the selected repos, including held, waiting, done, filtered, and human-gated issues.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open pull requests in the selected repos, including held, drafts, filtered, and blocked PRs.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.issues || { tracked: trackedIssues }, OVERVIEW_ISSUE_BREAKDOWN_LABELS) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.prs || { tracked: trackedPRs }, OVERVIEW_PR_BREAKDOWN_LABELS) },
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
@@ -13355,7 +13439,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${overviewKPISpark(card, useServerHistory)}</button>`;
+        const subline = card.subline ? `<span class="overview-kpi-subline">${esc(card.subline)}</span>` : '';
+        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
       }).join('')}</div>`;
     }
 
