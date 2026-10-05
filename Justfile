@@ -1740,6 +1740,16 @@ contribute-hive backend="" mode="docker": check-version
             CLI_MOUNTS="-v ${CLI_STAGE}/opencode:/home/dev/.local/share/opencode${VOLSUF}"
           fi
           ;;
+        openhands)
+          # OpenHands keeps provider credentials in settings.json under
+          # OPENHANDS_PERSISTENCE_DIR (default ~/.openhands). Stage it when
+          # present; LLM_* env vars are forwarded separately below.
+          OPENHANDS_DIR="${OPENHANDS_PERSISTENCE_DIR:-${HOME}/.openhands}"
+          if [ -f "${OPENHANDS_DIR}/settings.json" ]; then
+            stage_copy "${OPENHANDS_DIR}" ".openhands"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.openhands:/home/dev/.openhands${VOLSUF}"
+          fi
+          ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
       # Pi receives ONLY the selected provider's official credential variables.
@@ -1758,7 +1768,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY; do
+        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
         done
       fi
