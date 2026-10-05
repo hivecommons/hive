@@ -1,7 +1,5 @@
 # Running a hive at ACMM Level 6
 
-> **Awaiting operator review.** This advice has not yet been reviewed by someone who operates a hive at ACMM Level 6. Maintainer sign-off is tracked in [#10515](https://github.com/hivecommons/hive/issues/10515). Until then, this page is linked only from the documentation index; it is not a signed-off operating standard.
-
 For people who operate a hive, Level 6 means unattended merging, not just faster agents. Protect every destination branch with real required tests and coverage checks; aim for **90% or better coverage before enabling automatic merging**. Stage repositories individually, keep work creation below CI/merge capacity, and prove your emergency stops work before you need them. Human-authored PRs can merge too. A reviewer comment, a spending limit, and paused agents are not substitutes for a merge stop.
 
 This guide walks through preparation, a weekly routine, and recovery. Start with the merge-path table, configure the five areas below, then use the single pre-switch checklist. After a bad merge, stop further harm first, revert and verify, then demonstrate that a strengthened required check rejects the original change.
@@ -211,6 +209,7 @@ These are confirmations of the practices above, not additional product gates.
 - [ ] Real weeks at L3–L5 produced reviewed PRs matching your judgment; no calendar interval is enforced, and "not surprised" matters more than elapsed time.
 - [ ] GitHub installation scope/permissions and **every** merge destination's rules checked; App cannot bypass critical tests/coverage. Green CI genuinely means safe to ship, not just a passing harness.
 - [ ] Each proposed repo meets the 90% coverage target with demonstrated failing gates; below-target repos remain excluded. Advisor readings and their limitations recorded.
+- [ ] Per-repository opt-out decided and applied: Level 6 is not all-or-nothing. Each repository card's **Auto-merge** switch is set deliberately (off for repos that are not ready or must stay human-merged; `project.repo_policies[].auto_merge` in config), and a test PR in an opted-out repo was refused while agents kept proposing work there. Remember that re-applying Level 6 re-enables auto-merge for every **active** repo, so opted-out repos are paused during the switch (R2) or re-checked afterwards (R3).
 - [ ] Reporter-trust posture explicitly decided before promotion. For public issues, trust is on with the intended association set; decide specifically whether `CONTRIBUTOR` belongs. Demonstrate admission and PR-side holding.
 - [ ] Knowledge priming enabled and actual prompts inspected; release/test/rollback constraints are accurate. Any relied-on checkout instructions demonstrably reach agents.
 - [ ] Hive repo scope, required contexts, proposal/plan decisions, cadence, token budget, paused lanes and alert delivery reviewed.

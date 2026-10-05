@@ -1,0 +1,1 @@
+- Level 6 operating guide: add a per-repository auto-merge opt-out item to the pre-switch checklist and drop the "awaiting operator review" notice now that the guide is published. (#PLACEHOLDER)
