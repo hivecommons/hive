@@ -81,9 +81,26 @@ for (const [section, text] of Object.entries(fixtures)) {
     if (!html.includes('advisory-collapsed-advice') || !html.includes('Fix 4 blocked PRs') || !html.includes('−4 queue')) throw new Error(section + ' did not render advice pills: ' + html);
   } else if (section === 'acmm-eval-section') {
     if (!html.includes('acmm-collapsed-pill') || !html.includes('L6') || !html.includes('7/7 dims')) throw new Error(section + ' did not render ACMM pill: ' + html);
+  } else if (section === 'faq-section') {
+    if (html !== '') throw new Error(section + ' should not render a collapsed mini-stat: ' + html);
   } else if (!/svg class="mini-[^"]+"/.test(html)) throw new Error(section + ' did not render a mini SVG: ' + html);
-  if (!html.includes('aria-label="')) throw new Error(section + ' missing accessible label');
+  if (section !== 'faq-section' && !html.includes('aria-label="')) throw new Error(section + ' missing accessible label');
 }
+const knowledge = visualSectionSummary('knowledge-section', '1,526 facts');
+if (!knowledge.includes('1,526 facts')) throw new Error('knowledge summary should preserve spaced fact count: ' + knowledge);
+if (knowledge.includes('1,526facts')) throw new Error('knowledge summary collapsed number and label: ' + knowledge);
+window._auditSummary = { histogram: [], sensitive_24h: 0, today: 0, last: null };
+const audit = visualSectionSummary('audit-section', '99 events today');
+if (!audit.includes('>0 events today<')) throw new Error('audit summary should use live today count and spaced label: ' + audit);
+if (audit.includes('0eventstod') || audit.includes('entries today')) throw new Error('audit summary retained malformed/old label: ' + audit);
+const oneCadence = { id: 'add-agent-cadence', title: 'Add cadence', signals: [{ name: 'no_cadence_agents', value: '1' }], items: [{}] };
+const twoCadence = { id: 'add-agent-cadence', title: 'Add cadence', signals: [{ name: 'no_cadence_agents', value: '2' }], items: [{}, {}] };
+const twoDisabled = { id: 'enable-disabled-agent', title: 'Enable disabled agents', signals: [{ name: 'disabled_agents', value: '2' }], items: [{}, {}] };
+if (advisoryCollapsedHeadline(oneCadence, advisoryCollapsedImpact(oneCadence)) !== 'Set cadence on 1 agent') throw new Error('singular cadence headline failed');
+if (advisoryCollapsedHeadline(twoCadence, advisoryCollapsedImpact(twoCadence)) !== 'Set cadence on 2 agents') throw new Error('plural cadence headline failed');
+if (advisoryCollapsedImpact(oneCadence).label !== '+1 kick') throw new Error('singular kick impact failed');
+if (advisoryCollapsedImpact(twoCadence).label !== '+2 kicks') throw new Error('plural kick impact failed');
+if (advisoryCollapsedImpact(twoDisabled).label !== '+2 lanes') throw new Error('plural lane impact failed');
 for (const section of ['knowledge-section', 'audit-section', 'overview-section', 'pr-throughput-section', 'token-panel']) {
   const html = visualSectionSummary(section, fixtures[section]);
   if (/mini-spark/.test(html)) throw new Error(section + ' rendered an unlabelled collapsed-header sparkline: ' + html);
