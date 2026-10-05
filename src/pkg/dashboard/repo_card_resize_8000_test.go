@@ -138,8 +138,8 @@ func TestRepoCardResizeInteractionsAreWired(t *testing.T) {
 		"if (e.key === 'ArrowRight') next = cur + step;",
 		"else if (e.key === 'ArrowLeft') next = Math.max(REPO_CARD_MIN_W, cur - step);",
 		"else if (e.key === 'Escape') next = 0;",
-		// Reset-all sits beside Rescan and goes through the generic
-		// data-action dispatcher, not an inline onclick.
+		// Reset-all sits in the expanded Projects toolbar beside Rescan and
+		// goes through the generic data-action dispatcher, not an inline onclick.
 		`id="repos-reset-layout-btn" data-action="resetRepoCardWidths"`,
 		"function resetRepoCardWidths() {",
 		// It only appears once there is a layout to reset.
