@@ -375,7 +375,7 @@ func sanitizeHubFeedbackIdentityValue(v string) string {
 	return hubFeedbackRedact(v)
 }
 
-var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$`)
+var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}(?:\[bot\])?$`)
 
 func hubGitHubLoginForMention(login string) string {
 	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
