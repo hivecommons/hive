@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestOverviewKPIValuesRenderFromChartSlices10139(t *testing.T) {
+func TestOverviewKPIValuesRenderFromRepoTotalsOrChartSlices10139(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node unavailable: Overview KPI render rule was not executed")
@@ -42,6 +42,9 @@ function renderSparkline(){ return '<svg></svg>'; }
 ` + jsFunc(t, html, "overviewKPIWindowControls") + `
 ` + jsFunc(t, html, "overviewKPISparkTitle") + `
 ` + jsFunc(t, html, "overviewKPISpark") + `
+` + jsFunc(t, html, "overviewRepoNumber") + `
+` + jsFunc(t, html, "overviewRepoOpenIssueCount") + `
+` + jsFunc(t, html, "overviewRepoOpenPRCount") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
 const state = { showKPIs: true, timeBasis: 'updated' };
 const repos = [{ heldIssues: [{ number: 501 }], heldPrs: [] }];
@@ -73,6 +76,13 @@ assert.deepEqual(Object.fromEntries(values), {
   'Blocked / needs-human': '1',
   'Median age': '7m',
 });
+
+repos[0].issues = 123;
+repos[0].prs = 45;
+const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
+const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
+assert.equal(rawValues['Total open issues'], '123');
+assert.equal(rawValues['Total open PRs'], '45');
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -84,8 +94,8 @@ func TestOverviewKPIRenderEscapesNumericValues10139(t *testing.T) {
 	html := indexHTML(t)
 	kpis := jsFunc(t, html, "renderOverviewKPIs")
 	for _, want := range []string{
-		"const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
-		"const openPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const openIssues = repoIssueCounts.length ? repoIssueCounts.reduce((n, count) => n + count, 0) : (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const openPRs = repoPRCounts.length ? repoPRCounts.reduce((n, count) => n + count, 0) : (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
 		"${esc(String(value ?? '—'))}",
 	} {
 		if !strings.Contains(kpis, want) {
