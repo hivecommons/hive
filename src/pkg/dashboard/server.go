@@ -1836,6 +1836,11 @@ func isPublicPath(path string) bool {
 		return true
 	case path == "/auth/return":
 		return true
+	case path == publicKnowledgeMCPPath && publicKnowledgeEnabled():
+		// Owner-switched, read-only MCP knowledge endpoint (#10615). Public only
+		// while HIVE_PUBLIC_KNOWLEDGE is on; handlePublicKnowledgeMCP re-checks
+		// the switch and 404s otherwise, and serves no write method at all.
+		return true
 	case path == "/metrics" && metricsEnabled():
 		// Prometheus scrape target — bypasses dashboard auth only when
 		// explicitly enabled via HIVE_METRICS_ENABLED (Prometheus cannot

@@ -1,0 +1,1 @@
+- Move the Throughput hive-vs-human trend into the KPI tile row with a compact share sparkline and mode selector.
