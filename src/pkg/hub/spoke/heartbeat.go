@@ -2574,8 +2574,9 @@ type HeartbeatUpgradePolicy struct {
 	TargetResolved bool `json:"target_resolved"`
 	// ArmedTarget is the SHA the hub currently has armed for this hive, "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
-	// NextUpdateAt is when the hub expects the next promotion into Channel
-	// (RFC3339 UTC). Empty means unknown — including older hubs that do not
+	// NextUpdateAt is the next operator-relevant update time (RFC3339 UTC):
+	// either the stable-channel promotion ETA or the next daily/weekly managed
+	// upgrade window. Empty means unknown — including older hubs that do not
 	// send it — and must not be rendered as "no update coming".
 	NextUpdateAt string `json:"next_update_at,omitempty"`
 }

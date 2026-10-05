@@ -463,16 +463,10 @@ type HeartbeatUpgradePolicy struct {
 	// ArmedTarget is the SHA the hub currently has armed for this hive (a
 	// pending or in-flight upgrade), "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
-	// NextUpdateAt is when the next promotion into Channel is expected
-	// (RFC3339 UTC, #10256): the time the newest queued build crosses the
-	// 24-hour line because stable chases candidate and is always 24 hours
-	// behind it (docs/stable-soak-policy.md). The hourly promotion run lands
-	// it at or after this time once its other gates pass, and it may be in the
-	// past while a gate holds. Omitted when unknown:
-	// channels other than stable (candidate/edge move on every green build),
-	// branch tags and pins, stable auto-promotion paused, nothing queued, or
-	// the hub has not resolved the channels yet. Describes the channel, not
-	// this hive's own daily/weekly upgrade window (Schedule*).
+	// NextUpdateAt is the next operator-relevant update time (RFC3339 UTC,
+	// #10256): for stable-channel hives, the channel promotion ETA; otherwise,
+	// for daily/weekly managed hives, the next scheduled upgrade window. Omitted
+	// when unknown, instant, disabled, or paused.
 	NextUpdateAt string `json:"next_update_at,omitempty"`
 }
 
