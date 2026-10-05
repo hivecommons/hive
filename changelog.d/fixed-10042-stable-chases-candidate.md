@@ -1,1 +1,0 @@
-- Clarify that stable chases candidate by promoting the newest v5 build that crossed the 24-hour line.

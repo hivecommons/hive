@@ -1,1 +1,0 @@
-- Fixed the review queue collapsed summary escape helper used by visual summary tests.

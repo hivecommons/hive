@@ -1,1 +1,0 @@
-- Restore the `pkg/github` coverage gate above its 89% floor by testing the reporter-trust wait notice paths added in #10586.
