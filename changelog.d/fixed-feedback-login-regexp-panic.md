@@ -1,1 +1,0 @@
-Fixed `pkg/dashboard` and `pkg/hub` init panics: the feedback GitHub-login validators used a Perl lookahead that Go's RE2 regexp engine rejects, which crashed spoke and hub on startup and every dashboard/hub test.
