@@ -90,8 +90,8 @@ use it.
 The current runner image has the Go/Node toolchains and a Docker daemon, so
 gh-free Docker, coverage, license and shell-test lanes can use the same
 fork-safe fleet expression as the rest of CI. This includes `docker.yml`'s
-`gate` and manifest `merge*` jobs, the remaining `v2-ci.yml` Docker smoke
-job, `coverage-hourly.yml`, `dco-post-merge.yml`, `fossa.yml`,
+`gate`, amd64 image build legs, and manifest `merge*` jobs, the remaining
+`v2-ci.yml` Docker smoke job, `coverage-hourly.yml`, `dco-post-merge.yml`, `fossa.yml`,
 `pr-auto-update-test.yml`,
 `promote-stable.yml` and `notice-autofix.yml`.
 
@@ -102,6 +102,9 @@ A few jobs are still pinned to `ubuntu-latest` on purpose:
   `gh-aw-compile.yml`, `ci-infra-*.yml`, `hive-of-the-week.yml` and similar)
   stay hosted until the self-hosted image includes `gh` and that image is
   rolled out to the pool.
+- `docker.yml` arm64 image build legs stay on `ubuntu-24.04-arm`: the LKE
+  runner pool is amd64-only, and `publish-image-tags.sh` verifies both
+  `linux/amd64` and `linux/arm64` before advancing candidate/stable tags.
 - `v2-ci.yml` `overlayfs-exec-guard` needs the hosted VM's systemd-managed
   containerd service and overlayfs snapshotter.
 - `suid-contract.yml` runtime jobs stay hosted: their capability-removal

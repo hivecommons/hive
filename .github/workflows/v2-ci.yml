@@ -1161,12 +1161,12 @@ jobs:
       - name: Set up Docker Buildx
         if: env.skip != 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
 
       - name: Build Docker image
         if: env.skip != 'true'
-        env:
-          DOCKER_BUILDKIT: "1"
-        run: docker build -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
+        run: docker buildx build --load --network host -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
         if: env.skip != 'true' && matrix.smoke == 'true'
