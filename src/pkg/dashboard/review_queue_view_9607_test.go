@@ -26,6 +26,25 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 			t.Errorf("index.html is missing review-queue wiring %q", want)
 		}
 	}
+	// The collapsed Review Queue card must use the shared range-control and
+	// renderSparkline path, not the old count-only gauge.
+	for _, want := range []string{
+		`function reviewQueueCollapsedSummary(text)`,
+		`function reviewQueueRangeControls()`,
+		`overview-kpi-range-btn`,
+		`data-action="setReviewQueueWindow"`,
+		`function reviewQueueSparkline(entries)`,
+		`renderSparkline(null, values`,
+		`['high', high, 'High priority']`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html is missing review-queue collapsed sparkline wiring %q", want)
+		}
+	}
+	if strings.Contains(html, `sectionId === 'review-queue-section') {
+        inner = miniGauge`) {
+		t.Error("Review Queue collapsed summary still uses the gauge renderer")
+	}
 	// The view must never fall back to a browser-native dialog.
 	for _, banned := range []string{"window.alert", "window.confirm", "window.prompt"} {
 		if strings.Contains(jsFunc(t, html, "renderReviewQueue"), banned) {

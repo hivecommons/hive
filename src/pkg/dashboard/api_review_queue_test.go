@@ -94,6 +94,21 @@ func TestHandleReviewQueue_RanksAndPages(t *testing.T) {
 	}
 }
 
+func TestHandleReviewQueue_IncludesPriorityHistory(t *testing.T) {
+	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
+	resp := decodeReviewQueue(t, doOwnerGet(s, "/api/review/queue"))
+	if len(resp.History) != 1 {
+		t.Fatalf("history len = %d, want 1", len(resp.History))
+	}
+	entry := resp.History[0]
+	if entry.Total != 3 || entry.High != 1 || entry.Normal != 1 || entry.Low != 1 {
+		t.Fatalf("history priority split = %+v, want total/high/normal/low 3/1/1/1", entry)
+	}
+	if entry.Timestamp <= 0 {
+		t.Fatalf("history timestamp = %d, want unix millis", entry.Timestamp)
+	}
+}
+
 func TestHandleReviewQueue_RejectsBadPaging(t *testing.T) {
 	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
 	for _, q := range []string{"limit=0", "limit=-1", "limit=abc", "limit=201", "offset=-1", "offset=x"} {

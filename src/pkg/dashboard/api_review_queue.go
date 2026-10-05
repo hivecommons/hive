@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -20,15 +21,32 @@ const (
 	reviewQueueMaxLimit = 200
 )
 
+type reviewQueueHistoryStore struct {
+	mu      sync.Mutex
+	entries []ReviewQueueHistoryEntry
+}
+
+var reviewQueueHistoryByServer sync.Map
+
+// ReviewQueueHistoryEntry is one priority-split review queue depth sample.
+type ReviewQueueHistoryEntry struct {
+	Timestamp int64 `json:"t"`
+	Total     int   `json:"total"`
+	High      int   `json:"high"`
+	Normal    int   `json:"normal"`
+	Low       int   `json:"low"`
+}
+
 // reviewQueueResponse is one page of the PR review queue.
 type reviewQueueResponse struct {
-	GeneratedAt time.Time                `json:"generated_at"`
-	SnapshotAt  time.Time                `json:"snapshot_at,omitzero"`
-	Total       int                      `json:"total"`
-	Limit       int                      `json:"limit"`
-	Offset      int                      `json:"offset"`
-	HasMore     bool                     `json:"has_more"`
-	Items       []ghpkg.ReviewQueueEntry `json:"items"`
+	GeneratedAt time.Time                 `json:"generated_at"`
+	SnapshotAt  time.Time                 `json:"snapshot_at,omitzero"`
+	Total       int                       `json:"total"`
+	Limit       int                       `json:"limit"`
+	Offset      int                       `json:"offset"`
+	HasMore     bool                      `json:"has_more"`
+	History     []ReviewQueueHistoryEntry `json:"history"`
+	Items       []ghpkg.ReviewQueueEntry  `json:"items"`
 }
 
 // handleReviewQueue serves GET /api/review/queue?limit=N&offset=M: every open
@@ -65,6 +83,7 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	actionable := s.lastActionableForPRModels()
 	queue := ghpkg.ReviewQueueFromActionable(actionable, opts)
+	history := s.recordReviewQueueHistory(queue, opts.Now)
 
 	resp := reviewQueueResponse{
 		GeneratedAt: opts.Now.UTC(),
@@ -72,6 +91,7 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		Total:       len(queue),
 		Limit:       limit,
 		Offset:      offset,
+		History:     history,
 		Items:       []ghpkg.ReviewQueueEntry{},
 	}
 	if offset < len(queue) {
@@ -108,4 +128,37 @@ func reviewQueuePaging(r *http.Request) (limit, offset int, err error) {
 		offset = n
 	}
 	return limit, offset, nil
+}
+
+func (s *Server) recordReviewQueueHistory(queue []ghpkg.ReviewQueueEntry, now time.Time) []ReviewQueueHistoryEntry {
+	if s == nil {
+		return nil
+	}
+	entry := ReviewQueueHistoryEntry{Timestamp: now.UTC().UnixMilli(), Total: len(queue)}
+	for _, item := range queue {
+		switch item.Priority {
+		case ghpkg.ReviewPriorityHigh:
+			entry.High++
+		case ghpkg.ReviewPriorityLow:
+			entry.Low++
+		default:
+			entry.Normal++
+		}
+	}
+
+	storeAny, _ := reviewQueueHistoryByServer.LoadOrStore(s, &reviewQueueHistoryStore{})
+	store := storeAny.(*reviewQueueHistoryStore)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if n := len(store.entries); n > 0 && entry.Timestamp-store.entries[n-1].Timestamp < trendHistoryMinIntervalMs {
+		store.entries[n-1] = entry
+	} else {
+		store.entries = append(store.entries, entry)
+	}
+	if len(store.entries) > trendHistoryMaxEntries {
+		store.entries = store.entries[len(store.entries)-trendHistoryMaxEntries:]
+	}
+	out := make([]ReviewQueueHistoryEntry, len(store.entries))
+	copy(out, store.entries)
+	return out
 }
