@@ -8486,6 +8486,12 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	// hive/already-done is display state, not a hold, but it is also positive
+	// evidence that a merged fix already covered the item. Keep it out of new
+	// kick prompts until a human removes the label.
+	if withheld := github.FilterAlreadyDoneIssues(actionable, logger); withheld > 0 {
+		logger.Info("already-done guard applied", "withheld", withheld)
+	}
 	// #8380: a LIVE issue claim covers an issue the same way an open PR does,
 	// for every kick prompt (the scanner's included). The claim fields are
 	// only ever set while governor.claims.enabled is on, so with the feature

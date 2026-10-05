@@ -102,6 +102,8 @@ const (
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
+	// AlreadyDoneLabel marks an issue that Hive verified is already fixed.
+	AlreadyDoneLabel = "hive/already-done"
 	// VerifiedOpenLabel records that verification found the issue still open/not
 	// done, suppressing renewed likely-done labeling from the same stale claim.
 	VerifiedOpenLabel = "hive/verified-open"

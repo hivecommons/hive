@@ -202,6 +202,15 @@ func recordAgentKickClaims(dashSrv *dashboard.Server, org, agentName string, iss
 		if org != "" && !strings.Contains(repo, "/") {
 			repo = org + "/" + repo
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), claimsGitHubTimeout)
+		refused, _ := dashSrv.RefuseAlreadyDoneClaim(ctx, repo, ref.Number)
+		cancel()
+		if refused {
+			if logger != nil {
+				logger.Info("issue-claims: agent claim refused for already-done issue", "agent", agentName, "issue", claims.Key(repo, ref.Number))
+			}
+			continue
+		}
 		res, err := ledger.Claim(claims.Request{
 			Repo: repo, Issue: ref.Number,
 			Holder: agentName, HolderID: agentName, Kind: claims.KindAgent,
