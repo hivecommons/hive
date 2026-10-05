@@ -183,14 +183,12 @@ func overviewActionableNow(status *StatusPayload, meta overviewPartitionMeta) Fr
 	if status == nil {
 		return counts
 	}
-	var issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, confirmClose, draft int
+	var issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, draft int
 	for _, repo := range status.Repos {
 		for _, raw := range repo.ActionableIssues {
 			switch overviewStatusIssueBand(raw) {
-			case "waiting":
+			case "waiting", "done":
 				issueBlockedHuman++
-			case "done":
-				confirmClose++
 			default:
 				counts.Issues++
 			}
@@ -210,10 +208,10 @@ func overviewActionableNow(status *StatusPayload, meta overviewPartitionMeta) Fr
 	}
 	counts.Total = counts.Issues + counts.PRs
 	totals := status.OverviewTotals
-	if totals.Issues.Forge == 0 && totals.PRs.Forge == 0 && (len(status.Repos) > 0 || counts.Total > 0 || issueHeld > 0 || prHeld > 0 || issueBlockedHuman > 0 || prBlockedHuman > 0 || confirmClose > 0 || draft > 0) {
+	if totals.Issues.Forge == 0 && totals.PRs.Forge == 0 && (len(status.Repos) > 0 || counts.Total > 0 || issueHeld > 0 || prHeld > 0 || issueBlockedHuman > 0 || prBlockedHuman > 0 || draft > 0) {
 		totals = overviewTotals(status)
 	}
-	counts.Equation, counts.IssueEquation, counts.PREquation = overviewActionableEquations(totals, counts.Issues, counts.PRs, issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, confirmClose, draft, meta)
+	counts.Equation, counts.IssueEquation, counts.PREquation = overviewActionableEquations(totals, counts.Issues, counts.PRs, issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, draft, meta)
 	if counts.Equation != nil {
 		if outside := overviewTerm(counts.Equation, "outside"); outside != nil {
 			counts.Outside = &FrontendActionableOutside{Count: outside.Count, Breakdown: append([]FrontendActionableBreakdownTerm(nil), outside.Breakdown...)}
@@ -222,27 +220,25 @@ func overviewActionableNow(status *StatusPayload, meta overviewPartitionMeta) Fr
 	return counts
 }
 
-func overviewActionableEquations(totals FrontendOverviewTotals, actionableIssues, actionablePRs, issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, confirmClose, draft int, meta overviewPartitionMeta) (*FrontendActionableEquation, *FrontendActionableEquation, *FrontendActionableEquation) {
+func overviewActionableEquations(totals FrontendOverviewTotals, actionableIssues, actionablePRs, issueHeld, prHeld, issueBlockedHuman, prBlockedHuman, draft int, meta overviewPartitionMeta) (*FrontendActionableEquation, *FrontendActionableEquation, *FrontendActionableEquation) {
 	openIssues := totals.Issues.Forge
 	openPRs := totals.PRs.Forge
 	outsideNeedsHuman := totals.Issues.Breakdown["needs_human"]
 	issueBlockedHuman += outsideNeedsHuman
 	issueOutside := max(0, totals.Issues.Outside-outsideNeedsHuman)
-	prOutside := max(0, totals.PRs.Outside)
+	prOutside := max(0, totals.PRs.Outside+draft)
 	details := overviewPartitionDetails(totals, issueOutside, prOutside, issueBlockedHuman, prBlockedHuman, meta)
 	issueEq := overviewActionableKindEquation("issues", openIssues, actionableIssues, []FrontendActionableEquationTerm{
 		{Key: "held", Label: "held", Count: issueHeld, Rule: "Issue has a hold label.", Breakdown: details.IssueHeld},
 		{Key: "blocked_needs_human", Label: "blocked/needs-human", Count: issueBlockedHuman, Rule: "Issue is waiting on a person, confirmation, or dependency.", Breakdown: details.IssueBlocked},
-		{Key: "confirm_close", Label: "confirm/close", Count: confirmClose},
 		{Key: "outside", Label: "outside", Count: issueOutside, Rule: "Open issues filtered out before Overview bands by this hive's scanner settings.", Breakdown: details.IssueOutside},
 	})
 	prEq := overviewActionableKindEquation("PRs", openPRs, actionablePRs, []FrontendActionableEquationTerm{
 		{Key: "held", Label: "held", Count: prHeld, Rule: "Pull request has a hold label.", Breakdown: details.PRHeld},
 		{Key: "blocked_needs_human", Label: "blocked/needs-human", Count: prBlockedHuman, Rule: "Pull request is blocked, waiting, or needs human review.", Breakdown: details.PRBlocked},
-		{Key: "draft", Label: "draft", Count: draft},
 		{Key: "outside", Label: "outside", Count: prOutside, Rule: "Open PRs filtered out before Overview bands by this hive's scanner settings.", Breakdown: details.PROutside},
 	})
-	combined := overviewActionableCombinedEquation(totals, actionableIssues+actionablePRs, issueHeld+prHeld, issueBlockedHuman+prBlockedHuman, confirmClose, draft, issueEq, prEq)
+	combined := overviewActionableCombinedEquation(totals, actionableIssues+actionablePRs, issueHeld+prHeld, issueBlockedHuman+prBlockedHuman, issueEq, prEq)
 	return combined, issueEq, prEq
 }
 
@@ -265,7 +261,7 @@ func overviewActionableKindEquation(kind string, open, actionable int, subtract 
 	return eq
 }
 
-func overviewActionableCombinedEquation(totals FrontendOverviewTotals, actionable, held, blockedHuman, confirmClose, draft int, issueEq, prEq *FrontendActionableEquation) *FrontendActionableEquation {
+func overviewActionableCombinedEquation(totals FrontendOverviewTotals, actionable, held, blockedHuman int, issueEq, prEq *FrontendActionableEquation) *FrontendActionableEquation {
 	openIssues := totals.Issues.Forge
 	openPRs := totals.PRs.Forge
 	outside := overviewTermCount(issueEq, "outside") + overviewTermCount(prEq, "outside")
@@ -277,12 +273,6 @@ func overviewActionableCombinedEquation(totals FrontendOverviewTotals, actionabl
 		{Key: "actionable", Label: "actionable", Count: actionable},
 		{Key: "held", Label: "held", Count: held, Rule: "Open issues and PRs paused by hold labels.", Breakdown: heldBreakdown},
 		{Key: "blocked_needs_human", Label: "blocked/needs-human", Count: blockedHuman, Rule: "Open work waiting on a person, dependency, or mergeability.", Breakdown: blockedBreakdown},
-	}
-	if confirmClose > 0 {
-		terms = append(terms, FrontendActionableEquationTerm{Key: "confirm_close", Label: "confirm/close", Count: confirmClose})
-	}
-	if draft > 0 {
-		terms = append(terms, FrontendActionableEquationTerm{Key: "draft", Label: "draft", Count: draft})
 	}
 	if outside > 0 {
 		terms = append(terms, FrontendActionableEquationTerm{Key: "outside", Label: "outside", Count: outside, Rule: "Open items excluded before they enter Overview bands by this hive's scanner settings.", Breakdown: outsideBreakdown})
@@ -355,7 +345,7 @@ func overviewKindEquationTitle(eq *FrontendActionableEquation) string {
 	}
 	return strings.ToUpper("actionable "+eq.Kind) + " — " + what + " that can move without waiting.\n\n" +
 		"WHAT: The " + eq.Kind + " split of the shared Overview Actionable now set.\n\n" +
-		"HOW: " + eq.Text + ". Held, blocked/needs-human, confirm/close, draft, outside, and other terms use the same server-side partition as Overview. Claimed/in-progress work remains actionable unless it is in one of those excluded terms."
+		"HOW: " + eq.Text + ". Each open item is assigned once, in order: actionable, held, blocked/needs-human, or one outside reason. Confirm/close items are blocked/needs-human; draft PRs are outside. Claimed/in-progress work remains actionable unless it is in one of those excluded terms."
 }
 
 func overviewEquationText(eq *FrontendActionableEquation) string {
@@ -506,7 +496,7 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 		},
 		IssueBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries the hard-suppress label needs-human, so Hive waits for a person.", "hardSuppressIssueLabels", overviewValue(meta.HardSuppressIssueLabels), "Remove needs-human after the person finishes the required action.", "Labels", "/docs/labels-and-control-signals.md"),
-			overviewBreakdownTerm("issue-waiting-band", "waiting issue band", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]), "Overview waiting-band issues include open dependency links, claimed waiting states, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
+			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
 		},
 		PRBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("pr-blocked-band", "blocked/waiting PR band", prBlocked, "Overview PR blocked/waiting bands cover merge conflicts, requested human review, needs-human, or other PR gates.", "overview PR band specs", "server-provided overview_bands.prs", "Resolve mergeability/review gates or clear the needs-human signal shown on the PR pill.", "", "/docs/dashboard.md#overview"),

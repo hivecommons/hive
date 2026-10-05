@@ -13767,21 +13767,46 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `${esc(String(openIssues))} issues + ${esc(String(openPRs))} PRs = ${terms || '0 actionable'}`;
     }
 
+    function overviewEquationTermCount(equation, key) {
+      const term = (equation?.terms || []).find(t => t && t.key === key);
+      const n = Number(term?.count || 0);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function overviewOutsideBreakdownText(equation) {
+      const outside = (equation?.terms || []).find(t => t && t.key === 'outside');
+      const rows = Array.isArray(outside?.breakdown) ? outside.breakdown : [];
+      if (!rows.length) return '';
+      return rows.map(row => `${Number(row?.count || 0)} ${row?.label || row?.key || 'other'}`).join(' · ');
+    }
+
+    function renderOverviewTotalPartitionSubline(equation) {
+      if (!equation) return '';
+      const total = Number(equation.open || equation.totalOpen || 0);
+      const actionable = Number(equation.result || 0);
+      const held = overviewEquationTermCount(equation, 'held');
+      const blocked = overviewEquationTermCount(equation, 'blocked_needs_human');
+      const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
+      const detail = overviewOutsideBreakdownText(equation);
+      return `${esc(String(total))} = ${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
+    }
+
+    function renderOverviewSplitSubline(total, issueCount, prCount, label) {
+      return `${esc(String(Number(total || 0)))} ${esc(label)} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
+    }
+
     function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
-      const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
       const draft = (prSlices || []).filter(s => s.key === 'draft').reduce((n, s) => n + Number(s.count || 0), 0);
       const totalOpen = Number(openIssues || 0) + Number(openPRs || 0);
       const outsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
-      const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman;
-      const known = Number(actionable || 0) + Number(held || 0) + blockedTerm + confirmClose + draft;
-      const outside = Math.min(Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman), Math.max(0, totalOpen - known));
+      const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
+      const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman + confirmClose;
+      const outside = Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman + draft);
       const terms = [
         { key: 'actionable', label: 'actionable', count: actionable },
         { key: 'held', label: 'held', count: held },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: blockedTerm },
       ];
-      if (confirmClose > 0) terms.push({ key: 'confirm_close', label: 'confirm/close', count: confirmClose });
-      if (draft > 0) terms.push({ key: 'draft', label: 'draft', count: draft });
       if (outside > 0) terms.push({ key: 'outside', label: 'outside', count: outside });
       const sum = terms.reduce((n, t) => n + Number(t.count || 0), 0);
       if (totalOpen > sum) terms.push({ key: 'other', label: 'other', count: totalOpen - sum });
@@ -13808,15 +13833,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const outsideNeedsHuman = Number(totals.issues?.breakdown?.needs_human || 0);
       const issueEq = overviewKPIKindEquation('issues', Number(totals.issues?.forge || issueCount || 0), Number(issueCount || 0), [
         { key: 'held', label: 'held', count: issueHeld },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + outsideNeedsHuman },
-        { key: 'confirm_close', label: 'confirm/close', count: Number(issueCounts.done || 0) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + outsideNeedsHuman },
         { key: 'outside', label: 'outside', count: Math.max(0, Number(totals.issues?.outside || 0) - outsideNeedsHuman) },
       ]);
       const prEq = overviewKPIKindEquation('PRs', Number(totals.prs?.forge || prCount || 0), Number(prCount || 0), [
         { key: 'held', label: 'held', count: prHeld },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
-        { key: 'draft', label: 'draft', count: Number(prCounts.draft || 0) },
-        { key: 'outside', label: 'outside', count: Number(totals.prs?.outside || 0) },
+        { key: 'outside', label: 'outside', count: Number(totals.prs?.outside || 0) + Number(prCounts.draft || 0) },
       ]);
       return { issueEq, prEq };
     }
@@ -13827,9 +13850,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const forgeTotals = overviewKPIForgeTotals(repos);
       const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const actionableIssues = (issueSlices || []).filter(s => !['waiting', 'done'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const actionablePRs = (prSlices || []).filter(s => !['waiting', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);
       const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);
-      const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const computedActionableNow = actionableIssues + actionablePRs;
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
       const computedHeld = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
@@ -13837,18 +13862,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
       const serverEquation = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.equation : null;
       const equation = serverEquation || overviewKPIEquation(openIssues, openPRs, actionableNow, computedHeld, computedBlockedNeedsHuman, issueSlices, prSlices, forgeTotals);
+      const serverIssueEq = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.issueEquation : null;
+      const serverPREq = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.prEquation : null;
+      const issueCounts = Object.fromEntries((issueSlices || []).map(s => [s.key, Number(s.count || 0)]));
+      const prCounts = Object.fromEntries((prSlices || []).map(s => [s.key, Number(s.count || 0)]));
+      const issueHeldLocal = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length, 0);
+      const prHeldLocal = (repos || []).reduce((n, r) => n + (r.heldPrs || []).length, 0);
+      const localOutsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
+      const issueEq = serverIssueEq || overviewKPIKindEquation('issues', openIssues, actionableIssues, [
+        { key: 'held', label: 'held', count: issueHeldLocal },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman },
+        { key: 'outside', label: 'outside', count: Math.max(0, Number(forgeTotals?.issues?.outside || 0) - localOutsideNeedsHuman) },
+      ]);
+      const prEq = serverPREq || overviewKPIKindEquation('PRs', openPRs, actionablePRs, [
+        { key: 'held', label: 'held', count: prHeldLocal },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
+        { key: 'outside', label: 'outside', count: Number(forgeTotals?.prs?.outside || 0) + Number(prCounts.draft || 0) },
+      ]);
       const held = overviewKPITerm(equation, 'held', computedHeld);
       const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
       const equationText = equation?.text || '';
       const equationHTML = equationText ? renderActionableEquationSubline(equation) : '';
       const equationTitle = equation?.title || equationText || 'Items in bands that can move without waiting.';
+      const heldIssues = overviewEquationTermCount(issueEq, 'held');
+      const heldPRs = overviewEquationTermCount(prEq, 'held');
+      const blockedIssues = overviewEquationTermCount(issueEq, 'blocked_needs_human');
+      const blockedPRs = overviewEquationTermCount(prEq, 'blocked_needs_human');
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. In Overview bands means actionable + held + blocked/needs-human.', subline: renderOverviewTotalPartitionSubline(issueEq) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. In Overview bands means actionable + held + blocked/needs-human; draft PRs are outside until ready.', subline: renderOverviewTotalPartitionSubline(prEq) },
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationHTML },
-        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
-        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' }
+        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: `${held} held = ${heldIssues} issues + ${heldPRs} PRs. Issues and PRs deliberately paused by a hold.`, subline: renderOverviewSplitSubline(held, heldIssues, heldPRs, 'held') },
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
