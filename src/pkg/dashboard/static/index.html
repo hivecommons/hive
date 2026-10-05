@@ -3313,12 +3313,12 @@
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     .agent-navbar-upnext { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: min(480px, 34vw); overflow: hidden; }
     .agent-navbar-upnext[hidden] { display: none; }
-    .agent-navbar-tile { flex: 0 1 150px; min-width: 0; height: 32px; border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; column-gap: var(--sp-2); padding: var(--sp-1) var(--sp-3); font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; }
+    .agent-navbar-tile { flex: 0 1 150px; min-width: 0; height: 32px; border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; column-gap: var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
     .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
-    .agent-navbar-tile .agent-tile-dot { grid-row: 1 / 3; }
+    .agent-navbar-tile .agent-tile-dot { grid-row: 1 / 3; margin-left: var(--sp-2); }
     .agent-navbar-tile .agent-tile-name { grid-column: 2; }
     .agent-navbar-tile .agent-tile-next { grid-column: 2 / 4; color: var(--muted); }
     .agent-navbar-tile .agent-up-next { grid-column: 3; }
