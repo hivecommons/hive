@@ -46,7 +46,7 @@ func (s *unparkGateServer) count() int {
 func TestIssueUnparkSweepGate_NoClientNoCalls(t *testing.T) {
 	var lastRun time.Time
 
-	runIssueUnparkSweepIfDue(context.Background(), nil, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), nil, nil, nil, &lastRun, sweepQuietLogger())
 
 	if !lastRun.IsZero() {
 		t.Fatal("a sweep that did not run must not consume the throttle clock")
@@ -58,7 +58,7 @@ func TestIssueUnparkSweepGate_ThrottledToOnePassPerInterval(t *testing.T) {
 	client := github.NewClientForTest(srv.URL, "o", []string{"o/r"}, sweepQuietLogger())
 	var lastRun time.Time
 
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	first := srv.count()
 	if first == 0 {
 		t.Fatal("first pass made no API calls, want at least the issue listing")
@@ -67,13 +67,13 @@ func TestIssueUnparkSweepGate_ThrottledToOnePassPerInterval(t *testing.T) {
 		t.Fatal("first pass did not stamp the throttle clock")
 	}
 
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	if srv.count() != first {
 		t.Fatalf("second pass inside the interval made %d calls, want %d", srv.count(), first)
 	}
 
 	lastRun = time.Now().Add(-2 * issueUnparkSweepInterval)
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	if srv.count() <= first {
 		t.Fatal("a pass after the interval elapsed should have run")
 	}
