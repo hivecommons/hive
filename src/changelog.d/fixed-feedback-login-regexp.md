@@ -1,1 +1,0 @@
-- Fixed the feedback GitHub-login pattern that used an unsupported `(?=` lookahead and panicked at init, breaking every hub and dashboard test on v5 (#10593).
