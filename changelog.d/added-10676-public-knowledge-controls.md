@@ -1,0 +1,1 @@
+- Add owner-only public Knowledge MCP sharing controls to the Knowledge header and Settings, with persisted tag scope, enable confirmation, read-only viewer status, and audit logging (#10676).

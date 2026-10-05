@@ -317,6 +317,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)
 	s.mux.HandleFunc("GET /api/inference/models/{backend}", s.handleInferenceModels)
 
+	s.mux.HandleFunc("GET /api/knowledge/public", s.handlePublicKnowledgeSettings)
+	s.mux.HandleFunc("PUT /api/knowledge/public", s.handlePublicKnowledgeSettingsUpdate)
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)
 	s.mux.HandleFunc("GET /api/knowledge/export", s.handleKnowledgeExport)
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)

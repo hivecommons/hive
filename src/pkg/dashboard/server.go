@@ -345,6 +345,7 @@ type Server struct {
 	readyAt time.Time
 
 	githubAppMu         sync.RWMutex
+	publicKnowledgeMu   sync.RWMutex
 	githubConfigMu      sync.Mutex
 	githubAppRequired   bool
 	githubAppInstallURL string

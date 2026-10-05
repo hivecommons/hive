@@ -354,7 +354,8 @@ func publicKnowledgeToolDefs() []mcpToolDef {
 // anonymous entry point into knowledge and fails closed when the owner switch
 // is off, regardless of what the auth middleware admitted.
 func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request) {
-	if !publicKnowledgeEnabled() {
+	settings := s.publicKnowledgeSettings()
+	if !settings.Enabled {
 		http.NotFound(w, r)
 		return
 	}
@@ -399,7 +400,7 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 	case "tools/list":
 		resp.Result = map[string]interface{}{"tools": publicKnowledgeToolDefs()}
 	case "tools/call":
-		result, rpcErr := s.callPublicKnowledgeTool(r, req.Params)
+		result, rpcErr := s.callPublicKnowledgeTool(r, req.Params, settings.Tags)
 		if rpcErr != nil {
 			resp.Error = rpcErr
 		} else {
@@ -435,7 +436,7 @@ type mcpToolCallParams struct {
 // callPublicKnowledgeTool dispatches tools/call. Unknown tool names are a
 // JSON-RPC invalid-params error; tool-level problems (fact not found) come
 // back as isError results per the MCP spec so the model can recover.
-func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (interface{}, *jsonRPCError) {
+func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage, tags []string) (interface{}, *jsonRPCError) {
 	var params mcpToolCallParams
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &params); err != nil {
@@ -445,7 +446,6 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	if !s.ensureKnowledge() {
 		return toolText("Knowledge base not available."), nil
 	}
-	tags := publicKnowledgeTags()
 
 	switch params.Name {
 	case "knowledge_search":

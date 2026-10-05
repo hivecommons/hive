@@ -8,16 +8,23 @@ type DocSourceConfigYAML struct {
 	Layer    string `yaml:"layer"`
 }
 
+// PublicKnowledgeConfig overrides the environment when explicitly configured.
+type PublicKnowledgeConfig struct {
+	Enabled bool     `yaml:"enabled" json:"enabled"`
+	Tags    []string `yaml:"tags" json:"tags"`
+}
+
 type KnowledgeConfig struct {
-	Enabled         bool                  `yaml:"enabled"`
-	Engine          string                `yaml:"engine"`
-	Layers          []KnowledgeLayer      `yaml:"layers"`
-	Vaults          []VaultConfig         `yaml:"vaults"`
-	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
-	Documents       []DocSourceConfigYAML `yaml:"documents"`
-	Curator         KnowledgeCurator      `yaml:"curator"`
-	Primer          KnowledgePrimer       `yaml:"primer"`
-	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
+	Public          *PublicKnowledgeConfig `yaml:"public,omitempty"`
+	Enabled         bool                   `yaml:"enabled"`
+	Engine          string                 `yaml:"engine"`
+	Layers          []KnowledgeLayer       `yaml:"layers"`
+	Vaults          []VaultConfig          `yaml:"vaults"`
+	GitSources      []GitSourceConfigYAML  `yaml:"git_sources"`
+	Documents       []DocSourceConfigYAML  `yaml:"documents"`
+	Curator         KnowledgeCurator       `yaml:"curator"`
+	Primer          KnowledgePrimer        `yaml:"primer"`
+	BeadSynthesizer BeadSynthesizerConfig  `yaml:"bead_synthesizer"`
 }
 
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.

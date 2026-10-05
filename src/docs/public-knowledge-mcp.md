@@ -12,6 +12,26 @@ motivating case is a distro's troubleshooting assistant reasoning from the
 project's own accumulated fixes instead of only what its model was trained on
 ([#10615](https://github.com/hivecommons/hive/issues/10615)).
 
+## Dashboard control
+
+The Knowledge section header and **Settings → Knowledge sharing** show whether
+public MCP access is enabled, its tag scope, and the endpoint URL. Owners can
+change the toggle and comma-separated tags, then apply the settings. Enabling
+requires an in-app confirmation. Other authenticated viewers see read-only
+status and an owner-only explanation. The URL can be copied from either control.
+
+`GET /api/knowledge/public` returns `{enabled, tags, source, endpoint, url}` to
+authenticated dashboard viewers. Owner-only `PUT /api/knowledge/public` accepts
+`{"enabled": false, "tags": []}` and persists `knowledge.public` through runtime
+config persistence, including the Kubernetes dashboard overlay. Changes are
+audited. A failed save returns an error and restores the previous runtime value.
+
+An explicit `knowledge.public` config block overrides both environment variables,
+including when `enabled` is false or `tags` is empty. Without that block, the
+environment controls below remain backward compatible. Settings are checked for
+every request, so disabling closes subsequent requests immediately. Requests
+already in progress may finish.
+
 ## Owner switch
 
 | Variable | Effect |
@@ -103,7 +123,7 @@ curl -s https://hive.example.org/mcp/knowledge \
 On hosted hives the hub's nginx `auth_request` gate waves `/mcp/knowledge`
 through (same mechanism as `/api/knowledge/export`, #8294) so an agent with
 no browser session is not bounced to the login page. This opens nothing by
-itself: the spoke re-checks `HIVE_PUBLIC_KNOWLEDGE` and 404s when it is off.
+itself: the spoke re-checks the effective public-sharing setting and 404s when it is off.
 
 ## Related
 

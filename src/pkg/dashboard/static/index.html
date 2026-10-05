@@ -1772,6 +1772,10 @@
     .repo-pr-pill .pill-role { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.02em; text-transform:uppercase; margin-left:3px; opacity:0.85; }
     .overview-card { position: relative; margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
     .overview-header { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    #kb-public-sharing { position: relative; font-size: 0.8rem; }
+    #kb-public-sharing summary { cursor: pointer; }
+    #kb-public-controls { position: absolute; right: 0; top: 100%; z-index: 30; width: min(26rem, 80vw); padding: 1rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #0004; font-weight: normal; }
+    #kb-public-controls input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
     .overview-settings-modal { width: min(44rem, calc(100vw - var(--modal-gap) - var(--modal-gap))); }
     .overview-settings-body { display: grid; gap: var(--sp-4); }
     .overview-settings-section { display: grid; gap: var(--sp-3); padding-top: var(--sp-3); margin-top: var(--sp-3); border-top: 1px solid var(--border); }
@@ -18551,6 +18555,72 @@ function burnAreaChart() {
 
     // fetchNousStatus() — deferred to _deferredInit
 
+    // Public sharing is independent of knowledge primer registration.
+    let _publicKnowledge = null;
+    function publicKnowledgeControls(id) {
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const p = _publicKnowledge;
+      if (!p) return '<p role="status">Public sharing status unavailable.</p><button class="hv-btn" data-action="loadPublicKnowledge" data-arg0="true" data-arg-types="j">Retry</button>';
+      const disabled = owner ? '' : ' disabled';
+      return '<div id="' + id + '" title="' + (owner ? 'Public read-only knowledge endpoint' : 'Only the owner can change public sharing') + '">' +
+        '<p><strong>Public read-only MCP: ' + (p.enabled ? 'Enabled' : 'Disabled') + '</strong></p>' +
+        '<p>Anyone with this URL can read operational facts. Private ideation and governance facts remain excluded.</p>' +
+        '<label><input type="checkbox" class="public-knowledge-enabled"' + (p.enabled ? ' checked' : '') + disabled + '> Enable public sharing</label>' +
+        '<p><label>Allowed tags (comma-separated; empty shares all operational facts)<br><input class="public-knowledge-tags" value="' + escapeHtml(p.tags.join(', ')) + '"' + disabled + '></label></p>' +
+        '<p><label>Endpoint URL <input readonly value="' + escapeHtml(p.url) + '"></label> <button type="button" class="hv-btn" data-action="copyPublicKnowledgeURL">Copy</button></p>' +
+        '<p class="muted">Settings source: ' + escapeHtml(p.source) + '</p>' +
+        (owner ? '<button type="button" class="hv-btn btn-primary" data-action="savePublicKnowledge" data-arg0="' + id + '">Apply sharing settings</button>' : '<p>Only the owner can change public sharing.</p>') + '</div>';
+    }
+    function renderPublicKnowledge(force) {
+      const header = document.querySelector('#knowledge-section .dash-card-actions');
+      if (header) {
+        let sharing = document.getElementById('kb-public-sharing');
+        if (!sharing) {
+          sharing = document.createElement('details');
+          sharing.id = 'kb-public-sharing';
+          sharing.setAttribute('data-stop', '1');
+          header.appendChild(sharing);
+        }
+        if (!sharing.open || force || !document.getElementById('kb-public-controls')) sharing.innerHTML = '<summary>Public MCP: ' + (_publicKnowledge ? (_publicKnowledge.enabled ? 'on' : 'off') : 'unknown') + '</summary>' + publicKnowledgeControls('kb-public-controls');
+      }
+      const settings = document.getElementById('settings-public-sharing');
+      if (settings && (force || !document.getElementById('settings-public-controls'))) settings.innerHTML = publicKnowledgeControls('settings-public-controls');
+    }
+    async function loadPublicKnowledge(force) {
+      try {
+        const r = await fetch('/api/knowledge/public');
+        if (!r.ok) throw new Error('Could not load public sharing status');
+        _publicKnowledge = await r.json();
+      } catch (e) { _publicKnowledge = null; }
+      renderPublicKnowledge(force);
+    }
+    async function savePublicKnowledge(id) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      const container = document.getElementById(id);
+      if (!container || !_publicKnowledge) return;
+      const enabled = container.querySelector('.public-knowledge-enabled').checked;
+      const tags = container.querySelector('.public-knowledge-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+      if (enabled && !await hiveConfirm({title: 'Enable public knowledge sharing?', message: 'Anyone with the endpoint URL will be able to read and export operational facts matching these tags. Empty tags share all operational facts. This endpoint is read-only.', confirmLabel: 'Enable public sharing'})) return;
+      const button = container.querySelector('[data-action="savePublicKnowledge"]');
+      button.disabled = true;
+      try {
+        const r = await fetch('/api/knowledge/public', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled, tags})});
+        if (!r.ok) throw new Error(await r.text());
+        _publicKnowledge = await r.json();
+        const details = document.getElementById('kb-public-sharing');
+        if (details) details.open = false;
+        if (document.activeElement) document.activeElement.blur();
+        renderPublicKnowledge(true);
+        showToast('Public knowledge sharing updated', 'success');
+      } catch (e) { showToast('Could not save sharing settings: ' + e.message, 'error'); }
+      finally { button.disabled = false; }
+    }
+    async function copyPublicKnowledgeURL() {
+      if (!_publicKnowledge) return;
+      try { await navigator.clipboard.writeText(_publicKnowledge.url); showToast('Endpoint URL copied', 'success'); }
+      catch (e) { showToast('Could not copy URL; select and copy the endpoint field.', 'error'); }
+    }
+
     // ── Knowledge Base ──
     let _kbCache = null;
     let _kbSelectedLayer = 'all';
@@ -18624,6 +18694,7 @@ function burnAreaChart() {
     }
 
     async function fetchKnowledgeStats() {
+      loadPublicKnowledge();
       try {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
         if (!r.ok) return;
@@ -19351,6 +19422,7 @@ function burnAreaChart() {
 
     function renderKnowledge() {
       refreshSectionCardShell('knowledge-section');
+      renderPublicKnowledge();
       const panel = document.getElementById('knowledge-panel');
       const badge = document.getElementById('kb-status-badge');
       if (!panel) return;
@@ -26726,7 +26798,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Knowledge sharing', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -27367,6 +27439,7 @@ function burnAreaChart() {
         // configured" when upstream_watch is off.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
+        if (tabId === 'Knowledge sharing') loadPublicKnowledge(true);
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -27549,6 +27622,7 @@ function burnAreaChart() {
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
+        case 'Knowledge sharing': return '<h3>Knowledge sharing</h3><p>Changes apply immediately using the button below.</p><div id="settings-public-sharing">' + publicKnowledgeControls('settings-public-controls') + '</div>';
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});

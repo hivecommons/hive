@@ -5441,6 +5441,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
 	}
+	// An explicit public-sharing setting (including false) survives pod restarts.
+	if overlay.Knowledge.Public != nil {
+		cfg.Knowledge.Public = overlay.Knowledge.Public
+	}
 	// Tombstones live in the dashboard overlay because that is the only agent
 	// source the dashboard can write. Adopt them BEFORE the fullness guard below
 	// so a short/empty overlay (one that has no agents yet, or only carries the
