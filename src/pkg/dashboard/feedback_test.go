@@ -97,6 +97,15 @@ func TestFeedbackIssueBodyAttributionShapes(t *testing.T) {
 			wantLine:        "Opened by @clubanderson on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
 			notWant:         []string{"/cc @"},
 		},
+		{
+			name:            "self-reported login is not mentioned",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "https://hub.example",
+			hiveID:          "hive-linked",
+			submitter:       feedbackSubmitterIdentity{Name: "mallory", GitHubLogin: "mallory", Source: feedbackSourceEntered},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of `mallory` (self-reported GitHub username, unverified) from hive hive-linked (https://hub.example)",
+			notWant:         []string{"/cc @", "@mallory"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,8 +148,14 @@ func TestFeedbackSubmitterIdentitySources(t *testing.T) {
 		t.Fatalf("oauth identity = %+v", got)
 	}
 
+	// A verified session login must win over whatever the form sent: otherwise
+	// any signed-in user could attribute feedback to an arbitrary account.
+	if got := s.feedbackSubmitterIdentity(oauthReq, "mallory"); got.GitHubLogin != "octocat" || got.Source != "GitHub dashboard identity" {
+		t.Fatalf("entered login overrode verified identity = %+v", got)
+	}
+
 	enteredReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
-	if got := s.feedbackSubmitterIdentity(enteredReq, "alice"); got.Name != "alice" || got.GitHubLogin != "alice" || got.Source != "entered GitHub username" {
+	if got := s.feedbackSubmitterIdentity(enteredReq, "alice"); got.Name != "alice" || got.GitHubLogin != "alice" || got.Source != feedbackSourceEntered {
 		t.Fatalf("entered identity = %+v", got)
 	}
 
@@ -412,7 +427,12 @@ assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as 
 window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 nodes['feedback-github-username'].value = 'bob';
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of @bob · hive hive-solo (hub-less)');
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of @bob (self-reported, unverified) · hive hive-solo (hub-less)');
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: 'octocat', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of @octocat · hive hive-solo (hub-less)');
+nodes['feedback-github-username'].value = '';
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 nodes['feedback-github-username'].value = '';
 window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', submitter_name: 'basic-user', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 updateFeedbackAttributionLine();

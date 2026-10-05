@@ -111,9 +111,23 @@ type feedbackSubmissionRecord struct {
 	LastSeenUpdatedAt string `json:"last_seen_updated_at,omitempty"`
 }
 
+// feedbackSubmitterVerified reports whether the submitter login came from an
+// authenticated identity rather than free text typed into the form.
+func feedbackSubmitterVerified(s feedbackSubmitterIdentity) bool {
+	return s.GitHubLogin != "" && s.Source != feedbackSourceEntered
+}
+
+// feedbackSubmitterBodyText renders the submitter for the issue body. Only a
+// verified login is @-mentioned: the issue is opened with the hive's own
+// credential, so mentioning a self-reported handle would let any dashboard
+// user make the bot notify (and misattribute feedback to) an arbitrary
+// GitHub account.
 func feedbackSubmitterBodyText(s feedbackSubmitterIdentity) string {
-	if s.GitHubLogin != "" {
+	if feedbackSubmitterVerified(s) {
 		return "@" + s.GitHubLogin
+	}
+	if s.GitHubLogin != "" {
+		return "`" + s.GitHubLogin + "` (self-reported GitHub username, unverified)"
 	}
 	return s.Name
 }
@@ -807,10 +821,14 @@ func (s *Server) feedbackTokenLogin(token string) string {
 	return githubLoginForMention(lookupFeedbackTokenLogin(token))
 }
 
+// feedbackSourceEntered marks a submitter login the user typed into the form.
+// Nothing verifies it, so renderers must not @-mention it (see
+// feedbackSubmitterBodyText).
+const feedbackSourceEntered = "entered GitHub username"
+
 func (s *Server) feedbackSubmitterIdentity(r *http.Request, enteredLogin string) feedbackSubmitterIdentity {
-	if login := githubLoginForMention(enteredLogin); login != "" {
-		return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: "entered GitHub username"}
-	}
+	// A verified identity always wins: an entered login is only a fallback for
+	// sessions that carry no GitHub login of their own.
 	if s != nil {
 		if sess := s.sessionFromRequest(r); sess != nil && strings.TrimSpace(sess.Username) != "" {
 			name := sanitizeFeedbackIdentityValue(sess.Username)
@@ -821,8 +839,14 @@ func (s *Server) feedbackSubmitterIdentity(r *http.Request, enteredLogin string)
 			if login != "" {
 				return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: "GitHub dashboard identity"}
 			}
+			if entered := githubLoginForMention(enteredLogin); entered != "" {
+				return feedbackSubmitterIdentity{Name: entered, GitHubLogin: entered, Source: feedbackSourceEntered}
+			}
 			return feedbackSubmitterIdentity{Name: name, Source: "authenticated dashboard user"}
 		}
+	}
+	if login := githubLoginForMention(enteredLogin); login != "" {
+		return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: feedbackSourceEntered}
 	}
 	if user := sanitizeFeedbackIdentityValue(r.Header.Get("X-Hive-User")); user != "" {
 		return feedbackSubmitterIdentity{Name: user, Source: "authenticated dashboard user"}
@@ -926,7 +950,7 @@ func buildFeedbackIssueBody(req feedbackReportRequest) string {
 	} else {
 		b.WriteString("Target: Hive\n")
 	}
-	if req.Submitter.GitHubLogin != "" {
+	if feedbackSubmitterVerified(req.Submitter) {
 		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
 	}
 	if req.Diagnostics != nil {

@@ -5137,7 +5137,8 @@
       const status = window._feedbackStatus || {};
       const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'the hive');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
-      const user = feedbackMention(entered || status.submitter_login) || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
+      // A verified login wins over the typed one; a typed login is only ever self-reported.
+      const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
       const hive = status.hive_id || ((window._lastStatus || {}).hiveId) || 'unknown';
       let line = 'Will be opened as ' + credential;
       if (credential.toLowerCase() !== user.toLowerCase()) line += ' on behalf of ' + user;
