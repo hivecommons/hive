@@ -321,6 +321,8 @@ docker_success_runs() {
     env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
       "/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=50" \
       --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
+    curl -fsSL "https://api.github.com/repos/${repo}/actions/workflows/${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}/runs?branch=${branch}&per_page=100" \
+      | jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | [.run_number, .head_sha, (.updated_at // .created_at)] | @tsv' || true
   } | awk -F '\t' 'NF >= 3 && !seen[$1]++ { print }' | sort -t $'\t' -k1,1nr
 }
 
