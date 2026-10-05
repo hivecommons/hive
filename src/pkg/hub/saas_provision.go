@@ -2782,8 +2782,9 @@ func HashDashboardToken(token string) string { return spoke.HashDashboardToken(t
 
 // deprovisionHive performs best-effort cleanup of all resources associated
 // with a hosted hive: K8s namespace (cascading to deployment, service, ingress,
-// configmap, secret, PVC), cluster-scoped PV, OCI NFS export, OCI file system,
-// and the on-disk SaaS hive record. It also decrements the owner's quota.
+// configmap, secret, PVC), cluster-scoped node-health RBAC, cluster-scoped PV,
+// OCI NFS export, OCI file system, and the on-disk SaaS hive record. It also
+// decrements the owner's quota.
 // Order matters: namespace before PV, export before file system.
 // Errors are logged but do not stop the remaining cleanup steps.
 func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
@@ -2798,7 +2799,16 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		logger.Warn("deprovision: namespace delete failed", "namespace", ns, "output", string(out), "error", err)
 	}
 
-	// Step 2: NFS storage requires extra cleanup — PV is cluster-scoped and
+	// Step 2: Delete cluster-scoped node-health RBAC; namespace deletion cannot
+	// cascade it.
+	nodeHealthReaderName := "hive-node-health-reader-" + ns
+	logger.Info("deprovision: deleting node-health RBAC", "name", nodeHealthReaderName)
+	cmd = kubectlForCluster(cluster, "delete", "clusterrole,clusterrolebinding", nodeHealthReaderName, "--ignore-not-found")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.Warn("deprovision: node-health RBAC delete failed", "name", nodeHealthReaderName, "output", string(out), "error", err)
+	}
+
+	// Step 3: NFS storage requires extra cleanup — PV is cluster-scoped and
 	// OCI FSS resources live outside K8s. Dynamic storage (CephFS) cascades
 	// with the namespace delete, so no extra steps needed.
 	if cluster.StorageType == storageTypeNFS || cluster.StorageType == "" {
@@ -2827,7 +2837,7 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		}
 	}
 
-	// Step 3: For OpenShift with SCC, remove the SCC binding. The ServiceAccount
+	// Step 4: For OpenShift with SCC, remove the SCC binding. The ServiceAccount
 	// is already gone with the namespace, but the cluster-scoped SCC binding may linger.
 	if cluster.RequiresSCC {
 		sccName := cluster.SCCName
@@ -2843,7 +2853,7 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		}
 	}
 
-	// Step 4: Remove the on-disk SaaS hive record.
+	// Step 5: Remove the on-disk SaaS hive record.
 	hiveDir := filepath.Join(saasHivesDir, hiveID)
 	if err := os.RemoveAll(hiveDir); err != nil {
 		logger.Warn("deprovision: failed to remove hive directory", "path", hiveDir, "error", err)
@@ -3080,6 +3090,46 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: hive-route-reader
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
+# hive-node-health-reader lets a push-reported spoke include useful cluster
+# capacity in its outbound heartbeat when the hub cannot kubectl into the
+# cluster. Read-only and cluster-scoped because Kubernetes Nodes and
+# metrics.k8s.io NodeMetrics are cluster-scoped, and the per-node hive count
+# requires listing running pods across hive-hosted-* namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-node-health-reader-{{.Namespace}}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-node-health-reader-{{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-node-health-reader-{{.Namespace}}
 subjects:
 - kind: ServiceAccount
 {{- if .RequiresSCC}}

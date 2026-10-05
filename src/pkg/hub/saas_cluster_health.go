@@ -998,6 +998,11 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 		HiveCount:  hiveCount,
 		DataSource: "heartbeat",
 	}
+	if report.NodeHealthError != "" {
+		pch.Error = report.NodeHealthError
+		pch.Status = perClusterHealthStatusMissingHealth
+		pch.Note = "push-reported · node health partial — " + report.NodeHealthError
+	}
 
 	// Mark staleness if heartbeat data is too old.
 	age := time.Since(entry.ReceivedAt)

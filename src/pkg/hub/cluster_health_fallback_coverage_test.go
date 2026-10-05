@@ -203,3 +203,24 @@ func TestConvertHeartbeatToPerClusterHealthMarksStale(t *testing.T) {
 		t.Fatal("stale heartbeat note should explain the warning")
 	}
 }
+
+func TestConvertHeartbeatToPerClusterHealthShowsNodeHealthError(t *testing.T) {
+	report := sampleHeartbeatReport()
+	report.NodeHealthError = "metrics API failed: k8s API /apis/metrics.k8s.io/v1beta1/nodes: HTTP 403: forbidden"
+	entry := &HeartbeatHealthEntry{Report: report, ReceivedAt: time.Now()}
+
+	got := convertHeartbeatToPerClusterHealth("vllm-d", "vLLM-d", entry, 36)
+	if got.Status != perClusterHealthStatusMissingHealth {
+		t.Fatalf("status = %q, want %q", got.Status, perClusterHealthStatusMissingHealth)
+	}
+	if got.Error != report.NodeHealthError {
+		t.Fatalf("error = %q, want %q", got.Error, report.NodeHealthError)
+	}
+	want := "push-reported · node health partial — " + report.NodeHealthError
+	if got.Note != want {
+		t.Fatalf("note = %q, want %q", got.Note, want)
+	}
+	if got.Summary.TotalNodes != 1 || got.Summary.TotalCPUCores != 4 || got.Summary.HiveCount != 36 {
+		t.Fatalf("summary = %+v, want heartbeat capacity preserved", got.Summary)
+	}
+}
