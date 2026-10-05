@@ -277,7 +277,7 @@ The codebase signal compares the prior recorded head SHA with the current Git
 HEAD when available. Outward-looking external-source discovery (upstreams,
 competitors, standards trackers, landscape entries) is deliberately not in
 this PR; the Go extension point is `RecheckEvidenceSource`, with only the
-codebase-head source implemented.
+codebase-head source implemented. Follow-up: [#10667](https://github.com/hivecommons/hive/issues/10667).
 
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count}`;

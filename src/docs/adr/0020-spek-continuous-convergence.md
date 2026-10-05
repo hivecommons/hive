@@ -1,4 +1,4 @@
-# ADR-0020: Spek recheck cadence and delta generations
+# ADR-0020: Spek continuous convergence
 
 ## Status
 
