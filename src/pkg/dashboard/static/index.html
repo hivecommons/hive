@@ -7716,15 +7716,33 @@
 
     // ── Sparkline helper ──
     const SPARKLINE_STORAGE_KEY = 'hive_sparkline_history';
-    // Upper bound for any client-side time-series history (one week at the
-    // server's 5-min trend resolution). Every in-memory history array is
-    // trimmed through capHistory so a tab left open for hours stays bounded.
-    const CLIENT_HISTORY_MAX_SAMPLES = 2016;
-    function capHistory(arr, max) {
+    const SPARKLINE_MAX_POINTS = 360;
+    const DASHBOARD_HISTORY_CAP = SPARKLINE_MAX_POINTS;
+    const CLIENT_HISTORY_MAX_SAMPLES = DASHBOARD_HISTORY_CAP;
+    const DASHBOARD_SERVER_HISTORY_CAP = 10000;
+    const DASHBOARD_LOG_CAP = 500;
+    const DASHBOARD_INTERVALS = window.__dashboardIntervals = window.__dashboardIntervals || {};
+    function capDashboardArray(arr, cap) {
       if (!Array.isArray(arr)) return [];
-      const limit = max || CLIENT_HISTORY_MAX_SAMPLES;
-      if (arr.length > limit) arr.splice(0, arr.length - limit);
+      return arr.length > cap ? arr.slice(-cap) : arr;
+    }
+    function pushDashboardRing(arr, item, cap) {
+      arr.push(item);
+      if (arr.length > cap) arr.splice(0, arr.length - cap);
       return arr;
+    }
+    function capHistory(arr, max) {
+      return capDashboardArray(arr, max || CLIENT_HISTORY_MAX_SAMPLES);
+    }
+    function dashboardSetInterval(key, fn, ms) {
+      if (DASHBOARD_INTERVALS[key]) clearInterval(DASHBOARD_INTERVALS[key]);
+      DASHBOARD_INTERVALS[key] = setInterval(fn, ms);
+      return DASHBOARD_INTERVALS[key];
+    }
+    function dashboardClearInterval(key) {
+      if (!DASHBOARD_INTERVALS[key]) return;
+      clearInterval(DASHBOARD_INTERVALS[key]);
+      delete DASHBOARD_INTERVALS[key];
     }
     let historyData = (() => {
       try {
@@ -7733,6 +7751,7 @@
       } catch { return []; }
     })();
     function persistSparklineHistory() {
+      historyData = capHistory(historyData);
       try { localStorage.setItem(SPARKLINE_STORAGE_KEY, JSON.stringify(historyData)); } catch {}
     }
     const SPARK_W = 80, SPARK_H = 20;
@@ -7781,6 +7800,23 @@
       while (_sparklineLastKeys.size > SPARKLINE_KEY_CACHE_MAX) {
         _sparklineLastKeys.delete(_sparklineLastKeys.keys().next().value);
       }
+    }
+    const _sparklineCleanupTimers = new WeakMap();
+    const _sparklineStaggerTimers = new Set();
+
+    function cancelSparklineWork(root, clearStaggers) {
+      if (clearStaggers) {
+        _sparklineStaggerTimers.forEach(timer => clearTimeout(timer));
+        _sparklineStaggerTimers.clear();
+      }
+      const nodes = [];
+      if (root && root.nodeType === 1) nodes.push(root);
+      if (root && root.querySelectorAll) nodes.push(...root.querySelectorAll('*'));
+      nodes.forEach(node => {
+        const cleanup = _sparklineCleanupTimers.get(node);
+        if (cleanup) { clearTimeout(cleanup); _sparklineCleanupTimers.delete(node); }
+        if (node.getAnimations) node.getAnimations().forEach(animation => animation.cancel());
+      });
     }
 
     function sparklineSeriesKey(series) {
@@ -7847,6 +7883,7 @@
         dot + (opts.after || '') + `</svg>`;
       const html = opts.wrapper === false ? svg : `<span class="${['sparkline', opts.wrapperClass || ''].filter(Boolean).map(escapeHtml).join(' ')}"${opts.wrapperTitle ? ` title="${escapeHtml(opts.wrapperTitle)}"` : ''}>${svg}</span>`;
       if (el && el.nodeType === 1) {
+        cancelSparklineWork(el, true);
         el.innerHTML = html;
         replaySparklinesIn(el, { force: true });
       }
@@ -7864,10 +7901,9 @@
       return true;
     }
     function animateSparklineSvg(svg, length) {
-      // A re-render may have replaced this svg before its staggered timeout
-      // fired; animating a detached node would only extend its lifetime.
       if (!svg || !svg.isConnected) return;
-      const line = svg.querySelector('.sparkline-line');
+      cancelSparklineWork(svg, false);
+      const line = svg && svg.querySelector('.sparkline-line');
       if (!line || sparklineReducedMotion()) return;
       const wrap = svg.closest('.sparkline') || svg;
       const area = svg.querySelector('.sparkline-area');
@@ -7881,11 +7917,14 @@
       line.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
       if (area) area.animate([{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
       if (dot) dot.animate([{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
-      setTimeout(() => {
+      const cleanupTimer = setTimeout(() => {
+        _sparklineCleanupTimers.delete(wrap);
+        if (!line.isConnected) return;
         line.style.strokeDasharray = '';
         line.style.strokeDashoffset = '';
         wrap.classList.remove('is-redrawing', 'is-glowing');
       }, SPARKLINE_ANIMATION_MS + 80);
+      _sparklineCleanupTimers.set(wrap, cleanupTimer);
     }
     function replaySparklinesIn(root, opts) {
       opts = opts || {};
@@ -7901,7 +7940,13 @@
         const line = svg.querySelector('.sparkline-line');
         runnable.push({ svg, length: line && line.getTotalLength ? line.getTotalLength() : 0 });
       }
-      runnable.forEach((item, i) => setTimeout(() => animateSparklineSvg(item.svg, item.length), Math.min(i * SPARKLINE_STAGGER_MS, SPARKLINE_MAX_STAGGER_MS)));
+      runnable.forEach((item, i) => {
+        const timer = setTimeout(() => {
+          _sparklineStaggerTimers.delete(timer);
+          if (item.svg && item.svg.isConnected) animateSparklineSvg(item.svg, item.length);
+        }, Math.min(i * SPARKLINE_STAGGER_MS, SPARKLINE_MAX_STAGGER_MS));
+        _sparklineStaggerTimers.add(timer);
+      });
     }
 
     function sparkSvg(rawValues, color, times, id) {
@@ -7974,7 +8019,7 @@
     async function fetchFactHistory() {
       try {
         const r = await fetch('/api/knowledge/fact-history');
-        _factHistory = await r.json();
+        _factHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP);
       } catch { /* non-critical */ }
     }
     // axisSparkSvg renders a time series WITH axes (#4298: the dashboard's
@@ -8026,7 +8071,7 @@
     async function fetchCostHistory() {
       try {
         const r = await fetch('/api/cost/history');
-        _costHistory = await r.json();
+        _costHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP);
       } catch { /* non-critical */ }
     }
     function costSparkSvg() {
@@ -8055,7 +8100,7 @@
       try {
         const r = await fetch('/api/trend/history');
         const data = await r.json();
-        _serverTrendHistory = Array.isArray(data) ? data : [];
+        _serverTrendHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP);
         mergeTrendHistory();
       } catch { /* non-critical */ }
     }
@@ -8098,8 +8143,9 @@
       if (injected.length) {
         historyData = historyData.concat(injected);
         historyData.sort((a, b) => (a.t || 0) - (b.t || 0));
+        historyData = capDashboardArray(historyData, DASHBOARD_HISTORY_CAP);
+        capHistory(historyData);
       }
-      capHistory(historyData);
     }
 
     // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
@@ -12512,6 +12558,7 @@
       animateOverviewKPIs(el, { fromZero: reason === 'expand', reduced });
     }
 
+    const _overviewKPIAnimationFrames = new WeakMap();
     function animateOverviewKPIs(root, options) {
       const opts = options || {};
       const reduced = !!opts.reduced || overviewPrefersReducedMotion();
@@ -12521,6 +12568,10 @@
         const key = node.getAttribute('data-overview-kpi-key') || '';
         const target = Number(node.getAttribute('data-overview-kpi-value'));
         if (!key || !Number.isFinite(target)) return;
+        const kpiFrames = (typeof _overviewKPIAnimationFrames !== 'undefined') ? _overviewKPIAnimationFrames : null;
+        const priorFrame = kpiFrames && kpiFrames.get(node);
+        if (priorFrame && window.cancelAnimationFrame) window.cancelAnimationFrame(priorFrame);
+        if (kpiFrames) kpiFrames.delete(node);
         const display = node.getAttribute('data-overview-kpi-display') || String(target);
         const prior = Number(_overviewKPIValues[key]);
         const start = fromZero || !Number.isFinite(prior) ? 0 : prior;
@@ -12534,12 +12585,21 @@
         const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
         const tick = now => {
           const t = Math.min(1, (now - started) / duration);
+          if (!node.isConnected) { if (kpiFrames) kpiFrames.delete(node); return; }
           node.textContent = String(Math.round(start + (target - start) * easeOutCubic(t)));
-          if (t < 1) window.requestAnimationFrame(tick);
-          else node.textContent = display;
+          if (t < 1) {
+            const nextFrame = window.requestAnimationFrame(tick);
+            if (kpiFrames) kpiFrames.set(node, nextFrame);
+          } else {
+            if (kpiFrames) kpiFrames.delete(node);
+            node.textContent = display;
+          }
         };
         node.textContent = String(Math.round(start));
-        window.requestAnimationFrame(tick);
+        {
+          const firstFrame = window.requestAnimationFrame(tick);
+          if (kpiFrames) kpiFrames.set(node, firstFrame);
+        }
       });
     }
 
@@ -12613,7 +12673,7 @@
         const since = Date.now() - OVERVIEW_KPI_WINDOWS['7d'];
         const r = await fetch('/api/' + 'overview/history?since=' + encodeURIComponent(String(since)));
         const data = await r.json();
-        _overviewKPIHistory = Array.isArray(data) ? data : [];
+        _overviewKPIHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP);
         if (window._lastStatus && Array.isArray(window._lastStatus.repos)) renderOverviewCharts(window._lastStatus.repos);
       } catch { /* non-critical: local fallback below still records samples */ }
     }
@@ -15700,7 +15760,7 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
     fetchCost();
-    setInterval(fetchCost, COST_POLL_MS);
+    dashboardSetInterval('cost', fetchCost, COST_POLL_MS);
 
     // ── v4: ACMM level-up recommendation (advisory) + lifecycle timeline ──
     // Both are additive, read-only panels polled on their own modest interval.
@@ -16900,7 +16960,7 @@ function burnAreaChart() {
     // block initial paint: these run after the main poll is already wired.
     function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
     v4RefreshPanels();
-    setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
+    dashboardSetInterval('v4-panels', v4RefreshPanels, V4_PANELS_POLL_MS);
 
     // Cost range pills: switch hourly/daily/weekly/monthly and re-render the
     // trend chart from the already-fetched history (no network round-trip).
@@ -16931,7 +16991,7 @@ function burnAreaChart() {
       } catch (_) { /* dashboard unreachable — different problem */ }
     }
     checkGhAuth();
-    setInterval(checkGhAuth, GH_AUTH_POLL_MS);
+    dashboardSetInterval('gh-auth-banner', checkGhAuth, GH_AUTH_POLL_MS);
 
     function renderGhRateLimits(ghRateLimits) {
       const el = document.getElementById('gh-rate-alert');
@@ -17043,7 +17103,7 @@ function burnAreaChart() {
     function ensureNousPolling() {
       if (!strategyLabEnabled() || _nousPollStarted) return Promise.resolve();
       _nousPollStarted = true;
-      return fetchNousStatus().then(() => { if (strategyLabEnabled() && !_nousPollTimer) _nousPollTimer = setInterval(fetchNousStatus, NOUS_POLL_MS); });
+      return fetchNousStatus().then(() => { if (strategyLabEnabled() && !_nousPollTimer) _nousPollTimer = dashboardSetInterval('nous-status', fetchNousStatus, NOUS_POLL_MS); });
     }
 
     function _nousExplainerCard() {
@@ -19882,7 +19942,7 @@ function burnAreaChart() {
         var resp = await fetch('/api/audit');
         if (!resp.ok) return;
         var data = await resp.json();
-        _auditEntries = data.entries || [];
+        _auditEntries = capDashboardArray(data.entries || [], DASHBOARD_LOG_CAP);
         filterAuditLog();
       } catch(e) {}
     }
@@ -21529,7 +21589,7 @@ function burnAreaChart() {
       _inceptionTailing = true;
       pollInceptionActivity();
       const INCEPTION_POLL_INTERVAL_MS = 3000;
-      _inceptionPollTimer = setInterval(pollInceptionActivity, INCEPTION_POLL_INTERVAL_MS);
+      _inceptionPollTimer = dashboardSetInterval('inception-activity', pollInceptionActivity, INCEPTION_POLL_INTERVAL_MS);
     }
 
     function stopInceptionPoll() {
@@ -22259,7 +22319,7 @@ function burnAreaChart() {
       `;
       applySectionCollapse('debug-section');
     }
-    setInterval(renderDebugSection, DEBUG_REFRESH_MS);
+    dashboardSetInterval('debug-section', renderDebugSection, DEBUG_REFRESH_MS);
 
     // ── Logs section ──
     const LOGS_REFRESH_MS = 5000;
@@ -22286,7 +22346,7 @@ function burnAreaChart() {
           const res = await fetch(`/api/pane/${name}`);
           if (res.ok) {
             const d = await res.json();
-            _logsData[name] = (d.lines || []);
+            _logsData[name] = capDashboardArray(d.lines || [], DASHBOARD_LOG_CAP);
           }
         } catch (e) { /* skip */ }
       }
@@ -25579,7 +25639,7 @@ function burnAreaChart() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
       }).catch(function() {});
-      setInterval(function() {
+      dashboardSetInterval('version-reload-check', function() {
         fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
           var current = d.hash || d.short || '';
           if (_initialVersionHash && current && current !== _initialVersionHash) {
@@ -25591,10 +25651,8 @@ function burnAreaChart() {
     }
     // startVersionCheck() — deferred to _deferredInit
 
-    // Single live /api/events stream: connect() closes any previous source and
-    // pending reconnect timer first, so repeated errors never stack streams.
-    let _eventSource = null;
-    let _eventSourceReconnectTimer = null;
+    var _eventSource = null;
+    var _eventSourceReconnectTimer = null;
     function connect() {
       if (_eventSourceReconnectTimer) { clearTimeout(_eventSourceReconnectTimer); _eventSourceReconnectTimer = null; }
       if (_eventSource) { _eventSource.onerror = null; _eventSource.onmessage = null; _eventSource.close(); _eventSource = null; }
@@ -25606,8 +25664,10 @@ function burnAreaChart() {
         try {
           const data = JSON.parse(e.data);
           render(data);
-          conn.className = 'connection live';
-          conn.innerHTML = '<span class="dot-live">●</span> live';
+          if (conn) {
+            conn.className = 'connection live';
+            conn.innerHTML = '<span class="dot-live">●</span> live';
+          }
           // Append to local history for instant sparkline updates
           const snap = {
             t: Date.now(),
@@ -25642,8 +25702,7 @@ function burnAreaChart() {
           for (const [name, stats] of Object.entries(_bm)) {
             snap.tokenModels[name] = (stats.input || 0) + (stats.output || 0) + (stats.cacheRead || 0);
           }
-          historyData.push(snap);
-          capHistory(historyData);
+          pushDashboardRing(historyData, snap, DASHBOARD_HISTORY_CAP);
           persistSparklineHistory();
         } catch (err) {
           console.error('SSE parse error:', err);
@@ -25681,12 +25740,14 @@ function burnAreaChart() {
       });
 
       source.onerror = () => {
-        conn.className = 'connection';
-        conn.innerHTML = '<span class="dot-dead">●</span> reconnecting...';
+        if (conn) {
+          conn.className = 'connection';
+          conn.innerHTML = '<span class="dot-dead">●</span> reconnecting...';
+        }
         source.close();
         if (_eventSource === source) _eventSource = null;
         if (!_eventSourceReconnectTimer) {
-          _eventSourceReconnectTimer = setTimeout(() => { _eventSourceReconnectTimer = null; connect(); }, 3000);
+          _eventSourceReconnectTimer = setTimeout(function() { _eventSourceReconnectTimer = null; connect(); }, 3000);
         }
       };
     }
@@ -25759,7 +25820,7 @@ function burnAreaChart() {
 
     // Initial fetch then SSE — these two are critical for first paint
     tickNavbarClock();
-    setInterval(tickNavbarClock, NAVBAR_CLOCK_TICK_MS);
+    dashboardSetInterval('navbar-clock', tickNavbarClock, NAVBAR_CLOCK_TICK_MS);
     fetch('/api/status').then(r => r.json()).then(render).catch(console.error);
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];
@@ -27635,7 +27696,7 @@ function burnAreaChart() {
     function orStartCreditPolling() {
       if (_openrouterPoll) clearInterval(_openrouterPoll);
       const OR_POLL_MS = 4000;
-      _openrouterPoll = setInterval(orCheckCredit, OR_POLL_MS);
+      _openrouterPoll = dashboardSetInterval('openrouter-credit', orCheckCredit, OR_POLL_MS);
     }
 
     async function orCheckCredit() {
@@ -30110,7 +30171,7 @@ function burnAreaChart() {
         }
         const data = await resp.json();
         // Guard: a failed or partial response can leave entries undefined.
-        _promptHistoryEntries = (data && data.entries) || [];
+        _promptHistoryEntries = capDashboardArray((data && data.entries) || [], DASHBOARD_LOG_CAP);
         renderAgentPromptHistoryList();
       } catch (e) {
         list.innerHTML = '<div style="color:var(--muted);padding:var(--sp-4)">Could not load prompt history.</div>';
@@ -34921,7 +34982,7 @@ function burnAreaChart() {
     renderChatSuggestions();
     detectChatCapabilities();
     refreshChatPresence();
-    setInterval(refreshChatPresence, 30000);
+    dashboardSetInterval('chat-presence', refreshChatPresence, 30000);
 
     chatFab.onclick = () => {
       const isOpen = chatPanel.classList.toggle('open');
@@ -36758,7 +36819,7 @@ function burnAreaChart() {
     }
 
     checkGHAuth();
-    setInterval(checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
+    dashboardSetInterval('welcome-gh-auth', checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
     initWelcomeDialog();
     initNPSSurvey();
 
@@ -36795,7 +36856,7 @@ function burnAreaChart() {
 
     checkClaudeAuth();
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
-    setInterval(checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
+    dashboardSetInterval('welcome-claude-auth', checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
 
     window.addEventListener('hashchange', function() {
       var section = _ocSectionFromHash();
@@ -36844,7 +36905,7 @@ function burnAreaChart() {
           sendPresencePing();
         }
       });
-      setInterval(sendPresencePing, PRESENCE_PING_MS);
+      dashboardSetInterval('presence-ping', sendPresencePing, PRESENCE_PING_MS);
       sendPresencePing();
     })();
 
@@ -36856,22 +36917,22 @@ function burnAreaChart() {
       setTimeout(() => {
         const deferred = [
           () => fetchFactHistory(),
-          () => fetchOverviewKPIHistory().then(() => { setInterval(fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
-          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
+          () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
+          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
-          () => fetchBudgetHistory().then(() => { setInterval(fetchBudgetHistory, HISTORY_REFRESH_MS); }),
+          () => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); }),
           () => ensureNousPolling(),
-          () => fetchKnowledgeStats().then(() => { setInterval(fetchKnowledgeStats, KB_POLL_MS); }),
-          () => fetchAuditLog().then(() => { setInterval(fetchAuditLog, AUDIT_POLL_MS); }),
-          () => fetchReviewQueue().then(() => { setInterval(fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
-          () => fetchContributors().then(() => { setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); }),
-          () => fetchLeaderboard().then(() => { setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); }),
-          () => fetchGitVersion().then(() => { setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); }),
-          () => fetchACMMEvaluation().then(() => { setInterval(fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
+          () => fetchKnowledgeStats().then(() => { dashboardSetInterval('knowledge-stats', fetchKnowledgeStats, KB_POLL_MS); }),
+          () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
+          () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
+          () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); }),
+          () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); }),
+          () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); }),
+          () => fetchACMMEvaluation().then(() => { dashboardSetInterval('acmm-evaluation', fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
           () => Promise.resolve(startVersionCheck()),
-          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { setInterval(() => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
-          () => fetchTimeline().then(() => { setInterval(fetchTimeline, TIMELINE_REFRESH_MS); }),
-          () => fetchAgentLogs().then(() => { setInterval(fetchAgentLogs, LOGS_REFRESH_MS); }),
+          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { dashboardSetInterval('weekly-trends', () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
+          () => fetchTimeline().then(() => { dashboardSetInterval('timeline', fetchTimeline, TIMELINE_REFRESH_MS); }),
+          () => fetchAgentLogs().then(() => { dashboardSetInterval('agent-logs', fetchAgentLogs, LOGS_REFRESH_MS); }),
         ];
         // `Promise.resolve().then(fn)` rather than `fn()`, so ONE bad entry
         // cannot strand the whole chain (#6581). `fn()` was called bare inside

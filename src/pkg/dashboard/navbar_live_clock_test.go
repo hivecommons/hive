@@ -35,7 +35,7 @@ func TestNavbarClockTicksLocallyAndFlagsStaleStatus(t *testing.T) {
 		`<span class="status-stale" id="oc-status-stale" hidden></span>`,
 		"const NAVBAR_CLOCK_TICK_MS = 1000;",
 		"const STATUS_STALE_AFTER_MS = STATUS_EXPECTED_REFRESH_MS * STATUS_STALE_AFTER_POLLS;",
-		"setInterval(tickNavbarClock, NAVBAR_CLOCK_TICK_MS);",
+		"dashboardSetInterval('navbar-clock', tickNavbarClock, NAVBAR_CLOCK_TICK_MS);",
 		"updateNavbarClockTimeZone(data);",
 		"noteStatusPayloadTimestamp(data);",
 	} {
