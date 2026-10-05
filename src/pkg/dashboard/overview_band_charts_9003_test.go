@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -41,17 +42,17 @@ func TestOverviewBandChartsStaticWiring9003(t *testing.T) {
 func TestOverviewBandChartClassMappings9003(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"overview-issue-ready { --slice-c: var(--status-info); }",
-		"overview-issue-in-progress { --slice-c: var(--status-warn); }",
-		"overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }",
-		"overview-issue-waiting { --slice-c: var(--status-attention); }",
-		"overview-issue-done { --slice-c: var(--status-ok); }",
-		"overview-pr-waiting { --slice-c: var(--status-attention); }",
-		"overview-pr-eligible { --slice-c: var(--status-ok); }",
-		"overview-pr-blocked { --slice-c: var(--status-error); }",
-		"overview-pr-in-review { --slice-c: var(--status-warn); }",
-		"overview-pr-open { --slice-c: var(--acmm-level-5); }",
-		"overview-pr-draft { --slice-c: var(--status-neutral); }",
+		"overview-issue-ready { --slice-c: var(--band-unclaimed); }",
+		"overview-issue-in-progress { --slice-c: var(--band-claimed); }",
+		"overview-issue-agent-filed { --slice-c: var(--band-agent-filed); }",
+		"overview-issue-waiting { --slice-c: var(--band-needs-human); }",
+		"overview-issue-done { --slice-c: var(--band-confirm-close); }",
+		"overview-pr-waiting { --slice-c: var(--band-needs-human); }",
+		"overview-pr-eligible { --slice-c: var(--band-merge-eligible); }",
+		"overview-pr-blocked { --slice-c: var(--band-blocked); }",
+		"overview-pr-in-review { --slice-c: var(--band-in-review); }",
+		"overview-pr-open { --slice-c: var(--band-open); }",
+		"overview-pr-draft { --slice-c: var(--band-draft); }",
 		"className: 'overview-issue-' + band",
 		"className: 'overview-pr-' + band",
 	} {
@@ -59,4 +60,65 @@ func TestOverviewBandChartClassMappings9003(t *testing.T) {
 			t.Errorf("overview band chart mapping missing %q", want)
 		}
 	}
+}
+
+func TestOverviewBandChartPaletteIsNamedDistinctAndShared(t *testing.T) {
+	html := indexHTML(t)
+	palette := []string{
+		"--band-unclaimed",
+		"--band-claimed",
+		"--band-agent-filed",
+		"--band-needs-human",
+		"--band-confirm-close",
+		"--band-merge-eligible",
+		"--band-blocked",
+		"--band-in-review",
+		"--band-open",
+		"--band-draft",
+	}
+	seenValues := map[string]string{}
+	for _, name := range palette {
+		value := cssCustomPropertyValue(t, html, name)
+		if prior := seenValues[value]; prior != "" {
+			t.Fatalf("%s and %s share palette value %s; overview bands must stay visually distinct", prior, name, value)
+		}
+		seenValues[value] = name
+	}
+	classToken := func(className string) string {
+		t.Helper()
+		re := regexp.MustCompile(`\.` + regexp.QuoteMeta(className) + `\s*\{\s*--slice-c:\s*var\((--band-[^)]+)\);\s*\}`)
+		match := re.FindStringSubmatch(html)
+		if match == nil {
+			t.Fatalf("missing named band palette mapping for %s", className)
+		}
+		return match[1]
+	}
+	if issue, pr := classToken("overview-issue-waiting"), classToken("overview-pr-waiting"); issue != "--band-needs-human" || pr != issue {
+		t.Fatalf("Needs human should share one palette token across Issues and PRs, got issue=%s pr=%s", issue, pr)
+	}
+	for className, token := range map[string]string{
+		"overview-issue-ready":       "--band-unclaimed",
+		"overview-issue-in-progress": "--band-claimed",
+		"overview-issue-agent-filed": "--band-agent-filed",
+		"overview-issue-done":        "--band-confirm-close",
+		"overview-pr-eligible":       "--band-merge-eligible",
+		"overview-pr-blocked":        "--band-blocked",
+		"overview-pr-in-review":      "--band-in-review",
+		"overview-pr-open":           "--band-open",
+		"overview-pr-draft":          "--band-draft",
+	} {
+		if got := classToken(className); got != token {
+			t.Fatalf("%s maps to %s, want %s", className, got, token)
+		}
+	}
+}
+
+func cssCustomPropertyValue(t *testing.T, css, name string) string {
+	t.Helper()
+	re := regexp.MustCompile(regexp.QuoteMeta(name) + `\s*:\s*([^;]+);`)
+	match := re.FindStringSubmatch(css)
+	if match == nil {
+		t.Fatalf("missing CSS custom property %s", name)
+	}
+	return strings.TrimSpace(match[1])
 }

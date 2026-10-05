@@ -63,6 +63,16 @@
       --green-bg: rgba(116, 223, 154, 0.15); --green-border: rgba(116, 223, 154, 0.35);
       --red-bg: rgba(255, 126, 126, 0.15); --red-border: rgba(255, 126, 126, 0.35);
       --prt-actor-hive: var(--green); --prt-actor-human: var(--purple); --prt-actor-other: var(--muted);
+      --band-unclaimed: #8fb4d9;
+      --band-claimed: #2dd4bf;
+      --band-agent-filed: #c084fc;
+      --band-needs-human: #fb923c;
+      --band-confirm-close: #a3e635;
+      --band-merge-eligible: #22c55e;
+      --band-blocked: #f87171;
+      --band-in-review: #facc15;
+      --band-open: #a78bfa;
+      --band-draft: #94a3b8;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -147,6 +157,16 @@
       --oc-accent-light: rgba(220,38,38,0.08);
       --green-bg: #f0fdf4; --green-border: #bbf7d0;
       --red-bg: #fef2f2; --red-border: #fecaca;
+      --band-unclaimed: #2563eb;
+      --band-claimed: #0f766e;
+      --band-agent-filed: #7c3aed;
+      --band-needs-human: #c2570f;
+      --band-confirm-close: #65a30d;
+      --band-merge-eligible: #15803d;
+      --band-blocked: #dc2626;
+      --band-in-review: #a16207;
+      --band-open: #6d28d9;
+      --band-draft: #475569;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -1888,17 +1908,17 @@
       .overview-chart-card { grid-template-columns: 1fr; justify-items: center; }
       .overview-chart-meta { width: 100%; padding-right: var(--sp-0); }
     }
-    .overview-issue-ready { --slice-c: var(--status-info); }
-    .overview-issue-in-progress { --slice-c: var(--status-warn); }
-    .overview-issue-agent-filed { --slice-c: var(--acmm-level-5); }
-    .overview-issue-waiting { --slice-c: var(--status-attention); }
-    .overview-issue-done { --slice-c: var(--status-ok); }
-    .overview-pr-waiting { --slice-c: var(--status-attention); }
-    .overview-pr-eligible { --slice-c: var(--status-ok); }
-    .overview-pr-blocked { --slice-c: var(--status-error); }
-    .overview-pr-in-review { --slice-c: var(--status-warn); }
-    .overview-pr-open { --slice-c: var(--acmm-level-5); }
-    .overview-pr-draft { --slice-c: var(--status-neutral); }
+    .overview-issue-ready { --slice-c: var(--band-unclaimed); }
+    .overview-issue-in-progress { --slice-c: var(--band-claimed); }
+    .overview-issue-agent-filed { --slice-c: var(--band-agent-filed); }
+    .overview-issue-waiting { --slice-c: var(--band-needs-human); }
+    .overview-issue-done { --slice-c: var(--band-confirm-close); }
+    .overview-pr-waiting { --slice-c: var(--band-needs-human); }
+    .overview-pr-eligible { --slice-c: var(--band-merge-eligible); }
+    .overview-pr-blocked { --slice-c: var(--band-blocked); }
+    .overview-pr-in-review { --slice-c: var(--band-in-review); }
+    .overview-pr-open { --slice-c: var(--band-open); }
+    .overview-pr-draft { --slice-c: var(--band-draft); }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: var(--sp-3); flex-shrink: 0; }
