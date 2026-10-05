@@ -652,7 +652,7 @@ type HeartbeatPayload struct {
 	// (SaaSHive.DashboardTokenHash) of the credential spoke-relayed upgrade
 	// requests prove themselves with — without the hub ever needing to read
 	// the hive-secrets secret from the spoke's cluster (impossible on
-	// pull-only clusters) and without the raw token ever riding the wire. The
+	// push-reported clusters) and without the raw token ever riding the wire. The
 	// beat itself is authenticated by the per-hive bearer, so only the hive
 	// can set its own record — which is sound: the record only lets that same
 	// hive's dashboard prove it is itself. omitempty: an old spoke, or one
@@ -1042,7 +1042,7 @@ type HeartbeatPayload struct {
 	// ComponentReach carries the spoke's in-process component reach counters
 	// (#3993, phase 2a of #3973): per (component, running commit) span counts
 	// that increment REGARDLESS of whether an OTel exporter is configured, so
-	// every spoke reports — including the pull-only fleet a span backend can
+	// every spoke reports — including the push-reported fleet a span backend can
 	// never see (design D1/D2). The hub stores the latest report per hive,
 	// storage only: nothing joins, maps, or renders it until #3994. Spoke-side
 	// the entry count is capped at tracing.MaxReachComponents and the hub
@@ -1961,7 +1961,7 @@ func ingressHostExists(ctx context.Context, client *http.Client, cfg *inClusterC
 // for that name and answers 503. The hub then linked users at a hostname that
 // could never work, while the spoke's real Route was serving fine all along.
 //
-// The spoke is the only party that can answer this on a pull-only cluster: the
+// The spoke is the only party that can answer this on a push-reported cluster: the
 // hub has no kubectl path there by design, so it cannot read the Route. The
 // spoke reads its own namespace, which it can always do.
 //

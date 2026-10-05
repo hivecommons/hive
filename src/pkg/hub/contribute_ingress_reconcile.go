@@ -218,7 +218,7 @@ func (s *HubServer) reconcileContributeIngress() {
 			skippedNoIngress++
 			continue
 		}
-		// A pull-only cluster is reached only by answering its outbound
+		// A push-reported cluster is reached only by answering its outbound
 		// heartbeat; the hub has no kubectl path into it.
 		if !cluster.KubectlReachable() {
 			skippedNoIngress++

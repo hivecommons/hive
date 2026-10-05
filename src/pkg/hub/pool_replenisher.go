@@ -56,7 +56,7 @@ func (s *HubServer) replenishPools() {
 			continue // opt-in per cluster
 		}
 		if !cluster.KubectlReachable() {
-			// A pull-only cluster's infra cannot be provisioned from the hub.
+			// A push-reported cluster's infra cannot be provisioned from the hub.
 			s.logger.Warn("pool replenish skipped — cluster not kubectl-reachable", "cluster", id)
 			continue
 		}

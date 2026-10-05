@@ -156,7 +156,7 @@ func stampHostedNamespaceIdentity(cluster *ClusterConfig, namespace, name, org, 
 		return
 	}
 	if cluster.PullOnly {
-		// A pull-only cluster's namespaces are not ours to label. Before
+		// A push-reported cluster's namespaces are not reachable for hub-side labeling. Before
 		// clusters like this could be registered, clusterForHive fell back to
 		// the DEFAULT cluster and this ran against the hub's own cluster,
 		// stamping (or failing to find) a namespace that lives on another
