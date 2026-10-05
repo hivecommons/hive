@@ -1,0 +1,1 @@
+- Added an owner-only dashboard toggle for the public read-only Knowledge MCP endpoint, with shared controls in Knowledge and Settings.

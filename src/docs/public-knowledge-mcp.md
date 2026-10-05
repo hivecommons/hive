@@ -14,13 +14,23 @@ project's own accumulated fixes instead of only what its model was trained on
 
 ## Owner switch
 
+Owners can use the dashboard instead of editing environment variables:
+
+- **Knowledge** section header: `Public read-only MCP: Off/On`.
+- **Settings → Knowledge → Knowledge sharing**: the same control, plus tags
+  and a copyable endpoint URL.
+
+The dashboard setting is persisted in `hive.yaml` and takes precedence over
+the environment variables below. If no dashboard setting has been saved, the
+legacy env-only behavior remains unchanged.
+
 | Variable | Effect |
 |---|---|
 | `HIVE_PUBLIC_KNOWLEDGE=1` (`true`/`yes`/`on`) | Enables `POST /mcp/knowledge`. Unset or anything else → the path returns **404**, even to the owner. |
 | `HIVE_PUBLIC_KNOWLEDGE_TAGS=linux,troubleshooting` | Optional. Only facts carrying at least one listed tag are served. |
 
-Both are read on every request, so the surface can be closed instantly
-without restarting the spoke.
+Both the dashboard setting and env fallback are resolved on every request, so
+the surface can be closed instantly without restarting the spoke.
 
 ## What is exposed
 
@@ -103,7 +113,8 @@ curl -s https://hive.example.org/mcp/knowledge \
 On hosted hives the hub's nginx `auth_request` gate waves `/mcp/knowledge`
 through (same mechanism as `/api/knowledge/export`, #8294) so an agent with
 no browser session is not bounced to the login page. This opens nothing by
-itself: the spoke re-checks `HIVE_PUBLIC_KNOWLEDGE` and 404s when it is off.
+itself: the spoke re-checks the dashboard setting (or
+`HIVE_PUBLIC_KNOWLEDGE` when no setting exists) and 404s when it is off.
 
 ## Related
 

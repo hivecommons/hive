@@ -323,6 +323,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only —
 	// the mux answers other verbs with 405, and there is no SSE stream.
 	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath
+	s.mux.HandleFunc("GET /api/knowledge/public", s.handlePublicKnowledgeGet)
+	s.mux.HandleFunc("PUT /api/knowledge/public", s.handlePublicKnowledgePut)
 	s.mux.HandleFunc("GET /api/knowledge/health", s.handleKnowledgeHealth)
 	s.mux.HandleFunc("GET /api/knowledge/stats", s.handleKnowledgeStats)
 	s.mux.HandleFunc("GET /api/knowledge/graph", s.handleKnowledgeGraph)
