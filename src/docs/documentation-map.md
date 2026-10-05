@@ -13,6 +13,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
+- [Running a hive at ACMM Level 6](running-at-level-6.md) — **awaiting operator review**: preparation, GitHub/coverage/knowledge/Hive/ClankeR settings, weekly routine, and incident recovery; sign-off tracked in #10515.
 - [Maintainer commands](maintainer-commands.md) — slash-command reference for `/hive approve`, `/hive decision`, `/hive help`, `/fixed`, `/reopen`, and label/assignment helpers.
 - [Token mint](token-mint.md) — the opt-in `mint:` block (`pkg/mint`): what a minted token grants, key lifecycle, and the trust boundary an operator must get right before enabling it. Companion to [ADR-0007](adr/0007-token-mint.md).
 - [Changelog](../../CHANGELOG.md) — recent user-visible changes and release notes.
