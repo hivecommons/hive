@@ -131,6 +131,16 @@ type PerClusterHealth struct {
 	DataSource string               `json:"data_source,omitempty"` // "heartbeat" when data comes from spoke heartbeat instead of kubectl
 	DataStale  bool                 `json:"data_stale,omitempty"`  // true when heartbeat data is older than heartbeatHealthStaleness
 	DataAge    string               `json:"data_age,omitempty"`    // human-readable age or collection timestamp
+	// PullOnly marks a cluster the hub cannot reach (ClusterConfig.PullOnly):
+	// its health exists only as what its spokes report over the heartbeat.
+	PullOnly bool `json:"pull_only,omitempty"`
+	// AwaitingHeartbeat is set for a pull-only cluster the hub holds no
+	// heartbeat health for yet. It is an informational state, not a fault —
+	// the hub cannot query the cluster by design — so Error stays empty and the
+	// dashboard renders it neutrally. LastSeen says when any spoke on the
+	// cluster last heartbeated ("never" when none has since the hub started).
+	AwaitingHeartbeat bool   `json:"awaiting_heartbeat,omitempty"`
+	LastSeen          string `json:"last_seen,omitempty"`
 	// StuckPods reports hive-namespace pods stuck Terminating — the residue of
 	// nodes disappearing without draining (#5328 item 3). Nil means the hub
 	// could not determine it (unreachable cluster, pull-only pool, failed
@@ -298,9 +308,11 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 				} else {
 					s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
 				}
+				pullOnly := errors.Is(res.err, errClusterPullOnly)
 				// Fall back to heartbeat-reported health if available.
 				if hbHealth := s.getHeartbeatHealthForCluster(cID); hbHealth != nil {
 					pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), hbHealth, hiveCounts[cID])
+					pch.PullOnly = pullOnly
 					perCluster = append(perCluster, pch)
 					allNodes = append(allNodes, pch.Nodes...)
 					aggCPUCores += pch.Summary.TotalCPUCores
@@ -309,6 +321,12 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 					aggMemAlloc += int64(pch.Summary.TotalMemGB) * giToBytes
 					aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
 					s.logger.Info("cluster health: using heartbeat fallback", "cluster", cID)
+					continue
+				}
+				if pullOnly {
+					// Unreachable by design and no spoke has reported yet: say
+					// so neutrally rather than as an error banner.
+					perCluster = append(perCluster, awaitingHeartbeatHealth(cID, s.clusterNameForID(cID), hiveCounts[cID], s.lastSpokeHeartbeatForCluster(cID, time.Now())))
 					continue
 				}
 				perCluster = append(perCluster, PerClusterHealth{
@@ -802,6 +820,55 @@ func (s *HubServer) getHeartbeatHealthForCluster(clusterID string) *HeartbeatHea
 		return nil
 	}
 	return entry
+}
+
+// awaitingHeartbeatHealth is the health entry for a pull-only cluster the hub
+// holds no heartbeat-reported health for. It carries no Error: the hub not
+// reaching the cluster is the configured design, not a fault.
+func awaitingHeartbeatHealth(clusterID, clusterName string, hiveCount int, lastSeen string) PerClusterHealth {
+	return PerClusterHealth{
+		ID:                clusterID,
+		Name:              clusterName,
+		Summary:           ClusterHealthSummary{HiveCount: hiveCount},
+		HiveCount:         hiveCount,
+		DataSource:        "heartbeat",
+		PullOnly:          true,
+		AwaitingHeartbeat: true,
+		LastSeen:          lastSeen,
+	}
+}
+
+// lastSpokeHeartbeatForCluster reports when any registry hive on clusterID
+// last heartbeated, as "<age> ago", or "never" when none has. It answers the
+// operator's real question for a pull-only cluster with no health data: is a
+// spoke there talking to the hub at all (and simply not reporting node
+// metrics), or is nothing heartbeating from it?
+func (s *HubServer) lastSpokeHeartbeatForCluster(clusterID string, now time.Time) string {
+	var latest time.Time
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if h.ClusterID != clusterID || h.LastHeartbeat == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, h.LastHeartbeat); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	s.mu.RUnlock()
+	if latest.IsZero() {
+		return "never"
+	}
+	age := now.Sub(latest)
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age.Minutes()))
+	case age < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(age.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(age.Hours()/24))
+	}
 }
 
 // convertHeartbeatToPerClusterHealth converts heartbeat-reported health data

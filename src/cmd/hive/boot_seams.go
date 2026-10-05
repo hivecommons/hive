@@ -2,8 +2,10 @@ package main
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // hiveConfigEnv is the environment variable entrypoint.sh uses to redirect
@@ -66,6 +68,21 @@ func resolveHubTarget(hub config.HubConfig, envHubURL, envClusterID string) hubT
 		t.clusterID = envClusterID
 	}
 	return t
+}
+
+// heartbeatClusterHealth returns the node-health report a spoke attaches to
+// its heartbeat. It is gated on the RESOLVED cluster id (hive.yaml
+// hub.cluster_id, overridden by HIVE_CLUSTER_ID) — the same id the payload
+// carries as cluster_id and the hub files the report under. Gating on the
+// environment variable alone silently dropped node stats for any spoke told
+// its cluster through hive.yaml, which is how a firewalled spoke on a
+// pull-only cluster is typically configured: the hub then had nothing to fall
+// back to and showed the cluster with no nodes (#10559).
+func heartbeatClusterHealth(clusterID string, collect func() *spoke.HeartbeatClusterHealthReport) *spoke.HeartbeatClusterHealthReport {
+	if strings.TrimSpace(clusterID) == "" || collect == nil {
+		return nil
+	}
+	return collect()
 }
 
 // heartbeatsToHub reports whether main() should start the hub heartbeat: the

@@ -9272,6 +9272,16 @@
                 esc(wtLabel) + '</span>';
             }
             var errorLine = c.error ? '<div style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' + esc(c.error) + '</div>' : '';
+            // Pull-only clusters (#10559): the hub never reaches them, so no
+            // heartbeat data yet is the expected state — informational, not
+            // red. Red is kept for a spoke that WAS reporting and went stale.
+            if (!c.error && c.awaiting_heartbeat) {
+              errorLine = '<div class="text-muted" style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:var(--fs-sm)" title="This cluster is registered pull_only: the hub cannot query it and shows the node health its spokes report over the heartbeat.">' +
+                'pull-only · awaiting spoke heartbeat (last seen: ' + esc(c.last_seen || 'never') + ')</div>';
+            } else if (!c.error && c.data_stale) {
+              errorLine = '<div style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' +
+                (c.pull_only ? 'pull-only · ' : '') + 'spoke heartbeat stale — node stats last reported ' + esc(c.data_age || 'a while ago') + '</div>';
+            }
             var headerHtml = '<div style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-6) var(--sp-0) var(--sp-4)">' +
               clusterBadge(c.id, c.name) +
               '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + esc(cLabel) + '</span>' +

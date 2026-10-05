@@ -131,7 +131,8 @@ func TestBootHeartbeatCollect_FreshBootGatesUnmeasuredSignalsToNil(t *testing.T)
 	if p.Governor.WorkSource != "" {
 		t.Fatalf("Governor.WorkSource = %q for a default (github) source, want empty", p.Governor.WorkSource)
 	}
-	// Cluster health is gated on HIVE_CLUSTER_ID, which the fixture clears:
+	// Cluster health is gated on the resolved cluster id (hub.cluster_id or
+	// HIVE_CLUSTER_ID), both of which the fixture leaves empty:
 	// never guess health for a cluster this spoke was not told it is on.
 	if p.ClusterHealth != nil {
 		t.Fatalf("ClusterHealth=%v with no cluster id, want nil", p.ClusterHealth)
