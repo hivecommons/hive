@@ -47,13 +47,16 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 		`class="agent-navbar-upnext"`,
 		`function renderAgentNavbarUpNext(agents, nowMs)`,
 		`sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3)`,
+		`function renderAgentNavbarTileDiff(wrap, list, now)`,
+		`data-agent-key`,
 		`function openAgentsUpNextPanel()`,
 		`data-action="openAgentsUpNextPanel"`,
-		`.agent-navbar-tile { flex: 0 0 max-content;`,
-		`.agent-navbar-tile .agent-tile-name { grid-column: 2; min-width: max-content; overflow: visible; text-overflow: clip; }`,
+		`.agent-navbar-tile { flex: 0 0 calc(var(--sp-9) * 4);`,
+		`.agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }`,
 		`renderAgentNavbarUpNext(agents, Date.now())`,
 		`refreshAgentNavbarUpNextCountdowns(now);`,
 		`@media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }`,
+		`@media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("agents sidebar/navbar up-next contract missing %q", want)
