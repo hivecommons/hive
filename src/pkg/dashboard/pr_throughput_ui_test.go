@@ -90,6 +90,25 @@ func TestPRThroughputCollapsedHeadlineKeepsWindowPill(t *testing.T) {
 		t.Skip("node unavailable: Change Throughput headline window controls were not executed")
 	}
 	html := indexHTML(t)
+	for _, snippet := range []string{
+		`.prt-window-controls { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }`,
+		`.prt-window-controls { justify-self: start; justify-content: flex-start; }`,
+		`.prt-share-tile .prt-role-select { position:absolute; right:var(--sp-3); bottom:var(--sp-3);`,
+		`.prt-share-tile .prt-tile-spark { max-width: calc(100% - 6.4rem); overflow: hidden; }`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("Change Throughput window controls must remain in-flow and wrapping, missing CSS snippet %q", snippet)
+		}
+	}
+	if strings.Contains(html, `.prt-window-controls { position: absolute;`) {
+		t.Fatal("Change Throughput window controls must not be absolutely positioned over the metric tiles")
+	}
+	if strings.Contains(html, `.prt-headline { padding-top:`) {
+		t.Fatal("Change Throughput headline must not reserve a fixed top pad for out-of-flow controls")
+	}
+	if strings.Contains(html, `.prt-share-tile .prt-role-select { position:absolute; top:`) {
+		t.Fatal("Hive vs human role select must stay at the tile's lower-right corner")
+	}
 	render := jsFunc(t, html, "renderPRThroughput")
 	for _, snippet := range []string{
 		`<div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>`,
