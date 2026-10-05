@@ -36,8 +36,10 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		`<svg class="prt-trend-svg"`,
 		`class="area ${key}"`,
 		"100% stacked area trend",
-		"non-hive bots (dependabot, renovate, GitHub Actions, …)",
 		"function prtTrendCaption",
+		"function prtHiveHumanTile",
+		`<div class="lbl">Hive vs human</div>`,
+		`data-change-action="setPRThroughputRole"`,
 		"No attribution data yet — counters start now.",
 		"setSectionSummary('pr-throughput-section'",
 		"dto.merged_by_path",
@@ -123,8 +125,8 @@ func TestPRThroughputTrendStackedAreaAndLegendTooltip(t *testing.T) {
 	script := `const assert = require('node:assert/strict');
 let prtRole = 'merged';
 function escapeHtml(v) { return String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
-function prtTrendCaption() { return 'caption'; }
-` + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" + jsFunc(t, html, "prtActorTrend") + `
+function renderSparkline(_node, values, opts) { return '<svg data-label="' + opts.label + '">' + values.join(',') + '</svg>'; }
+` + jsFunc(t, html, "prtSparkTitle") + "\n" + jsFunc(t, html, "prtHiveShareSpark") + "\n" + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" + jsFunc(t, html, "prtTrendStats") + "\n" + jsFunc(t, html, "prtTrendCaption") + "\n" + jsFunc(t, html, "prtHiveHumanTile") + `
 const series = [
   { hive: 4, human: 0, other: 6 },
   { hive: 5, human: 0, other: 5 },
@@ -139,9 +141,14 @@ assert.doesNotMatch(svg, /class="baseline"/);
 const paths = Array.from(svg.matchAll(/<path class="area ([^"]+)" d="([^"]+)"/g));
 assert.equal(paths.length, 2, svg);
 assert.notEqual(paths[0][2], paths[1][2], 'stacked bands must not render duplicate line paths');
-const trend = prtActorTrend({ series });
-assert.match(trend, /title="non-hive bots \(dependabot, renovate, GitHub Actions, …\)"/);
-assert.match(trend, /human · 0/);
+const tile = prtHiveHumanTile({ series });
+assert.match(tile, /class="lc-fleet-stat prt-share-tile"/);
+assert.match(tile, /<div class="val merged">53%<\/div>/);
+assert.match(tile, /<div class="lbl">Hive vs human<\/div>/);
+assert.match(tile, /of merges\/closures · was 40%/);
+assert.match(tile, /hive 16 · human 0 · other automation 14 · hive 53% of merges\/closures this window, up from 40%/);
+assert.match(tile, /data-change-action="setPRThroughputRole"/);
+assert.match(tile, /data-label="hive share"/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
