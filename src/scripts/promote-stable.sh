@@ -216,7 +216,7 @@ full_sha() {
     printf '%s' "$sha"
     return 0
   fi
-  result=$(env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
+  result=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
     "/repos/${repo}/commits/${sha}" --jq '.sha' 2>/dev/null || true)
   if [[ $result =~ ^[0-9a-f]{40}$ ]]; then
     printf '%s' "$result"
@@ -245,7 +245,7 @@ workflow_ran_on() {
   # commit is evidence about that commit wherever it ran, and a branch filter
   # hides a genuine FAILURE (reporting it as "did not run"), which the caller
   # would then inherit past. Matching on head_sha alone keeps a failure visible.
-  runs=$(env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
+  runs=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
     "/repos/${repo}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20" \
     --jq '[.workflow_runs[] | select(.status == "completed") | .conclusion]' 2>/dev/null || echo '[]')
   if grep -q '"success"' <<<"$runs"; then
@@ -277,7 +277,7 @@ workflow_success() {
   esac
 
   for (( i = 1; i <= EVIDENCE_ANCESTOR_DEPTH; i++ )); do
-    candidate=$(env -u GITHUB_TOKEN -u GH_TOKEN gh api -H "Accept: application/vnd.github+json" \
+    candidate=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
       "/repos/${repo}/commits/${resolved}~${i}" --jq '.sha' 2>/dev/null || true)
     [[ $candidate =~ ^[0-9a-f]{40}$ ]] || return 1
     verdict=$(workflow_ran_on "$repo" "$workflow" "$candidate")
@@ -299,7 +299,7 @@ workflow_success() {
 # and promotes it short of the full window (#10042).
 workflow_run_completed_at() {
   local repo=$1 run_number=$2 result
-  result=$(env -u GITHUB_TOKEN -u GH_TOKEN gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
+  result=$(unset GITHUB_TOKEN && gh run list -R "$repo" --workflow "${DOCKER_WORKFLOW:-$DOCKER_WORKFLOW_DEFAULT}" \
     --branch "${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}" --json number,createdAt,updatedAt,status,conclusion --limit 100 \
     --jq ".[] | select(.number == ${run_number}) | select(.status == \"completed\") | if (.updatedAt // \"\") == \"\" then .createdAt else .updatedAt end" | head -n 1)
   [[ -n $result ]] || return 1
@@ -325,7 +325,7 @@ docker_success_runs() {
 }
 
 blocker_count() {
-  env -u GITHUB_TOKEN -u GH_TOKEN gh issue list -R "$1" --state open --label "${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}" --json number --limit 100 --jq 'length'
+  unset GITHUB_TOKEN && gh issue list -R "$1" --state open --label "${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}" --json number --limit 100 --jq 'length'
 }
 
 fetch_stable_promotion_state() {
