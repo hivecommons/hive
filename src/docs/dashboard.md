@@ -189,7 +189,12 @@ charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
 shows open issues, open PRs, actionable now, held, blocked/needs-human, and the
-median actionable age. Operators can view each Issues or PRs panel as a donut,
+median actionable age. **Actionable now** is the shared server-side count used by
+the Overview KPI and the Governor collapsed split: open enumerated issues plus
+open enumerated PRs after hold/exempt filters, excluding items in the waiting,
+done, draft, or blocked Overview bands. Its `actionableNow.issues` and
+`actionableNow.prs` splits always sum to `actionableNow.total`. Operators can
+view each Issues or PRs panel as a donut,
 pie, horizontal bar, single 100% stacked bar, line/spark trend, or age
 histogram. Every shape is still driven by the same band slices and
 server-provided classifications. Hovering a chart element, an Overview legend
