@@ -44,6 +44,102 @@ func TestOverviewTotalsUseForgeCountsAndExplainScannerGap10629(t *testing.T) {
 	}
 }
 
+func TestOverviewActionableEquationPartitionsOpenWork(t *testing.T) {
+	now := time.Date(2026, 10, 5, 15, 0, 0, 0, time.UTC)
+	status := &StatusPayload{Repos: []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive", Issues: 9, PRs: 5,
+		ActionableIssues: []any{
+			github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "ready"},
+			github.Issue{Repo: "hivecommons/hive", Number: 2, Title: "claimed", Assignees: []string{"alice"}},
+			github.Issue{Repo: "hivecommons/hive", Number: 3, Title: "needs human", Labels: []string{"needs-human"}},
+			github.Issue{Repo: "hivecommons/hive", Number: 4, Title: "covered by PR", Labels: []string{"hive/covered-by-pr"}},
+		},
+		HeldIssues: []any{github.HoldItem{Repo: "hivecommons/hive", Number: 5, Type: "issue", Labels: []string{"hold"}}},
+		OpenPrs: []any{
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 10, Title: "open"}},
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 11, Title: "dependency blocked", Mergeable: github.MergeableNo}},
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 12, Title: "draft", Draft: true}},
+		},
+		HeldPrs: []any{FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 13, Title: "held", Labels: []string{"hold"}}}},
+		WorkBreakdown: &github.RepoWorkBreakdown{
+			Issues: github.RepoIssueBreakdown{Actionable: 4, Hold: 1, Filtered: 2, NeedsHuman: 1, Exempt: 1, HiveAdvisory: 1, DependencyDashboard: 1},
+			PRs:    github.RepoPRBreakdown{Actionable: 2, Hold: 1, Draft: 1, Filtered: 1},
+		},
+	}}}
+
+	got := (&Server{}).statusWithOverviewBands(status, now).ActionableNow
+	if got.Equation == nil {
+		t.Fatal("missing actionable equation")
+	}
+	terms := map[string]int{}
+	sum := 0
+	for _, term := range got.Equation.Terms {
+		terms[term.Key] = term.Count
+		sum += term.Count
+	}
+	if got.Equation.OpenIssues != 9 || got.Equation.OpenPRs != 5 || got.Equation.TotalOpen != 14 {
+		t.Fatalf("open side = %+v, want 9 issues + 5 PRs", got.Equation)
+	}
+	if got.Total != 3 || terms["actionable"] != 3 || terms["held"] != 2 || terms["blocked_needs_human"] != 3 || terms["confirm_close"] != 1 || terms["draft"] != 1 || terms["outside"] != 4 {
+		t.Fatalf("partition terms = %+v, actionableNow=%+v", terms, got)
+	}
+	if sum != got.Equation.TotalOpen {
+		t.Fatalf("partition sum = %d, want total open %d (%s)", sum, got.Equation.TotalOpen, got.Equation.Text)
+	}
+	if want := "9 issues + 5 PRs = 3 actionable + 2 held + 3 blocked/needs-human + 1 confirm/close + 1 draft + 4 outside"; got.Equation.Text != want {
+		t.Fatalf("equation text = %q, want %q", got.Equation.Text, want)
+	}
+	for _, want := range []string{"1 exempt", "1 hive advisory", "1 dependency dashboard", "outside PRs: 1 filtered"} {
+		if !strings.Contains(got.Equation.Title, want) {
+			t.Fatalf("equation title missing %q: %q", want, got.Equation.Title)
+		}
+	}
+}
+
+func TestGovernorActionableSplitsShareOverviewPartition(t *testing.T) {
+	now := time.Date(2026, 10, 5, 16, 0, 0, 0, time.UTC)
+	status := &StatusPayload{Repos: []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive", Issues: 6, PRs: 4,
+		ActionableIssues: []any{
+			github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "ready"},
+			github.Issue{Repo: "hivecommons/hive", Number: 2, Title: "claimed", Assignees: []string{"alice"}},
+			github.Issue{Repo: "hivecommons/hive", Number: 3, Title: "needs human", Labels: []string{"needs-human"}},
+			github.Issue{Repo: "hivecommons/hive", Number: 4, Title: "confirm close", Labels: []string{"hive/likely-done"}},
+		},
+		HeldIssues: []any{github.HoldItem{Repo: "hivecommons/hive", Number: 5, Type: "issue", Labels: []string{"hold"}}},
+		OpenPrs: []any{
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 10, Title: "open"}},
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 11, Title: "blocked", Mergeable: github.MergeableNo}},
+			FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 12, Title: "draft", Draft: true}},
+		},
+		HeldPrs: []any{FrontendPR{PullRequest: github.PullRequest{Repo: "hivecommons/hive", Number: 13, Title: "held", Labels: []string{"hold"}}}},
+		WorkBreakdown: &github.RepoWorkBreakdown{
+			Issues: github.RepoIssueBreakdown{Actionable: 4, Hold: 1, Filtered: 1, Exempt: 1},
+			PRs:    github.RepoPRBreakdown{Actionable: 2, Hold: 1, Draft: 1},
+		},
+	}}}
+
+	got := (&Server{}).statusWithOverviewBands(status, now).ActionableNow
+	if got.IssueEquation == nil || got.PREquation == nil || got.Equation == nil {
+		t.Fatalf("missing equations: %+v", got)
+	}
+	if got.Total != got.Issues+got.PRs {
+		t.Fatalf("overview total = %d, want issue+pr split %d", got.Total, got.Issues+got.PRs)
+	}
+	if got.Total != got.IssueEquation.Result+got.PREquation.Result {
+		t.Fatalf("overview actionable %d != governor split %d + %d", got.Total, got.IssueEquation.Result, got.PREquation.Result)
+	}
+	if got.Issues != got.IssueEquation.Result || got.PRs != got.PREquation.Result {
+		t.Fatalf("governor equations do not match splits: actionable=%+v issueEq=%+v prEq=%+v", got, got.IssueEquation, got.PREquation)
+	}
+	if got.IssueEquation.Text != "6 open − 1 held − 1 blocked/needs-human − 1 confirm/close − 1 outside = 2" {
+		t.Fatalf("issue equation = %q", got.IssueEquation.Text)
+	}
+	if got.PREquation.Text != "4 open − 1 held − 1 blocked/needs-human − 1 draft = 1" {
+		t.Fatalf("PR equation = %q", got.PREquation.Text)
+	}
+}
+
 func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
