@@ -133,8 +133,8 @@ func TestReporterTrustNilClient(t *testing.T) {
 	if _, err := (*Client)(nil).reporterTrustWaitComments(ctx, "o/r", 1); !errors.Is(err, ErrNoGitHubClient) {
 		t.Errorf("err = %v, want ErrNoGitHubClient", err)
 	}
-	(*Client)(nil).markReporterTrustAwaiting(ctx, "o/r", issue, nil, plainWaitAdmitter{})
-	(*Client)(nil).markReporterTrustAwaiting(ctx, "o/r", issue, nil, noticeWaitAdmitter{comment: false})
+	(*Client)(nil).markReporterTrustAwaiting(ctx, "o/r", issue, nil, plainWaitAdmitter{}, nil)
+	(*Client)(nil).markReporterTrustAwaiting(ctx, "o/r", issue, nil, noticeWaitAdmitter{comment: false}, nil)
 
 	labels := []string{"needs-triage"}
 	if got := (*Client)(nil).clearReporterTrustAwaiting(ctx, "o/r", issue, labels, plainWaitAdmitter{}); !reflect.DeepEqual(got, labels) {
@@ -256,6 +256,7 @@ func TestMarkReporterTrustAwaiting_HTTP(t *testing.T) {
 			statuses: map[string]int{listComments: 200, postComment: 201},
 			labels:   []string{"needs-triage"},
 			ra:       plainWaitAdmitter{},
+			wantLog:  "reporter_trust_wait_noticed",
 			wantCall: []string{postComment},
 			noCall:   []string{getLabel, addLabels},
 		},
@@ -278,7 +279,7 @@ func TestMarkReporterTrustAwaiting_HTTP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server, rec := newWaitTestServer(t, tt.statuses, nil)
 			c, buf := waitTestClient(t, server)
-			c.markReporterTrustAwaiting(context.Background(), "o/r", &gh.Issue{Number: gh.Ptr(1)}, tt.labels, tt.ra)
+			c.markReporterTrustAwaiting(context.Background(), "o/r", &gh.Issue{Number: gh.Ptr(1)}, tt.labels, tt.ra, nil)
 			if tt.wantLog != "" && !strings.Contains(buf.String(), tt.wantLog) {
 				t.Errorf("log %q missing %q", buf.String(), tt.wantLog)
 			}
@@ -308,7 +309,7 @@ func TestMarkReporterTrustAwaiting_ExistingNoticeSkips(t *testing.T) {
 	}
 	server, rec := newWaitTestServer(t, nil, handlers)
 	c, _ := waitTestClient(t, server)
-	c.markReporterTrustAwaiting(context.Background(), "o/r", &gh.Issue{Number: gh.Ptr(1)}, nil, plainWaitAdmitter{})
+	c.markReporterTrustAwaiting(context.Background(), "o/r", &gh.Issue{Number: gh.Ptr(1)}, nil, plainWaitAdmitter{}, nil)
 	if rec.has("POST /repos/o/r/issues/1/comments") {
 		t.Error("a second notice was posted")
 	}

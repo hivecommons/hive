@@ -12,6 +12,30 @@ import (
 
 const reporterTrustWaitMarkerPrefix = "<!-- hive:reporter-trust-wait "
 
+// DefaultReporterTrustWaitMaxNotices caps new reporter-trust wait notices per
+// governor poll, mirroring DefaultIssueUnparkSweepMaxActions. A bad config or
+// newly-enabled public repo must not label/comment an entire backlog at once.
+const DefaultReporterTrustWaitMaxNotices = DefaultIssueUnparkSweepMaxActions
+
+type reporterTrustWaitBudget struct {
+	remaining int
+}
+
+func newReporterTrustWaitBudget() *reporterTrustWaitBudget {
+	return &reporterTrustWaitBudget{remaining: DefaultReporterTrustWaitMaxNotices}
+}
+
+func (b *reporterTrustWaitBudget) reserve() bool {
+	if b == nil {
+		return true
+	}
+	if b.remaining <= 0 {
+		return false
+	}
+	b.remaining--
+	return true
+}
+
 func reporterTrustWaitMarker(repo, addedLabel string) string {
 	if strings.TrimSpace(addedLabel) == "" {
 		return fmt.Sprintf("%srepo=%s -->", reporterTrustWaitMarkerPrefix, repo)
@@ -78,7 +102,7 @@ func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) stri
 		"Until then the hive will not claim, label, or open PRs for it."
 }
 
-func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter) {
+func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter, budget *reporterTrustWaitBudget) {
 	number := issue.GetNumber()
 	if !reporterTrustCommentEnabled(ra) {
 		return
@@ -91,6 +115,12 @@ func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, iss
 	if len(comments) > 0 {
 		return
 	}
+	if !budget.reserve() {
+		if c != nil && c.logger != nil {
+			c.logger.Info("reporter trust wait notice budget exhausted", slog.String("repo", repo), slog.Int("number", number))
+		}
+		return
+	}
 
 	label := reporterTrustAwaitingLabel(ra)
 	addedLabel := ""
@@ -101,6 +131,8 @@ func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, iss
 			c.warnReporterTrustWait("label add failed", repo, number, err)
 		} else {
 			addedLabel = label
+			c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
+				WriteTarget{Repo: c.reporterTrustAuditRepo(repo), Number: number}, "label", label, "reason", "reporter_trust_wait")
 		}
 	}
 	if err := c.CreateIssueComment(ctx, repo, number, reporterTrustWaitComment(repo, addedLabel, ra)); err != nil {
@@ -110,7 +142,10 @@ func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, iss
 				c.warnReporterTrustWait("label cleanup failed", repo, number, removeErr)
 			}
 		}
+		return
 	}
+	c.recordWriteAudit(AuditActionReporterTrustWaitNoticed, hiveWriteMeta(),
+		WriteTarget{Repo: c.reporterTrustAuditRepo(repo), Number: number}, "label", addedLabel)
 }
 
 func (c *Client) clearReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter) []string {
@@ -130,7 +165,14 @@ func (c *Client) clearReporterTrustAwaiting(ctx context.Context, repo string, is
 		c.warnReporterTrustWait("label remove failed", repo, issue.GetNumber(), err)
 		return labels
 	}
+	c.recordWriteAudit(AuditActionReporterTrustWaitCleared, hiveWriteMeta(),
+		WriteTarget{Repo: c.reporterTrustAuditRepo(repo), Number: issue.GetNumber()}, "label", label)
 	return withoutExactLabel(labels, label)
+}
+
+func (c *Client) reporterTrustAuditRepo(repo string) string {
+	owner, repoName := c.splitRepo(repo)
+	return owner + "/" + repoName
 }
 
 func (c *Client) reporterTrustWaitComments(ctx context.Context, repo string, number int) ([]string, error) {
