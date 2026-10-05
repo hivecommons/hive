@@ -783,6 +783,7 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 
 var publicExactPaths = map[string]struct{}{
 	knowledgeExportPath:        {},
+	publicKnowledgeMCPPath:     {},
 	"/api/gh-user-auth/status": {},
 	"/api/style":               {},
 	"/api/theme.css":           {},
@@ -852,6 +853,15 @@ func isSaaSPublicPath(originalURI string) bool {
 // here simply lets that check run at all. It is the same class of fix as
 // #4050 (/api/v1) and #7453 (/api/contribute/me).
 const knowledgeExportPath = "/api/knowledge/export"
+
+// publicKnowledgeMCPPath is the spoke's owner-switched, read-only MCP
+// knowledge endpoint (#10615). External agents (Goose, Claude, Copilot) reach
+// it with no browser session, so the hub's nginx auth_request gate must wave
+// it through for the same reason as knowledgeExportPath. This does NOT open
+// anything by itself: the spoke's handlePublicKnowledgeMCP 404s unless the
+// owner set HIVE_PUBLIC_KNOWLEDGE, and the endpoint serves only
+// search/get/export — there is no write method on that surface.
+const publicKnowledgeMCPPath = "/mcp/knowledge"
 
 // ssoHandoffPath is the spoke's SSO handoff endpoint. It MUST bypass the hub's
 // nginx auth_request gate.
