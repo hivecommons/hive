@@ -74,3 +74,35 @@ func TestFormatBlockedIssuesNote_Caps(t *testing.T) {
 		t.Errorf("empty input must render nothing")
 	}
 }
+
+// TestBuildKickMessages_BlockedIssuesNotInIssueRefs pins the claim half of
+// #9839: a dependency-blocked issue is named in the footer as "do NOT start"
+// and so must not appear in KickMessage.IssueRefs — that list is what records
+// the agent's claim and posts the 🔒 comment on GitHub every kick.
+func TestBuildKickMessages_BlockedIssuesNotInIssueRefs(t *testing.T) {
+	s := newScheduler()
+	issues := []github.Issue{
+		{Repo: "test-org/console", Number: 41, Title: "ready one", AgeMinutes: 5},
+		{Repo: "test-org/console", Number: 42, Title: "blocked one", AgeMinutes: 5,
+			DependsOn: []github.IssueDependency{{Key: "test-org/console#41"}}},
+	}
+	kicks := s.BuildKickMessages(&github.ActionableResult{Issues: github.IssueResult{Items: issues}}, []string{"scanner"})
+	if !strings.Contains(kicks[0].Message, "console#42 blocked by test-org/console#41") {
+		t.Errorf("blocked footer missing:\n%s", kicks[0].Message)
+	}
+	if len(kicks) != 1 {
+		t.Fatalf("kicks = %d", len(kicks))
+	}
+	var sawReady bool
+	for _, ref := range kicks[0].IssueRefs {
+		if strings.HasSuffix(ref, "#42") {
+			t.Errorf("blocked issue must not be in IssueRefs: %v", kicks[0].IssueRefs)
+		}
+		if strings.HasSuffix(ref, "#41") {
+			sawReady = true
+		}
+	}
+	if !sawReady {
+		t.Errorf("ready issue missing from IssueRefs: %v", kicks[0].IssueRefs)
+	}
+}
