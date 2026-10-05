@@ -4164,7 +4164,7 @@
     </div>
     <div class="config-body" style="padding:var(--sp-6) var(--sp-8);overflow-y:auto;max-height:calc(85vh - 120px)">
       <p style="font-size:var(--fs-base);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-6)">
-        Select your AI-native Continuous Maturity Model (ACMM) level. Each level provides a curated set of agents
+        Select your AI Codebase Maturity Model (ACMM) level. Each level provides a curated set of agents
         with increasing autonomy. Agents are additive — higher levels build on lower ones.
       </p>
       <div id="acmm-packs-list" style="display:flex;flex-direction:column;gap:var(--sp-5)"></div>
@@ -30545,7 +30545,7 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
         <div class="config-field">
-          <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI-native Continuous Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
+          <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
             <button class="hv-btn btn-secondary btn" data-action="gh41" title="Open the ACMM maturity level selector">Change&hellip;</button>
