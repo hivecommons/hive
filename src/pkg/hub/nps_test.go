@@ -516,23 +516,48 @@ func TestHandleAdminNPSAdminGated(t *testing.T) {
 func TestNPSAdminCardWired(t *testing.T) {
 	html := dashScript(t)
 	for _, snippet := range []string{
+		`id="nps-section"`,
+		`id="nps-header"`,
+		`aria-controls="nps-body"`,
+		`Hub Admin &mdash; NPS feedback`,
+		`id="nps-summary"`,
 		`id="nps-container"`,
 		"function renderAdminNPS(data)",
 		"async function loadAdminNPS()",
 		"fetch('/api/admin/nps')",
 		"loadAdminNPS();",
+		"function npsHeadlineText(data)",
+		"function toggleAdminNPSSection()",
 	} {
 		if !strings.Contains(html, snippet) {
-			t.Errorf("dashboardHTML is missing %q - the NPS card is not wired", snippet)
+			t.Errorf("dashboardHTML is missing %q - the NPS section is not wired", snippet)
 		}
 	}
-	// The container must live inside the admin-gated section, i.e. after the
-	// admin-section opens and before the banner section that follows it.
-	adminAt := strings.Index(html, `id="admin-section"`)
-	npsAt := strings.Index(html, `id="nps-container"`)
-	bannerAt := strings.Index(html, `id="hub-banner-section"`)
-	if adminAt < 0 || npsAt < adminAt || npsAt > bannerAt {
-		t.Errorf("nps-container is not inside the admin section (admin=%d nps=%d banner=%d)", adminAt, npsAt, bannerAt)
+}
+
+func TestNPSAdminSectionPrecedesUsersAndIsSeparate(t *testing.T) {
+	html := dashScript(t)
+	npsSectionAt := strings.Index(html, `id="nps-section"`)
+	usersSectionAt := strings.Index(html, `id="admin-section"`)
+	if npsSectionAt < 0 || usersSectionAt < 0 {
+		t.Fatalf("missing NPS or Users section markup (nps=%d users=%d)", npsSectionAt, usersSectionAt)
+	}
+	if npsSectionAt > usersSectionAt {
+		t.Fatalf("NPS section must precede Users in the default DOM order (nps=%d users=%d)", npsSectionAt, usersSectionAt)
+	}
+
+	usersBodyAt := strings.Index(html, `id="admin-users-body"`)
+	npsContainerAt := strings.Index(html, `id="nps-container"`)
+	if usersBodyAt < 0 || npsContainerAt < 0 {
+		t.Fatalf("could not locate Users body or NPS container (body=%d nps=%d)", usersBodyAt, npsContainerAt)
+	}
+	usersEndAt := strings.Index(html[usersBodyAt:], `id="hub-banner-section"`)
+	if usersEndAt < 0 {
+		t.Fatalf("could not locate section after Users (body=%d end=%d)", usersBodyAt, usersEndAt)
+	}
+	usersEndAt += usersBodyAt
+	if npsContainerAt > usersBodyAt && npsContainerAt < usersEndAt {
+		t.Fatalf("nps-container must not be inside the Users section (nps=%d usersBody=%d usersEnd=%d)", npsContainerAt, usersBodyAt, usersEndAt)
 	}
 }
 
@@ -585,6 +610,8 @@ func TestNPSAdminCardRendersFeedbackAsText(t *testing.T) {
 	script := "var NPS_TREND_BAR_MAX_PCT = 100;\n" +
 		npsHubJSFunc(t, html, "npsEl") + "\n" +
 		npsHubJSFunc(t, html, "npsTallyText") + "\n" +
+		npsHubJSFunc(t, html, "npsHeadlineText") + "\n" +
+		npsHubJSFunc(t, html, "updateAdminNPSSummary") + "\n" +
 		npsHubJSFunc(t, html, "renderAdminNPS") + "\n" + npsAdminDOMAssertions
 	path := filepath.Join(t.TempDir(), "nps_admin.js")
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -614,9 +641,10 @@ function makeEl(tag) {
   return el;
 }
 const container = makeEl('div');
+const summary = { textContent: '' };
 globalThis.document = {
   createElement: makeEl,
-  getElementById: id => (id === 'nps-container' ? container : null),
+  getElementById: id => (id === 'nps-container' ? container : (id === 'nps-summary' ? summary : null)),
 };
 const hostile = '<img src=x onerror=alert(1)><script>alert(2)</script>';
 renderAdminNPS({
@@ -636,6 +664,7 @@ check('hostile feedback is present as literal text', text.includes(hostile));
 check('hostile hive name is present as literal text', text.includes('<b>evil</b>'));
 check('only div elements were created', created.every(e => e.tagName === 'DIV'));
 check('the summary shows the NPS score', text.includes('NPS -100'));
+check('the collapsed summary shows NPS score, count, and max', summary.textContent === 'NPS -100 · 1 response · avg 1 / 4');
 check('the trend bar is sized', created.some(e => e.style.width === '100%'));
 check('a relay response is labeled as an unverified install', text.includes('unverified install <i>inst</i>'));
 check('a direct response is not labeled unverified', (text.match(/unverified install/g) || []).length === 1);
