@@ -77,17 +77,24 @@ type feedbackDiagnostics struct {
 	WindowSize          string                    `json:"window_size,omitempty"`
 	Page                string                    `json:"page,omitempty"`
 }
+type feedbackSubmitterIdentity struct {
+	Name        string `json:"name,omitempty"`
+	GitHubLogin string `json:"github_login,omitempty"`
+	Source      string `json:"source,omitempty"`
+}
 type feedbackReportRequest struct {
-	Title              string                  `json:"title"`
-	Description        string                  `json:"description"`
-	RequestType        string                  `json:"request_type"`
-	TargetRepo         string                  `json:"target_repo"`
-	HiveID             string                  `json:"hive_id,omitempty"`
-	Screenshots        []string                `json:"screenshots,omitempty"`
-	IncludeDiagnostics bool                    `json:"include_diagnostics"`
-	Diagnostics        *feedbackDiagnostics    `json:"diagnostics,omitempty"`
-	ConsoleErrors      []feedbackConsoleError  `json:"console_errors,omitempty"`
-	FailedAPICalls     []feedbackFailedAPICall `json:"failed_api_calls,omitempty"`
+	Title              string                    `json:"title"`
+	Description        string                    `json:"description"`
+	RequestType        string                    `json:"request_type"`
+	TargetRepo         string                    `json:"target_repo"`
+	HiveID             string                    `json:"hive_id,omitempty"`
+	Submitter          feedbackSubmitterIdentity `json:"submitter,omitempty"`
+	OpenedByHive       bool                      `json:"opened_by_hive,omitempty"`
+	Screenshots        []string                  `json:"screenshots,omitempty"`
+	IncludeDiagnostics bool                      `json:"include_diagnostics"`
+	Diagnostics        *feedbackDiagnostics      `json:"diagnostics,omitempty"`
+	ConsoleErrors      []feedbackConsoleError    `json:"console_errors,omitempty"`
+	FailedAPICalls     []feedbackFailedAPICall   `json:"failed_api_calls,omitempty"`
 }
 type feedbackReportResponse struct {
 	OK          bool   `json:"ok"`
@@ -318,6 +325,8 @@ func mustHubFeedbackJSON(v any) string { b, _ := json.Marshal(v); return string(
 func sanitizeHubFeedbackRequest(req *feedbackReportRequest) {
 	req.Title = truncateRunes(hubFeedbackRedact(req.Title), 200)
 	req.Description = truncateRunes(hubFeedbackRedact(req.Description), 5000)
+	req.OpenedByHive = true
+	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	if len(req.ConsoleErrors) > 20 {
 		req.ConsoleErrors = req.ConsoleErrors[len(req.ConsoleErrors)-20:]
 	}
@@ -337,6 +346,35 @@ func sanitizeHubFeedbackRequest(req *feedbackReportRequest) {
 	if req.Diagnostics != nil {
 		sanitizeHubFeedbackDiagnostics(req.Diagnostics)
 	}
+}
+func sanitizeHubFeedbackSubmitter(s *feedbackSubmitterIdentity) {
+	s.Name = truncateRunes(sanitizeHubFeedbackIdentityValue(s.Name), 120)
+	s.GitHubLogin = hubGitHubLoginForMention(s.GitHubLogin)
+	s.Source = truncateRunes(sanitizeHubFeedbackIdentityValue(s.Source), 80)
+	if s.Name == "" {
+		s.Name = "anonymous dashboard session"
+		s.Source = "anonymous dashboard session"
+	}
+}
+func sanitizeHubFeedbackIdentityValue(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, v)
+	return hubFeedbackRedact(v)
+}
+
+var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+
+func hubGitHubLoginForMention(login string) string {
+	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if hubFeedbackGitHubLoginPattern.MatchString(login) {
+		return login
+	}
+	return ""
 }
 func sanitizeHubFeedbackDiagnostics(d *feedbackDiagnostics) {
 	d.HiveID = truncateRunes(hubFeedbackRedact(d.HiveID), 120)
@@ -477,6 +515,7 @@ func createHubFeedbackIssue(ctx context.Context, client *http.Client, token stri
 	return res, warning, nil
 }
 func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
+	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	var b strings.Builder
 	b.WriteString(req.Description)
 	b.WriteString("\n\n---\nSubmitted from the Hive spoke dashboard feedback form.\n")
@@ -485,11 +524,15 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	} else {
 		b.WriteString("Target: Hive\n")
 	}
-	if req.Diagnostics != nil {
-		b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
-		writeHubFeedbackDiagnostics(&b, req.Diagnostics)
-		b.WriteString("\n</details>\n")
+	if req.OpenedByHive {
+		b.WriteString(fmt.Sprintf("Opened by the hive on behalf of %s.\n", hubFeedbackSubmitterBodyText(req.Submitter)))
 	}
+	if req.Submitter.GitHubLogin != "" {
+		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
+	}
+	b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
+	writeHubFeedbackDiagnostics(&b, req.Diagnostics, req.Submitter)
+	b.WriteString("\n</details>\n")
 	if len(req.ConsoleErrors) > 0 {
 		b.WriteString(fmt.Sprintf("\n<details>\n<summary>Browser Console Errors (%d captured)</summary>\n\n", len(req.ConsoleErrors)))
 		for _, e := range req.ConsoleErrors {
@@ -509,9 +552,29 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	}
 	return truncateRunes(b.String(), 60000)
 }
-func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics) {
+func hubFeedbackSubmitterBodyText(s feedbackSubmitterIdentity) string {
+	if s.GitHubLogin != "" {
+		return "@" + s.GitHubLogin
+	}
+	return s.Name
+}
+
+func hubFeedbackSubmitterDiagnosticsText(s feedbackSubmitterIdentity) string {
+	name := hubFeedbackSubmitterBodyText(s)
+	if s.Source != "" && s.Source != s.Name {
+		return fmt.Sprintf("%s (%s)", name, s.Source)
+	}
+	return name
+}
+
+func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, submitter feedbackSubmitterIdentity) {
 	b.WriteString("| Field | Value |\n|---|---|\n")
-	rows := [][2]string{{"Version", d.Version}, {"Commit", d.Commit}, {"Channel", d.Channel}, {"ACMM Level", d.ACMMLevel}, {"Hive ID", d.HiveID}, {"Hosted", fmt.Sprintf("%t", d.Hosted)}, {"Hub linked", fmt.Sprintf("%t", d.HubLinked)}, {"Agent count", fmt.Sprintf("%d", d.AgentCount)}, {"Browser UA", d.BrowserUA}, {"Browser platform", d.BrowserPlatform}, {"Browser language", d.BrowserLanguage}, {"Screen", d.ScreenSize}, {"Window", d.WindowSize}, {"Page", d.Page}}
+	submitterText := hubFeedbackSubmitterDiagnosticsText(submitter)
+	if d == nil {
+		b.WriteString(fmt.Sprintf("| Submitted by | %s |\n", strings.ReplaceAll(submitterText, "|", "\\|")))
+		return
+	}
+	rows := [][2]string{{"Submitted by", submitterText}, {"Version", d.Version}, {"Commit", d.Commit}, {"Channel", d.Channel}, {"ACMM Level", d.ACMMLevel}, {"Hive ID", d.HiveID}, {"Hosted", fmt.Sprintf("%t", d.Hosted)}, {"Hub linked", fmt.Sprintf("%t", d.HubLinked)}, {"Agent count", fmt.Sprintf("%d", d.AgentCount)}, {"Browser UA", d.BrowserUA}, {"Browser platform", d.BrowserPlatform}, {"Browser language", d.BrowserLanguage}, {"Screen", d.ScreenSize}, {"Window", d.WindowSize}, {"Page", d.Page}}
 	for _, r := range rows {
 		if r[1] != "" {
 			b.WriteString(fmt.Sprintf("| %s | %s |\n", r[0], strings.ReplaceAll(r[1], "|", "\\|")))

@@ -1,0 +1,1 @@
+- Attribute dashboard feedback issues to the submitting dashboard user in the issue body and prefer the GitHub App credential when available.
