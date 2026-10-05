@@ -322,9 +322,13 @@ func channelRevisionSHA(channel string, logger *slog.Logger) string {
 // channel switch is still on the wire. Targeting on intent during that window
 // would aim at a channel the spoke is not on yet — the same unreachable-target
 // mistake, one step removed. tracked_channel remains the fallback for spokes
-// too old to report an image ref at all.
+// too old to report an image ref at all, plus channel followers temporarily
+// pinned to an immutable SHA image while the moving channel tag catches up.
 func spokeReleaseChannel(imageRef, trackedChannel string) string {
-	channel, _, _ := ResolveSpokeReleaseChannel(imageRef, trackedChannel)
+	channel, _, tag := ResolveSpokeReleaseChannel(imageRef, trackedChannel)
+	if channel == "" && trackedChannel != "" && imageTagSHAPattern.MatchString(tag) && isReleaseChannel(trackedChannel) {
+		return trackedChannel
+	}
 	return channel
 }
 
@@ -378,5 +382,12 @@ func (s *HubServer) reachableUpgradeTarget(branch, imageRef, trackedChannel stri
 	if sha == "" {
 		return upgradeReachability{Channel: channel}
 	}
-	return upgradeReachability{SHA: sha, Channel: channel, Resolved: true}
+	target := channelPublishedImageTarget(branch, channel, sha, s.logger)
+	if target.VerificationUnavailable {
+		return upgradeReachability{SHA: sha, Channel: channel, Resolved: true}
+	}
+	if target.SHA == "" {
+		return upgradeReachability{Channel: channel}
+	}
+	return upgradeReachability{SHA: target.SHA, Channel: channel, Resolved: true}
 }

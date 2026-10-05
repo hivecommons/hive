@@ -59,6 +59,32 @@ func stubBranchHead(t *testing.T, branch, sha string) {
 	})
 }
 
+func stubChannelImageSelection(t *testing.T, commits []branchSHAInfo, exists map[string]bool, verified bool) {
+	t.Helper()
+	origList := listChannelBranchCommits
+	origExists := channelSpokeImageTagExists
+	listChannelBranchCommits = func(string, *slog.Logger) []branchSHAInfo {
+		return commits
+	}
+	channelSpokeImageTagExists = func(tag string, _ *slog.Logger) (bool, bool) {
+		if !verified {
+			return false, false
+		}
+		return exists[shortSHA(tag)], true
+	}
+	t.Cleanup(func() {
+		listChannelBranchCommits = origList
+		channelSpokeImageTagExists = origExists
+	})
+}
+
+func stubChannelImageVerificationUnavailable(t *testing.T) {
+	t.Helper()
+	origList := listChannelBranchCommits
+	listChannelBranchCommits = func(string, *slog.Logger) []branchSHAInfo { return nil }
+	t.Cleanup(func() { listChannelBranchCommits = origList })
+}
+
 func TestSpokeReleaseChannel(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -76,6 +102,7 @@ func TestSpokeReleaseChannel(t *testing.T) {
 		// targeting stable there aims at a channel it is not on yet.
 		{"reported tag wins over intent", "ghcr.io/hivecommons/hive:v4-latest", "stable", ""},
 		{"reported channel wins over a different intent", "ghcr.io/hivecommons/hive:candidate", "stable", "candidate"},
+		{"immutable sha tag keeps tracked channel", "ghcr.io/hivecommons/hive:526ef71", "stable", "stable"},
 		// Spokes too old to report an image ref fall back to intent.
 		{"no image ref falls back to tracked channel", "", "stable", "stable"},
 		{"no image ref, no channel", "", "", ""},
@@ -134,6 +161,7 @@ func TestResolveSpokeReleaseChannel(t *testing.T) {
 func TestReachableUpgradeTargetPrefersChannelOverBranchHead(t *testing.T) {
 	stubBranchHead(t, "v4", "526ef71")
 	stubChannelRevisions(t, map[string]string{"stable": "77ba848"})
+	stubChannelImageVerificationUnavailable(t)
 	s := &HubServer{logger: targetingLogger()}
 
 	got := s.reachableUpgradeTarget("v4", "ghcr.io/hivecommons/hive:stable", "stable")
@@ -169,6 +197,7 @@ func TestReachableUpgradeTargetBranchSpokeUsesBranchHead(t *testing.T) {
 func TestReachableUpgradeTargetUnresolvedChannelSuppresses(t *testing.T) {
 	stubBranchHead(t, "v4", "526ef71")
 	stubChannelRevisions(t, map[string]string{}) // nothing resolves
+	stubChannelImageVerificationUnavailable(t)
 	s := &HubServer{logger: targetingLogger()}
 
 	got := s.reachableUpgradeTarget("v4", "ghcr.io/hivecommons/hive:stable", "stable")
@@ -180,6 +209,72 @@ func TestReachableUpgradeTargetUnresolvedChannelSuppresses(t *testing.T) {
 	}
 	if got.Channel != ReleaseChannelStable {
 		t.Errorf("Channel = %q, want %q so the refusal can name the channel", got.Channel, ReleaseChannelStable)
+	}
+}
+
+func TestReachableUpgradeTargetWalksChannelBranchForNewestPublishedImage(t *testing.T) {
+	stubBranchHead(t, "v5", "head999")
+	stubChannelRevisions(t, map[string]string{ReleaseChannelCandidate: "old1111"})
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "gap8888"},
+		{SHA: "new7777"},
+		{SHA: "old1111"},
+	}, map[string]bool{"new7777": true, "old1111": true}, true)
+	s := &HubServer{logger: targetingLogger()}
+
+	got := s.reachableUpgradeTarget("v5", "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate)
+	if !got.Resolved || got.SHA != "new7777" || got.Channel != ReleaseChannelCandidate {
+		t.Fatalf("reachable target = %+v, want newest published per-SHA image new7777 on candidate", got)
+	}
+}
+
+func TestChannelPublishedImageTargetReportsFloatingLagAndPendingImages(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "new7777"},
+		{SHA: "old1111"},
+	}, map[string]bool{"new7777": true, "old1111": true}, true)
+
+	got := channelPublishedImageTarget("v5", ReleaseChannelCandidate, "old1111", targetingLogger())
+	if got.SHA != "new7777" || got.FloatingSHA != "old1111" || got.PendingImageCommits != 1 || got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want SHA new7777, floating old1111, one pending image commit", got)
+	}
+}
+
+func TestChannelPublishedImageTargetFallsBackWhenNoNewerImageExists(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "old1111"},
+	}, map[string]bool{"old1111": true}, true)
+
+	got := channelPublishedImageTarget("v5", ReleaseChannelCandidate, "old1111", targetingLogger())
+	if got.SHA != "old1111" || got.PendingImageCommits != 1 || got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want floating SHA old1111 with one newer commit awaiting image", got)
+	}
+}
+
+func TestChannelPublishedImageTargetFallsBackWhenVerificationUnavailable(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "old1111"},
+	}, nil, false)
+
+	got := channelPublishedImageTarget("v5", ReleaseChannelCandidate, "old1111", targetingLogger())
+	if got.SHA != "old1111" || !got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want floating SHA with verification-unavailable hint", got)
+	}
+}
+
+func TestChannelPublishedImageTargetDoesNotUseBranchUnlessFloatingSHAIsInHistory(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "new7777"},
+		{SHA: "head999"},
+	}, map[string]bool{"new7777": true}, true)
+
+	got := channelPublishedImageTarget("old-line", ReleaseChannelCandidate, "old1111", targetingLogger())
+	if got.SHA != "old1111" || !got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want floating SHA and unavailable hint when branch history does not contain it", got)
 	}
 }
 

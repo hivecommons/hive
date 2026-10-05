@@ -125,6 +125,39 @@ func TestUpgradeSelfMutableToSHA_EmptyTarget_FallsBackToRestart(t *testing.T) {
 	}
 }
 
+func TestUpgradeSelfToSHA_ChannelTagPatchesToImmutableSHA(t *testing.T) {
+	var patched string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:candidate"}]}}}}`))
+			return
+		}
+		if r.Method == http.MethodPatch {
+			body, _ := io.ReadAll(r.Body)
+			patched = string(body)
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		t.Fatalf("unexpected method %s", r.Method)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), "abc1234")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if needsRestart {
+		t.Fatal("channel SHA patch rolls the deployment itself; needsRestart = true")
+	}
+	if !strings.Contains(patched, "ghcr.io/hivecommons/hive:abc1234") {
+		t.Fatalf("patch body = %s, want immutable SHA image", patched)
+	}
+	if strings.Contains(patched, selfUpgradeTargetAnnotation) {
+		t.Fatalf("channel exact-image upgrade must patch the image, not only annotate the channel tag: %s", patched)
+	}
+}
+
 func TestUpgradeSelfMutableToSHA_NamespaceFileMissing_FallsBackToRestart(t *testing.T) {
 	// upgradeSelfMutableToSHA reads k8sNamespacePath a SECOND time (independently
 	// of selfDeploymentImage). If that read fails, it falls back to restart.

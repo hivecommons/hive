@@ -225,6 +225,27 @@ func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool,
 		return true, nil
 	}
 	if imageTagIsMutable(current) {
+		// Release-channel spokes may be instructed to a newer immutable per-SHA
+		// image before the floating channel tag has caught up. A restart of the
+		// channel tag would just pull the old digest again, so patch the image to
+		// the exact published SHA tag. The hub keeps the selected channel in its
+		// hive record, so later channel moves still target this spoke as a channel
+		// follower even while the Deployment is temporarily on a SHA tag.
+		if ImageReleaseChannel(current) != "" && imageTagSHAPattern.MatchString(targetSHA) {
+			idx := strings.LastIndex(current, ":")
+			if idx >= 0 {
+				newImage := current[:idx+1] + targetSHA
+				if newImage == current {
+					return false, nil
+				}
+				logger.Info("upgrading a release-channel deployment to an immutable SHA image",
+					"from", current, "to", newImage)
+				if err := SwitchImageSelf(logger, newImage); err != nil {
+					return false, fmt.Errorf("patching release-channel image to %s: %w", newImage, err)
+				}
+				return false, nil
+			}
+		}
 		return upgradeSelfMutableToSHA(logger, current, targetSHA)
 	}
 	// Pinned. Rewrite the tag in place so the registry/repo (which may be a
