@@ -31,7 +31,8 @@ func TestOverviewChartPolish(t *testing.T) {
 		`y="${OVERVIEW_STACK_TOTAL_Y}">${total} total</text>`,
 		".overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm);",
 		".overview-chart-legend-count { font-size: var(--fs-sm); font-variant-numeric: tabular-nums;",
-		".overview-duration-normal { --overview-transition-duration: 1000ms; }",
+		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
+		"`--overview-transition-duration:${overviewTransitionDurationMs(state)}ms`",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

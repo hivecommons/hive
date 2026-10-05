@@ -1841,11 +1841,8 @@
     .overview-animate .overview-chart-area { opacity: 0; animation: overview-area-fade var(--anim-band-grow) var(--anim-ease-out-cubic) both; animation-delay: var(--anim-chart-slow); }
     .overview-chart-point { fill: var(--slice-c); }
     .overview-chart-hist-cell { fill: var(--slice-c); }
-    .overview-panel-in { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-panel-out { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-duration-fast { --overview-transition-duration: 500ms; }
-    .overview-duration-normal { --overview-transition-duration: 1000ms; }
-    .overview-duration-slow { --overview-transition-duration: 1800ms; }
+    .overview-panel-in { animation-duration: var(--overview-transition-duration); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-panel-out { animation-duration: var(--overview-transition-duration); animation-timing-function: ease; animation-fill-mode: both; }
     .overview-panel-in.overview-transition-fade { animation-name: overview-fade-in; }
     .overview-panel-out.overview-transition-fade { animation-name: overview-fade-out; }
     .overview-panel-in.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-in; }
@@ -13055,7 +13052,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const OVERVIEW_CHART_TYPE_LABELS = { donut: 'Donut', pie: 'Pie', bar: 'Horizontal bar', stacked: '100% stacked bar', line: 'Line / spark', histogram: 'Age histogram' };
     const OVERVIEW_TRANSITIONS = ['fade', 'rise-from-bottom', 'lower-from-top', 'slide-from-left', 'slide-from-right', 'zoom', 'flip', 'blur', 'random'];
     const OVERVIEW_DURATIONS = ['fast', 'normal', 'slow'];
-    const OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 };
+    const OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 };
     const OVERVIEW_CAROUSEL_MIN_MS = 5000;
     const OVERVIEW_CAROUSEL_MAX_MS = 300000;
     const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
@@ -13463,13 +13460,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const active = enabled.includes(state.active[kind]) ? state.active[kind] : enabled[0];
       state.active[kind] = active;
       const panelClass = `overview-panel-in ${overviewTransitionClass(state)} overview-duration-${state.duration}`;
+      const panelStyle = `--overview-transition-duration:${overviewTransitionDurationMs(state)}ms`;
       const body = renderOverviewChartBody(active, title, subtitle, slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const csvKind = kind === 'pr' ? 'prs' : 'issues';
       const format = (state.exportFormat || 'csv').toUpperCase();
       const csvTitle = total ? ('Download ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to download';
       const download = `<a class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="Download ${format}" aria-label="${esc(csvTitle)}">⬇︎</a>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+      return `<div class="overview-chart-card ${panelClass}" style="${panelStyle}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
     function overviewMedianAgeLabel(slices, state) {

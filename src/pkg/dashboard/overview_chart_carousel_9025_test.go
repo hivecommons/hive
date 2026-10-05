@@ -78,9 +78,10 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 		"OVERVIEW_CAROUSEL_MIN_MS = 5000",
 		"OVERVIEW_CAROUSEL_MAX_MS = 300000",
 		"OVERVIEW_CAROUSEL_DEFAULT_MS = 30000",
-		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 }",
+		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
 		"function overviewTransitionDurationMs(state)",
 		"function overviewCarouselDwellMs(state)",
+		"`--overview-transition-duration:${overviewTransitionDurationMs(state)}ms`",
 		"}, overviewCarouselDwellMs(state)));",
 		"transition: 'fade', duration: 'normal'",
 		"carousel: false",
@@ -95,10 +96,8 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 			t.Errorf("index.html missing transition %q", transition)
 		}
 	}
-	for _, cls := range []string{"overview-duration-fast", "overview-duration-normal", "overview-duration-slow"} {
-		if !strings.Contains(html, cls) {
-			t.Errorf("index.html missing duration class %q", cls)
-		}
+	if !strings.Contains(html, "overview-duration-${state.duration}") {
+		t.Errorf("index.html missing selected duration class wiring")
 	}
 	if !strings.Contains(html, "@media (prefers-reduced-motion: reduce) { .overview-panel-in, .overview-panel-out { animation: none; } }") {
 		t.Errorf("index.html missing reduced-motion instant swap rule")
@@ -173,9 +172,9 @@ const OVERVIEW_TRANSITION_DURATION_MS = { fast: ` + durations[1] + `, normal: ` 
 const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
 ` + jsFunc(t, html, "overviewTransitionDurationMs") + `
 ` + jsFunc(t, html, "overviewCarouselDwellMs") + `
-assert.equal(overviewTransitionDurationMs({ duration: 'fast' }), 500);
-assert.equal(overviewTransitionDurationMs({ duration: 'normal' }), 1000);
-assert.equal(overviewTransitionDurationMs({ duration: 'slow' }), 1800);
+assert.equal(overviewTransitionDurationMs({ duration: 'fast' }), 1000);
+assert.equal(overviewTransitionDurationMs({ duration: 'normal' }), 2000);
+assert.equal(overviewTransitionDurationMs({ duration: 'slow' }), 3600);
 assert.ok(overviewCarouselDwellMs({ intervalMs: 500, duration: 'slow' }) >= overviewTransitionDurationMs({ duration: 'slow' }));
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
