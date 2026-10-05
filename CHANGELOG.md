@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-05 (v5.132.9)
+
+### Fixed
+
+- Promote the newest eligible soaked v5 build to stable, even after candidate has moved on.
+
 ## 2026-10-04 (v5.132.8)
 
 ### Fixed
