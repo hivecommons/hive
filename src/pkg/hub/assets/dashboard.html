@@ -7639,8 +7639,12 @@
       var st = _stablePromotion || {auto_promote: true, soak_hours: 24};
       var on = st.auto_promote !== false;
       var base = on
-        ? 'auto-promotion: on — stable catches up to candidate after ' + (st.soak_hours || 24) + 'h soak'
+        ? 'auto-promotion: on — newest soaked build promotes after ' + (st.soak_hours || 24) + 'h per-build soak'
         : 'auto-promotion: paused by ' + (st.paused_by || 'operator') + (st.paused_at ? ' ' + stablePromotionAge(st.paused_at) : '');
+      if (on && st.eligible_build) {
+        var eb = st.eligible_build || {};
+        base += ' — eligible build ' + (eb.sha || '?') + (eb.generation ? ' generation ' + eb.generation : '') + (st.eligible_at ? ' at ' + st.eligible_at : '');
+      }
       if (!on && ct && ct.behind) base = '↓' + ct.behind + ' behind — ' + base;
       var title = base;
       if (st.maintained_hives && st.maintained_hives.length) {

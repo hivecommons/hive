@@ -19,6 +19,7 @@ import (
 // while this label continues to name it exactly. src/scripts/promote-stable.sh
 // reads the same label for the same reason.
 const revisionLabel = "org.opencontainers.image.revision"
+const generationLabel = "io.kubestellar.hive.github-actions-run-number"
 
 // channelRevisionStaleGrace bounds how long a channel→SHA answer may be served
 // after a refresh has failed.
@@ -195,6 +196,81 @@ var ghcrTagRevision = func(repo, tag string, logger *slog.Logger) string {
 		return ""
 	}
 	return shortSHA(rev)
+}
+
+// ghcrTagGeneration returns the docker.yml run number stamped onto repo:tag, or
+// 0 when it cannot be determined. The stable-promotion card uses this only as
+// advisory display state; the workflow re-checks the labels before moving tags.
+var ghcrTagGeneration = func(repo, tag string, logger *slog.Logger) int {
+	client := &http.Client{Timeout: channelResolveTimeout}
+	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:" + repo + ":pull")
+	if err != nil {
+		logger.Warn("channel generation: GHCR token request failed", "repo", repo, "error", err)
+		return 0
+	}
+	var tok struct {
+		Token string `json:"token"`
+	}
+	decodeErr := json.NewDecoder(io.LimitReader(tokenResp.Body, ghcrManifestMaxBytes)).Decode(&tok)
+	_ = tokenResp.Body.Close()
+	if decodeErr != nil {
+		logger.Warn("channel generation: GHCR token response was not decodable",
+			"repo", repo, "tag", tag, "status", tokenResp.StatusCode, "error", decodeErr)
+		return 0
+	}
+
+	m := ghcrManifestBody(client, tok.Token, repo, tag, logger)
+	if m == nil {
+		return 0
+	}
+	if len(m.Manifests) > 0 {
+		d := m.platformDigest()
+		if d == "" {
+			logger.Warn("channel generation: image index carries no linux/amd64 manifest",
+				"repo", repo, "tag", tag)
+			return 0
+		}
+		if m = ghcrManifestBody(client, tok.Token, repo, d, logger); m == nil {
+			return 0
+		}
+	}
+	if m.Config.Digest == "" {
+		logger.Warn("channel generation: manifest has no config descriptor", "repo", repo, "tag", tag)
+		return 0
+	}
+
+	blobURL := fmt.Sprintf("%s/v2/%s/blobs/%s", ghcrBase, repo, m.Config.Digest)
+	req, err := http.NewRequest("GET", blobURL, nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Warn("channel generation: GHCR config blob GET failed", "repo", repo, "tag", tag, "error", err)
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("channel generation: GHCR config blob GET returned non-OK",
+			"repo", repo, "tag", tag, "status", resp.StatusCode)
+		return 0
+	}
+	var cfg struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, ghcrConfigMaxBytes)).Decode(&cfg); err != nil {
+		logger.Warn("channel generation: GHCR config blob was not decodable",
+			"repo", repo, "tag", tag, "error", err)
+		return 0
+	}
+	var gen int
+	if _, err := fmt.Sscanf(cfg.Config.Labels[generationLabel], "%d", &gen); err != nil || gen < 0 {
+		return 0
+	}
+	return gen
 }
 
 // channelRevisionSHA returns the short SHA that release channel `channel`
