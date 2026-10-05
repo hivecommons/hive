@@ -37,6 +37,9 @@ func publicKnowledgeServer(t *testing.T) *Server {
 	write("gotcha-nil-map.md", "---\ntitle: Nil Map Gotcha\ntype: gotcha\n---\nAlways initialize maps before use.\n")
 	write("pattern-caching.md", "---\ntitle: Caching Pattern\ntype: pattern\ntags: [linux, public]\n---\nUse Redis for caching hot paths.\n")
 	write("vision-world-domination.md", "---\ntitle: Secret Roadmap\ntype: vision\n---\nWe will acquire a competitor in Q3.\n")
+	// Long body (>200 runes) with a Related link to a private fact: exercises
+	// full-body re-reads and Related filtering.
+	write("pattern-long-body.md", "---\ntitle: Long Caching Notes\ntype: pattern\nrelated: [pattern-caching, vision-world-domination]\n---\n"+strings.Repeat("Redis caching detail sentence. ", 20)+"END-MARKER\n")
 
 	api := knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true, Engine: "file"}, logger)
 	if err := api.ConnectVault(vault, "vault"); err != nil {
@@ -131,7 +134,7 @@ func TestPublicKnowledgeMCPHandshakeAndToolsList(t *testing.T) {
 		t.Fatal("switch on: /mcp/knowledge must be public")
 	}
 
-	rec := mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"goose","version":"1"}}}`)
+	rec := mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"goose","version":"1"}}}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("initialize anonymous: status = %d body=%q", rec.Code, rec.Body.String())
 	}
@@ -331,5 +334,76 @@ func TestPublicKnowledgeTypeListExcludesGovernance(t *testing.T) {
 func TestPublicKnowledgeMCPPathConstantMatchesRoute(t *testing.T) {
 	if publicKnowledgeMCPPath != "/mcp/knowledge" {
 		t.Fatalf("publicKnowledgeMCPPath = %q; update the HandleFunc literal in api.go and docs/api-reference.md", publicKnowledgeMCPPath)
+	}
+}
+
+func TestPublicKnowledgeMCPRejectsBatchRequests(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_KNOWLEDGE", "1")
+	s := publicKnowledgeServer(t)
+	rec := mcpCall(t, s, `[{"jsonrpc":"2.0","id":1,"method":"ping"}]`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	resp := decodeRPC(t, rec)
+	if resp.Error == nil || resp.Error.Code != jsonRPCInvalidRequest {
+		t.Fatalf("error = %+v, want code %d", resp.Error, jsonRPCInvalidRequest)
+	}
+}
+
+func TestPublicKnowledgeMCPGetReturnsFullBodyAndFiltersRelated(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_KNOWLEDGE", "1")
+	s := publicKnowledgeServer(t)
+	rec := mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"knowledge_get","arguments":{"slug":"pattern-long-body"}}}`)
+	text, isErr := rpcToolText(t, decodeRPC(t, rec))
+	if isErr {
+		t.Fatalf("unexpected tool error: %s", text)
+	}
+	var pf publicFact
+	if err := json.Unmarshal([]byte(text), &pf); err != nil {
+		t.Fatalf("decode fact: %v", err)
+	}
+	if !strings.Contains(pf.Body, "END-MARKER") {
+		t.Fatalf("body truncated, want full text ending in END-MARKER: %q", pf.Body)
+	}
+	if len(pf.Related) != 1 || pf.Related[0] != "pattern-caching" {
+		t.Fatalf("related = %v, want only the public slug", pf.Related)
+	}
+
+	rec = mcpCall(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"knowledge_export","arguments":{}}}`)
+	text, _ = rpcToolText(t, decodeRPC(t, rec))
+	if !strings.Contains(text, "END-MARKER") {
+		t.Fatal("export should carry full bodies")
+	}
+	if strings.Contains(text, "vision-world-domination") || strings.Contains(text, "acquire a competitor") {
+		t.Fatal("export leaked private fact")
+	}
+}
+
+func TestPublicKnowledgeMCPSearchTypeFilterAppliesToVaultResults(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_KNOWLEDGE", "1")
+	s := publicKnowledgeServer(t)
+	// "maps" only matches the gotcha; asking for type=pattern must yield nothing
+	// even though the vault store ignores the type argument.
+	rec := mcpCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"knowledge_search","arguments":{"query":"initialize maps","type":"pattern"}}}`)
+	text, isErr := rpcToolText(t, decodeRPC(t, rec))
+	if isErr {
+		t.Fatalf("unexpected tool error: %s", text)
+	}
+	var out struct {
+		Count   int          `json:"count"`
+		Results []publicFact `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range out.Results {
+		if r.Type != "pattern" {
+			t.Fatalf("type filter leaked %q: %+v", r.Type, r)
+		}
+	}
+	rec = mcpCall(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"knowledge_search","arguments":{"query":"initialize maps","type":"gotcha"}}}`)
+	text, _ = rpcToolText(t, decodeRPC(t, rec))
+	if !strings.Contains(text, "gotcha-nil-map") {
+		t.Fatalf("gotcha search missing result: %s", text)
 	}
 }

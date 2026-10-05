@@ -46,8 +46,15 @@ handshake (`initialize`, `ping`, `notifications/*`), `tools/list`, and
 mutation. Anonymous callers cannot alter a knowledge base, and every tool is
 annotated `readOnlyHint: true` so MCP clients run them without confirmation.
 
-Other hard limits: POST only (no SSE stream), 64 KiB request body,
+Other hard limits: POST only (no SSE stream), 64 KiB request body, one
+JSON-RPC request per POST (batch arrays are answered with `-32600`; the
+endpoint speaks MCP `2025-06-18`, which dropped batching), and
 `knowledge_search` returns at most 50 results per call.
+
+A fact's `related` list is filtered to public slugs, so a public fact cannot
+disclose even the name of a private one. `knowledge_get` and
+`knowledge_export` return complete bodies; `knowledge_search` results do too,
+re-read per hit.
 
 ## Tools
 

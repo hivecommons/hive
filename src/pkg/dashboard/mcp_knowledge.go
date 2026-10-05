@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -42,14 +43,22 @@ const (
 	// every fact of a public type is exposed.
 	publicKnowledgeTagsEnv = "HIVE_PUBLIC_KNOWLEDGE_TAGS"
 
-	// mcpProtocolVersion is the MCP spec revision this endpoint speaks.
-	mcpProtocolVersion = "2025-03-26"
+	// mcpProtocolVersion is the MCP spec revision this endpoint speaks. The
+	// 2025-06-18 revision dropped JSON-RPC batching, which this endpoint does
+	// not implement (a batch array is answered with -32600).
+	mcpProtocolVersion = "2025-06-18"
 
 	// publicKnowledgeDefaultLimit / MaxLimit bound knowledge_search results so
 	// an anonymous caller cannot pull the whole base one query at a time
 	// faster than knowledge_export already allows.
 	publicKnowledgeDefaultLimit = 10
 	publicKnowledgeMaxLimit     = 50
+
+	// publicKnowledgeOverfetch is how many ranked hits are pulled from the
+	// stores before the public filter runs. Stores rank across ALL types, so
+	// a hive heavy in private decision/idea facts could otherwise fill the
+	// window with facts the filter then drops and starve the result set.
+	publicKnowledgeOverfetch = publicKnowledgeMaxLimit * 10
 
 	// publicKnowledgeMaxBodyBytes caps a JSON-RPC request body.
 	publicKnowledgeMaxBodyBytes = 64 << 10
@@ -130,16 +139,57 @@ type publicFact struct {
 	Related    []string `json:"related,omitempty"`
 }
 
-func toPublicFact(f knowledge.Fact) publicFact {
+// toPublicFact projects f. Related is filtered against publicSlugs so a public
+// fact cannot disclose the (often descriptive) slug of a private one.
+func toPublicFact(f knowledge.Fact, publicSlugs map[string]struct{}) publicFact {
 	t := string(f.Type)
 	if t == "" {
 		t = "general"
 	}
-	pf := publicFact{Slug: f.Slug, Title: f.Title, Type: t, Body: f.Body, Tags: f.Tags, Related: f.Related}
+	pf := publicFact{Slug: f.Slug, Title: f.Title, Type: t, Body: f.Body, Tags: f.Tags}
+	for _, r := range f.Related {
+		if _, ok := publicSlugs[r]; ok {
+			pf.Related = append(pf.Related, r)
+		}
+	}
 	if f.ConfidenceScored {
 		pf.Confidence = f.Confidence
 	}
 	return pf
+}
+
+// publicListing returns every public fact (snippet bodies, as the stores list
+// them) plus the set of their slugs. It is the authority for "is this slug
+// public" used by every tool.
+func (s *Server) publicListing(tags []string) ([]knowledge.Fact, map[string]struct{}) {
+	all := publicKnowledgeFilter(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0), tags)
+	slugs := make(map[string]struct{}, len(all))
+	for _, f := range all {
+		slugs[f.Slug] = struct{}{}
+	}
+	return all, slugs
+}
+
+// withFullBody re-reads f by slug so callers get the complete body rather
+// than the ~200-rune snippet store listings carry. Falls back to f unchanged
+// when the read fails or the stored page is no longer public.
+func (s *Server) withFullBody(f knowledge.Fact) knowledge.Fact {
+	full, err := s.deps.Knowledge.ReadFact(s.deps.Ctx, f.Slug)
+	if err != nil || full == nil || full.Slug != f.Slug {
+		return f
+	}
+	if _, ok := publicKnowledgeTypes[string(full.Type)]; !ok {
+		return f
+	}
+	out := *full
+	// Preserve listing-derived fields the page read does not carry.
+	if len(out.Related) == 0 {
+		out.Related = f.Related
+	}
+	if len(out.Tags) == 0 {
+		out.Tags = f.Tags
+	}
+	return out
 }
 
 // publicKnowledgeFilter keeps only facts of a public type that match the tag
@@ -314,6 +364,11 @@ func (s *Server) handlePublicKnowledgeMCP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '[' {
+		writeJSONRPC(w, http.StatusBadRequest, jsonRPCResponse{JSONRPC: "2.0", ID: nullID, Error: &jsonRPCError{Code: jsonRPCInvalidRequest, Message: "JSON-RPC batch requests are not supported; send one request per POST"}})
+		return
+	}
+
 	var req jsonRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONRPC(w, http.StatusBadRequest, jsonRPCResponse{JSONRPC: "2.0", ID: nullID, Error: &jsonRPCError{Code: jsonRPCParseError, Message: "invalid JSON"}})
@@ -418,16 +473,22 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		if limit > publicKnowledgeMaxLimit {
 			limit = publicKnowledgeMaxLimit
 		}
-		// Over-fetch so the public filter does not starve the result set, then
-		// trim to the requested bound.
-		facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, args.Query, args.Type, publicKnowledgeMaxLimit*2)
-		facts = publicKnowledgeFilter(facts, tags)
-		if len(facts) > limit {
-			facts = facts[:limit]
-		}
-		out := make([]publicFact, 0, len(facts))
+		_, publicSlugs := s.publicListing(tags)
+		facts := publicKnowledgeFilter(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, args.Query, args.Type, publicKnowledgeOverfetch), tags)
+		out := make([]publicFact, 0, limit)
 		for _, f := range facts {
-			out = append(out, toPublicFact(f))
+			if len(out) >= limit {
+				break
+			}
+			// Vault/git-source stores ignore the type argument; enforce it here
+			// so the advertised filter holds for every source.
+			if args.Type != "" && publicTypeName(f.Type) != args.Type {
+				continue
+			}
+			if _, ok := publicSlugs[f.Slug]; !ok {
+				continue
+			}
+			out = append(out, toPublicFact(s.withFullBody(f), publicSlugs))
 		}
 		return toolJSON(map[string]interface{}{"query": args.Query, "count": len(out), "results": out})
 
@@ -446,16 +507,19 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 		}
 		// Resolve through the same filtered listing search uses so a private
 		// fact can never be fetched by guessing its slug.
-		all := publicKnowledgeFilter(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0), tags)
+		all, publicSlugs := s.publicListing(tags)
 		for _, f := range all {
 			if f.Slug == args.Slug {
-				return toolJSON(toPublicFact(f))
+				return toolJSON(toPublicFact(s.withFullBody(f), publicSlugs))
 			}
 		}
 		return toolError("fact not found: " + args.Slug), nil
 
 	case "knowledge_export":
-		all := publicKnowledgeFilter(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0), tags)
+		all, _ := s.publicListing(tags)
+		for i := range all {
+			all[i] = s.withFullBody(all[i])
+		}
 		md := renderPublicKnowledgeMarkdown(all)
 		sum := sha256.Sum256([]byte(md))
 		return map[string]interface{}{
@@ -468,6 +532,14 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 	default:
 		return nil, &jsonRPCError{Code: jsonRPCInvalidParams, Message: "unknown tool: " + params.Name}
 	}
+}
+
+// publicTypeName normalises the empty type to "general" for comparisons.
+func publicTypeName(t knowledge.FactType) string {
+	if t == "" {
+		return "general"
+	}
+	return string(t)
 }
 
 func toolText(text string) mcpToolResult {
