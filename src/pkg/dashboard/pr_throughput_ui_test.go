@@ -59,7 +59,7 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		`<div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>`,
-		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span>`,
+		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Change Throughput</span>`,
 		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section'`,
 		`h === 'throughput' || h.startsWith('section-')`,
 		`if (h === 'throughput') return 'pr-throughput-section';`,

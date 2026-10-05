@@ -183,7 +183,7 @@ rule.
 
 ## Repository card legend, issue bands, and PR bands
 
-The collapsible **Overview** section above Repositories summarizes the same
+The collapsible **Overview** section above Projects summarizes the same
 client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
@@ -221,7 +221,7 @@ Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.
 
-The **Repositories** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
+The **Projects** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend lists the issue
 and PR bands (rendered from the shared band table, each with its rule as a
