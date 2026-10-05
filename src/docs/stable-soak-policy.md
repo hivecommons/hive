@@ -64,12 +64,18 @@ smoke all pass, `stable` moves to B37, even though `candidate` is B52. On each
 later hourly run, `stable` moves again whenever another newer build crosses the
 24-hour line.
 
-The remaining race is two hourly promotion runs trying to move `stable` at the
-same time. The workflow uses a compare-and-set: immediately before publishing it
-re-reads each image's current `stable` generation and requires it to be unchanged
-from the decision read and lower than the chosen build's generation. If that
-compare-and-set fails, the run exits successfully without moving `stable`; the
-next scheduled run re-evaluates from the new `stable` generation.
+Two promotion runs never execute at the same time: `promote-stable.yml` declares
+a GitHub Actions `concurrency` group (`stable-promotion-v5`,
+`cancel-in-progress: false`), so a scheduled or manually dispatched run waits
+for any in-progress run to finish before it starts. GitHub serialises the
+runs; the workflow itself does not need an atomic primitive. As a second,
+independent guard, immediately before publishing the run re-reads each image's
+current `stable` generation and requires it to be unchanged from the decision
+read and lower than the chosen build's generation. That re-read is not atomic
+with the tag move and is not relied on to be; it only catches a `stable`
+generation that moved between the decision and the publish step (for example a
+manual retag). If the re-read fails, the run exits successfully without moving
+`stable`; the next scheduled run re-evaluates from the new `stable` generation.
 
 The release captain records the promoted digest, selected build, stable tag, soak
 start/end time, and smoke evidence in the workflow summary or promotion PR.
