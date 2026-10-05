@@ -2,6 +2,8 @@ package hub
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +25,7 @@ type StablePromotionState struct {
 type StablePromotionBuild struct {
 	SHA        string `json:"sha,omitempty"`
 	Digest     string `json:"digest,omitempty"`
+	Generation int    `json:"generation,omitempty"`
 	BuiltAt    string `json:"built_at,omitempty"`
 	PromotedAt string `json:"promoted_at,omitempty"`
 }
@@ -44,6 +47,7 @@ type StablePromotionStatus struct {
 	Candidate       StablePromotionBuild    `json:"candidate"`
 	Stable          StablePromotionBuild    `json:"stable"`
 	EligibleAt      *string                 `json:"eligible_at"`
+	EligibleBuild   *StablePromotionBuild   `json:"eligible_build,omitempty"`
 	MaintainedHives []MaintainedHiveSummary `json:"maintained_hives,omitempty"`
 }
 
@@ -104,20 +108,108 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 			if imageSHA := channelRevisionSHA(ReleaseChannelCandidate, s.logger); imageSHA != "" {
 				sha = imageSHA
 			}
-			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, BuiltAt: t.CommittedAt}
-			if eligible := stablePromotionEligibleAt(t.CommittedAt); eligible != "" {
-				status.EligibleAt = &eligible
-			}
+			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelCandidate, s.logger), BuiltAt: t.CommittedAt}
 		case ReleaseChannelStable:
 			sha := t.SHA
 			if imageSHA := channelRevisionSHA(ReleaseChannelStable, s.logger); imageSHA != "" {
 				sha = imageSHA
 			}
-			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, PromotedAt: t.CommittedAt}
+			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, s.logger), PromotedAt: t.CommittedAt}
+		}
+	}
+	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, time.Now().UTC(), s.logger); eligibleAt != "" {
+		status.EligibleAt = &eligibleAt
+		if build.Generation != 0 || build.SHA != "" {
+			status.EligibleBuild = &build
+		}
+	} else if status.Candidate.Generation > status.Stable.Generation {
+		if eligible := stablePromotionEligibleAt(status.Candidate.BuiltAt); eligible != "" {
+			status.EligibleAt = &eligible
+			candidate := status.Candidate
+			status.EligibleBuild = &candidate
 		}
 	}
 	status.MaintainedHives = s.maintainedCandidateHives(status.Candidate)
 	return status
+}
+
+type stablePromotionWorkflowRun struct {
+	RunNumber  int    `json:"run_number"`
+	HeadSHA    string `json:"head_sha"`
+	UpdatedAt  string `json:"updated_at"`
+	CreatedAt  string `json:"created_at"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := "https://api.github.com/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=50"
+	resp, err := client.Get(url)
+	if err != nil {
+		logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
+		return nil
+	}
+	var body struct {
+		WorkflowRuns []stablePromotionWorkflowRun `json:"workflow_runs"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body); err != nil {
+		logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
+		return nil
+	}
+	return body.WorkflowRuns
+}
+
+func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
+	var nextAt string
+	var nextBuild StablePromotionBuild
+	for _, run := range stablePromotionFetchRuns(logger) {
+		if run.Status != "" && run.Status != "completed" {
+			continue
+		}
+		if run.Conclusion != "" && run.Conclusion != "success" {
+			continue
+		}
+		if run.RunNumber <= stableGeneration {
+			continue
+		}
+		builtAt := run.UpdatedAt
+		if builtAt == "" {
+			builtAt = run.CreatedAt
+		}
+		built, err := time.Parse(time.RFC3339, builtAt)
+		if err != nil {
+			continue
+		}
+		short := shortSHA(run.HeadSHA)
+		digest := ghcrTagDigest(ghcrRepoSpoke, short, logger)
+		if digest == "" || ghcrTagGeneration(ghcrRepoSpoke, short, logger) != run.RunNumber {
+			continue
+		}
+		build := StablePromotionBuild{SHA: short, Digest: digest, Generation: run.RunNumber, BuiltAt: built.UTC().Format(time.RFC3339)}
+		eligible := built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC()
+		if !eligible.After(now) {
+			return build, now.UTC().Format(time.RFC3339)
+		}
+		if nextAt == "" || eligible.After(mustParseRFC3339(nextAt)) {
+			nextAt = eligible.Format(time.RFC3339)
+			nextBuild = build
+		}
+	}
+	return nextBuild, nextAt
+}
+
+func mustParseRFC3339(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 // stablePromotionEligibleAt is when the current candidate's 24-hour soak
