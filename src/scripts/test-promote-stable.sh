@@ -286,7 +286,11 @@ if [[ $1 == issue && $2 == list ]]; then
 fi
 echo '[]'
 MOCK
-chmod +x "$select_build/bin/docker" "$select_build/bin/gh"
+cat > "$select_build/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+exit 22
+MOCK
+chmod +x "$select_build/bin/docker" "$select_build/bin/gh" "$select_build/bin/curl"
 capture="$select_build/create"
 out=$(PATH="$select_build/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
   STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"new1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
@@ -352,7 +356,11 @@ if [[ $1 == issue && $2 == list ]]; then
 fi
 echo '[]'
 MOCK
-chmod +x "$held_gate/bin/docker" "$held_gate/bin/gh"
+cat > "$held_gate/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+exit 22
+MOCK
+chmod +x "$held_gate/bin/docker" "$held_gate/bin/gh" "$held_gate/bin/curl"
 capture="$held_gate/create"
 out=$(PATH="$held_gate/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
   STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"old","image_ref":"ghcr.io/example/hive:old1234","git_hash":"old1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
@@ -368,6 +376,7 @@ fi
 no_eligible="$tmp/no-eligible"
 mkdir -p "$no_eligible/bin"
 cp "$select_build/bin/docker" "$no_eligible/bin/docker"
+cp "$select_build/bin/curl" "$no_eligible/bin/curl"
 cat > "$no_eligible/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -385,7 +394,7 @@ fi
 if [[ $1 == issue && $2 == list ]]; then echo 0; exit 0; fi
 echo '[]'
 MOCK
-chmod +x "$no_eligible/bin/gh"
+chmod +x "$no_eligible/bin/gh" "$no_eligible/bin/curl"
 out=$(PATH="$no_eligible/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
   STABLE_PROMOTION_STATE_JSON='{"auto_promote":true}' "$promoter" promote 2>&1) && rc=0 || rc=$?
 if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'next unsoaked build old1234 generation 200' <<<"$out" && grep -q 'eligible_at 2033-05-19T01:00:00Z' <<<"$out"; then
