@@ -28,8 +28,8 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 	"operator static/index.html": {
 		inlineStyles:   1588,
 		rawColors:      143,
-		rawFontSizes: 666,
-		rawPadding:     229,
+		rawFontSizes:   666,
+		rawPadding:     227,
 		rawBorderRadii: 176},
 	"contributor landing": {
 		inlineStyles:   95,

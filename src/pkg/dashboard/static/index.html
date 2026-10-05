@@ -355,6 +355,7 @@
     .oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; }
     .avatar-menu.oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
     .oc-version-menu:empty { display: none; }
+    .oc-version-focus-pulse { outline: 2px solid color-mix(in srgb, var(--amber) 72%, transparent); outline-offset: 3px; border-radius: var(--r); }
     .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); color: var(--muted); font-size: var(--fs-sm); min-width: 0; max-width: 100%; overflow: hidden; }
     .oc-version-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -365,10 +366,10 @@
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
-    .oc-version-upgrade-progress { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: hidden; }
-    .oc-version-hive { position: relative; width: 42px; height: 42px; display: grid; place-items: center; color: var(--amber); }
+    .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: hidden; }
+    .oc-version-hive { position: relative; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: hidden; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
-    .oc-version-bee { position: absolute; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
+    .oc-version-bee { --oc-version-bee-radius: 17px; position: absolute; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
     .oc-version-bee:nth-child(2) { animation-delay: -0.6s; }
     .oc-version-bee:nth-child(3) { animation-delay: -1.2s; }
     .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
@@ -377,18 +378,20 @@
     .oc-version-progress-status { color: var(--muted); margin-top: var(--sp-1); overflow-wrap: anywhere; }
     .oc-version-progress-status a { color: var(--accent); }
     .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
-    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); }
-    .oc-version-navbar-upgrade { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 auto; }
-    .oc-version-navbar-upgrade .oc-version-hive { width: 24px; height: 24px; }
+    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); overflow: hidden; }
+    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; max-width: min(360px, 34vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: hidden; }
+    .oc-navbar-upgrade[hidden] { display: none; }
+    .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: hidden; }
+    .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
     .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
-    .oc-version-navbar-upgrade .oc-version-bee { font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: var(--fs-xs); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
-    .oc-version-navbar-upgrade .oc-version-progress-copy { line-height: 1.1; overflow: hidden; white-space: nowrap; }
+    .oc-version-navbar-upgrade .oc-version-progress-copy { min-width: 0; padding-left: var(--oc-version-bee-lane); line-height: 1.1; overflow: hidden; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      from { transform: rotate(0deg) translateX(17px) rotate(0deg); }
-      to { transform: rotate(360deg) translateX(17px) rotate(-360deg); }
+      from { transform: rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg); }
+      to { transform: rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -399,9 +402,10 @@
       50% { opacity: 1; transform: scale(1.12); }
     }
     @media (prefers-reduced-motion: reduce) {
-      .oc-version-bee, .oc-version-bee-chip { animation: none; }
+      .oc-version-bee, .oc-version-bee-chip, .oc-version-honey-dot { animation: none; }
       .oc-version-hive .oc-version-bee { display: none; }
-      .oc-version-honey-dot { animation: ocHoneyPulse 2.4s ease-in-out infinite; }
+      .oc-version-hive .oc-version-bee:nth-child(2) { display: inline; transform: translate(-50%, -50%); }
+      .oc-version-honey-dot { opacity: 0.75; transform: none; }
     }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
@@ -502,7 +506,7 @@
     body.light-mode {
       box-sizing: border-box;
     }
-    body.light-mode > .gh-rate-alert { margin-left: var(--sp-0); }
+    body.light-mode .gh-rate-alert { margin-left: var(--sp-0); }
     /* Light mode keeps the shared responsive agent grid; beads still wrap. */
     body.light-mode .beads { flex-wrap: wrap; }
 
@@ -1402,16 +1406,18 @@
     .prt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--dash-card-inner-padding, var(--sp-6)); }
     .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
     .prt-controls { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-    .prt-headline { position: relative; padding-top: var(--sp-6); }
-    .prt-window-controls { position: absolute; top: 0; right: 0; }
+    .prt-headline { position: relative; }
+    .prt-window-controls { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
     .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
     .lc-fleet.prt-headline { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .prt-tile-spark { display:block; margin-top: var(--sp-2); min-height: 20px; }
     .prt-share-tile { position: relative; }
-    .prt-share-tile .prt-role-select { position:absolute; top:var(--sp-3); right:var(--sp-3); max-width:5.8rem; padding:var(--sp-1) var(--sp-6) var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); }
+    .prt-share-tile .prt-role-select { position:absolute; right:var(--sp-3); bottom:var(--sp-3); max-width:5.8rem; padding:var(--sp-1) var(--sp-6) var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); }
     .prt-share-tile .prt-caption { margin-top:var(--sp-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .prt-share-tile .prt-tile-spark { max-width: calc(100% - 6.4rem); overflow: hidden; }
+    .prt-share-tile .prt-tile-spark .sparkline, .prt-share-tile .prt-tile-spark svg { max-width: 100%; }
     .prt-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-2); margin: var(--sp-3) 0; }
     .prt-metric { background: color-mix(in srgb, var(--bg) 85%, transparent); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); min-height: 4.5rem; }
     .prt-metric .mval { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
@@ -1424,8 +1430,8 @@
     .prt-breakdown { color: var(--muted); font-size: var(--fs-xs); }
     .prt-breakdown b { color: var(--text); display:block; margin-bottom: var(--sp-1); }
     .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
-    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
-    .prt-matrix { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr) minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
+    .prt-matrix, .prt-trend { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
     .prt-matrix table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
     .prt-matrix th, .prt-matrix td { padding:var(--sp-2) var(--sp-2); border-top:1px solid var(--border); text-align:left; vertical-align:middle; }
     .prt-matrix th { color:var(--muted); font-weight:600; border-top:0; }
@@ -1433,15 +1439,21 @@
     .prt-stack .hive { fill:var(--prt-actor-hive); }
     .prt-stack .human { fill:var(--prt-actor-human); }
     .prt-stack .other { fill:var(--prt-actor-other); }
+    .prt-legend .hive { background:var(--prt-actor-hive); }
+    .prt-legend .human { background:var(--prt-actor-human); }
+    .prt-legend .other { background:var(--prt-actor-other); }
     .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
+    .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
+    .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
+    .prt-legend i { display:inline-block; width:8px; height:8px; border-radius:var(--r-pill); margin-right:var(--sp-1); vertical-align:middle; }
     .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
     @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } }
+    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .prt-window-controls { justify-self: start; justify-content: flex-start; } }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
     .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
@@ -1723,6 +1735,7 @@
     .repo-pill-row-filtered-hidden { display:none; }
     .repo-filtered-chip { display:inline-flex; align-items:center; gap:var(--sp-1); flex:0 0 auto; font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.02em; line-height:1; padding:var(--sp-1) var(--sp-3); border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); background:color-mix(in srgb, var(--accent) 14%, transparent); color:var(--accent); text-transform:uppercase; white-space:nowrap; }
     .repo-filtered-chip button { border:0; background:transparent; color:inherit; font:inherit; line-height:1; padding:0 var(--sp-1); cursor:pointer; }
+    .repos-toolbar { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin:var(--sp-0) var(--sp-0) var(--sp-4); }
     @media (max-width:640px) { .repo-legend-v2 .repo-legend-body { grid-template-columns:1fr; } }
     .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
     .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
@@ -1759,6 +1772,7 @@
     .overview-kpi:hover { border-color: var(--accent); }
     .overview-kpi-value { font-size: var(--fs-lg); font-weight: 800; font-variant-numeric: tabular-nums; }
     .overview-kpi-label { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .overview-kpi-subline { color: var(--muted); font-size: var(--fs-2xs); line-height: 1.25; }
     .overview-kpi-spark { min-height: 24px; display: flex; align-items: end; margin-top: var(--sp-1); }
     .overview-kpi-spark .sparkline { width: 100%; }
     .overview-kpi-spark svg { width: 100%; height: 24px; }
@@ -2044,7 +2058,7 @@
     .gov-matrix th.mode-active.mode-surge { background: color-mix(in srgb, var(--red) 15%, transparent); }
     .gov-matrix td { padding: 3px 8px; text-align: center; color: var(--muted); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
     .gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }
-    .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: inherit; text-align: left; }
+    .gov-matrix .gov-agent-name-link { background: none; border: 0; padding: var(--sp-0); color: inherit; font: inherit; font-weight: inherit; text-align: left; }
     .gov-matrix .gov-agent-name-link:hover { color: var(--accent); text-decoration: underline; }
     .gov-matrix td.name-col { text-align: left; color: var(--text); font-weight: 600; min-width: 72px; }
     .gov-matrix .power-col { width: 52px; white-space: nowrap; }
@@ -2339,7 +2353,7 @@
     .gh-auth-alert a { color: var(--blue); text-decoration: underline; }
     .gh-rate-alert {
       background: color-mix(in srgb, var(--yellow) 14%, var(--panel)); border: 1px solid var(--yellow);
-      border-radius: 8px; padding: 10px 16px; margin-bottom: var(--sp-6);
+      border-radius: 8px; padding: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-6);
       display: none; /* hidden by default, shown via JS */
     }
     .gh-rate-alert.active { display: block; }
@@ -2537,6 +2551,14 @@
       cursor: pointer; padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
     }
     .config-close:hover { color: var(--text); background: var(--border); }
+    .ws-wavefront-card { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); margin: var(--sp-5) 0; }
+    .ws-wavefront-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+    .ws-wavefront-kicker { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .ws-wavefront-help { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
+    .ws-wavefront-toggle { margin: var(--sp-0); }
+    .ws-wavefront-errors { font-size: var(--fs-xs); color: var(--red); margin-bottom: var(--sp-4); }
+    .ws-wavefront-source-options { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--fs-sm); }
+    .ws-wavefront-radio { display: flex; align-items: center; gap: var(--sp-2); }
     .config-tabs {
       display: flex; flex-wrap: wrap; gap: var(--sp-0);
       border-bottom: 1px solid var(--border);
@@ -2848,7 +2870,7 @@
 
     @media (max-width: 600px) {
       .config-modal { max-width: 100vw; max-height: 100vh; border-radius: 0; height: 100vh; }
-      .config-tabs { padding: 0 10px; }
+      .config-tabs { padding: var(--sp-0) var(--sp-3); }
       .config-tab { padding: 8px 10px; font-size: 0.7rem; }
       .config-body { padding: 14px; }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
@@ -3159,12 +3181,13 @@
     .kb-detail-label { font-weight: 600; color: var(--fg); }
     .kb-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: var(--sp-4); }
     .kb-summary-stats { display: flex; flex-wrap: nowrap; gap: var(--sp-4); margin-bottom: var(--sp-2); overflow-x: auto; }
-    .kb-stat { text-align: center; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .kb-stat { text-align: center; padding: calc(var(--sp-4) + var(--sp-1)); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
     .kb-summary-stats .kb-stat { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-1); }
     .kb-summary-stats .val { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .kb-stat .val { font-size: 1.2rem; font-weight: 700; color: var(--fg); }
     .kb-stat .lbl { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
     .kb-stat-spark { width: 100%; height: 28px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-top: var(--sp-1); }
+    .collapsed-with-headline .kb-summary-stats .kb-stat-spark { display: none; }
     .kb-stat-spark .sparkline { width: 100%; max-width: 100%; height: 20px; margin-left: 0; }
     .kb-stat-spark .sparkline svg { width: 100%; max-width: 100%; height: 20px; }
     .kb-stats-help { margin-bottom: var(--sp-5); }
@@ -3275,17 +3298,18 @@
     .dash-card-header { font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.055em; text-transform: uppercase; margin-bottom: var(--dash-card-header-gap); min-height: 32px; display: flex; align-items: center; gap: var(--sp-3); cursor: pointer; user-select: none; width: 100%; }
     .dash-card-header:hover { opacity: 0.85; }
     .dash-card-title { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.055em; line-height: 1; }
-    .dash-card-header .dashboard-grip { width: 1.55rem; height: 1.55rem; padding: 0; margin-right: 0; font-size: var(--fs-base); font-weight: 400; line-height: 1; }
+    .dash-card-header .dashboard-grip { width: 1.55rem; height: 1.55rem; padding: var(--sp-0); margin-right: 0; font-size: var(--fs-base); font-weight: 400; line-height: 1; }
     .dash-card-header .section-chevron, .dash-card-header .cost-chevron { width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; }
     .dash-card-badges, .dash-card-actions { display: inline-flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
     .dash-card-actions { margin-left: auto; }
+    .dash-card.collapsed .dash-card-actions { display: none; }
     .dash-card-action, .dash-card-actions > button, .dash-card-actions > a, .dash-card-actions > .hv-btn, .dash-card-actions > .config-gear { display: inline-flex !important; align-items: center; justify-content: center; min-height: 24px !important; height: 24px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; border: 1px solid var(--line-subtle) !important; background: color-mix(in srgb, var(--surface-2) 70%, transparent) !important; color: var(--text) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; text-decoration: none !important; line-height: 1 !important; white-space: nowrap; }
     .dash-card-action:hover, .dash-card-actions > button:hover, .dash-card-actions > a:hover { background: var(--surface-2) !important; border-color: var(--border) !important; }
     .dash-card-badge, .dash-card-badges > * { display: inline-flex !important; align-items: center; min-height: 22px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; line-height: 1 !important; text-transform: uppercase; white-space: nowrap; }
     .dash-card-badges #review-queue-count { display: none !important; }
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
-    .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
@@ -3311,7 +3335,32 @@
     .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
+    .agent-navbar-upnext { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: min(480px, 34vw); overflow: hidden; }
+    .agent-navbar-upnext[hidden] { display: none; }
+    .agent-navbar-tile { flex: 0 1 150px; min-width: 0; height: 32px; border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; column-gap: var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; }
+    .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
+    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
+    .agent-navbar-tile .agent-tile-dot { grid-row: 1 / 3; margin-left: var(--sp-2); }
+    .agent-navbar-tile .agent-tile-name { grid-column: 2; }
+    .agent-navbar-tile .agent-tile-next { grid-column: 2 / 4; color: var(--muted); }
+    .agent-navbar-tile .agent-up-next { grid-column: 3; }
+    .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
+    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .agent-navbar-tile.active .agent-tile-dot { animation: none; } }
+    .advisory-collapsed-advice { display: flex; align-items: stretch; gap: var(--sp-2); width: min(760px, 52vw); max-width: 760px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
+    .advice-collapsed-eyebrow { flex: 0 0 auto; align-self: center; color: var(--muted); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .advice-collapsed-pill, .acmm-collapsed-pill { flex: 0 0 auto; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; align-items: center; gap: var(--sp-2); min-width: 0; min-height: 24px; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; white-space: nowrap; }
+    .advice-collapsed-pill { grid-template-columns: minmax(0, 1fr) auto; max-width: 210px; }
+    .advice-collapsed-pill:hover, .advice-collapsed-pill:focus-visible, .acmm-collapsed-pill:hover, .acmm-collapsed-pill:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .advice-collapsed-pill.muted { color: var(--muted); cursor: default; }
+    .advice-pill-headline { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 800; color: inherit; }
+    .advice-pill-impact { color: var(--accent); font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+    .acmm-collapsed-pill { grid-template-columns: auto auto; color: var(--text); font-weight: 800; }
+    .acmm-collapsed-pill .acmm-pill-detail { color: var(--accent); font-weight: 900; }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
     .mini-gauge-track { stroke: var(--line-subtle); }
@@ -3349,7 +3398,7 @@
     .debug-quota-ok { color: var(--green); }
     .debug-quota-warn { color: var(--yellow); }
     .debug-quota-bad { color: var(--red); }
-    @media (max-width: 640px) { .debug-headline-tokens { display: none; } .prt-headline { padding-top: var(--sp-7); } }
+    @media (max-width: 640px) { .debug-headline-tokens { display: none; } }
     .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
@@ -3819,6 +3868,24 @@
     .review-queue-reasons { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); color: var(--muted); font-size: var(--fs-xs); }
     .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
     .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-queue-collapsed { width: min(460px, 44vw); max-width: 460px; gap: var(--sp-3); }
+    .review-queue-collapsed-main { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .review-queue-collapsed-total { color: var(--text); font-weight: 900; font-variant-numeric: tabular-nums; }
+    .review-queue-chip { display: inline-flex; align-items: center; gap: var(--sp-1); padding: var(--sp-0) var(--sp-2); border: 1px solid var(--blue); border-radius: var(--r-pill); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .review-queue-chip.high { border-color: var(--red); }
+    .review-queue-chip.low { border-color: var(--muted); }
+    .review-queue-delta { font-size: var(--fs-2xs); font-weight: 900; font-variant-numeric: tabular-nums; }
+    .review-queue-delta.up { color: var(--red); }
+    .review-queue-delta.down { color: var(--green); }
+    .review-queue-delta.flat { color: var(--muted); }
+    .review-queue-spark { flex: 1 1 120px; min-width: 96px; }
+    .review-queue-spark .sparkline { width: 100%; }
+    .review-queue-spark svg { width: 100%; height: 24px; }
+    .review-queue-priority-line { fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
+    .review-queue-priority-line.high { stroke: var(--red); }
+    .review-queue-priority-line.normal { stroke: var(--blue); }
+    .review-queue-priority-line.low { stroke: var(--muted); }
+    .review-queue-collapsed-range { position: static; flex: 0 0 auto; }
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
@@ -4073,6 +4140,8 @@
   </div>
   <div id="hub-banner" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
+  <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
+  <div class="gh-rate-alert" id="gh-rate-alert"></div>
   </div>
 <div id="toast-container"></div>
 <!-- Hive Chat FAB + Panel -->
@@ -4142,7 +4211,7 @@
     </div>
     <div class="config-body" style="padding:var(--sp-6) var(--sp-8);overflow-y:auto;max-height:calc(85vh - 120px)">
       <p style="font-size:var(--fs-base);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-6)">
-        Select your AI-native Continuous Maturity Model (ACMM) level. Each level provides a curated set of agents
+        Select your AI Codebase Maturity Model (ACMM) level. Each level provides a curated set of agents
         with increasing autonomy. Agents are additive — higher levels build on lower ones.
       </p>
       <div id="acmm-packs-list" style="display:flex;flex-direction:column;gap:var(--sp-5)"></div>
@@ -4166,9 +4235,6 @@
     </div>
   </div>
 </div>
-<div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
-  <div class="gh-rate-alert" id="gh-rate-alert"></div>
-
   <!-- Light sidebar (hidden by default) -->
   <div class="oc-sidebar-resize" id="ocSidebarResize"></div>
   <nav id="oc-sidebar" class="oc-sidebar">
@@ -4219,6 +4285,7 @@
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
       <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
+      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
@@ -4291,6 +4358,7 @@
       </span>
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       </span>
+      <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order"></span>
     </div>
     <div class="oc-topbar-center">
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
@@ -4299,6 +4367,7 @@
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     </div>
     <div class="oc-topbar-right">
+      <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -4437,8 +4506,13 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn btn-secondary btn" id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1" title="Clear the active repository pill filter" hidden>Clear filter</button> <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button> <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
     <div class="section-body">
+      <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
+        <button class="hv-btn btn-secondary btn" id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1" title="Clear the active repository pill filter" hidden>Clear filter</button>
+        <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button>
+        <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button>
+      </div>
       <div id="repos-legend" class="repo-legend"></div>
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
@@ -5347,6 +5421,8 @@
     }
     function sectionHeaderKey(ev, sectionId) {
       if (!ev || (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar')) return;
+      const header = this && this.nodeType === 1 ? this : null;
+      if (header && ev.target && ev.target !== header && ev.target.closest && ev.target.closest('button,a,input,select,textarea,[role="button"]')) return;
       ev.preventDefault();
       toggleSection(sectionId);
     }
@@ -5407,6 +5483,20 @@
     }
     const MINI_SUMMARY_HISTORY_PREFIX = 'hive_visual_summary_history:';
     const MINI_SUMMARY_HISTORY_POINTS = 48;
+    const REVIEW_QUEUE_WINDOW_KEY = 'hive_review_queue_history_window';
+    const REVIEW_QUEUE_MS_PER_HOUR = 3600e3;
+    const REVIEW_QUEUE_HOURS_PER_DAY = 24;
+    const REVIEW_QUEUE_DAYS_PER_WEEK = 7;
+    const REVIEW_QUEUE_WINDOWS = { '24h': REVIEW_QUEUE_HOURS_PER_DAY * REVIEW_QUEUE_MS_PER_HOUR, '7d': REVIEW_QUEUE_DAYS_PER_WEEK * REVIEW_QUEUE_HOURS_PER_DAY * REVIEW_QUEUE_MS_PER_HOUR };
+    const REVIEW_QUEUE_SPARK_W = 128;
+    const REVIEW_QUEUE_SPARK_H = 24;
+    const REVIEW_QUEUE_SPARK_PAD_Y = 2;
+    let _reviewQueueWindow = (() => {
+      try {
+        const saved = localStorage.getItem(REVIEW_QUEUE_WINDOW_KEY);
+        return Object.prototype.hasOwnProperty.call(REVIEW_QUEUE_WINDOWS, saved) ? saved : '24h';
+      } catch { return '24h'; }
+    })();
     function miniHiveKey() {
       return String(((window._lastStatus || {}).hiveId) || 'default').trim() || 'default';
     }
@@ -5501,12 +5591,194 @@
       const title = label || text;
       return `<svg class="mini-text" width="74" height="24" viewBox="0 0 74 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}<text x="72" y="16" text-anchor="end" fill="currentColor" font-size="11" font-weight="800">${escapeHtml(text.slice(0, 10))}</text></svg>`;
     }
+    function reviewQueueHistoryEntries() {
+      const cutoff = Date.now() - (REVIEW_QUEUE_WINDOWS[_reviewQueueWindow] || REVIEW_QUEUE_WINDOWS['24h']);
+      const rows = Array.isArray(window._reviewQueueHistory) ? window._reviewQueueHistory : [];
+      return rows.filter(row => {
+        const t = Number(row && row.t);
+        return Number.isFinite(t) && t >= cutoff;
+      });
+    }
+    function reviewQueueSeries(entries, key) {
+      return (entries || []).map(row => Number(row && row[key]) || 0);
+    }
+    function reviewQueueSparkPoints(values, min, max) {
+      const series = (Array.isArray(values) ? values : []).map(v => Number(v) || 0);
+      const range = (max - min) || max || 1;
+      const plotH = REVIEW_QUEUE_SPARK_H - REVIEW_QUEUE_SPARK_PAD_Y * 2;
+      if (series.length <= 1) {
+        const y = REVIEW_QUEUE_SPARK_PAD_Y + plotH - (((series[0] || 0) - min) / range) * plotH;
+        return `0,${y.toFixed(1)} ${REVIEW_QUEUE_SPARK_W.toFixed(1)},${y.toFixed(1)}`;
+      }
+      return series.map((v, i) => {
+        const x = (i / (series.length - 1)) * REVIEW_QUEUE_SPARK_W;
+        const y = REVIEW_QUEUE_SPARK_PAD_Y + plotH - ((v - min) / range) * plotH;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+    }
+    function reviewQueueRangeControls() {
+      return `<span class="overview-kpi-range review-queue-collapsed-range" aria-label="Review Queue history range">${Object.keys(REVIEW_QUEUE_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _reviewQueueWindow ? ' active' : ''}" data-action="setReviewQueueWindow" data-arg0="${escapeHtml(win)}" data-stop="1" aria-pressed="${win === _reviewQueueWindow ? 'true' : 'false'}" title="Show ${escapeHtml(win)} review queue history">${escapeHtml(win)}</button>`).join('')}</span>`;
+    }
+    function reviewQueueSparkline(entries) {
+      const total = reviewQueueSeries(entries, 'total');
+      const high = reviewQueueSeries(entries, 'high');
+      const normal = reviewQueueSeries(entries, 'normal');
+      const low = reviewQueueSeries(entries, 'low');
+      const values = total.length ? total : [0, 0];
+      const max = Math.max(1, ...values, ...high, ...normal, ...low);
+      const latest = values[values.length - 1] || 0;
+      const min = Math.min(0, ...values);
+      const title = `min ${fmtSparkVal(min)} · max ${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
+      const after = [
+        ['high', high, 'High priority'],
+        ['normal', normal, 'Normal priority'],
+        ['low', low, 'Low priority'],
+      ].map(([key, series, label]) => series.length ? `<polyline class="review-queue-priority-line ${key}" points="${reviewQueueSparkPoints(series, min, max)}"><title>${escapeHtml(label)}: latest ${fmtSparkVal(series[series.length - 1] || 0)}</title></polyline>` : '').join('');
+      return `<span class="review-queue-spark">${renderSparkline(null, values, {
+        width: REVIEW_QUEUE_SPARK_W, height: REVIEW_QUEUE_SPARK_H, min, max, color: 'color-mix(in srgb, var(--purple) 60%, transparent)',
+        title, ariaLabel: `Review Queue total: ${title}`, label: 'review queue total', id: 'review-queue-collapsed',
+        dot: false, strokeWidth: 1, after, svgClass: 'mini-spark', wrapperClass: 'sparkline--flush', wrapperTitle: title,
+      })}</span>`;
+    }
+    function reviewQueueCollapsedSummary(text) {
+      const entries = reviewQueueHistoryEntries();
+      const latest = entries[entries.length - 1] || {};
+      const total = Number(latest.total);
+      const shownTotal = Number.isFinite(total) ? total : miniFirstNumber(text);
+      const hasPrioritySplit = Number.isFinite(Number(latest.high)) || Number.isFinite(Number(latest.normal)) || Number.isFinite(Number(latest.low));
+      const high = Number(latest.high) || 0;
+      const normal = hasPrioritySplit ? (Number(latest.normal) || 0) : shownTotal;
+      const low = Number(latest.low) || 0;
+      const first = entries[0] || {};
+      const startTotal = Number(first.total);
+      const delta = Number.isFinite(startTotal) ? shownTotal - startTotal : 0;
+      const deltaCls = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+      const deltaText = delta > 0 ? `▲${delta}` : delta < 0 ? `▼${Math.abs(delta)}` : '•0';
+      const chips = [
+        ['high', 'H', high],
+        ['normal', 'N', normal],
+        ['low', 'L', low],
+      ].map(([key, label, value]) => `<span class="review-queue-chip ${key}" title="${escapeHtml(label)} priority PRs">${escapeHtml(label)} ${fmtSparkVal(value)}</span>`).join('');
+      const label = `${fmtSparkVal(shownTotal)} PRs · high ${high}, normal ${normal}, low ${low}, ${deltaText} vs range start`;
+      const sparkEntries = entries.length ? entries : [{ t: Date.now(), total: shownTotal, high, normal, low }];
+      const inner = `${reviewQueueRangeControls()}<span class="review-queue-collapsed-main"><span class="review-queue-collapsed-total">${fmtSparkVal(shownTotal)}</span>${chips}<span class="review-queue-delta ${deltaCls}" title="Delta vs range start">${deltaText}</span></span>${reviewQueueSparkline(sparkEntries)}`;
+      return `<span class="mini-summary-strip review-queue-collapsed" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="review-queue-section">${inner}</span>`;
+    }
+    function setReviewQueueWindow(win) {
+      if (!Object.prototype.hasOwnProperty.call(REVIEW_QUEUE_WINDOWS, win)) return;
+      _reviewQueueWindow = win;
+      try { localStorage.setItem(REVIEW_QUEUE_WINDOW_KEY, win); } catch {}
+      setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
+    }
+    window.setReviewQueueWindow = setReviewQueueWindow;
     function miniAvatarDots(contributors, total, label) {
       const list = Array.isArray(contributors) ? contributors.slice(0, 5) : [];
       const dots = list.map((c, i) => `<circle cx="${8 + i * 12}" cy="12" r="5" fill="${_getAgentColor((c && (c.github_username || c.login || c.name)) || String(i))}"><title>${escapeHtml((c && (c.github_username || c.login || c.name)) || 'contributor')}</title></circle>`).join('');
       const n = Number(total) || list.length || 0;
       const title = label || `${n} contributors`;
       return `<svg class="mini-avatars" width="92" height="24" viewBox="0 0 92 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}${dots}<text x="90" y="16" text-anchor="end" fill="currentColor" font-size="10" font-weight="800">${escapeHtml(fmtSparkVal(n))}</text></svg>`;
+    }
+    function adviceSignalNumber(rec, names) {
+      const wanted = new Set((Array.isArray(names) ? names : [names]).map(String));
+      const signals = Array.isArray(rec && rec.signals) ? rec.signals : [];
+      for (const sig of signals) {
+        if (!sig || !wanted.has(String(sig.name || ''))) continue;
+        const match = String(sig.value == null ? '' : sig.value).match(/\d+/);
+        if (match) return Number(match[0]) || 0;
+      }
+      return 0;
+    }
+    function advisoryCollapsedImpact(rec) {
+      const id = String((rec && rec.id) || '');
+      const items = Array.isArray(rec && rec.items) ? rec.items.length : 0;
+      const first = (names) => adviceSignalNumber(rec, names) || items || 1;
+      if (id === 'fix-failing-check') return { n: first('failing_prs'), label: `−${first('failing_prs')} CI` };
+      if (id === 'throttle-lane') return { n: first('blocked_from_lane'), label: `−${first('blocked_from_lane')} lane` };
+      if (id === 'clear-human-gate-prs') return { n: first('needs_human'), label: `−${first('needs_human')} waits` };
+      if (id === 'unblock-human-issues') return { n: first('needs_human'), label: `−${first('needs_human')} holds` };
+      if (id === 'review-stale-prs') return { n: first('stale_blocked'), label: `−${first('stale_blocked')} stale` };
+      if (id === 'confirm-and-close') return { n: first('agent_done'), label: `−${first('agent_done')} queue` };
+      if (id === 'enable-disabled-agent') return { n: first('disabled_agents'), label: `+${first('disabled_agents')} lane` };
+      if (id === 'add-agent-cadence') return { n: first('no_cadence_agents'), label: `+${first('no_cadence_agents')} kicks` };
+      if (id === 'fix-merge-blockers') return { n: first('open_holds'), label: `−${first('open_holds')} holds` };
+      if (id === 'reduce-blocked-prs') return { n: first('blocked'), label: `−${first('blocked')} queue` };
+      return { n: items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1, label: `−${items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1} queue` };
+    }
+    function advisoryCollapsedHeadline(rec, impact) {
+      const id = String((rec && rec.id) || '');
+      const title = String((rec && rec.title) || 'Act on advice').replace(/`/g, '');
+      const n = Math.max(1, Number(impact && impact.n) || 1);
+      const byId = {
+        'reduce-blocked-prs': `Fix ${n} blocked PRs`,
+        'fix-failing-check': title.replace(/^Fix check\s+/i, 'Fix '),
+        'throttle-lane': title.replace(/^Throttle lane\s+/i, 'Throttle '),
+        'clear-human-gate-prs': `Review ${n} waiting PRs`,
+        'unblock-human-issues': `Decide ${n} held issues`,
+        'review-stale-prs': `Review ${n} stale PRs`,
+        'confirm-and-close': `Close ${n} done issues`,
+        'enable-disabled-agent': `Enable ${n} disabled agent${n === 1 ? '' : 's'}`,
+        'add-agent-cadence': `Set cadence on ${n} agents`,
+        'fix-merge-blockers': `Drain ${n} held PRs`,
+        'throttle-pr-producing-lanes': 'Throttle PR-producing lanes',
+        'raise-budget-if-starving': 'Raise agent budget',
+        'watch-budget-before-cadence': 'Hold cadence changes',
+        'rebalance-merge-side': 'Prioritize review lanes',
+      };
+      const raw = byId[id] || title;
+      return raw.length <= 28 ? raw : raw.slice(0, 27).trimEnd() + '…';
+    }
+    function advisoryCollapsedRecommendations() {
+      const source = (typeof _lastHiveAdvice !== 'undefined' && _lastHiveAdvice) || ((window._lastStatus || {}).hiveAdvice) || {};
+      const recs = Array.isArray(source.recommendations) ? source.recommendations : [];
+      const actionable = recs.filter(r => r && !r.cleared && r.id !== 'observe-more-signals' && r.id !== 'widen-hive-repos' && r.id !== 'raise-acmm-level' && r.id !== 'document-agents-conventions');
+      return actionable.map((rec, index) => ({ rec, sourceIndex: recs.indexOf(rec), impact: advisoryCollapsedImpact(rec), score: Number(rec.score) || 0 }))
+        .sort((a, b) => (b.impact.n - a.impact.n) || (b.score - a.score) || (a.sourceIndex - b.sourceIndex))
+        .slice(0, 3);
+    }
+    function advisoryCollapsedAdviceHtml(text) {
+      const picks = advisoryCollapsedRecommendations();
+      if (!picks.length) {
+        return `<span class="advisory-collapsed-advice" role="group" aria-label="This week: nothing to do — queue healthy" title="${escapeHtml(text || 'Nothing to do — queue healthy')}"><button type="button" class="advice-collapsed-pill muted" data-action="openAdvisoryAdvicePill" data-arg0="" data-stop="1"><span class="advice-pill-headline">Nothing to do — queue healthy</span></button></span>`;
+      }
+      const eyebrow = picks.length > 1 ? '<span class="advice-collapsed-eyebrow">This week</span>' : '';
+      const pills = picks.map(p => {
+        const headline = advisoryCollapsedHeadline(p.rec, p.impact);
+        const full = [p.rec.title, p.rec.rationale].filter(Boolean).join('\n');
+        return `<button type="button" class="advice-collapsed-pill" data-action="openAdvisoryAdvicePill" data-arg0="${escapeHtml(String(p.sourceIndex))}" data-stop="1" title="${escapeHtml(full || headline)}" aria-label="${escapeHtml(full || headline)}"><span class="advice-pill-headline">${escapeHtml(headline)}</span><span class="advice-pill-impact">${escapeHtml(p.impact.label)}</span></button>`;
+      }).join('');
+      return `<span class="advisory-collapsed-advice" role="group" aria-label="${escapeHtml(text || 'This week advice')}">${eyebrow}${pills}</span>`;
+    }
+    function acmmCollapsedDimensions(data) {
+      const rows = Array.isArray(data && data.criteria_results) ? data.criteria_results : [];
+      if (rows.length) {
+        const byCat = new Map();
+        rows.forEach(r => {
+          const key = String((r && (r.category || r.Category)) || 'Criteria');
+          const cur = byCat.get(key) || { name: key, passed: 0, total: 0 };
+          cur.total++;
+          if (r && r.passed) cur.passed++;
+          byCat.set(key, cur);
+        });
+        return Array.from(byCat.values()).map(d => ({ name: d.name, passed: d.passed === d.total, detail: `${d.passed}/${d.total}` }));
+      }
+      const levels = Array.isArray(data && data.levels) ? data.levels : [];
+      return levels.map(l => ({ name: `L${l.level} ${l.name || ''}`.trim(), passed: !!l.passed, detail: `${Number(l.matched) || 0}/${Number(l.total) || 0}` }));
+    }
+    function acmmCollapsedEvalHtml(text) {
+      const data = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? ((typeof acmmGetActiveData === 'function' && acmmGetActiveData()) || _acmmEvalData) : null;
+      if (!data) return miniWrap('acmm-eval-section', text, miniText(text, text));
+      const codebase = Number(data.codebase_level);
+      const op = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? Number(_acmmEvalData.operational_level) : Number(data.operational_level);
+      const level = Number.isFinite(Number(data.overall_level)) ? Number(data.overall_level) : (Number.isFinite(codebase) && Number.isFinite(op) ? Math.min(codebase, op) : Number(text && String(text).match(/\d+/)));
+      const dims = acmmCollapsedDimensions(data);
+      const total = dims.length || Number(data.criteria_total) || 0;
+      const met = dims.length ? dims.filter(d => d.passed).length : Number(data.criteria_passed) || 0;
+      const gaps = Math.max(0, total - met);
+      const detail = total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'no criteria';
+      const tipLines = dims.length ? dims.map(d => `${d.passed ? '✓' : '•'} ${d.name}: ${d.detail}`) : [`criteria: ${met}/${total}`];
+      const scope = (typeof _acmmSelectedRepo !== 'undefined' && _acmmSelectedRepo) ? `Showing ${_acmmSelectedRepo}` : 'Aggregate ACMM evaluation';
+      const title = [`L${Number.isFinite(level) ? level : '—'} · ${detail}`, scope, ...tipLines].join('\n');
+      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>L${escapeHtml(Number.isFinite(level) ? String(level) : '—')}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
     }
     function visualSectionSummary(sectionId, html, title) {
       const text = textOrDash(html);
@@ -5519,26 +5791,23 @@
       if (sectionId === 'overview-section') {
         const issueTotal = repos.reduce((n, r) => n + ((r.actionableIssues || r.issues || []).length || Number(r.openIssues || r.open_issues || r.issues || 0) || 0), 0);
         const prTotal = repos.reduce((n, r) => n + ((r.openPrs || r.prs || []).length || Number(r.open_prs || r.openPRs || r.prs || 0) || 0), 0);
-        inner = miniBar([{ label: 'issues', value: issueTotal, color: 'var(--blue)' }, { label: 'open PRs', value: prTotal, color: 'var(--purple)' }], text) + miniSpark(hist('open-prs', prTotal), 'var(--purple)', text);
+        inner = miniBar([{ label: 'issues', value: issueTotal, color: 'var(--blue)' }, { label: 'open PRs', value: prTotal, color: 'var(--purple)' }], text);
       } else if (sectionId === 'governor') {
         const gov = data.governor || {};
         const mode = String(gov.mode || text.split(/\s+/)[0] || 'idle').toLowerCase();
         const pressure = Number(gov.pressure || gov.total || ((gov.issues || 0) + (gov.prs || 0)) || 0) || 0;
         const max = Number(gov.surgeThreshold || gov.surge_threshold || gov.thresholds?.surge || 10) || 10;
         inner = miniDial(mode, ['idle','quiet','busy','surge'], text) + miniGauge(pressure, max, 'var(--yellow)', text);
-      } else if (sectionId === 'advisory-section' || sectionId === 'hive-advice-section') {
+      } else if (sectionId === 'advisory-section') {
+        return advisoryCollapsedAdviceHtml(title || text);
+      } else if (sectionId === 'hive-advice-section') {
         const series = hist('count', n0);
         inner = miniDelta(n0, series.length > 1 ? series[series.length - 2] : n0, text) + miniSpark(series, 'var(--blue)', text);
       } else if (sectionId === 'pr-throughput-section') {
-        const buckets = prtLast && Array.isArray(prtLast.buckets) ? prtLast.buckets : [];
-        const merged = buckets.map(b => Number(b.merged) || 0);
-        const opened = buckets.map(b => Number(b.opened) || 0);
-        inner = miniSpark(merged.length ? merged : hist('merged', nums[0] || 0), 'var(--green)', text) + miniSpark(opened.length ? opened : hist('opened', nums[1] || 0), 'var(--yellow)', text);
+        inner = miniBar([{ label: 'merged', value: nums[0] || 0, color: 'var(--green)' }, { label: 'opened', value: nums[1] || 0, color: 'var(--yellow)' }], text);
       } else if (sectionId === 'token-panel') {
-        const tokenRates = (typeof computeHourlyBurnRates === 'function' ? computeHourlyBurnRates() : []).map(r => Number(r.rate) || 0);
         const sessions = nums.length > 1 ? nums[1] : Number(data.tokens?.totals?.sessions || 0);
-        const series = tokenRates.length ? tokenRates : hist('tok-hr', n0);
-        inner = miniSpark(series, 'var(--cyan)', text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
+        inner = miniText(text.replace(/\s+/g, ''), text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
       } else if (sectionId === 'cost-panel') {
         const costSeries = (typeof costHist === 'function' ? costHist() : []).map(e => Number(e.usd || e.total_usd) || 0);
         inner = miniSpark(costSeries.length ? costSeries : hist('usd', n0), 'var(--green)', text) + miniText(text.replace(/\s+/g, ''), text);
@@ -5547,11 +5816,13 @@
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
         inner = typeof reposCollapsedTilesHtml === 'function' ? reposCollapsedTilesHtml(repos, data) : miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
       } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
-        inner = miniSpark(hist('count', n0), sectionId === 'audit-section' ? 'var(--yellow)' : 'var(--cyan)', text);
-      } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
+        inner = miniText(text.replace(/\s+/g, ''), text);
+      } else if (sectionId === 'acmm-eval-section') {
+        return acmmCollapsedEvalHtml(title || text);
+      } else if (sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
       } else if (sectionId === 'review-queue-section') {
-        inner = miniGauge(n0, Math.max(10, n0), 'var(--purple)', text);
+        return reviewQueueCollapsedSummary(text);
       } else if (sectionId === 'inception-section') {
         inner = miniBar([{ label: 'proposals', value: n0, color: 'var(--blue)' }, { label: 'in progress', value: nums[1] || 0, color: 'var(--green)' }], text);
       } else if (sectionId === 'contributors-section') {
@@ -5601,6 +5872,7 @@
       const on = Math.max(0, activeAgents.length - off);
       return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
     }
+    let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
       const raw = String(value == null ? '' : value).trim();
       if (!raw) return null;
@@ -5729,8 +6001,9 @@
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
-      if (!strip) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      refreshAgentNavbarUpNextCountdowns(now);
+      if (!strip) return;
       const tiles = Array.from(strip.querySelectorAll('.agent-collapsed-tile'));
       tiles.forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
@@ -5760,6 +6033,50 @@
     function ensureAgentsCollapsedCountdownTicker() {
       if (window._agentsCollapsedCountdownInterval) return;
       window._agentsCollapsedCountdownInterval = setInterval(refreshAgentsCollapsedCountdowns, AGENTS_COLLAPSED_COUNTDOWN_TICK_MS);
+    }
+    function agentNavbarHasSchedule(a, nowMs) {
+      return !!a && !agentIsDisabled(a) && (a.busy === 'working' || Number.isFinite(agentCollapsedNextKickMs(a, nowMs)) || a.continuous === true);
+    }
+    function agentNavbarTileHtml(a, nowMs, isUpNext) {
+      const name = (a && (a.displayName || a.name)) || 'agent';
+      const disabled = agentIsDisabled(a);
+      const isDown = a && a.state !== 'running';
+      const active = !!a && !disabled && a.busy === 'working';
+      const auth = agentCollapsedAuthInfo(a || {}, isDown);
+      const nextMs = agentCollapsedNextKickMs(a, nowMs);
+      const countdown = agentCollapsedNextLabel(a, nowMs);
+      const classes = ['agent-navbar-tile', active ? 'active' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', isUpNext ? 'up-next' : ''].filter(Boolean).join(' ');
+      const title = `${name}
+next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
+      const upNext = isUpNext ? '<span class="agent-up-next">up next</span>' : '<span class="agent-up-next" aria-hidden="true"></span>';
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-name">${esc(name)}</span>${upNext}<span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span></button>`;
+    }
+    function renderAgentNavbarUpNext(agents, nowMs) {
+      const wrap = document.getElementById('agent-navbar-upnext');
+      if (!wrap) return;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const list = sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3);
+      wrap.hidden = list.length === 0;
+      wrap.innerHTML = list.length ? list.map((a, i) => agentNavbarTileHtml(a, now, i === 0)).join('') : '';
+      if (list.length) ensureAgentsCollapsedCountdownTicker();
+    }
+    function refreshAgentNavbarUpNextCountdowns(nowMs) {
+      const wrap = document.getElementById('agent-navbar-upnext');
+      if (!wrap || wrap.hidden) return;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
+        const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const nextMs = rawNext ? Number(rawNext) : NaN;
+        const countdown = tile.getAttribute('data-agent-active') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        const el = tile.querySelector('.agent-tile-countdown');
+        if (el && el.textContent !== countdown) el.textContent = countdown;
+      });
+    }
+    function openAgentsUpNextPanel() {
+      navPeekRestore('agents-section', { instant: true });
+      const expanded = navPeekExpand('agents-section');
+      if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
+      ocAfterNavLayoutSettles(['agents-section'], function() { ocScrollSectionIntoView('agents-section'); });
     }
     function agentsCollapsedTilesHtml(agents, nowMs) {
       const list = sortAgentsForCollapsedTiles(agents, nowMs);
@@ -6563,6 +6880,28 @@
       if (!expanded && isSectionCollapsed('repos-section')) toggleSection('repos-section', { collapsed: false, persist: false, navPeek: true });
       repaintReposForWidth();
       ocAfterNavLayoutSettles(['repos-section'], function() { scrollToRepoCard(repo, 'smooth') || ocScrollSectionIntoView('repos-section'); });
+    }
+    function openAdvisoryAdvicePill(index) {
+      const affected = [];
+      ['advisory-section', 'hive-advice-section'].forEach(sectionId => {
+        navPeekRestore(sectionId, { instant: true });
+        if (navPeekExpand(sectionId)) affected.push(sectionId);
+        if (isSectionCollapsed(sectionId)) {
+          toggleSection(sectionId, { collapsed: false, persist: false, navPeek: true });
+          affected.push(sectionId);
+        }
+      });
+      const raw = String(index == null ? '' : index).trim();
+      const targetId = raw === '' ? 'hive-advice-section' : 'hive-advice-rec-' + raw;
+      const after = () => {
+        const target = document.getElementById(targetId) || document.getElementById('hive-advice-section') || document.getElementById('advisory-section');
+        if (!target) return;
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.remove('anchor-highlight');
+        void target.offsetWidth;
+        target.classList.add('anchor-highlight');
+      };
+      ocAfterNavLayoutSettles(affected, after);
     }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
@@ -9798,6 +10137,7 @@
       })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
+      renderAgentNavbarUpNext(agents, Date.now());
       const el = document.getElementById('agents');
       // Preserve custom prompt input values across re-renders
       const savedInputs = {};
@@ -9807,6 +10147,7 @@
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       if (sortedAgents.length === 0) {
+        renderAgentNavbarUpNext([], Date.now());
         setSectionSummary('agents-section', agentsSectionSummary([]));
         setIfChanged(el, emptyStateCard('🤖', 'Add your first agent',
           'Agents are the workers that scan repos, review changes, keep CI healthy, and write docs. Start from a quick template or build one from scratch. ' +
@@ -13077,11 +13418,117 @@
       return Math.round(median * 60);
     }
 
+    function overviewRepoNumber(repo, fields) {
+      for (const field of fields) {
+        if (!repo || !Object.prototype.hasOwnProperty.call(repo, field)) continue;
+        const raw = repo[field];
+        if (Array.isArray(raw)) continue;
+        const n = Number(raw);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+
+    function overviewRepoOpenIssueCount(repo) {
+      return overviewRepoNumber(repo, ['openIssues', 'open_issues', 'issues']);
+    }
+
+    function overviewRepoOpenPRCount(repo) {
+      return overviewRepoNumber(repo, ['openPRs', 'open_prs', 'prs']);
+    }
+
+    const OVERVIEW_ISSUE_BREAKDOWN_LABELS = {
+      needs_human: 'needs-human',
+      needs_direction: 'needs-direction',
+      needs_decision: 'needs-decision',
+      needs_spec: 'needs-spec',
+      exempt: 'exempt',
+      filtered: 'filtered',
+      reporter_triage: 'reporter triage',
+      hive_advisory: 'hive advisory',
+      dependency_dashboard: 'dependency dashboard',
+      other: 'other'
+    };
+    const OVERVIEW_PR_BREAKDOWN_LABELS = {
+      hold: 'held',
+      draft: 'draft',
+      filtered: 'filtered',
+      other: 'other'
+    };
+
+    function overviewBreakdownTotal(bd, keys) {
+      return (keys || []).reduce((n, key) => n + Number((bd || {})[key] || 0), 0);
+    }
+
+    function overviewRepoForgeTotals(repos) {
+      const totals = {
+        issues: { forge: 0, tracked: 0, held: 0, outside: 0, breakdown: {} },
+        prs: { forge: 0, tracked: 0, held: 0, outside: 0, breakdown: {} }
+      };
+      (repos || []).forEach(r => {
+        const ib = r.workBreakdown?.issues || {};
+        const pb = r.workBreakdown?.prs || {};
+        const trackedIssues = (r.actionableIssues || []).length + (r.heldIssues || []).length;
+        const trackedPRs = (r.openPrs || []).length + (r.heldPrs || []).length;
+        const rawIssues = overviewRepoOpenIssueCount(r);
+        const rawPRs = overviewRepoOpenPRCount(r);
+        const issueForge = Object.keys(ib).length ? ['actionable', 'hold', 'hive_advisory', 'dependency_dashboard', 'filtered', 'reporter_triage', 'other'].reduce((n, key) => n + Number(ib[key] || 0), 0) : (rawIssues ?? trackedIssues);
+        const prForge = Object.keys(pb).length ? ['actionable', 'hold', 'draft', 'filtered', 'other'].reduce((n, key) => n + Number(pb[key] || 0), 0) : (rawPRs ?? trackedPRs);
+        totals.issues.forge += issueForge;
+        totals.issues.tracked += trackedIssues;
+        totals.issues.held += (r.heldIssues || []).length;
+        totals.prs.forge += prForge;
+        totals.prs.tracked += trackedPRs;
+        totals.prs.held += (r.heldPrs || []).length;
+        Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
+          let v = Number(ib[key] || 0);
+          if (key === 'filtered') {
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'exempt']));
+          }
+          if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
+        });
+        Object.keys(OVERVIEW_PR_BREAKDOWN_LABELS).forEach(key => {
+          const v = Number(pb[key] || 0);
+          if (v > 0) totals.prs.breakdown[key] = (totals.prs.breakdown[key] || 0) + v;
+        });
+      });
+      totals.issues.outside = Math.max(0, totals.issues.forge - totals.issues.tracked);
+      totals.prs.outside = Math.max(0, totals.prs.forge - totals.prs.tracked);
+      return totals;
+    }
+
+    function overviewKPIForgeTotals(repos) {
+      if (_overviewKPILocalScope === 'all' && window._lastStatus?.overviewTotals?.issues && window._lastStatus?.overviewTotals?.prs) {
+        return window._lastStatus.overviewTotals;
+      }
+      if (!(repos || []).some(r => r && (r.workBreakdown || overviewRepoOpenIssueCount(r) !== null || overviewRepoOpenPRCount(r) !== null))) {
+        return null;
+      }
+      return overviewRepoForgeTotals(repos);
+    }
+
+    function overviewKPIBreakdownSubline(total, labels) {
+      const parts = Object.entries(labels || {}).map(([key, label]) => {
+        const n = Number(total?.breakdown?.[key] || 0);
+        return n > 0 ? `${n} ${label}` : '';
+      }).filter(Boolean);
+      const outside = Number(total?.outside || 0);
+      const held = Number(total?.held || 0);
+      const tracked = Number(total?.tracked || 0);
+      const bits = [`${tracked} in Overview bands`];
+      if (held > 0) bits.push(`${held} held`);
+      if (outside > 0) bits.push(`${outside} outside${parts.length ? ': ' + parts.join(' · ') : ''}`);
+      return bits.join(' · ');
+    }
+
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
-      const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
-      const openPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const forgeTotals = overviewKPIForgeTotals(repos);
+      const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);
+      const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);
       const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
@@ -13092,8 +13539,8 @@
       const ageSec = overviewMedianAgeSeconds((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.issues || { tracked: trackedIssues }, OVERVIEW_ISSUE_BREAKDOWN_LABELS) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts; the sub-line explains items outside the Overview bands.', subline: overviewKPIBreakdownSubline(forgeTotals?.prs || { tracked: trackedPRs }, OVERVIEW_PR_BREAKDOWN_LABELS) },
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },
@@ -13104,7 +13551,8 @@
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${overviewKPISpark(card, useServerHistory)}</button>`;
+        const subline = card.subline ? `<span class="overview-kpi-subline">${esc(card.subline)}</span>` : '';
+        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
       }).join('')}</div>`;
     }
 
@@ -15987,7 +16435,9 @@ function burnAreaChart() {
       const card = document.getElementById('hive-advice-card');
       if (!section || !card) return;
       dto = dto || {};
+      _lastHiveAdvice = dto;
       const recs = Array.isArray(dto.recommendations) ? dto.recommendations : [];
+      setSectionSummary('advisory-section', `${recs.length} weekly advice${recs.length === 1 ? '' : ' items'}`, 'Weekly Hive Advice');
       setSectionSummary('hive-advice-section', `${recs.length} recommendation${recs.length === 1 ? '' : 's'}`);
       if (recs.length === 0) { section.style.display = 'none'; return; }
       const epoch = dto.epoch || {};
@@ -16001,7 +16451,7 @@ function burnAreaChart() {
       const items = recs.map((r, i) => {
         r = r || {};
         if (r.cleared) {
-          return `<li class="reco-crit met">
+          return `<li class="reco-crit met" id="hive-advice-rec-${i}">
           <span class="mark">✓</span>
           <div class="crit-body"><div class="crit-name"><s>${escapeHtml(r.title || r.id || 'Recommendation')}</s></div>
           <div class="crit-detail">${escapeHtml(r.rationale || '')}</div></div>
@@ -16017,7 +16467,7 @@ function burnAreaChart() {
         }).join(', ')}</div>` : '';
         const links = Array.isArray(r.links) ? r.links : [];
         const linkHtml = links.length ? `<div class="crit-cmp">Full list: ${links.map((l) => `<a href="${escapeHtml(l.url || '')}" target="_blank" rel="noopener noreferrer">${escapeHtml(l.label || l.url || '')}</a>`).join(', ')}</div>` : '';
-        return `<li class="reco-crit met">
+        return `<li class="reco-crit met" id="hive-advice-rec-${i}">
           <span class="mark">${i + 1}</span>
           <div class="crit-body"><div class="crit-name">${escapeHtml(r.title || r.id || 'Recommendation')}</div>
           <div class="crit-detail">${escapeHtml(r.rationale || '')}</div>${itemHtml}${linkHtml}${sigHtml}</div>
@@ -16748,6 +17198,7 @@ function burnAreaChart() {
         label: 'hive share',
         id: 'change-throughput:hive-share',
         wrapperClass: 'sparkline--flush',
+        area: true,
       });
     }
     function prtBucketMetricSeries(dto) {
@@ -16872,6 +17323,12 @@ function burnAreaChart() {
       const sub = stats.total ? `of ${stats.shortNoun}${stats.prevPct == null ? '' : ` · was ${stats.prevPct}%`}` : 'No attribution data yet';
       return `<div class="lc-fleet-stat prt-share-tile" title="${escapeHtml(tooltip)}"><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v" data-stop="1" title="Hive vs human mode">${opts}</select><div class="val merged">${stats.cur == null ? '—' : stats.cur + '%'}</div><div class="lbl">Hive vs human</div><div class="prt-caption">${escapeHtml(sub)}</div><span class="prt-tile-spark">${prtHiveShareSpark(series)}</span></div>`;
     }
+    function prtActorTrend(dto) {
+      const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
+      const series = Array.isArray(dto.series) ? dto.series : [];
+      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
+      return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+    }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
       return `<div class="gov-pr-models-toggle prt-window-controls" data-stop="1">${buttons}</div>`;
@@ -16920,7 +17377,7 @@ function burnAreaChart() {
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
           ${prtHiveHumanTile(dto)}
-        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
+        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }
 
@@ -20125,6 +20582,7 @@ function burnAreaChart() {
     var _reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE;
     var _reviewQueueTotal = 0;
     var _reviewQueueHasMore = false;
+    window._reviewQueueHistory = window._reviewQueueHistory || [];
 
     // reviewQueuePriorityMeta maps the API's priority (high|normal|low) to the
     // review-priority/* label family the backend mirrors onto PRs; the badge
@@ -20183,6 +20641,7 @@ function burnAreaChart() {
       _reviewQueueLimit = Number(data && data.limit) || REVIEW_QUEUE_PAGE_SIZE;
       _reviewQueueOffset = Number(data && data.offset) || 0;
       _reviewQueueHasMore = !!(data && data.has_more);
+      window._reviewQueueHistory = capDashboardArray((data && Array.isArray(data.history)) ? data.history : window._reviewQueueHistory, DASHBOARD_SERVER_HISTORY_CAP);
       var countEl = document.getElementById('review-queue-count');
       if (countEl) countEl.textContent = _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '';
       setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
@@ -21014,6 +21473,7 @@ function burnAreaChart() {
       if (!_navbarClockTimeZone) _navbarClockTimeZone = browserDashboardTimeZone();
       setNavbarClockText(formatNavbarClock(now, _navbarClockTimeZone));
       updateStatusStaleness(now.getTime());
+      if (typeof refreshVersionProgressSurfaces === 'function') refreshVersionProgressSurfaces();
     }
 
     function render(data) {
@@ -22708,6 +23168,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
@@ -25339,12 +25800,14 @@ function burnAreaChart() {
     }
 
     function versionNavbarUpgradeHTML(st, v) {
-      if (!st || st.completedAt) return '';
+      if (!st) return '';
       const target = st.targetShort || versionShortSHA(st.target || '');
       const elapsed = versionElapsedText(st.startedAt);
-      const status = (target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : '');
+      const complete = !!st.completedAt;
+      const title = complete ? 'Upgrade complete ✓' : 'Upgrading…';
+      const status = complete ? (target || '') : ((target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : ''));
       return '<span class="oc-version-navbar-upgrade" role="status" aria-live="polite">' +
-        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">Upgrading… </span>' +
+        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
         '<span class="oc-version-progress-status">' + escapeHtml(status) + '</span></span></span>';
     }
 
@@ -25462,6 +25925,46 @@ function burnAreaChart() {
       chip.setAttribute('aria-label', upgrading ? 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version & upgrade details' : 'Version & upgrade details');
     }
 
+    function renderNavbarUpgradeIndicator(v, ctx) {
+      const el = document.getElementById('oc-navbar-upgrade');
+      if (!el) return;
+      const progress = ctx && ctx.upgradeProgress || null;
+      if (!progress) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+      }
+      const complete = !!progress.completedAt;
+      el.hidden = false;
+      el.innerHTML = versionNavbarUpgradeHTML(progress, v || {});
+      el.title = complete ? 'Upgrade complete — jump to Version details' : 'Upgrade in progress — jump to Version details';
+      el.setAttribute('aria-label', complete ? 'Upgrade complete — Version details' : 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version details');
+    }
+
+    function renderVersionSurfaces(v, ctx) {
+      renderVersionChip(v, ctx);
+      renderVersionMenu(v, ctx);
+      renderNavbarUpgradeIndicator(v, ctx);
+    }
+
+    function refreshVersionProgressSurfaces() {
+      const ctx = window._lastVersionContext;
+      if (!ctx || !ctx.upgradeProgress) return;
+      ctx.upgradeProgress = versionReadUpgradeProgress();
+      renderVersionSurfaces(window._lastVersionData || {}, ctx);
+    }
+
+    function focusVersionBlock() {
+      const block = document.getElementById('oc-git-version');
+      const chip = document.getElementById('oc-version-chip');
+      const target = chip || block;
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (chip && chip.focus) chip.focus({ preventScroll: true });
+      if (block) block.classList.add('oc-version-focus-pulse');
+      setTimeout(function() { if (block) block.classList.remove('oc-version-focus-pulse'); }, 1200);
+    }
+
     async function fetchGitVersion() {
       try {
         const res = await fetch('/api/version');
@@ -25554,8 +26057,7 @@ function burnAreaChart() {
         if (ocEl) {
           window._lastVersionData = v;
           window._lastVersionContext = { deliveryLabel, trackingLabel, offeredUpgradeHash, offeredUpgradeShort, offeredUpgradeLabel, upgradeHTML, manualUpdateHTML, hasUpgrade, statusText: versionStatusSummary(v, offeredUpgradeShort), upgradeProgress };
-          renderVersionChip(v, window._lastVersionContext);
-          renderVersionMenu(v, window._lastVersionContext);
+          renderVersionSurfaces(v, window._lastVersionContext);
         }
         versionScheduleUpgradePoll(upgradeProgress);
         window._lastVersionHTML = legacyHTML;
@@ -25771,8 +26273,7 @@ function burnAreaChart() {
       if (window._lastVersionData && window._lastVersionContext) {
         window._lastVersionContext.upgradeProgress = progress;
         window._lastVersionContext.hasUpgrade = false;
-        renderVersionChip(window._lastVersionData, window._lastVersionContext);
-        renderVersionMenu(window._lastVersionData, window._lastVersionContext);
+        renderVersionSurfaces(window._lastVersionData, window._lastVersionContext);
       }
       versionScheduleUpgradePoll(true);
       try {
@@ -30472,7 +30973,7 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
         <div class="config-field">
-          <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI-native Continuous Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
+          <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
             <button class="hv-btn btn-secondary btn" data-action="gh41" title="Open the ACMM maturity level selector">Change&hellip;</button>
@@ -33477,6 +33978,51 @@ function burnAreaChart() {
       markWorkSourceDirty('linear.assigned_only', el.classList.toggle('on'));
     }
 
+    function wsWavefrontSource(wf) {
+      wf = wf || {};
+      if (wf.source === 'url' || wf.source === 'path') return wf.source;
+      return wf.url ? 'url' : 'path';
+    }
+
+    function wsWavefrontErrors(wf) {
+      wf = wf || {};
+      if (!wf.enabled) return [];
+      const path = String(wf.path || '').trim();
+      const url = String(wf.url || '').trim();
+      const repo = String(wf.repo || '').trim();
+      const errors = [];
+      if ((path ? 1 : 0) + (url ? 1 : 0) !== 1) errors.push('Choose exactly one graph source: file path or URL.');
+      if (url && !/^https?:\/\//.test(url)) errors.push('URL must start with http:// or https://.');
+      if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) errors.push('Repo must use owner/name.');
+      return errors;
+    }
+
+    function wsWavefrontSetEnabled(el) {
+      markWorkSourceDirty('wavefront.enabled', el.classList.toggle('on'));
+      renderConfigTab('Work Source');
+    }
+
+    function wsWavefrontSetSource(source) {
+      markWorkSourceDirty('wavefront.source', source === 'url' ? 'url' : 'path');
+      if (source === 'url') {
+        markWorkSourceDirty('wavefront.path', '');
+      } else {
+        markWorkSourceDirty('wavefront.url', '');
+      }
+      renderConfigTab('Work Source');
+    }
+
+    function wsWavefrontSetLocation(source, value) {
+      markWorkSourceDirty('wavefront.source', source === 'url' ? 'url' : 'path');
+      if (source === 'url') {
+        markWorkSourceDirty('wavefront.url', value);
+        markWorkSourceDirty('wavefront.path', '');
+      } else {
+        markWorkSourceDirty('wavefront.path', value);
+        markWorkSourceDirty('wavefront.url', '');
+      }
+    }
+
     // renderGovWorkSource renders the work_source settings: which external planning
     // tool hive reads work items from (Step 01 of the loop). Saved to
     // /api/config/governor/work-source.
@@ -33486,6 +34032,9 @@ function burnAreaChart() {
       const ghp = ws.github_projects || {};
       const lin = ws.linear || {};
       const jira = ws.jira || {};
+      const wf = ws.wavefront || {};
+      const wfSource = wsWavefrontSource(wf);
+      const wfErrors = wsWavefrontErrors(wf);
       const linTeams = Array.isArray(lin.teams) ? lin.teams : [];
       const linAgents = Array.isArray(_configState.data.agents) ? _configState.data.agents.slice().sort() : [];
 
@@ -33661,7 +34210,45 @@ function burnAreaChart() {
         ${type === '' ? `
         <div style="font-size:var(--fs-sm);color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 20%,transparent);border-radius:var(--r);padding:10px 12px">
           <b>Using default issues</b> — hive reads open issues from the projects listed in the Projects tab. No additional work-source configuration is needed.
-        </div>` : ''}`;
+        </div>` : ''}
+
+        <div class="ws-wavefront-card">
+          <div class="ws-wavefront-head">
+            <div>
+              <div class="ws-wavefront-kicker">Wavefront (Crustify) migration graph</div>
+              <div class="ws-wavefront-help">
+                Adds ready nodes from a Crustify/Wavefront migration graph as Hive run-stage work items; see
+                <a class="text-accent" href="https://docs.hivecommons.dev/docs/hive/integrations" target="_blank" rel="noopener">Hive integrations</a>
+                and <a class="text-accent" href="https://github.com/crustify-rs/crustify" target="_blank" rel="noopener">crustify-rs/crustify</a>.
+                URL fetches plain JSON only today; there is no auth field.
+              </div>
+            </div>
+            <div class="config-toggle ws-wavefront-toggle">
+              <div class="config-toggle-switch ${wf.enabled ? 'on' : ''}" data-action="wsWavefrontSetEnabled" data-arg-types="t"></div>
+              <span class="config-toggle-label">Enabled</span>
+            </div>
+          </div>
+          ${wfErrors.length ? `<div class="ws-wavefront-errors">${wfErrors.map(esc).join('<br>')}</div>` : ''}
+          <div class="config-field">
+            <label>Source</label>
+            <div class="ws-wavefront-source-options">
+              <label class="ws-wavefront-radio"><input type="radio" name="wf-source" value="path" ${wfSource === 'path' ? 'checked' : ''} data-change-action="gh79"> File path</label>
+              <label class="ws-wavefront-radio"><input type="radio" name="wf-source" value="url" ${wfSource === 'url' ? 'checked' : ''} data-change-action="gh79"> URL</label>
+            </div>
+          </div>
+          <div class="config-field">
+            <label>${wfSource === 'url' ? 'Graph URL' : 'Graph file path'}</label>
+            <input type="text" placeholder="${wfSource === 'url' ? 'https://wavefront.example/graph.json' : '/data/wavefront/graph.json'}" value="${esc(wfSource === 'url' ? (wf.url||'') : (wf.path||''))}" data-change-action="gh80" data-source="${wfSource}">
+          </div>
+          <div class="config-field">
+            <label>Repo <span class="config-info">i<span class="config-tooltip">owner/name repository the migration nodes are scoped to.</span></span></label>
+            <input type="text" placeholder="acme/crust" value="${esc(wf.repo||'')}" data-change-action="markWorkSourceDirty" data-arg0="wavefront.repo" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Receipts directory <span class="config-info">i<span class="config-tooltip">Optional directory where Hive writes node-completion receipts. Empty keeps receipts in memory until restart.</span></span></label>
+            <input type="text" placeholder="/data/wavefront/receipts" value="${esc(wf.receipts_dir||'')}" data-change-action="markWorkSourceDirty" data-arg0="wavefront.receipts_dir" data-arg-types="s,w">
+          </div>
+        </div>`;
     }
 
     function addSensingItem(key, inputId) {
@@ -34393,6 +34980,12 @@ function burnAreaChart() {
         if (Array.isArray(d.repos) && d.repos.length > 0 && (!d.primaryRepo || !d.repos.includes(d.primaryRepo))) {
           showToast('Set a default repo before saving — click a ☆ star in the Repos tab.', 'error');
           renderConfigTab('Repos');
+          return;
+        }
+        const wfErrors = dirty['work-source'] ? wsWavefrontErrors((d.work_source || {}).wavefront || {}) : [];
+        if (wfErrors.length) {
+          showToast(wfErrors[0], 'error');
+          renderConfigTab('Work Source');
           return;
         }
       }
@@ -37301,6 +37894,8 @@ function burnAreaChart() {
       gh66: function (event, A) { markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh77: function (event, A) { markWorkSourceDirty('jira.deployment',this.value);renderConfigTab('Work Source'); },
       gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
+      gh79: function (event, A) { wsWavefrontSetSource(this.value); },
+      gh80: function (event, A) { wsWavefrontSetLocation(this.dataset.source || 'path', this.value); },
     };
 
   </script>

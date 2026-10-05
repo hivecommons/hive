@@ -13,6 +13,8 @@ import (
 
 func seedStablePromotionChannels(t *testing.T) {
 	t.Helper()
+	resetStablePromotionCaches()
+	t.Cleanup(resetStablePromotionCaches)
 	stubChannelDigests(t, map[string]string{
 		"v5-latest": "sha256:v5-latest",
 		"stable":    "sha256:stable",
@@ -146,6 +148,8 @@ func TestStablePromotionPUTAdminGatedAuditedAndPersists(t *testing.T) {
 }
 
 func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testing.T) {
+	resetStablePromotionCaches()
+	t.Cleanup(resetStablePromotionCaches)
 	now := time.Date(2033, 5, 18, 3, 30, 0, 0, time.UTC)
 	origRuns := stablePromotionFetchRuns
 	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun {

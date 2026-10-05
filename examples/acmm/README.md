@@ -1,6 +1,6 @@
 # ACMM runtime fragments
 
-These Markdown fragments document the operating constraints for each AI-native Capability Maturity Model (ACMM) level. Use them as policy references when reviewing or customizing the built-in ACMM packs and lane templates.
+These Markdown fragments document the operating constraints for each AI Codebase Maturity Model (ACMM) level. Use them as policy references when reviewing or customizing the built-in ACMM packs and lane templates.
 
 | File | Applies to | Purpose |
 |------|------------|---------|

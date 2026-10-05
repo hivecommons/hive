@@ -1,0 +1,1 @@
+- Refresh the public hub landing page with the current agent backend tiers, OpenHands, inference gateways, and related ecosystem links.

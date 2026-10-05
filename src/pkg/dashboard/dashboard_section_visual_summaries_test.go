@@ -33,8 +33,17 @@ var window = { _lastStatus: {
   governor: { mode: 'busy', prs: 4, issues: 3, thresholds: { surge: 12 } },
   repos: [{ name: 'repo', openPrs: [1,2,3], actionableIssues: [1,2] }],
   agents: [{ name: 'a' }, { name: 'b', paused: true }],
-  tokens: { totals: { sessions: 2 } }
+  tokens: { totals: { sessions: 2 } },
+  hiveAdvice: { recommendations: [
+    { id: 'reduce-blocked-prs', title: 'Reduce the blocked PR queue', rationale: '4 blocked PRs need fixes.', score: 95, signals: [{ name: 'blocked', value: '4' }], items: [{}, {}, {}, {}] },
+    { id: 'unblock-human-issues', title: 'Unblock the human queue', rationale: '2 issues need decisions.', score: 82, signals: [{ name: 'needs_human', value: '2' }], items: [{}, {}] }
+  ] }
 } };
+var _acmmEvalData = { overall_level: 6, operational_level: 6, codebase_level: 6, criteria_passed: 7, criteria_total: 7, criteria_results: [
+  { category: 'Build', passed: true }, { category: 'Tests', passed: true }, { category: 'Docs', passed: true },
+  { category: 'Security', passed: true }, { category: 'Release', passed: true }, { category: 'Ops', passed: true }, { category: 'Policy', passed: true }
+] };
+var _acmmSelectedRepo = null;
 var _cachedContributors = [{ github_username: 'octo' }, { login: 'bee' }];
 var localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
 var document = { getElementById: id => ({ textContent: id === 'repos-needs-human' ? '1' : '' }) };
@@ -68,8 +77,16 @@ const fixtures = {
 };
 for (const [section, text] of Object.entries(fixtures)) {
   const html = visualSectionSummary(section, text);
-  if (!/svg class="mini-[^"]+"/.test(html)) throw new Error(section + ' did not render a mini SVG: ' + html);
+  if (section === 'advisory-section') {
+    if (!html.includes('advisory-collapsed-advice') || !html.includes('Fix 4 blocked PRs') || !html.includes('−4 queue')) throw new Error(section + ' did not render advice pills: ' + html);
+  } else if (section === 'acmm-eval-section') {
+    if (!html.includes('acmm-collapsed-pill') || !html.includes('L6') || !html.includes('7/7 dims')) throw new Error(section + ' did not render ACMM pill: ' + html);
+  } else if (!/svg class="mini-[^"]+"/.test(html)) throw new Error(section + ' did not render a mini SVG: ' + html);
   if (!html.includes('aria-label="')) throw new Error(section + ' missing accessible label');
+}
+for (const section of ['knowledge-section', 'audit-section', 'overview-section', 'pr-throughput-section', 'token-panel']) {
+  const html = visualSectionSummary(section, fixtures[section]);
+  if (/mini-spark/.test(html)) throw new Error(section + ' rendered an unlabelled collapsed-header sparkline: ' + html);
 }
 miniHistorySeries('persist-section', 'count', 10);
 miniHistorySeries('persist-section', 'count', 12);

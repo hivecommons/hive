@@ -36,6 +36,9 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		`<svg class="prt-trend-svg"`,
 		`class="area ${key}"`,
 		"100% stacked area trend",
+		"function prtActorTrend",
+		"Hive vs human trend",
+		"non-hive bots (dependabot, renovate, GitHub Actions, …)",
 		"function prtTrendCaption",
 		"function prtHiveHumanTile",
 		`<div class="lbl">Hive vs human</div>`,
@@ -90,6 +93,25 @@ func TestPRThroughputCollapsedHeadlineKeepsWindowPill(t *testing.T) {
 		t.Skip("node unavailable: Change Throughput headline window controls were not executed")
 	}
 	html := indexHTML(t)
+	for _, snippet := range []string{
+		`.prt-window-controls { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }`,
+		`.prt-window-controls { justify-self: start; justify-content: flex-start; }`,
+		`.prt-share-tile .prt-role-select { position:absolute; right:var(--sp-3); bottom:var(--sp-3);`,
+		`.prt-share-tile .prt-tile-spark { max-width: calc(100% - 6.4rem); overflow: hidden; }`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("Change Throughput window controls must remain in-flow and wrapping, missing CSS snippet %q", snippet)
+		}
+	}
+	if strings.Contains(html, `.prt-window-controls { position: absolute;`) {
+		t.Fatal("Change Throughput window controls must not be absolutely positioned over the metric tiles")
+	}
+	if strings.Contains(html, `.prt-headline { padding-top:`) {
+		t.Fatal("Change Throughput headline must not reserve a fixed top pad for out-of-flow controls")
+	}
+	if strings.Contains(html, `.prt-share-tile .prt-role-select { position:absolute; top:`) {
+		t.Fatal("Hive vs human role select must stay at the tile's lower-right corner")
+	}
 	render := jsFunc(t, html, "renderPRThroughput")
 	for _, snippet := range []string{
 		`<div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>`,
@@ -125,7 +147,7 @@ func TestPRThroughputTrendStackedAreaAndLegendTooltip(t *testing.T) {
 	script := `const assert = require('node:assert/strict');
 let prtRole = 'merged';
 function escapeHtml(v) { return String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
-function renderSparkline(_node, values, opts) { return '<svg data-label="' + opts.label + '">' + values.join(',') + '</svg>'; }
+function renderSparkline(_node, values, opts) { return '<svg data-label="' + opts.label + '">' + (opts.area ? '<polygon class="sparkline-area"></polygon>' : '') + values.join(',') + '</svg>'; }
 ` + jsFunc(t, html, "prtSparkTitle") + "\n" + jsFunc(t, html, "prtHiveShareSpark") + "\n" + jsFunc(t, html, "prtSeriesAllZero") + "\n" + jsFunc(t, html, "prtTrendSvg") + "\n" + jsFunc(t, html, "prtTrendStats") + "\n" + jsFunc(t, html, "prtTrendCaption") + "\n" + jsFunc(t, html, "prtHiveHumanTile") + `
 const series = [
   { hive: 4, human: 0, other: 6 },
@@ -149,6 +171,14 @@ assert.match(tile, /of merges\/closures · was 40%/);
 assert.match(tile, /hive 16 · human 0 · other automation 14 · hive 53% of merges\/closures this window, up from 40%/);
 assert.match(tile, /data-change-action="setPRThroughputRole"/);
 assert.match(tile, /data-label="hive share"/);
+assert.match(tile, /class="sparkline-area"/);
+` + jsFunc(t, html, "prtActorTrend") + `
+const trend = prtActorTrend({ series });
+assert.match(trend, /class="prt-trend"/);
+assert.match(trend, /<strong>Hive vs human trend<\/strong>/);
+assert.match(trend, /title="non-hive bots \(dependabot, renovate, GitHub Actions, …\)"/);
+assert.match(trend, /human · 0/);
+assert.match(trend, /class="prt-trend-svg"/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {

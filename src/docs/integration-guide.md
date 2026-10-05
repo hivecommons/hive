@@ -10,16 +10,19 @@ flowchart LR
     Governor --> Agents[Hive agents and contributor relay]
     Clanker[ClankeR contributor relay\n/api/contribute/ws] --> Agents
     Flue[Flue external workflow\nextwork adapter] --> Clanker
+    Crustify[Crustify / Wavefront\nmigration graph] --> WorkSource
     Spek[Spektacular CLI\nspec/plan status + plan export] --> Runs[Long-running run leases]
     Runs --> WorkSource
     Runs --> Governor
 ```
 
+Two external projects shaped these surfaces and remain the reference integrations: [Flue](https://github.com/withastro/flue), the report-only external-execution pilot behind the `pkg/extwork` contract, and [Crustify](https://github.com/crustify-rs/crustify), the C/C++-to-Rust migration harness whose Wavefront migration graph is consumed as an additive work source (see [work sources](work-sources.md) and the `wavefront-smoke.yml` canary).
+
 ## Extension surfaces in v5
 
 | Surface | What you can do today | Start here |
 | --- | --- | --- |
-| Work sources | Add or configure an adapter that turns source-native items into `worksource.Issue` values. The only primary adapters linked today are GitHub Issues, GitHub Projects, Linear, and Jira; run stages and Wavefront are additive sources. | [Work source providers](integrations/work-source-providers.md) |
+| Work sources | Add or configure an adapter that turns source-native items into `worksource.Issue` values. The only primary adapters linked today are GitHub Issues, GitHub Projects, Linear, and Jira; run stages and the [Crustify](https://github.com/crustify-rs/crustify) Wavefront migration graph are additive sources. | [Work source providers](integrations/work-source-providers.md) |
 | ClankeR + Flue-style external execution | Use the contributor relay as the transport and the `pkg/extwork` contract as the engine-neutral admission/observation seam. Flue is the reference HTTP adapter. | [ClankeR and Flue-style external execution](integrations/clanker-flue.md) |
 | Spektacular | Let Hive poll a Spektacular-compatible CLI for `spec`/`plan` status and import final plan tasks into Hive's run flow. | [Spektacular and Project Inception](integrations/spektacular.md) |
 

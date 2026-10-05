@@ -1,0 +1,1 @@
+- Fixed the dashboard Overview open issue and PR cards to show forge totals with filtered/tracked gap explanations (#10629)

@@ -1,0 +1,1 @@
+- dashboard: restore shaded-area hive-vs-human graph in expanded throughput (#10646)

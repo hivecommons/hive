@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -142,10 +143,18 @@ type stablePromotionWorkflowRun struct {
 	Conclusion string `json:"conclusion"`
 }
 
+// stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
+// through stablePromotionRuns, which caches the answer.
 var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
 	client := &http.Client{Timeout: 5 * time.Second}
-	url := "https://api.github.com/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=50"
-	resp, err := client.Get(url)
+	runsURL := githubAPIBase + "/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=50"
+	req, err := http.NewRequest(http.MethodGet, runsURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
 		return nil
@@ -162,13 +171,25 @@ var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkfl
 		logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
 		return nil
 	}
+	if body.WorkflowRuns == nil {
+		body.WorkflowRuns = []stablePromotionWorkflowRun{}
+	}
 	return body.WorkflowRuns
 }
 
+// stablePromotionEligibleBuild returns the newest verified build newer than
+// stableGeneration that has already soaked (eligible now), or else the
+// verified build that will finish soaking soonest and when. Runs and GHCR
+// verifications are cached, and at most stablePromotionMaxVerifiedRuns runs
+// are verified per call.
 func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
-	var nextAt string
-	var nextBuild StablePromotionBuild
-	for _, run := range stablePromotionFetchRuns(logger) {
+	type pending struct {
+		run      stablePromotionWorkflowRun
+		built    time.Time
+		eligible time.Time
+	}
+	var soaked, soaking []pending
+	for _, run := range stablePromotionRuns(logger) {
 		if run.Status != "" && run.Status != "completed" {
 			continue
 		}
@@ -186,30 +207,37 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 		if err != nil {
 			continue
 		}
-		short := shortSHA(run.HeadSHA)
-		digest := ghcrTagDigest(ghcrRepoSpoke, short, logger)
-		if digest == "" || ghcrTagGeneration(ghcrRepoSpoke, short, logger) != run.RunNumber {
-			continue
-		}
-		build := StablePromotionBuild{SHA: short, Digest: digest, Generation: run.RunNumber, BuiltAt: built.UTC().Format(time.RFC3339)}
-		eligible := built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC()
-		if !eligible.After(now) {
-			return build, now.UTC().Format(time.RFC3339)
-		}
-		if nextAt == "" || eligible.Before(mustParseRFC3339(nextAt)) {
-			nextAt = eligible.Format(time.RFC3339)
-			nextBuild = build
+		p := pending{run: run, built: built.UTC(), eligible: built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC()}
+		if !p.eligible.After(now) {
+			soaked = append(soaked, p)
+		} else {
+			soaking = append(soaking, p)
 		}
 	}
-	return nextBuild, nextAt
-}
+	// Runs arrive newest-first; prefer the newest soaked build.
+	sort.SliceStable(soaked, func(i, j int) bool { return soaked[i].run.RunNumber > soaked[j].run.RunNumber })
+	sort.SliceStable(soaking, func(i, j int) bool { return soaking[i].eligible.Before(soaking[j].eligible) })
 
-func mustParseRFC3339(value string) time.Time {
-	parsed, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return time.Time{}
+	verified := 0
+	for i, group := range [][]pending{soaked, soaking} {
+		for _, p := range group {
+			if verified >= stablePromotionMaxVerifiedRuns {
+				return StablePromotionBuild{}, ""
+			}
+			verified++
+			short := shortSHA(p.run.HeadSHA)
+			v := stablePromotionVerifyBuild(p.run.RunNumber, short, logger)
+			if !v.ok {
+				continue
+			}
+			build := StablePromotionBuild{SHA: short, Digest: v.digest, Generation: p.run.RunNumber, BuiltAt: p.built.Format(time.RFC3339)}
+			if i == 0 {
+				return build, now.UTC().Format(time.RFC3339)
+			}
+			return build, p.eligible.Format(time.RFC3339)
+		}
 	}
-	return parsed
+	return StablePromotionBuild{}, ""
 }
 
 // stablePromotionEligibleAt is when a build crosses the stable channel's
@@ -249,11 +277,6 @@ func stableNextPromotionAt(targets []ChannelTarget) string {
 	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
 		return ""
 	}
-	stableGeneration := ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, slog.Default())
-	_, eligibleAt := stablePromotionEligibleBuild(stableGeneration, time.Now().UTC(), slog.Default())
-	if eligibleAt != "" {
-		return eligibleAt
-	}
 	return stablePromotionEligibleAt(candidate.CommittedAt)
 }
 
@@ -268,6 +291,17 @@ func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) [
 		}
 	}
 	return out
+}
+
+// stablePromotionFromTargets returns the status channelTargetsWithStablePromotion
+// already attached to the stable row, computing it only when there is none.
+func (s *HubServer) stablePromotionFromTargets(targets []ChannelTarget) StablePromotionStatus {
+	for _, t := range targets {
+		if t.Channel == ReleaseChannelStable && t.StablePromotion != nil {
+			return *t.StablePromotion
+		}
+	}
+	return s.stablePromotionStatus(targets)
 }
 
 func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []MaintainedHiveSummary {

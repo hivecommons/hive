@@ -29,13 +29,32 @@ func TestAgentsCollapsedSummaryRendersPerAgentTiles(t *testing.T) {
 			t.Fatalf("agents collapsed tile contract missing %q", want)
 		}
 	}
-	visual := jsFunctionBody(t, html, "function visualSectionSummary(sectionId, html, title)")
 	for _, want := range []string{
 		"agentsCollapsedTilesHtml(agents, Date.now())",
 		"if ((sectionId === 'agents-section' || sectionId === 'repos-section') && inner) return inner;",
 	} {
-		if !strings.Contains(visual, want) {
+		if !strings.Contains(html, want) {
 			t.Fatalf("agents collapsed summary visual helper missing %q", want)
+		}
+	}
+}
+
+func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span>`,
+		`id="agent-navbar-upnext"`,
+		`class="agent-navbar-upnext"`,
+		`function renderAgentNavbarUpNext(agents, nowMs)`,
+		`sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3)`,
+		`function openAgentsUpNextPanel()`,
+		`data-action="openAgentsUpNextPanel"`,
+		`renderAgentNavbarUpNext(agents, Date.now())`,
+		`refreshAgentNavbarUpNextCountdowns(now);`,
+		`@media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("agents sidebar/navbar up-next contract missing %q", want)
 		}
 	}
 }

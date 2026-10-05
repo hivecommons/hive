@@ -19,6 +19,9 @@ func TestDashboardSectionCardsHaveCollapsedSummaries(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "el.innerHTML = visualSectionSummary(sectionId, text, title);") {
 		t.Fatal("setSectionSummary must render visual collapsed summaries instead of bare text")
 	}
+	if !strings.Contains(dashboardHTML, ".collapsed-with-headline .kb-summary-stats .kb-stat-spark { display: none; }") {
+		t.Fatal("Knowledge fact-history sparkline must be hidden in the collapsed headline state")
+	}
 
 	configs := dashboardSectionCardConfigs(t, dashboardHTML)
 	for _, id := range dashboardSectionIDs(t, dashboardHTML) {
