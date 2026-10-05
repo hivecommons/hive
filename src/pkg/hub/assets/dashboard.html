@@ -141,6 +141,8 @@
     .fleet-tile-label { font-size: var(--fs-2xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     .fleet-tile.warn { border-color: rgba(245,158,11,0.4); }
     .fleet-tile.bad { border-color: rgba(248,81,73,0.45); }
+    .cluster-note { margin: var(--sp-4) var(--sp-0); padding: var(--sp-3) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); color: var(--text-muted); }
+    .cluster-note.stale { color: var(--red); border-color: var(--red); }
     .alert-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: var(--sp-5) var(--sp-6); }
     .alert-panel.has-critical { border-color: rgba(248,81,73,0.45); background: rgba(248,81,73,0.06); }
     .alert-panel.has-warning { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); }
@@ -9276,10 +9278,10 @@
             // heartbeat data yet is the expected state — informational, not
             // red. Red is kept for a spoke that WAS reporting and went stale.
             if (!c.error && c.awaiting_heartbeat) {
-              errorLine = '<div class="text-muted" style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:var(--fs-sm)" title="This cluster is registered pull_only: the hub cannot query it and shows the node health its spokes report over the heartbeat.">' +
+              errorLine = '<div class="cluster-note" title="This cluster is registered pull_only: the hub cannot query it and shows the node health its spokes report over the heartbeat.">' +
                 'pull-only · awaiting spoke heartbeat (last seen: ' + esc(c.last_seen || 'never') + ')</div>';
             } else if (!c.error && c.data_stale) {
-              errorLine = '<div style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' +
+              errorLine = '<div class="cluster-note stale">' +
                 (c.pull_only ? 'pull-only · ' : '') + 'spoke heartbeat stale — node stats last reported ' + esc(c.data_age || 'a while ago') + '</div>';
             }
             var headerHtml = '<div style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-6) var(--sp-0) var(--sp-4)">' +
