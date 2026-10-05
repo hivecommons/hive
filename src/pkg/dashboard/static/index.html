@@ -1457,7 +1457,7 @@
     .lc-axis-track { min-height: 1.4rem; border-bottom: 1px solid var(--border); }
     .lc-axis-svg { display: block; width: 100%; height: 1.4rem; overflow: visible; }
     .lc-axis-tick-line { stroke: var(--border); stroke-width: 1; }
-    .lc-axis-tick-label { fill: var(--muted); font-size: 0.55rem; text-anchor: middle; }
+    .lc-axis-tick-label { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; }
     @media (max-width: 760px) { .lc-head, .lc-journey-summary, .lc-axis { grid-template-columns: 1fr; } .lc-controls { justify-content: flex-start; } .lc-axis-meta { display: none; } }
     .lc-kind { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
       padding: 2px 7px; border-radius: 8px; }
@@ -3288,18 +3288,21 @@
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
-    .agents-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(720px, 52vw); max-width: 720px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
-    .agent-collapsed-tile { flex: 0 0 108px; min-width: 90px; max-width: 120px; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; gap: 0 var(--sp-2); align-items: center; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; text-align: left; }
+    .agents-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(820px, 56vw); max-width: 820px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
+    .agent-collapsed-tile { flex: 0 0 136px; min-width: 118px; max-width: 154px; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: 1fr 1fr; gap: 0 var(--sp-2); align-items: center; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; text-align: left; }
     .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-collapsed-tile.disabled { opacity: 0.58; }
+    .agent-collapsed-tile.stopped { border-color: color-mix(in srgb, var(--red) 35%, var(--line-subtle)); }
     .agent-collapsed-tile.needs-login { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
     .agent-collapsed-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
+    .agent-collapsed-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-tile-name { font-weight: 800; color: var(--text); }
+    .agent-up-next { justify-self: end; align-self: center; color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-collapsed-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot { background: var(--muted); box-shadow: none; }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
@@ -5577,26 +5580,35 @@
       }
       return null;
     }
+    const AGENTS_COLLAPSED_COUNTDOWN_TICK_MS = 30000;
+    function formatKickCountdown(ms) {
+      if (ms == null) return '—';
+      const delta = Number(ms);
+      if (!Number.isFinite(delta)) return '—';
+      if (delta <= 0) return 'now';
+      return `in ${Math.max(1, Math.ceil(delta / 60000))}m`;
+    }
+    function agentCollapsedNextKickMs(a, nowMs) {
+      if (!a || agentIsDisabled(a) || a.paused === true || a.offByCadence === true || a.unscheduledInMode === true || a.noCadence === true || a.onDemand === true) return null;
+      return agentCollapsedParseNextKick(a.nextKickAt || a.nextKickIn || a.nextKick, nowMs);
+    }
     function agentCollapsedNextLabel(a, nowMs) {
       if (!a || agentIsDisabled(a)) return '—';
-      if (a.continuous === true) return 'continuous';
-      const ms = agentCollapsedParseNextKick(a.nextKickIn || a.nextKick, nowMs);
+      if (a.busy === 'working') return 'now';
+      const ms = agentCollapsedNextKickMs(a, nowMs);
       if (!Number.isFinite(ms)) return '—';
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const delta = ms - now;
-      if (delta <= 60000) return 'due now';
-      if (delta < 3600000) return `in ${Math.max(1, Math.round(delta / 60000))}m`;
-      return 'next ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return formatKickCountdown(ms - now);
     }
     function agentCollapsedSortKey(a, index, nowMs) {
       const disabled = !a || agentIsDisabled(a);
       const active = !!a && !disabled && a.busy === 'working';
-      const next = !disabled ? agentCollapsedParseNextKick(a.nextKickIn || a.nextKick, nowMs) : null;
+      const next = !disabled ? agentCollapsedNextKickMs(a, nowMs) : null;
       const continuous = !!a && !disabled && a.continuous === true;
       let group = 4;
       if (active) group = 0;
-      else if (continuous) group = 2;
       else if (Number.isFinite(next)) group = 1;
+      else if (continuous) group = 2;
       else if (!disabled) group = 3;
       return { group, next: Number.isFinite(next) ? next : Number.POSITIVE_INFINITY, index };
     }
@@ -5607,11 +5619,39 @@
     }
     function agentCollapsedAuthInfo(a, isDown) {
       const text = String((a && (a.backendAuthStatus || a.backendAuthLastError || a.statusEvidence)) || '').toLowerCase();
-      if (text.includes('expired') || text.includes('token_expired')) return { label: 'token expired', status: 'error', needsLogin: true };
-      if (_agentNeedsLogin(a || {}, isDown)) return { label: 'needs login', status: 'error', needsLogin: true };
+      if (text.includes('expired') || text.includes('token_expired')) return { label: 'expired', status: 'error', needsLogin: true };
+      if (_agentNeedsLogin(a || {}, isDown)) return { label: 'logged out', status: 'error', needsLogin: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
-    function agentCollapsedTileHtml(a, nowMs) {
+    function agentCollapsedTimestampDetail(ms, fallback) {
+      if (Number.isFinite(ms)) {
+        const d = new Date(ms);
+        return `${d.toISOString()} (${d.toLocaleString()})`;
+      }
+      const direct = Date.parse(fallback || '');
+      if (Number.isFinite(direct)) {
+        const d = new Date(direct);
+        return `${d.toISOString()} (${d.toLocaleString()})`;
+      }
+      return String(fallback || '—');
+    }
+    function agentCollapsedTileTitle(a, name, power, auth, nextMs) {
+      const lastMs = Date.parse((a && a.lastKickAt) || '');
+      return [
+        name,
+        `power: ${power}`,
+        `login: ${auth.label}`,
+        `next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`,
+        `last kick: ${agentCollapsedTimestampDetail(Number.isFinite(lastMs) ? lastMs : null, a && a.lastKick)}`,
+      ].join('\n');
+    }
+    function agentCollapsedStateLabel(disabled, isDown, auth) {
+      if (disabled) return 'disabled';
+      if (auth && auth.needsLogin) return auth.label;
+      if (isDown) return 'stopped';
+      return '';
+    }
+    function agentCollapsedTileHtml(a, nowMs, isUpNext) {
       const name = (a && (a.displayName || a.name)) || 'agent';
       const key = (a && a.name) || name;
       const disabled = agentIsDisabled(a);
@@ -5619,15 +5659,55 @@
       const active = !!a && !disabled && a.busy === 'working';
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
-      const next = agentCollapsedNextLabel(a, nowMs);
-      const classes = ['agent-collapsed-tile', active ? 'active' : '', disabled ? 'disabled' : '', auth.needsLogin ? 'needs-login' : ''].filter(Boolean).join(' ');
-      const title = `${name} · ${power} · ${auth.label} · next ${next}`;
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next">${esc(power)} · ${esc(auth.label)} · ${esc(next)}</span></button>`;
+      const nextMs = agentCollapsedNextKickMs(a, nowMs);
+      const countdown = agentCollapsedNextLabel(a, nowMs);
+      const state = agentCollapsedStateLabel(disabled, isDown, auth);
+      const sortKey = agentCollapsedSortKey(a, 0, nowMs);
+      const classes = ['agent-collapsed-tile', active ? 'active' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', isUpNext ? 'up-next' : ''].filter(Boolean).join(' ');
+      const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
+      const upNext = isUpNext ? '<span class="agent-up-next">up next</span>' : '<span class="agent-up-next" aria-hidden="true"></span>';
+      const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${upNext}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
+    }
+    function refreshAgentsCollapsedCountdowns(nowMs) {
+      const strip = document.querySelector('.agents-collapsed-tiles');
+      if (!strip) return;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const tiles = Array.from(strip.querySelectorAll('.agent-collapsed-tile'));
+      tiles.forEach(tile => {
+        const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const nextMs = rawNext ? Number(rawNext) : NaN;
+        const countdown = tile.getAttribute('data-agent-active') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        const el = tile.querySelector('.agent-tile-countdown');
+        if (el && el.textContent !== countdown) el.textContent = countdown;
+      });
+      tiles.sort((a, b) => {
+        const ag = Number(a.getAttribute('data-agent-sort-group')) || 0;
+        const bg = Number(b.getAttribute('data-agent-sort-group')) || 0;
+        const ar = String(a.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const br = String(b.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const an = ar ? Number(ar) : NaN;
+        const bn = br ? Number(br) : NaN;
+        return (ag - bg) || ((Number.isFinite(an) ? an : Number.POSITIVE_INFINITY) - (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY));
+      }).forEach((tile, index) => {
+        strip.appendChild(tile);
+        tile.classList.toggle('up-next', index === 0);
+        const badge = tile.querySelector('.agent-up-next');
+        if (badge) {
+          badge.textContent = index === 0 ? 'up next' : '';
+          badge.setAttribute('aria-hidden', index === 0 ? 'false' : 'true');
+        }
+      });
+    }
+    function ensureAgentsCollapsedCountdownTicker() {
+      if (window._agentsCollapsedCountdownInterval) return;
+      window._agentsCollapsedCountdownInterval = setInterval(refreshAgentsCollapsedCountdowns, AGENTS_COLLAPSED_COUNTDOWN_TICK_MS);
     }
     function agentsCollapsedTilesHtml(agents, nowMs) {
       const list = sortAgentsForCollapsedTiles(agents, nowMs);
       if (!list.length) return '';
-      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(a => agentCollapsedTileHtml(a, nowMs)).join('')}</span>`;
+      ensureAgentsCollapsedCountdownTicker();
+      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map((a, i) => agentCollapsedTileHtml(a, nowMs, i === 0)).join('')}</span>`;
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
