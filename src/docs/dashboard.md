@@ -28,11 +28,11 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
 
-The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **System Diagnostics → Platform**, keeping the information available without consuming a top-level card. System Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
+The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
 
 ## Topbar and sidebar status
 
-The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Evaluation section; changing levels remains in the existing ACMM dialog/sidebar controls.
+The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Eval section; changing levels remains in the existing ACMM dialog/sidebar controls.
 
 Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar.
 
@@ -80,11 +80,11 @@ sort controls; the selected column and direction are saved in browser
 default row order is effectiveness rank; operators can toggle back to raw PR
 count without changing the selected window.
 
-## Change Throughput
+## Throughput
 
-The Change Throughput panel appears as a nested Hive Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
+The Throughput panel appears as a nested Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
 
-The **Change Throughput** section (`pr-throughput-section`) summarizes
+The **Throughput** section (`pr-throughput-section`) summarizes
 pull/merge requests and issues across tracked forges. It reads
 `GET /api/pr-throughput` for selectable windows and repository filters, keeps
 the historical `/api/pr-throughput` path and `pr-throughput-*` element IDs for
@@ -183,7 +183,7 @@ rule.
 
 ## Repository card legend, issue bands, and PR bands
 
-The collapsible **Overview** section above Repositories summarizes the same
+The collapsible **Overview** section above Projects summarizes the same
 client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
@@ -221,7 +221,7 @@ Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.
 
-The **Repositories** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
+The **Projects** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend lists the issue
 and PR bands (rendered from the shared band table, each with its rule as a
