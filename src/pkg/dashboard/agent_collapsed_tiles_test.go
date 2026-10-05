@@ -40,6 +40,26 @@ func TestAgentsCollapsedSummaryRendersPerAgentTiles(t *testing.T) {
 	}
 }
 
+func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span>`,
+		`id="agent-navbar-upnext"`,
+		`class="agent-navbar-upnext"`,
+		`function renderAgentNavbarUpNext(agents, nowMs)`,
+		`sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3)`,
+		`function openAgentsUpNextPanel()`,
+		`data-action="openAgentsUpNextPanel"`,
+		`renderAgentNavbarUpNext(agents, Date.now())`,
+		`refreshAgentNavbarUpNextCountdowns(now);`,
+		`@media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("agents sidebar/navbar up-next contract missing %q", want)
+		}
+	}
+}
+
 func TestAgentsCollapsedTileSortOrder(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
