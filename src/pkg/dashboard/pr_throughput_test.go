@@ -277,6 +277,25 @@ func TestPRThroughputUnknownActorIsExcludedFromShareSeries(t *testing.T) {
 	}
 }
 
+func TestPRThroughputPreviousActorUsesPreviousWindow(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	entries := []AuditEntry{
+		{Timestamp: rfc3339(now.Add(-2 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=1, path=sweep"},
+		{Timestamp: rfc3339(now.Add(-3 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=2, path=human, actor=alice"},
+		{Timestamp: rfc3339(now.Add(-26 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=3, path=human, actor=bob"},
+		{Timestamp: rfc3339(now.Add(-27 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=4, path=other_automation, actor=dependabot[bot]"},
+		{Timestamp: rfc3339(now.Add(-50 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=5, path=sweep"},
+		{Timestamp: rfc3339(now.Add(-26 * time.Hour)), User: "system", Action: ghpkg.AuditActionPRMerged, Detail: "repo=o/r, number=5, path=human, actor=mallory"},
+	}
+	got := buildPRThroughputWindow(entries, now, 24, "", prThroughputRoleMerged)
+	if got.PreviousActor == nil {
+		t.Fatal("previous_actor was not populated")
+	}
+	if got.PreviousActor.Hive != 0 || got.PreviousActor.Human != 1 || got.PreviousActor.Other != 1 {
+		t.Fatalf("previous_actor = %+v, want previous 24h only", got.PreviousActor)
+	}
+}
+
 // ── #9431: GET /api/pr-throughput ───────────────────────────────────────────
 
 func prThroughputFixtureEntries(now time.Time) []AuditEntry {
