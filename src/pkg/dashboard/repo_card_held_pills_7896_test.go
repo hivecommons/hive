@@ -172,8 +172,8 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		".repo-stats { display: grid; grid-template-columns: 1fr 1fr;",
 		".repo-pills { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);",
 		`<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`,
-		"const issueCol = issuePills;",
-		"const prCol = prPills;",
+		"const issueCol = issuePills ? `<div class=\"repo-pill-run-title\">ISSUES</div>${issuePills}` : '';",
+		"const prCol = prPills ? `<div class=\"repo-pill-run-title\">PULL REQUESTS</div>${prPills}` : '';",
 		// Held tint, distinct from every merge-state and from needs-human.
 		".repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }",
 		"const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));",

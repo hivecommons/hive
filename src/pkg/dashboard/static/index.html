@@ -1607,6 +1607,7 @@
     .repo-pills-issues-only .repo-pill-col-prs, .repo-pills-prs-only .repo-pill-col-issues { display: none; }
     .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
     .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
+    .repo-pill-run-title { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: var(--sp-1); }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
     .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
@@ -13312,8 +13313,8 @@
         // grouped into the same display bands) under "issues", PR pills grouped
         // into state bands under "PRs". Position says what a pill is; tint says
         // what state it is in.
-        const issueCol = issuePills;
-        const prCol = prPills;
+        const issueCol = issuePills ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}` : '';
+        const prCol = prPills ? `<div class="repo-pill-run-title">PULL REQUESTS</div>${prPills}` : '';
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const pillsHtml = (issueCol || prCol)
           ? `<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
