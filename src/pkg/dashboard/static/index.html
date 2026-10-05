@@ -11629,7 +11629,7 @@
           hive_advisory: 'Issues that belong to the Hive advisory/backlog lane, not the ordinary work lane',
           dependency_dashboard: 'Dependency-dashboard issues grouped separately from ordinary actionable work',
           filtered: 'Open issues skipped by the configured project.issue_filter label policy',
-          reporter_triage: 'Open issues from reporters this hive does not trust (not an owner, member or collaborator) that are waiting for a maintainer to add the configured triage label (#9665)',
+          reporter_triage: 'Open issues from reporters this hive does not trust (not an owner, member or collaborator) that carry needs-triage while waiting for a maintainer to add the configured triage label (#9665)',
           other: 'Open issues that did not land in an actionable, held, advisory, dependency dashboard or filtered bucket'
         },
         prs: {
@@ -11654,7 +11654,7 @@
             ['hive_advisory', 'advisory'],
             ['dependency_dashboard', 'dependency dashboard'],
             ['filtered', 'filtered'],
-            ['reporter_triage', 'awaiting triage'],
+            ['reporter_triage', 'needs triage'],
             ['other', 'other']
           ]
         : [

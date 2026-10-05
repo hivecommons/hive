@@ -117,10 +117,10 @@ func (f IssueFilterConfig) ReporterTrustRequiredLabelsForNotice() []string {
 	return f.ReporterTrust.EffectiveUntrustedRequireLabels()
 }
 
-// ReporterTrustAwaitingTriageLabel returns the visible wait label, or "" when
+// ReporterTrustAwaitingLabel returns the visible wait label, or "" when
 // that label is disabled.
-func (f IssueFilterConfig) ReporterTrustAwaitingTriageLabel() string {
-	return f.ReporterTrust.EffectiveAwaitingTriageLabel()
+func (f IssueFilterConfig) ReporterTrustAwaitingLabel() string {
+	return f.ReporterTrust.EffectiveAwaitingLabel()
 }
 
 // ReporterTrustCommentEnabled reports whether the one-shot wait explanation

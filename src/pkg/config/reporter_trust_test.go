@@ -28,8 +28,8 @@ func TestReporterTrust_Defaults(t *testing.T) {
 	if got := r.EffectiveUntrustedRequireLabels(); !equalStringSlices(got, []string{"triage/accepted"}) {
 		t.Errorf("default triage labels = %v", got)
 	}
-	if got := r.EffectiveAwaitingTriageLabel(); got != "hive/awaiting-triage" {
-		t.Errorf("default awaiting triage label = %q", got)
+	if got := r.EffectiveAwaitingLabel(); got != "needs-triage" {
+		t.Errorf("default awaiting label = %q", got)
 	}
 	if !r.CommentOn() {
 		t.Error("reporter-trust wait comments must default on")
@@ -133,8 +133,9 @@ func TestValidateReporterTrust(t *testing.T) {
 	if err := ValidateReporterTrust(ReporterTrustConfig{UntrustedRequireLabels: []string{" "}}); err == nil {
 		t.Error("a blank triage label must be rejected")
 	}
-	if err := ValidateReporterTrust(ReporterTrustConfig{AwaitingTriageLabel: " "}); err == nil {
-		t.Error("a blank awaiting triage label must be rejected")
+	disabled := " "
+	if got := (ReporterTrustConfig{AwaitingLabel: &disabled}).EffectiveAwaitingLabel(); got != "" {
+		t.Errorf("blank awaiting label should disable labeling, got %q", got)
 	}
 }
 

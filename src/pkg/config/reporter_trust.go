@@ -44,13 +44,10 @@ type ReporterTrustConfig struct {
 	// DefaultUntrustedRequireLabels. Exact, case-insensitive match, for the
 	// same over-admission reason IssueFilterConfig gives.
 	UntrustedRequireLabels []string `yaml:"untrusted_require_labels,omitempty" json:"untrusted_require_labels,omitempty"`
-	// AwaitingTriageLabel is applied to human-filed issues held out by this
-	// gate, so the wait is visible in the tracker and dashboard. Empty uses
-	// DefaultAwaitingTriageLabel.
-	AwaitingTriageLabel string `yaml:"awaiting_triage_label,omitempty" json:"awaiting_triage_label,omitempty"`
-	// AwaitingTriageLabelEnabled controls whether Hive applies/removes the
-	// awaiting label. nil defaults on.
-	AwaitingTriageLabelEnabled *bool `yaml:"awaiting_triage_label_enabled,omitempty" json:"awaiting_triage_label_enabled,omitempty"`
+	// AwaitingLabel is applied to human-filed issues held out by this gate, so
+	// the wait is visible in the tracker and dashboard. Empty disables the
+	// label; unset uses DefaultReporterTrustAwaitingLabel.
+	AwaitingLabel *string `yaml:"awaiting_label,omitempty" json:"awaiting_label,omitempty"`
 	// Comment controls the one-shot explanation comment on held-out issues.
 	// nil defaults on.
 	Comment *bool `yaml:"comment,omitempty" json:"comment,omitempty"`
@@ -93,9 +90,9 @@ var DefaultTrustedAssociations = []string{
 // issue must carry when the operator has not named their own.
 var DefaultUntrustedRequireLabels = []string{"triage/accepted"}
 
-// DefaultAwaitingTriageLabel marks issues waiting for a maintainer to admit an
-// untrusted reporter's request into the automated queue.
-const DefaultAwaitingTriageLabel = "hive/awaiting-triage"
+// DefaultReporterTrustAwaitingLabel marks issues waiting for a maintainer to
+// admit an untrusted reporter's request into the automated queue.
+const DefaultReporterTrustAwaitingLabel = "needs-triage"
 
 // IsEnabled reports whether the reporter gate is on.
 func (r ReporterTrustConfig) IsEnabled() bool {
@@ -119,22 +116,13 @@ func (r ReporterTrustConfig) EffectiveUntrustedRequireLabels() []string {
 	return append([]string(nil), r.UntrustedRequireLabels...)
 }
 
-// AwaitingTriageLabelOn reports whether Hive should apply/remove the visible
-// waiting-for-triage label. The default is on.
-func (r ReporterTrustConfig) AwaitingTriageLabelOn() bool {
-	return r.AwaitingTriageLabelEnabled == nil || *r.AwaitingTriageLabelEnabled
-}
-
-// EffectiveAwaitingTriageLabel returns the configured waiting label or the
-// default. It returns "" when the label is disabled.
-func (r ReporterTrustConfig) EffectiveAwaitingTriageLabel() string {
-	if !r.AwaitingTriageLabelOn() {
-		return ""
+// EffectiveAwaitingLabel returns the configured waiting label, the default, or
+// "" when the label has been explicitly disabled.
+func (r ReporterTrustConfig) EffectiveAwaitingLabel() string {
+	if r.AwaitingLabel != nil {
+		return strings.TrimSpace(*r.AwaitingLabel)
 	}
-	if label := strings.TrimSpace(r.AwaitingTriageLabel); label != "" {
-		return label
-	}
-	return DefaultAwaitingTriageLabel
+	return DefaultReporterTrustAwaitingLabel
 }
 
 // CommentOn reports whether Hive should post the one-shot reporter-trust wait
@@ -178,15 +166,14 @@ func (r ReporterTrustConfig) Equal(o ReporterTrustConfig) bool {
 	return equalStringSlices(r.TrustedAssociations, o.TrustedAssociations) &&
 		equalStringSlices(r.TrustedLogins, o.TrustedLogins) &&
 		equalStringSlices(r.UntrustedRequireLabels, o.UntrustedRequireLabels) &&
-		r.AwaitingTriageLabel == o.AwaitingTriageLabel &&
-		boolPtrEqual(r.AwaitingTriageLabelEnabled, o.AwaitingTriageLabelEnabled) &&
+		stringPtrEqual(r.AwaitingLabel, o.AwaitingLabel) &&
 		boolPtrEqual(r.Comment, o.Comment)
 }
 
 // IsZero reports whether the block is entirely absent.
 func (r ReporterTrustConfig) IsZero() bool {
 	return r.Enabled == nil && len(r.TrustedAssociations) == 0 && len(r.TrustedLogins) == 0 && len(r.UntrustedRequireLabels) == 0 &&
-		strings.TrimSpace(r.AwaitingTriageLabel) == "" && r.AwaitingTriageLabelEnabled == nil && r.Comment == nil
+		r.AwaitingLabel == nil && r.Comment == nil
 }
 
 // ValidateReporterTrust rejects association names GitHub never reports, so a
@@ -210,10 +197,17 @@ func ValidateReporterTrust(r ReporterTrustConfig) error {
 			return fmt.Errorf("reporter_trust.untrusted_require_labels: empty label")
 		}
 	}
-	if strings.TrimSpace(r.AwaitingTriageLabel) == "" && r.AwaitingTriageLabel != "" {
-		return fmt.Errorf("reporter_trust.awaiting_triage_label: empty label")
-	}
 	return nil
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil {
+		return true
+	}
+	return *a == *b
 }
 
 func boolPtrEqual(a, b *bool) bool {

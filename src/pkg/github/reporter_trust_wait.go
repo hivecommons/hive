@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -11,8 +12,11 @@ import (
 
 const reporterTrustWaitMarkerPrefix = "<!-- hive:reporter-trust-wait "
 
-func reporterTrustWaitMarker(repo string) string {
-	return fmt.Sprintf("%srepo=%s -->", reporterTrustWaitMarkerPrefix, repo)
+func reporterTrustWaitMarker(repo, addedLabel string) string {
+	if strings.TrimSpace(addedLabel) == "" {
+		return fmt.Sprintf("%srepo=%s -->", reporterTrustWaitMarkerPrefix, repo)
+	}
+	return fmt.Sprintf("%srepo=%s added-label=%s -->", reporterTrustWaitMarkerPrefix, repo, url.QueryEscape(strings.TrimSpace(addedLabel)))
 }
 
 func reporterTrustRequiredLabelsForNotice(ra ReporterAdmitter) []string {
@@ -35,9 +39,9 @@ func reporterTrustTrustedAssociationsForNotice(ra ReporterAdmitter) []string {
 
 func reporterTrustAwaitingLabel(ra ReporterAdmitter) string {
 	if nc, ok := ra.(ReporterTrustNoticeConfig); ok {
-		return strings.TrimSpace(nc.ReporterTrustAwaitingTriageLabel())
+		return strings.TrimSpace(nc.ReporterTrustAwaitingLabel())
 	}
-	return "hive/awaiting-triage"
+	return "needs-triage"
 }
 
 func reporterTrustCommentEnabled(ra ReporterAdmitter) bool {
@@ -57,7 +61,7 @@ func trimNonEmpty(in []string) []string {
 	return out
 }
 
-func reporterTrustWaitComment(repo string, ra ReporterAdmitter) string {
+func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) string {
 	trusted := strings.Join(reporterTrustTrustedAssociationsForNotice(ra), ", ")
 	required := reporterTrustRequiredLabelsForNotice(ra)
 	labelText := "the label `" + required[0] + "`"
@@ -68,7 +72,7 @@ func reporterTrustWaitComment(repo string, ra ReporterAdmitter) string {
 		}
 		labelText = "one of the labels " + strings.Join(quoted, ", ")
 	}
-	return reporterTrustWaitMarker(repo) + "\n" +
+	return reporterTrustWaitMarker(repo, addedLabel) + "\n" +
 		"Thanks — this hive only works issues from " + trusted + " automatically. " +
 		"A maintainer can admit this one by adding " + labelText + " (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
 		"Until then the hive will not claim, label, or open PRs for it."
@@ -76,27 +80,36 @@ func reporterTrustWaitComment(repo string, ra ReporterAdmitter) string {
 
 func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter) {
 	number := issue.GetNumber()
-	if reporterTrustCommentEnabled(ra) {
-		marker := reporterTrustWaitMarker(repo)
-		seen, err := c.IssueCommentsContain(ctx, repo, number, marker)
-		if err != nil {
-			c.warnReporterTrustWait("comment scan failed", repo, number, err)
-		} else if !seen {
-			if err := c.CreateIssueComment(ctx, repo, number, reporterTrustWaitComment(repo, ra)); err != nil {
-				c.warnReporterTrustWait("comment post failed", repo, number, err)
-			}
+	if !reporterTrustCommentEnabled(ra) {
+		return
+	}
+	comments, err := c.reporterTrustWaitComments(ctx, repo, number)
+	if err != nil {
+		c.warnReporterTrustWait("comment scan failed", repo, number, err)
+		return
+	}
+	if len(comments) > 0 {
+		return
+	}
+
+	label := reporterTrustAwaitingLabel(ra)
+	addedLabel := ""
+	if label != "" && !hasExactLabel(labels, label) {
+		if err := c.EnsureIssueLabel(ctx, repo, label, "ededed", "Awaiting maintainer triage before the hive works it"); err != nil {
+			c.warnReporterTrustWait("label ensure failed", repo, number, err)
+		} else if err := c.AddLabels(ctx, repo, number, []string{label}); err != nil {
+			c.warnReporterTrustWait("label add failed", repo, number, err)
+		} else {
+			addedLabel = label
 		}
 	}
-	label := reporterTrustAwaitingLabel(ra)
-	if label == "" || hasExactLabel(labels, label) {
-		return
-	}
-	if err := c.EnsureIssueLabel(ctx, repo, label, "d4c5f9", "Waiting for maintainer triage before Hive works this reporter's issue"); err != nil {
-		c.warnReporterTrustWait("label ensure failed", repo, number, err)
-		return
-	}
-	if err := c.AddLabels(ctx, repo, number, []string{label}); err != nil {
-		c.warnReporterTrustWait("label add failed", repo, number, err)
+	if err := c.CreateIssueComment(ctx, repo, number, reporterTrustWaitComment(repo, addedLabel, ra)); err != nil {
+		c.warnReporterTrustWait("comment post failed", repo, number, err)
+		if addedLabel != "" {
+			if removeErr := c.RemoveLabel(ctx, repo, number, addedLabel); removeErr != nil {
+				c.warnReporterTrustWait("label cleanup failed", repo, number, removeErr)
+			}
+		}
 	}
 }
 
@@ -105,11 +118,70 @@ func (c *Client) clearReporterTrustAwaiting(ctx context.Context, repo string, is
 	if label == "" || !hasExactLabel(labels, label) {
 		return labels
 	}
+	comments, err := c.reporterTrustWaitComments(ctx, repo, issue.GetNumber())
+	if err != nil {
+		c.warnReporterTrustWait("comment scan failed", repo, issue.GetNumber(), err)
+		return labels
+	}
+	if !reporterTrustWaitMarkedAdded(comments, label) {
+		return labels
+	}
 	if err := c.RemoveLabel(ctx, repo, issue.GetNumber(), label); err != nil {
 		c.warnReporterTrustWait("label remove failed", repo, issue.GetNumber(), err)
 		return labels
 	}
 	return withoutExactLabel(labels, label)
+}
+
+func (c *Client) reporterTrustWaitComments(ctx context.Context, repo string, number int) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	var out []string
+	for {
+		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repoName, number, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, comment := range comments {
+			body := comment.GetBody()
+			if strings.Contains(body, reporterTrustWaitMarkerPrefix) {
+				out = append(out, body)
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return out, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+func reporterTrustWaitMarkedAdded(comments []string, label string) bool {
+	want := strings.TrimSpace(label)
+	for _, body := range comments {
+		start := strings.Index(body, reporterTrustWaitMarkerPrefix)
+		if start < 0 {
+			continue
+		}
+		rest := body[start+len(reporterTrustWaitMarkerPrefix):]
+		end := strings.Index(rest, "-->")
+		if end < 0 {
+			continue
+		}
+		for _, field := range strings.Fields(rest[:end]) {
+			raw, ok := strings.CutPrefix(field, "added-label=")
+			if !ok {
+				continue
+			}
+			got, err := url.QueryUnescape(raw)
+			if err == nil && strings.EqualFold(strings.TrimSpace(got), want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) warnReporterTrustWait(msg, repo string, number int, err error) {

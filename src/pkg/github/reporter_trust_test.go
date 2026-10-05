@@ -254,10 +254,10 @@ func TestEnumerateActionable_ReporterTrustWaitCommentAndLabel(t *testing.T) {
 	if got := len(h.comments); got != 1 {
 		t.Fatalf("comments = %d, want one reporter-trust wait comment", got)
 	}
-	if !strings.Contains(h.comments[0], reporterTrustWaitMarkerPrefix) || !strings.Contains(h.comments[0], "triage/accepted") {
+	if !strings.Contains(h.comments[0], reporterTrustWaitMarkerPrefix) || !strings.Contains(h.comments[0], "triage/accepted") || !strings.Contains(h.comments[0], "added-label=needs-triage") {
 		t.Fatalf("comment body missing marker/label: %q", h.comments[0])
 	}
-	if !h.labels["hive/awaiting-triage"] {
+	if !h.labels["needs-triage"] {
 		t.Fatalf("awaiting-triage label not applied: %#v", h.labels)
 	}
 
@@ -272,8 +272,9 @@ func TestEnumerateActionable_ReporterTrustWaitCommentAndLabel(t *testing.T) {
 func TestEnumerateActionable_ReporterTrustWaitClearsAfterTriage(t *testing.T) {
 	h := newReporterTrustWaitHarness(t, wireIssue{
 		Number: 102, Title: "stranger triaged", User: wireUser{"stranger"}, AuthorAssociation: "NONE",
-		Labels: []wireLabel{{Name: "hive/awaiting-triage"}, {Name: "triage/accepted"}}, CreatedAt: hoursAgo(1),
+		Labels: []wireLabel{{Name: "needs-triage"}, {Name: "triage/accepted"}}, CreatedAt: hoursAgo(1),
 	})
+	h.comments = []string{reporterTrustWaitComment(h.repo, "needs-triage", enabledReporterTrust())}
 	server := h.server()
 	t.Cleanup(server.Close)
 	c := newTestClient(t, server, h.org, []string{h.repo})
@@ -286,11 +287,44 @@ func TestEnumerateActionable_ReporterTrustWaitClearsAfterTriage(t *testing.T) {
 	if result.Issues.Count != 1 {
 		t.Fatalf("triaged issue count = %d, want 1", result.Issues.Count)
 	}
-	if h.labels["hive/awaiting-triage"] {
+	if h.labels["needs-triage"] {
 		t.Fatalf("awaiting label was not removed after triage: %#v", h.labels)
 	}
-	if got := len(h.comments); got != 0 {
-		t.Fatalf("triaged issue got wait comments: %d", got)
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("triaged issue should keep its existing wait comment only: %d", got)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitDoesNotClearHumanTriageLabel(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 104, Title: "stranger triaged elsewhere", User: wireUser{"stranger"}, AuthorAssociation: "NONE",
+		Labels: []wireLabel{{Name: "needs-triage"}, {Name: "triage/accepted"}}, CreatedAt: hoursAgo(1),
+	})
+	h.comments = []string{reporterTrustWaitComment(h.repo, "", enabledReporterTrust())}
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(enabledReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 {
+		t.Fatalf("triaged issue count = %d, want 1", result.Issues.Count)
+	}
+	if !h.labels["needs-triage"] {
+		t.Fatalf("human/bot-owned needs-triage label was removed: %#v", h.labels)
+	}
+}
+
+func TestReporterTrustWaitMarkedAddedExact(t *testing.T) {
+	comments := []string{reporterTrustWaitMarker("repo", "needs-triage-old")}
+	if reporterTrustWaitMarkedAdded(comments, "needs-triage") {
+		t.Fatal("prefix match must not prove Hive added the current waiting label")
+	}
+	if !reporterTrustWaitMarkedAdded(comments, "needs-triage-old") {
+		t.Fatal("exact added-label marker was not recognized")
 	}
 }
 
@@ -310,7 +344,7 @@ func TestEnumerateActionable_ReporterTrustWaitTrustedReporterNoop(t *testing.T) 
 	if result.Issues.Count != 1 {
 		t.Fatalf("trusted issue count = %d, want 1", result.Issues.Count)
 	}
-	if len(h.comments) != 0 || h.labels["hive/awaiting-triage"] {
+	if len(h.comments) != 0 || h.labels["needs-triage"] {
 		t.Fatalf("trusted reporter should not be marked: comments=%d labels=%#v", len(h.comments), h.labels)
 	}
 }
