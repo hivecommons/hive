@@ -965,7 +965,7 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
    instead of stretching the page; the panel scrolls, the page does not. */
-.cc-queue{max-height:560px;overflow-y:auto}
+.cc-queue-scroll{max-height:560px;overflow-y:auto}
 /* The enter animation is OPT-IN via .cc-q-enter (added only to genuinely-new rows),
    NOT baked into .cc-q-item — otherwise every poll re-render replayed cc-popin on
    every row and the whole queue "blinked". Mirrors .clanker-row.cc-enter above. */
@@ -1102,7 +1102,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-menu-btn{line-height:1}
 .cc-q-menu{position:fixed;top:0;left:0;right:auto;bottom:auto;z-index:10002;min-width:190px;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:var(--sp-3);display:none}
 .cc-q-menu.open{display:block}
-/* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue overflow
+/* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue-scroll overflow
    clip; ccBindQueueMenus measures the trigger and flips/clamps inside the viewport
    (and visible queue panel) before paint. */
 .cc-q-menu button.cc-q-act{justify-content:flex-start;width:100%%}
@@ -2369,11 +2369,13 @@ It clears automatically when the period elapses. An operator can shorten or disa
     <button class="hv-btn btn-primary" type="button" id="cc-interests-add-btn">Add</button>
   </div>
 </div>
+<div class="cc-queue-scroll">
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
 <!-- End-of-queue block (#2595): a calm "all caught up" marker + the hive's managed
      rate-limit settings + the viewer's daily quota. Rendered by ccRenderQueueEnd()
      only when the FULL queue is shown (no active filter). Hidden until hydrated. -->
 <div id="cc-q-end" style="display:none"></div>
+</div>
 <!-- Withheld (#6902): the candidates Hive knows about and is NOT offering, with
      the reason the admission ladder recorded when it refused them. Collapsed by
      default and fetched only on first expand (?withheld=1), so the normal ready
@@ -4340,7 +4342,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 // ccPlaceFixedPopover places an already-visible popover/menu using viewport
 // coordinates so it is not clipped by card/queue overflow. It prefers below the
 // trigger, flips above when needed, and clamps inside the viewport plus an optional
-// boundary element (for example the visible .cc-queue panel).
+// boundary element (for example the visible .cc-queue-scroll panel).
 function ccPlaceFixedPopover(anchor,pop,opts){
   opts=opts||{};
   var edge=opts.edge||8,gap=opts.gap||8;
@@ -6258,10 +6260,10 @@ function ccBindQueueMenus(root){
       ccCloseQueueMenus();
       if(!isOpen){
         // Position with viewport coordinates BEFORE it paints so the menu escapes
-        // the scrolling .cc-queue overflow clip and flips/clamps when near the
+        // the scrolling .cc-queue-scroll overflow clip and flips/clamps when near the
         // viewport or visible queue-panel bottom.
         menu.classList.add('open');
-        ccPlaceFixedPopover(btn,menu,{align:'right',gap:6,fallbackWidth:220,fallbackHeight:220,boundary:btn.closest('.cc-queue')});
+        ccPlaceFixedPopover(btn,menu,{align:'right',gap:6,fallbackWidth:220,fallbackHeight:220,boundary:btn.closest('.cc-queue-scroll')});
         btn.setAttribute('aria-expanded','true');
       }
     });
