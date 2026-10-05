@@ -13,6 +13,7 @@ type RepoPolicy struct {
 	SelfAuthorizationHold *bool                `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
 	ReporterTrustHold     *bool                `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
 	AutoMerge             *bool                `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	LabelDriven           bool                 `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
 	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
 	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
 	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
@@ -59,6 +60,16 @@ func (c *Config) EffectiveACMMLevelForRepo(repo string) int {
 		return hive
 	}
 	return hive
+}
+
+// RepoLabelDriven reports whether repo opted in to label-driven triage
+// (hivecommons/hive#10537): maintainers accept and park issues with labels, so
+// Hive posts no un-park "What to reply" notice there and never removes
+// `needs-human` / `needs-decision` / `needs-direction` itself, including via
+// `/hive approve` or `/hive decision`. Unset means today's behavior.
+func (c *Config) RepoLabelDriven(repo string) bool {
+	rp, ok := c.RepoPolicyFor(repo)
+	return ok && rp.LabelDriven
 }
 
 func (c *Config) RepoACMMPinned(repo string) bool {
@@ -240,7 +251,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven
 }
 
 // ReporterTrustHoldEnabledForRepo resolves the #9665 reporter-trust hold for
