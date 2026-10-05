@@ -767,6 +767,7 @@ type FrontendActionableNow struct {
 	Equation      *FrontendActionableEquation `json:"equation,omitempty"`
 	IssueEquation *FrontendActionableEquation `json:"issueEquation,omitempty"`
 	PREquation    *FrontendActionableEquation `json:"prEquation,omitempty"`
+	Outside       *FrontendActionableOutside  `json:"outside,omitempty"`
 }
 
 type FrontendActionableEquation struct {
@@ -782,9 +783,28 @@ type FrontendActionableEquation struct {
 }
 
 type FrontendActionableEquationTerm struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	Count int    `json:"count"`
+	Key       string                            `json:"key"`
+	Label     string                            `json:"label"`
+	Count     int                               `json:"count"`
+	Breakdown []FrontendActionableBreakdownTerm `json:"breakdown,omitempty"`
+	Rule      string                            `json:"rule,omitempty"`
+}
+
+type FrontendActionableOutside struct {
+	Count     int                               `json:"count"`
+	Breakdown []FrontendActionableBreakdownTerm `json:"breakdown"`
+}
+
+type FrontendActionableBreakdownTerm struct {
+	Key          string `json:"key"`
+	Label        string `json:"label"`
+	Count        int    `json:"count"`
+	Rule         string `json:"rule"`
+	SettingPath  string `json:"settingPath"`
+	SettingValue string `json:"settingValue"`
+	HowToChange  string `json:"howToChange"`
+	SettingsTab  string `json:"settingsTab,omitempty"`
+	DocsHref     string `json:"docsHref,omitempty"`
 }
 
 type FrontendGovernor struct {

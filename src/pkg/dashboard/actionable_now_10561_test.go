@@ -47,7 +47,8 @@ func TestOverviewAndGovernorBindSharedActionableNowField10561(t *testing.T) {
 		"sharedActionable.prs",
 		"sharedActionable.issueEquation",
 		"sharedActionable.prEquation",
-		"issueEquationText ? `<div class=\"overview-kpi-subline\">${escapeHtml(issueEquationText)}</div>` : ''",
+		"const issueEquationHTML = issueEquationText ? renderActionableEquationSubline(issueEquation) : '';",
+		"issueEquationHTML ? `<div class=\"overview-kpi-subline\">${issueEquationHTML}</div>` : ''",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("dashboard missing shared actionable binding %q", want)

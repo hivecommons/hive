@@ -128,7 +128,8 @@ function overviewItemAgeMinutes(){ return NaN; }
 		"overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewFilterRepos",
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
 		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
-		"overviewKPITerm", "overviewKPIEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
+		"overviewKPITerm", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
+		"overviewKPIEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')

@@ -2788,7 +2788,9 @@
       box-shadow: 0 4px 12px rgba(0,0,0,0.4); line-height: 1.4;
       pointer-events: none;
     }
-    .config-info:hover .config-tooltip { display: block; }
+    .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
+    .overview-partition-tooltip { width: min(46rem, calc(100vw - var(--sp-8))); pointer-events: auto; }
+    .overview-partition-tooltip .muted { opacity: .58; }
 
     .config-list { margin-bottom: 14px; }
     /* Role pills for the Security tab Access subsection (read-only authorized-users view). */
@@ -11476,6 +11478,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prEquation = sharedActionable.prEquation || fallbackGovEquations.prEq;
       const issueEquationText = issueEquation?.text || '';
       const prEquationText = prEquation?.text || '';
+      const issueEquationHTML = issueEquationText ? renderActionableEquationSubline(issueEquation) : '';
+      const prEquationHTML = prEquationText ? renderActionableEquationSubline(prEquation) : '';
       const issueEquationTitle = issueEquation?.title || issueEquationText || 'ACTIONABLE ISSUES — issue work that can move without waiting.';
       const prEquationTitle = prEquation?.title || prEquationText || 'ACTIONABLE PRS — pull requests that can move without waiting.';
       const currentMode = gov.mode || 'idle';
@@ -11525,8 +11529,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="gov-grid sec-headline" data-collapsed-keep>
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: The mode comes from the governor's latest queue evaluation; the gauge uses the shared Overview Actionable now total so the Governor split and Overview KPI agree. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="${escapeHtml(issueEquationTitle)}"><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div>${issueEquationText ? `<div class="overview-kpi-subline">${escapeHtml(issueEquationText)}</div>` : ''}</div>
-          <div class="gov-stat" title="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationText ? `<div class="overview-kpi-subline">${escapeHtml(prEquationText)}</div>` : ''}</div>
+          <div class="gov-stat" aria-label="${escapeHtml(issueEquationTitle)}"><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div>${issueEquationHTML ? `<div class="overview-kpi-subline">${issueEquationHTML}</div>` : ''}</div>
+          <div class="gov-stat" aria-label="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationHTML ? `<div class="overview-kpi-subline">${prEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${(() => {
@@ -13625,6 +13629,54 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Number.isFinite(n) ? n : fallback;
     }
 
+    function overviewPartitionDocsLink(row) {
+      const href = row && row.docsHref;
+      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">docs ↗</a>` : '';
+    }
+
+    function overviewPartitionSettingsButton(row) {
+      const tab = row && row.settingsTab;
+      return tab ? ` <button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</button>` : '';
+    }
+
+    function overviewPartitionTooltip(term, context) {
+      const rows = Array.isArray(term?.breakdown) ? term.breakdown : [];
+      const body = rows.length ? rows.map(row => {
+        const zero = Number(row.count || 0) === 0 ? ' muted' : '';
+        const setting = row.settingPath ? ` — setting: <code>${esc(row.settingPath)}</code> = <code>${esc(row.settingValue || '')}</code>` : '';
+        const change = row.howToChange ? ` — change: ${esc(row.howToChange)}` : '';
+        return `<div class="${zero}">${esc(Number(row.count || 0))} · ${esc(row.label || row.key || '')} — ${esc(row.rule || '')}${setting}${change}${overviewPartitionSettingsButton(row)}${overviewPartitionDocsLink(row)}</div>`;
+      }).join('') : `<div>${esc(term?.rule || 'Server-side partition term.')}</div>`;
+      const footer = (term?.key === 'outside')
+        ? '<div class="mt-2 text-muted">These items are not actionable because this hive&apos;s filters exclude them; adjust the settings above to change what counts.</div>'
+        : '';
+      return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip">${body}${footer}</span>`;
+    }
+
+    function overviewPartitionInfo(term, context) {
+      if (!term || (!term.rule && !(term.breakdown || []).length)) return '';
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="${esc(context)}-tip" aria-label="${esc((term.label || term.key) + ' details')}">ⓘ${overviewPartitionTooltip(term, context)}</span>`;
+    }
+
+    function overviewActionableTermHTML(term, context) {
+      const text = `${Number(term?.count || 0)} ${term?.label || ''}`;
+      if (!term || !['outside', 'held', 'blocked_needs_human'].includes(term.key)) return esc(text);
+      return `<span class="overview-equation-term overview-equation-term-${esc(term.key)}">${esc(text)}${overviewPartitionInfo(term, context)}</span>`;
+    }
+
+    function renderActionableEquationSubline(equation) {
+      if (!equation || !Array.isArray(equation.terms)) return esc(equation?.text || '');
+      const contextBase = `overview-partition-${esc(equation.kind || 'combined')}`;
+      if (equation.open !== undefined && equation.kind) {
+        const terms = equation.terms.filter(t => Number(t?.count || 0) > 0).map((t, i) => `− ${overviewActionableTermHTML(t, contextBase + '-' + esc(t.key || i))}`).join(' ');
+        return `${esc(String(Number(equation.open || 0)))} open${terms ? ' ' + terms : ''} = ${esc(String(Number(equation.result || 0)))}`;
+      }
+      const terms = equation.terms.filter(t => Number(t?.count || 0) > 0).map((t, i) => overviewActionableTermHTML(t, contextBase + '-' + esc(t.key || i))).join(' + ');
+      const openIssues = Number(equation.openIssues ?? 0);
+      const openPRs = Number(equation.openPrs ?? equation.openPRs ?? 0);
+      return `${esc(String(openIssues))} issues + ${esc(String(openPRs))} PRs = ${terms || '0 actionable'}`;
+    }
+
     function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
       const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
       const draft = (prSlices || []).filter(s => s.key === 'draft').reduce((n, s) => n + Number(s.count || 0), 0);
@@ -13698,12 +13750,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const held = overviewKPITerm(equation, 'held', computedHeld);
       const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
       const equationText = equation?.text || '';
+      const equationHTML = equationText ? renderActionableEquationSubline(equation) : '';
       const equationTitle = equation?.title || equationText || 'Items in bands that can move without waiting.';
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
         { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos.' },
         { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts.' },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationText },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationHTML },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' }
       ];
@@ -13712,8 +13765,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
-        const subline = card.subline ? `<span class="overview-kpi-subline">${esc(card.subline)}</span>` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
+        const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
+        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
       }).join('')}</div></div>`;
     }
 
@@ -23429,20 +23482,24 @@ function burnAreaChart() {
         .replace(/\r/g, '');
     }
 
-    document.addEventListener('mouseover', (e) => {
-      const info = e.target.closest('.config-info');
+    function positionConfigTooltip(info) {
       if (!info) return;
       const tip = info.querySelector('.config-tooltip');
       if (!tip) return;
       const rect = info.getBoundingClientRect();
-      const tipW = 240;
+      const tipW = tip.offsetWidth || 240;
       let left = rect.left + rect.width / 2 - tipW / 2;
       const EDGE_PAD = 8;
       if (left < EDGE_PAD) left = EDGE_PAD;
       if (left + tipW > window.innerWidth - EDGE_PAD) left = window.innerWidth - EDGE_PAD - tipW;
       tip.style.top = (rect.bottom + 6) + 'px';
       tip.style.left = left + 'px';
+    }
+    document.addEventListener('mouseover', (e) => {
+      const info = e.target.closest('.config-info');
+      positionConfigTooltip(info);
     });
+    document.addEventListener('focusin', (e) => positionConfigTooltip(e.target.closest('.config-info')));
 
     // ── Event delegation for actions with user-controlled data ──
     // Eliminates XSS via inline data-action="func" data-arg0="${unsafeValue}" injection.
