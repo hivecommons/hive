@@ -1133,7 +1133,7 @@ jobs:
   # line docker.yml builds and publishes them anyway.
   docker:
     name: docker (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1195,7 +1195,9 @@ jobs:
   # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
   # binary EPERMs here and the PR is blocked.
   overlayfs-exec-guard:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    # Hosted on purpose: this asserts GitHub-hosted runner containerd/overlayfs
+    # semantics (systemd-managed containerd plus the default overlayfs snapshotter).
+    runs-on: ubuntu-latest
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
