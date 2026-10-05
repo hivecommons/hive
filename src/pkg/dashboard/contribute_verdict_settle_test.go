@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -271,10 +270,6 @@ func TestAlreadyDoneVerdict8477_ParseStructuredAndRegex(t *testing.T) {
 
 func TestAlreadyDoneVerdict8477_VerifiedClosePath(t *testing.T) {
 	hub, s := covK2Hub(t)
-	level := config.SelfMergeMinACMMLevel
-	s.deps.Config.ACMMLevel = &level
-	enabled := true
-	s.deps.Config.Hub.ContributeCloseAlreadyDone = &enabled
 	fx := &settleFixture{}
 	s.deps.RecordIssueClaim = fx.record
 	mergedAt := time.Now().Add(-time.Hour)
@@ -284,9 +279,6 @@ func TestAlreadyDoneVerdict8477_VerifiedClosePath(t *testing.T) {
 			PRAuthor: "dev", MergedPR: true, MergedAt: mergedAt,
 		}},
 	}, nil)
-	hub.prClosingVerifier = func(_ context.Context, repo string, prNumber, issueNumber int) (bool, error) {
-		return repo == "o/r" && prNumber == 41 && issueNumber == 7, nil
-	}
 	var closedRepo, closedReporter string
 	var closedNumber int
 	hub.alreadyDoneMarker = func(_ context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {
@@ -310,6 +302,29 @@ func TestAlreadyDoneVerdict8477_VerifiedClosePath(t *testing.T) {
 	}
 	if len(fx.recorded) != 1 || fx.recorded[0].Source != ghpkg.ClaimSourceVerdict {
 		t.Fatalf("verified already-done must still record claim: %+v", fx.recorded)
+	}
+}
+
+func TestAlreadyDoneVerdict8477_ReporterGateLeavesLabeled(t *testing.T) {
+	hub, s := covK2Hub(t)
+	fx := &settleFixture{}
+	s.deps.RecordIssueClaim = fx.record
+	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
+		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", MergedPR: true}},
+	}, nil)
+	var closeRequested bool
+	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
+		closeRequested = true
+		return ghpkg.ErrReporterConfirmationRequired
+	}
+
+	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "merged PR #41 already resolves this", "", nil, time.Now(), "ct")
+
+	if got != verdictDispositionAlreadyDoneLabeled {
+		t.Fatalf("disposition = %q, want labeled", got)
+	}
+	if !closeRequested {
+		t.Fatal("verified already-done merged PR must try the close path")
 	}
 }
 
@@ -340,22 +355,20 @@ func TestAlreadyDoneVerdict8477_UnverifiedSuppressesLonger(t *testing.T) {
 	}
 }
 
-func TestAlreadyDoneVerdict8477_ACMMGatePreventsCloseButRecords(t *testing.T) {
+func TestAlreadyDoneVerdict8477_OpenPRDoesNotCloseButRecords(t *testing.T) {
 	hub, s := covK2Hub(t)
-	level := config.SelfMergeMinACMMLevel - 1
-	s.deps.Config.ACMMLevel = &level
 	fx := &settleFixture{}
 	s.deps.RecordIssueClaim = fx.record
 	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
-		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", MergedPR: true}},
+		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", Reference: true, ExternalAuthor: true}},
 	}, nil)
 	var pendingLabel bool
 	hub.issuePRClaimMarker = func(_ context.Context, _ string, _ int, claim ghpkg.IssueClaim) error {
-		pendingLabel = claim.MergedPR
+		pendingLabel = claim.Reference
 		return nil
 	}
 	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
-		t.Fatal("merged PR without a closing relationship must not be marked already-done")
+		t.Fatal("open PR evidence must not close as already-done")
 		return nil
 	}
 
@@ -365,35 +378,9 @@ func TestAlreadyDoneVerdict8477_ACMMGatePreventsCloseButRecords(t *testing.T) {
 		t.Fatalf("disposition = %q, want verified pending", got)
 	}
 	if !pendingLabel {
-		t.Fatal("verified merged claim must get the pending likely-done label")
+		t.Fatal("verified open claim must get the pending covered-by-pr label")
 	}
 	if len(fx.recorded) != 1 {
 		t.Fatalf("verified claim should still be recorded: %+v", fx.recorded)
-	}
-}
-
-func TestAlreadyDoneVerdict8477_DefaultDoesNotClose(t *testing.T) {
-	hub, s := covK2Hub(t)
-	level := config.SelfMergeMinACMMLevel
-	s.deps.Config.ACMMLevel = &level
-	fx := &settleFixture{}
-	s.deps.RecordIssueClaim = fx.record
-	hub.settleVerifier = fx.verifier(map[string]ghpkg.SettleVerification{
-		"o/r#41": {Settled: true, Claim: ghpkg.IssueClaim{PRNumber: 41, PRRepo: "o/r", MergedPR: true}},
-	}, nil)
-	var pendingLabel bool
-	hub.issuePRClaimMarker = func(_ context.Context, _ string, _ int, claim ghpkg.IssueClaim) error {
-		pendingLabel = claim.MergedPR
-		return nil
-	}
-	hub.alreadyDoneMarker = func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error {
-		t.Fatal("default path must not mark already-done without GitHub closing relationship")
-		return nil
-	}
-
-	got := hub.settleIssueFromVerdictWithEvidence("o/r", 7, "merged PR #41 already resolves this", "", nil, time.Now(), "ct")
-
-	if got != verdictDispositionAlreadyDoneVerified || !pendingLabel {
-		t.Fatalf("disposition=%q pendingLabel=%v, want verified pending default path", got, pendingLabel)
 	}
 }

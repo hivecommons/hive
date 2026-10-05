@@ -758,9 +758,9 @@ dashboard:
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Contributor queue: "already done" no_work_needed verdicts are commented
 #   # and labeled so the issue stays out of re-offer until a maintainer removes
-#   # the label. Verified evidence can optionally be auto-closed when ACMM permits.
+#   # the label. Verified merged-PR evidence runs the normal completed close path.
 #   contribute_already_done_label: hive/already-done
-#   contribute_close_already_done: false
+#   contribute_close_already_done: false  # deprecated compatibility key
 #   contribute_already_done_hold_days: 30
 #
 # hive_id: my-hive
