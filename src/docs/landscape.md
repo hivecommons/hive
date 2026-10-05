@@ -118,6 +118,41 @@ for gaps and intentional divergences, the existing
 [Linear work source](work-sources.md), and
 [work-source provider contract](integrations/work-source-providers.md).
 
+## GitHub Agentic Workflows (gh-aw)
+
+Public references: [github/gh-aw](https://github.com/github/gh-aw),
+[gh-aw documentation](https://github.github.com/gh-aw/), and the
+[githubnext/agentics sample gallery](https://github.com/githubnext/agentics).
+
+GitHub Agentic Workflows compiles Markdown-authored agent instructions and
+frontmatter into GitHub Actions workflows. It is an Actions-native on-ramp,
+not a replacement for Hive's fleet scheduler. Its engines include Copilot,
+Claude, Codex, and Gemini; shared engine names do not imply shared credentials,
+confinement, or Hive backend-tier acceptance.
+
+| Dimension | gh-aw | Hive |
+| --- | --- | --- |
+| Execution substrate | Event, dispatch, and scheduled GitHub Actions runs | Long-running fleet with queue-depth cadence and convergence audits |
+| Authoring | Markdown prompt plus workflow frontmatter compiled to Actions | Project config, deterministic pipeline, and agent policies |
+| Judgment and policy | Engine judgment with declared tools, permissions, and safe outputs | Deterministic filtering/classification before judgment and gated merge authority afterward |
+| Operations | Per-workflow Actions logs and artifacts | Live dashboard, budgets, hub/spoke, and contributor compute |
+| Best starting point | A repo already using Actions that wants bounded agentic jobs | Operators coordinating continuous work across agents and repositories |
+
+Our [Hive workflow sample and installation guide](../deploy/gh-aw/README.md)
+provides manually dispatched **report-only issue triage**. A deterministic
+pre-agent admission step filters held/blocked issues, then runs Hive's existing
+classifier before the configured engine produces an advisory report. It does
+not give the engine merge authority or reproduce the whole production pipeline.
+Keep existing gh-aw workflows when adopting Hive: add the relay/fleet for the
+queues and stages requiring continuous operation, rather than rewriting those
+workflows or letting both systems claim the same tasks.
+
+The inverse path (Hive dispatching gh-aw as an external host through
+`pkg/extwork`) is **not implemented**. A future adapter is bounded to report-only
+and shadow modes, with the same credential, capability, and verified-receipt
+admission bar as external OMP; see
+[backend support tiers](backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend).
+
 ## Single-agent and service-oriented tools
 
 ### GitHub Copilot coding agent
@@ -148,6 +183,8 @@ multi-agent fleet operation.
 
 ## When to choose what
 
+- Choose **gh-aw** when you want Markdown-authored, bounded agentic Actions
+  jobs in an existing repository without running a standing fleet.
 - Choose **GitHub Copilot coding agent** when you need the quickest hosted path
   for GitHub issues and do not need a separate fleet governor or custom policy
   plane.
