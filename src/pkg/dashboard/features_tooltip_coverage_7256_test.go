@@ -187,7 +187,7 @@ func TestIssueClaimsFeatureTooltip(t *testing.T) {
 	tooltip := controlTooltip(t, body, "Issue claims")
 	for _, want := range []string{
 		"OFF by default",
-		"hive-claim marker comment",
+		"hive:claim marker comment",
 		"expire on their own",
 		"tiers that may write issue comments",
 		"src/docs/contributor-relay.md",

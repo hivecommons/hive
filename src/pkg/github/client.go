@@ -488,7 +488,7 @@ type Issue struct {
 	// but do not by themselves remove the issue from the actionable set.
 	LinkedPRs []IssueLinkedPR `json:"linked_prs,omitempty"`
 	// ClaimedBy / ClaimExpiresAt / ClaimSource carry a LIVE issue claim
-	// (hivecommons/hive#8380) read at enumeration time: a `hive-claim` marker
+	// (hivecommons/hive#8380) read at enumeration time: a `hive:claim` marker
 	// comment, or an assignee. All three are set together and only while
 	// governor.claims.enabled is on, so a hive with claims off emits an
 	// envelope byte-for-byte identical to before. ClaimSource is

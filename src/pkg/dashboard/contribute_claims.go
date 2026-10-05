@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -29,6 +30,14 @@ import (
 // task_assign is what the relay is waiting for. Same bound as the plan mirror.
 const claimCommentTimeout = 15 * time.Second
 
+type claimLabeler interface {
+	AddLabels(ctx context.Context, repo string, number int, labels []string) error
+}
+
+type claimLabelRemover interface {
+	RemoveLabel(ctx context.Context, repo string, number int, label string) error
+}
+
 // claimsEnabled reports governor.claims.enabled for this hub.
 func (h *ContributeWSHub) claimsEnabled() bool {
 	return h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil &&
@@ -41,6 +50,16 @@ func (h *ContributeWSHub) claimTTL() time.Duration {
 		return ghpkg.IssueClaimDefaultTTL
 	}
 	return h.server.deps.Config.Governor.Claims.EffectiveTTL()
+}
+
+func (h *ContributeWSHub) claimCommentsEnabled() bool {
+	return h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil ||
+		h.server.deps.Config.Governor.Claims.CommentEnabled()
+}
+
+func (h *ContributeWSHub) claimLabelsEnabled() bool {
+	return h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil ||
+		h.server.deps.Config.Governor.Claims.LabelEnabled()
 }
 
 // claimFromIssueMap reads the enumerator's claim fields off one actionable
@@ -112,6 +131,16 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 		ExpiresAt: now.Add(h.claimTTL()),
 		Source:    ghpkg.IssueClaimSourceLease,
 	}
+	if h.claimsLedger() != nil {
+		if h.claimCommentsEnabled() {
+			claim.Source = ghpkg.IssueClaimSourceMarker
+		}
+		h.setLeaseClaim(identityOf(c), taskID, claim, h.claimCommentsEnabled())
+		h.logger.Info("[contribute-ws] issue claim mirrored by ranked claim ledger",
+			"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number,
+			"claim_expires_at", claim.ExpiresAt.UTC().Format(time.RFC3339))
+		return claim, false
+	}
 	tier := ""
 	if c.profile != nil {
 		tier = c.profile.TrustTier
@@ -128,6 +157,12 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 		} else {
 			posted = true
 			claim.Source = ghpkg.IssueClaimSourceMarker
+			if labeler, ok := commenter.(claimLabeler); ok && h.claimLabelsEnabled() {
+				if err := labeler.AddLabels(postCtx, repoFull, number, []string{claims.LabelClaimed}); err != nil {
+					h.logger.Warn("[contribute-ws] issue claim label failed; comment remains authoritative",
+						"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number, "error", err)
+				}
+			}
 			h.logger.Info("[contribute-ws] issue claim posted",
 				"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number,
 				"claim_expires_at", claim.ExpiresAt.UTC().Format(time.RFC3339))
