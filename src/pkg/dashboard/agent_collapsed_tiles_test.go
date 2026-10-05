@@ -68,3 +68,37 @@ assert.equal(new Date(agentCollapsedParseNextKick('10/3 11:43 AM EDT', now)).get
 		t.Fatalf("agents collapsed tile sort helper failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
+
+func TestAgentsCollapsedTileCountdownAndUpNext(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		"agent-tile-upnext",
+		"agent-tile-cd",
+		"function agentCollapsedCountdownText(a, nextMs, nowMs)",
+		"function agentCollapsedTickCountdowns()",
+		"agentCollapsedTileHtml(a, nowMs, i === 0)",
+		"agentCollapsedTickCountdowns();",
+		"'logged out'",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("agents collapsed tile countdown contract missing %q", want)
+		}
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: countdown helper was not executed")
+	}
+	script := `const assert = require('node:assert/strict');
+function agentIsDisabled(a) { return !!a && a.enabled === false; }
+` + jsFunc(t, html, "agentCollapsedCountdownText") + `
+const now = 1000000;
+assert.equal(agentCollapsedCountdownText({}, now + 240000, now), 'in 4m');
+assert.equal(agentCollapsedCountdownText({}, now + 10000, now), 'now');
+assert.equal(agentCollapsedCountdownText({ busy: 'working' }, now + 900000, now), 'now');
+assert.equal(agentCollapsedCountdownText({}, null, now), '—');
+assert.equal(agentCollapsedCountdownText({ enabled: false }, now + 240000, now), '—');
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("countdown helper failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}

@@ -3297,6 +3297,9 @@
     .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-tile-name { font-weight: 800; color: var(--text); }
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
+    .agent-collapsed-tile.up-next { flex-basis: 128px; max-width: 140px; border-color: color-mix(in srgb, var(--blue) 60%, var(--line-subtle)); }
+    .agent-tile-flags { display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .agent-tile-upnext { font-size: 0.6rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--blue); white-space: nowrap; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-collapsed-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
@@ -5588,6 +5591,23 @@
       if (delta < 3600000) return `in ${Math.max(1, Math.round(delta / 60000))}m`;
       return 'next ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
+    function agentCollapsedCountdownText(a, nextMs, nowMs) {
+      if (!a || agentIsDisabled(a)) return '—';
+      if (a.busy === 'working') return 'now';
+      if (a.continuous === true) return 'continuous';
+      if (!Number.isFinite(nextMs)) return '—';
+      const delta = nextMs - (Number.isFinite(nowMs) ? nowMs : Date.now());
+      if (delta <= 30000) return 'now';
+      return `in ${Math.max(1, Math.round(delta / 60000))}m`;
+    }
+    function agentCollapsedTickCountdowns() {
+      const now = Date.now();
+      document.querySelectorAll('.agent-tile-cd[data-next-ms]').forEach(el => {
+        const ms = Number(el.dataset.nextMs);
+        const text = agentCollapsedCountdownText({}, ms, now);
+        if (el.textContent !== text) el.textContent = text;
+      });
+    }
     function agentCollapsedSortKey(a, index, nowMs) {
       const disabled = !a || agentIsDisabled(a);
       const active = !!a && !disabled && a.busy === 'working';
@@ -5611,7 +5631,7 @@
       if (_agentNeedsLogin(a || {}, isDown)) return { label: 'needs login', status: 'error', needsLogin: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
-    function agentCollapsedTileHtml(a, nowMs) {
+    function agentCollapsedTileHtml(a, nowMs, upNext) {
       const name = (a && (a.displayName || a.name)) || 'agent';
       const key = (a && a.name) || name;
       const disabled = agentIsDisabled(a);
@@ -5619,15 +5639,20 @@
       const active = !!a && !disabled && a.busy === 'working';
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
-      const next = agentCollapsedNextLabel(a, nowMs);
-      const classes = ['agent-collapsed-tile', active ? 'active' : '', disabled ? 'disabled' : '', auth.needsLogin ? 'needs-login' : ''].filter(Boolean).join(' ');
-      const title = `${name} · ${power} · ${auth.label} · next ${next}`;
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next">${esc(power)} · ${esc(auth.label)} · ${esc(next)}</span></button>`;
+      const nextMs = (!disabled && a && a.continuous !== true) ? agentCollapsedParseNextKick(a.nextKickIn || a.nextKick, nowMs) : null;
+      const countdown = agentCollapsedCountdownText(a, nextMs, nowMs);
+      const loginState = auth.needsLogin ? (auth.label === 'needs login' ? 'logged out' : auth.label) : '';
+      const state = [power === 'running' ? '' : power, loginState].filter(Boolean).join(' · ');
+      const classes = ['agent-collapsed-tile', upNext ? 'up-next' : '', active ? 'active' : '', disabled ? 'disabled' : '', auth.needsLogin ? 'needs-login' : ''].filter(Boolean).join(' ');
+      const title = `${name} · ${power} · ${auth.label} · next kick ${(a && (a.nextKick || a.nextKickIn)) || '—'} · last kick ${(a && a.lastKick) || '—'}`;
+      const cdAttr = Number.isFinite(nextMs) && !active ? ` data-next-ms="${Math.round(nextMs)}"` : '';
+      const badge = upNext ? '<span class="agent-tile-upnext">up next</span>' : '';
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-stop="1" aria-label="${esc(title)}"><span class="agent-tile-name" title="${esc(title)}">${esc(name)}</span><span class="agent-tile-flags">${badge}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span></span><span class="agent-tile-next"><span class="agent-tile-cd"${cdAttr}>${esc(countdown)}</span>${state ? ' · ' + esc(state) : ''}</span></button>`;
     }
     function agentsCollapsedTilesHtml(agents, nowMs) {
       const list = sortAgentsForCollapsedTiles(agents, nowMs);
       if (!list.length) return '';
-      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(a => agentCollapsedTileHtml(a, nowMs)).join('')}</span>`;
+      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map((a, i) => agentCollapsedTileHtml(a, nowMs, i === 0)).join('')}</span>`;
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
@@ -20632,7 +20657,12 @@ function burnAreaChart() {
       if (!_navbarClockTimeZone) _navbarClockTimeZone = browserDashboardTimeZone();
       setNavbarClockText(formatNavbarClock(now, _navbarClockTimeZone));
       updateStatusStaleness(now.getTime());
+      if (now.getTime() - _agentTileTickAt >= 30000) {
+        _agentTileTickAt = now.getTime();
+        if (typeof agentCollapsedTickCountdowns === 'function') agentCollapsedTickCountdowns();
+      }
     }
+    let _agentTileTickAt = 0;
 
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
