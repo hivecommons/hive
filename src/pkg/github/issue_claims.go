@@ -188,35 +188,6 @@ func FilterLiveIssueClaims(result *ActionableResult, now time.Time, logger *slog
 	return withheld
 }
 
-// FilterAlreadyDoneIssues removes issues marked hive/already-done from the
-// actionable set. The label is not a hard hold: it does not park the issue in
-// the hold list or require an operator unhold, but it does mean Hive already has
-// enough evidence that new contributor offers and agent kicks are duplicate
-// work until a human removes the display label.
-func FilterAlreadyDoneIssues(result *ActionableResult, logger *slog.Logger) int {
-	if result == nil || len(result.Issues.Items) == 0 {
-		return 0
-	}
-	kept := make([]Issue, 0, len(result.Issues.Items))
-	withheld := 0
-	for _, issue := range result.Issues.Items {
-		if !issueHasLabel(issue.Labels, AlreadyDoneLabel) {
-			kept = append(kept, issue)
-			continue
-		}
-		withheld++
-		if logger != nil {
-			logger.Info("withholding issue: already-done label",
-				"repo", issue.Repo, "issue", issue.Number, "label", AlreadyDoneLabel)
-		}
-	}
-	if withheld == 0 {
-		return 0
-	}
-	result.Issues = IssueResultFromItems(kept)
-	return withheld
-}
-
 // The dashboard-facing seam for issue claims (hivecommons/hive#8380).
 //
 // pkg/dashboard already imports this package for the Issue envelope that

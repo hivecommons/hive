@@ -127,6 +127,15 @@ func settlePR(number int, state string, merged bool, mergedAt time.Time, author 
 	return pr
 }
 
+func settlePRWithBase(number int, state string, merged bool, mergedAt time.Time, author, baseRef string) map[string]any {
+	pr := settlePR(number, state, merged, mergedAt, author)
+	pr["base"] = map[string]any{
+		"ref":  baseRef,
+		"repo": map[string]any{"full_name": "hivecommons/hive"},
+	}
+	return pr
+}
+
 func TestVerifySettlingRef_MergedBeforeDispatchIsStrongMergedClaim(t *testing.T) {
 	dispatched := time.Now()
 	mergedAt := dispatched.Add(-2 * time.Hour)
@@ -156,6 +165,21 @@ func TestVerifySettlingRef_MergedAfterDispatchIsRejected(t *testing.T) {
 	res, err := c.VerifySettlingRef(context.Background(), "hivecommons/hive", 533, SettlingRef{Repo: "hivecommons/hive", Number: 532}, dispatched)
 	if err != nil || res.Settled || !strings.Contains(res.Reason, "after the task was dispatched") {
 		t.Fatalf("expected clean negative, got %+v err=%v", res, err)
+	}
+}
+
+func TestVerifySettlingRef_PRMustTargetDefaultBranch(t *testing.T) {
+	dispatched := time.Now()
+	mergedAt := dispatched.Add(-2 * time.Hour)
+	ts := settleMux(t, map[string]any{
+		"/repos/hivecommons/hive/pulls/532": settlePRWithBase(532, "closed", true, mergedAt, "bob", "release"),
+		"/repos/hivecommons/hive":           map[string]any{"default_branch": "main"},
+	})
+	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, verifyTestLogger())
+
+	res, err := c.VerifySettlingRef(context.Background(), "hivecommons/hive", 533, SettlingRef{Repo: "hivecommons/hive", Number: 532}, dispatched)
+	if err != nil || res.Settled || !strings.Contains(res.Reason, "not the default branch") {
+		t.Fatalf("expected non-default branch rejection, got %+v err=%v", res, err)
 	}
 }
 

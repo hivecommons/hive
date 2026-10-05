@@ -311,29 +311,6 @@ func TestFilterLiveIssueClaims(t *testing.T) {
 	}
 }
 
-func TestFilterAlreadyDoneIssues(t *testing.T) {
-	items := []Issue{
-		{Repo: "widgets", Number: 1, Labels: []string{AlreadyDoneLabel}},
-		{Repo: "widgets", Number: 2, Labels: []string{LikelyDoneLabel}},
-		{Repo: "widgets", Number: 3},
-	}
-	result := &ActionableResult{Issues: IssueResultFromItems(items)}
-	if n := FilterAlreadyDoneIssues(result, slog.New(slog.NewTextHandler(io.Discard, nil))); n != 1 {
-		t.Fatalf("withheld %d, want 1", n)
-	}
-	if len(result.Issues.Items) != 2 || result.Issues.Count != 2 {
-		t.Fatalf("kept %d/%d, want 2", len(result.Issues.Items), result.Issues.Count)
-	}
-	for _, issue := range result.Issues.Items {
-		if issue.Number == 1 {
-			t.Fatal("already-done issue #1 was not withheld")
-		}
-	}
-	if n := FilterAlreadyDoneIssues(nil, nil); n != 0 {
-		t.Fatalf("nil result withheld %d", n)
-	}
-}
-
 // The SetIssueClaims setting is read live and a zero ttl takes the default.
 func TestIssueClaimsSetting(t *testing.T) {
 	var c *Client

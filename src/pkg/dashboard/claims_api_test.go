@@ -225,51 +225,6 @@ func TestClaims_APIRoutes(t *testing.T) {
 	}
 }
 
-func TestClaims_APIRouteRefusesAlreadyDoneIssue(t *testing.T) {
-	_, s, l := claimsHub(t)
-	var posted string
-	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/5":
-			_, _ = w.Write([]byte(`{"number":5,"labels":[{"name":"hive/already-done"}]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/5/comments":
-			_, _ = w.Write([]byte(`[]`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/5/comments":
-			var body map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			posted = body["body"]
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":1}`))
-		default:
-			t.Fatalf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	t.Cleanup(ghSrv.Close)
-	s.deps.GHClient = ghpkg.NewClientForTest(ghSrv.URL, "o", []string{"r"}, s.logger)
-	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
-		if repo == "o/r" && number == 5 {
-			return ghpkg.IssueClaim{Repo: repo, Issue: number, PRNumber: 10617, PRURL: "https://github.com/hivecommons/hive/pull/10617", MergedPR: true}, true
-		}
-		return ghpkg.IssueClaim{}, false
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/claims/o/r/5", strings.NewReader(""))
-	req.Header.Set("X-Hive-User", "alice")
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("claim code=%d body=%s, want 409", w.Code, w.Body.String())
-	}
-	if _, ok := l.Lookup("o/r", 5); ok {
-		t.Fatal("already-done issue was claimed")
-	}
-	for _, want := range []string{"hive:claim-refused", "hive/already-done", "#10617", "https://github.com/hivecommons/hive/pull/10617"} {
-		if !strings.Contains(posted, want) {
-			t.Fatalf("refusal comment missing %q: %q", want, posted)
-		}
-	}
-}
-
 // A relay whose socket is down has no connection to yank, but its lease would
 // otherwise let it RESUME the item it lost on reconnect (#4260 resumability).
 // Takeover must revoke that lease too.

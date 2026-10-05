@@ -4693,10 +4693,9 @@ type HubConfig struct {
 	// left as its own const and is not tuned here (the operator specifically asked
 	// for the week-long period to be adjustable).
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
-	// ContributeCloseAlreadyDone lets the hub close an issue when a contributor's
-	// no_work_needed verdict is explicitly "already done" and the cited PR/commit
-	// verifies as landed on the repo's default branch. Nil defaults OFF: the safe
-	// default is comment + label, so maintainers can close after reviewing.
+	// ContributeCloseAlreadyDone is a deprecated compatibility key. Verified
+	// already-done PR evidence now runs the normal issue close path; human-filed
+	// bugs still wait for reporter confirmation unless explicitly opted in.
 	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
 	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
 	// resolved. It is also in the default contribute skip label set, so labelled
@@ -4811,8 +4810,8 @@ func (h HubConfig) IsContributeCooldownEnabled() bool {
 	return h.ContributeCooldownEnabled == nil || *h.ContributeCooldownEnabled
 }
 
-// IsContributeCloseAlreadyDone resolves the verified already-done auto-close
-// toggle. Unset defaults to false; the default action is comment + label.
+// IsContributeCloseAlreadyDone resolves the deprecated verified already-done
+// auto-close toggle for older callers. New close decisions no longer read it.
 func (h HubConfig) IsContributeCloseAlreadyDone() bool {
 	return h.ContributeCloseAlreadyDone != nil && *h.ContributeCloseAlreadyDone
 }
