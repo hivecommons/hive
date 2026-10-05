@@ -13143,10 +13143,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Math.round(median * 60);
     }
 
+    function overviewRepoNumber(repo, fields) {
+      for (const field of fields) {
+        if (!repo || !Object.prototype.hasOwnProperty.call(repo, field)) continue;
+        const raw = repo[field];
+        if (Array.isArray(raw)) continue;
+        const n = Number(raw);
+        if (Number.isFinite(n)) return n;
+      }
+      return null;
+    }
+
+    function overviewRepoOpenIssueCount(repo) {
+      const n = overviewRepoNumber(repo, ['openIssues', 'open_issues', 'issues']);
+      if (n !== null) return n;
+      return (Array.isArray(repo && repo.actionableIssues) ? repo.actionableIssues.length : 0)
+        + (Array.isArray(repo && repo.heldIssues) ? repo.heldIssues.length : 0);
+    }
+
+    function overviewRepoOpenPRCount(repo) {
+      const n = overviewRepoNumber(repo, ['openPRs', 'open_prs', 'prs']);
+      if (n !== null) return n;
+      return (Array.isArray(repo && repo.openPrs) ? repo.openPrs.length : 0)
+        + (Array.isArray(repo && repo.heldPrs) ? repo.heldPrs.length : 0);
+    }
+
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
       if (!state.showKPIs) return '';
-      const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
-      const openPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const openIssues = (repos || []).reduce((n, r) => n + overviewRepoOpenIssueCount(r), 0);
+      const openPRs = (repos || []).reduce((n, r) => n + overviewRepoOpenPRCount(r), 0);
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
       const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
@@ -13158,8 +13183,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ageSec = overviewMedianAgeSeconds((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'Open plus held pull requests in the selected repos.' },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open issues in the selected repos, including held, waiting, done, filtered, and human-gated issues.' },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open pull requests in the selected repos, including held, drafts, filtered, and blocked PRs.' },
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: 'Items in bands that can move without waiting.' },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' },

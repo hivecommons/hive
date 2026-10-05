@@ -1,0 +1,1 @@
+- Fix dashboard Overview "Total open issues/PRs" KPIs to use the raw open repo totals instead of only the actionable-plus-held chart slices.
