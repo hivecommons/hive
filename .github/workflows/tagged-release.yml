@@ -527,7 +527,7 @@ jobs:
       # two references resolve to byte-identical content and a second scan
       # could only ever produce the same document twice.
       - name: Generate per-image SBOMs (SPDX JSON, Syft, linux/amd64)
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ghcr.io/${{ github.repository_owner }}/hive:v${{ env.VERSION }}
           output-file: hive-v${{ env.VERSION }}-sbom.spdx.json
@@ -535,7 +535,7 @@ jobs:
           artifact-name: "" # do not also attach to a GH Actions run artifact; the release upload below is the distribution point
 
       - name: Generate contributor image SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ghcr.io/${{ github.repository_owner }}/hive-contributor:v${{ env.VERSION }}
           output-file: hive-contributor-v${{ env.VERSION }}-sbom.spdx.json
@@ -543,7 +543,7 @@ jobs:
           artifact-name: ""
 
       - name: Generate hub image SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ghcr.io/${{ github.repository_owner }}/hive-hub:v${{ env.VERSION }}
           output-file: hive-hub-v${{ env.VERSION }}-sbom.spdx.json
