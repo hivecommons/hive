@@ -837,7 +837,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
-	stablePromotion := s.stablePromotionStatus(channelTargets)
+	stablePromotion := s.stablePromotionFromTargets(channelTargets)
 	resp := map[string]any{
 		"hives": hivesView,
 		// The fleet average backs the reference polygon drawn behind every
