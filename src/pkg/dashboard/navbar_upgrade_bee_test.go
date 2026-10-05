@@ -49,6 +49,47 @@ func TestNavbarUpgradeBeeMarkupAndSharedRenderPath(t *testing.T) {
 	}
 }
 
+func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
+	html := indexHTML(t)
+	for _, selector := range []string{
+		".oc-version-upgrade-progress",
+		".oc-version-hive",
+		".oc-version-chip.is-upgrading",
+		".oc-navbar-upgrade",
+		".oc-version-navbar-upgrade",
+	} {
+		rule := cssRule(t, html, selector)
+		if strings.Contains(rule, "overflow: hidden") {
+			t.Fatalf("%s clips the upgrade bee orbit: %s", selector, rule)
+		}
+		if !strings.Contains(rule, "overflow: visible") {
+			t.Fatalf("%s should keep the upgrade bee orbit visible: %s", selector, rule)
+		}
+	}
+
+	hiveRule := cssRule(t, html, ".oc-version-hive")
+	if !strings.Contains(hiveRule, "z-index: 2") {
+		t.Fatalf("bee hive host must stay above tile backgrounds: %s", hiveRule)
+	}
+	beeRule := cssRule(t, html, ".oc-version-bee")
+	if !strings.Contains(beeRule, "z-index: 3") {
+		t.Fatalf("orbiting bees must stack above their host: %s", beeRule)
+	}
+
+	copyRule := cssRule(t, html, ".oc-version-navbar-upgrade .oc-version-progress-copy")
+	for _, want := range []string{"overflow: hidden", "white-space: nowrap"} {
+		if !strings.Contains(copyRule, want) {
+			t.Fatalf("navbar upgrade copy should retain text clipping %q in %s", want, copyRule)
+		}
+	}
+	titleStatusRule := cssRule(t, html, ".oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status")
+	for _, want := range []string{"overflow: hidden", "text-overflow: ellipsis", "white-space: nowrap"} {
+		if !strings.Contains(titleStatusRule, want) {
+			t.Fatalf("navbar upgrade text should retain ellipsis %q in %s", want, titleStatusRule)
+		}
+	}
+}
+
 func TestNavbarUpgradeBeeDoesNotAddBareSetInterval(t *testing.T) {
 	html := indexHTML(t)
 	if got := strings.Count(html, "setInterval("); got > 11 {
