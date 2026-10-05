@@ -152,7 +152,7 @@ errors loudly) rather than a silent pick — remove all but one.
 |---|---|---|
 | `candidate`, `latest` | `docker.yml`, every merge to `v5` | Yes — moving pointers |
 | `edge` | `docker.yml`, every merge to `v6` | Yes — moving pointer |
-| `stable` | `promote-stable.yml`, digest promotion of the newest eligible soaked `v5` build after the [stable soak gate](stable-soak-policy.md), while the hub stable auto-promotion toggle is playing | Yes — moving pointer |
+| `stable` | `promote-stable.yml`, digest promotion of the newest `v5` build that crossed the 24-hour line after the [stable soak gate](stable-soak-policy.md), while the hub stable auto-promotion toggle is playing | Yes — moving pointer |
 | `<branch>-latest` (`v4-latest`, `v5-latest`, `v6-latest`) | `docker.yml`, every merge to that branch | Yes — moving pointers |
 | `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
 | `v1.2.3` | `tagged-release.yml`, only when a release is cut | No — immutable, and **is** the release |

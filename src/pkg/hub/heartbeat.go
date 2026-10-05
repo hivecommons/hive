@@ -464,10 +464,11 @@ type HeartbeatUpgradePolicy struct {
 	// pending or in-flight upgrade), "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
 	// NextUpdateAt is when the next promotion into Channel is expected
-	// (RFC3339 UTC, #10256): the end of the 24-hour candidate soak of the
-	// queued candidate build (docs/stable-soak-policy.md). The hourly
-	// promotion run lands it at or after this time once its other gates pass,
-	// and it may be in the past while a gate holds. Omitted when unknown:
+	// (RFC3339 UTC, #10256): the time the newest queued build crosses the
+	// 24-hour line because stable chases candidate and is always 24 hours
+	// behind it (docs/stable-soak-policy.md). The hourly promotion run lands
+	// it at or after this time once its other gates pass, and it may be in the
+	// past while a gate holds. Omitted when unknown:
 	// channels other than stable (candidate/edge move on every green build),
 	// branch tags and pins, stable auto-promotion paused, nothing queued, or
 	// the hub has not resolved the channels yet. Describes the channel, not

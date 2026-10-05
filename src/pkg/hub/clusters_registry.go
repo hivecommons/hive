@@ -17,7 +17,7 @@ import (
 // because losing an ack merely un-silences an alert — the safe direction. A
 // corrupt REGISTRY must not be discarded and replaced with a synthesized
 // default, because the default names only the hub-reachable cluster and would silently strand
-// every hive on the two pull-only clusters, re-routing their App and host
+// every hive on the two push-reported clusters, re-routing their App and host
 // resolution to the wrong cluster. The bad bytes are left on disk under this
 // suffix so an operator can see what arrived.
 const clustersQuarantineSuffix = ".corrupt"
@@ -91,7 +91,7 @@ const (
 	// THIS IS THE CASE THAT MUST NOT YIELD AN EMPTY MAP, and must not fall back
 	// to the default either. The hub knows a registry was placed here and
 	// cannot tell what it says. Returning empty disables writes to the hub-reachable cluster;
-	// returning the default silently re-routes every pull-only hive. Both are
+	// returning the default silently re-routes every push-reported hive. Both are
 	// widenings of the blast radius of a corrupt file, so the hub refuses.
 	clustersUntrusted
 )
@@ -200,7 +200,7 @@ func validateClusterEntries(configs []ClusterConfig, logger *slog.Logger) map[st
 		if !c.InCluster && c.KubeconfigPath == "" && !c.PullOnly {
 			logger.Warn("skipping remote cluster with no kubeconfig_path",
 				"cluster", c.ID,
-				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes connect outbound over the heartbeat")
+				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes push heartbeats outbound")
 			continue
 		}
 		if c.Domain == "" {

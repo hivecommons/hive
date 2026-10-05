@@ -1,47 +1,47 @@
-# Stable soak and promotion policy (v5 line)
+# Stable chases candidate and is always 24 hours behind it (v5 line)
 
-This policy is enforced by CI: every successful `v5` image build retags
-`candidate`, while a separate scheduled or manually dispatched promotion
-workflow advances `stable` by digest only after the gate below passes.
+Stable chases candidate and is always 24 hours behind it: at each evaluation,
+`stable` is the newest `v5` build whose `docker.yml` run completed at least
+`SOAK_HOURS` ago — the build `candidate` pointed at 24 hours ago — regardless of
+how many newer candidate builds exist.
 
 ## Goals
 
 - Keep `candidate` fast: it should move on every green `v5` release build.
-- Make `stable` automatic by default, but deliberate: it should advance after
-  observable soak unless an operator pauses stable auto-promotion, or by a
-  documented emergency exception.
+- Keep `stable` predictable: when `v5` is busy and the promotion workflow runs
+  hourly, `stable` lags `candidate` by 24 to 25 hours, not by a quiet period.
+- Make longer lag explicit: green evidence, `release-blocker`, and smoke-signal
+  gates are the only normal reasons `stable` stays farther behind, and the
+  workflow names the gate and build holding it.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
-- Give operators clear expectations for bursty release days.
 
 ## Promotion rule
 
-This rule is what the `Promote Stable Channel` workflow enforces today. In this
-document a *build* is one successful `docker.yml` run on `v5`; its *generation*
-is that run's number and its *digest* is the image manifest list it published
-for each image (`hive`, `hive-contributor`, and `hive-hub`). `candidate` is only
-the newest build pointer. `stable` promotes an already-built digest; it does not
-rebuild.
+Stable chases candidate and is always 24 hours behind it. In this document a
+*build* is one successful `docker.yml` run on `v5`; its *generation* is that
+run's number and its *digest* is the image manifest list it published for each
+image (`hive`, `hive-contributor`, and `hive-hub`). `candidate` is the newest
+build pointer. `stable` promotes an already-built digest; it does not rebuild.
 
-A `v5` build may be promoted to `stable` only when all of these conditions hold:
+At each hourly evaluation, the workflow finds the newest build newer than the
+current `stable` generation whose own `docker.yml` completion time is at least
+`SOAK_HOURS` old. That is the build `candidate` pointed at 24 hours ago. No quiet
+period is ever required: if `v5` keeps merging, newer builds may keep moving
+`candidate`, but the build that just crossed the 24-hour line remains the one
+considered for `stable`.
 
-1. **Per-build soak:** the build being promoted has itself aged at least 24
-   hours, measured from the completion of the `docker.yml` run that published
-   it. Frequent `v5` merges may move `candidate` many times during that window,
-   but they do not reset or erase an older build's own completed soak.
-2. **Newest eligible build wins:** the workflow scans successful `docker.yml`
-   builds on `v5` from newest to oldest and chooses the newest build newer than
-   the current `stable` generation that satisfies every condition here. The
-   chosen build does **not** have to still be the current `candidate` tag.
-3. **Digest integrity:** all three image digests for the chosen generation still
+The workflow moves `stable` to that build only when these hard gates pass:
+
+1. **Digest integrity:** all three image digests for the chosen generation still
    exist in GHCR and carry matching `org.opencontainers.image.revision` and
    `io.kubestellar.hive.github-actions-run-number` labels.
-4. **Green release evidence:** build, lint, unit tests, changelog/release guards,
+2. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy for the chosen
    build's commit.
-5. **No open blocker:** no open issue label explicitly marks the candidate
+3. **No open blocker:** no open issue label explicitly marks the candidate
    digest, release tag, or included fix set as a `release-blocker` for the stable
    (v5) line.
-6. **Maintained-hive smoke signal:** at least one maintained hive has reported a
+4. **Maintained-hive smoke signal:** at least one maintained hive has reported a
    healthy heartbeat with zero crash restarts in the soak window. The preferred
    evidence is a maintained hive on the exact build being promoted. When `v5` is
    busy and the exact build has already been superseded, the workflow may use a
@@ -49,14 +49,20 @@ A `v5` build may be promoted to `stable` only when all of these conditions hold:
    monotonic `v5` docker.yml lineage: surviving a later build is conservative
    smoke evidence for an older build in the same line, and it is never used to
    justify a younger build. If the hub is reachable but returns no maintained
-   hive summaries, the workflow records that absence explicitly rather than
-   blocking an otherwise soaked and verified build forever.
+   hive summaries, the smoke-signal gate holds the selected build until evidence
+   is available.
+
+If any hard gate fails, the run exits successfully without moving `stable` and
+prints which gate is holding which build. Those gates are the only normal reasons
+`stable` can lag more than 24 to 25 hours on the hourly cadence.
 
 Worked example: `stable` is B1. During the next day, `docker.yml` publishes B2,
 B3, … B52 and `candidate` ends at B52. At time T, B52 is only minutes old, but
 B37 is the newest build whose own `docker.yml` completion time is at least 24
-hours old and whose digests, evidence, blockers, and smoke all pass. The
-workflow moves `stable` to B37, not B52 and not merely B2.
+hours old. The workflow evaluates B37. If B37's digests, evidence, blockers, and
+smoke all pass, `stable` moves to B37, even though `candidate` is B52. On each
+later hourly run, `stable` moves again whenever another newer build crosses the
+24-hour line.
 
 The remaining race is two hourly promotion runs trying to move `stable` at the
 same time. The workflow uses a compare-and-set: immediately before publishing it
@@ -78,25 +84,25 @@ It:
 1. reads the current `stable` generation for `hive`, `hive-contributor`, and
    `hive-hub`;
 2. lists successful `docker.yml` runs on `v5` newest-to-oldest;
-3. for each run newer than `stable`, resolves the three short-SHA image tags by
-   digest and verifies their revision and generation labels match that run;
-4. skips builds whose own `docker.yml` completion time has not yet satisfied the
-   configured soak window, remembering the newest unsoaked build's `eligible_at`;
-5. checks required release evidence, open `release-blocker` issues, and
-   maintained-hive smoke evidence for the selected build;
-6. reads `GET /api/hub/release/stable-promotion`; if the hub is unreachable or
-   the stable line is paused, the workflow skips without moving tags. When
-   playing, the hub's public maintained-hive summary can synthesize smoke
-   evidence; and
+3. skips builds whose own `docker.yml` completion time has not yet crossed the
+   configured soak line, remembering the newest unsoaked build's `eligible_at`;
+4. selects the first build that has crossed the line — the newest build
+   `candidate` pointed at 24 hours ago;
+5. resolves that build's three short-SHA image tags by digest and verifies their
+   revision and generation labels match that run;
+6. checks required release evidence, open `release-blocker` issues, and
+   maintained-hive smoke evidence for that build; and
 7. retags all three `stable` images to the chosen build's digests only after the
    stable-generation compare-and-set passes.
 
 The hub dashboard's release-channel block has a play/pause control on the
 `stable` row for hub admins. Play is the default: scheduled runs advance `stable`
-to the newest eligible soaked build, so `stable` lags `candidate` by at least the
-soak window without requiring a quiet period on `candidate`.
-Pause records the admin and timestamp, shows "paused" next to any behind count,
-and stops scheduled and manual stable-promotion runs until an admin resumes.
+to the newest build that crossed the 24-hour line, so when `v5` is busy and the
+cron is hourly, `stable` stays 24 to 25 hours behind `candidate`. No quiet period
+is required. Pause records the admin and timestamp, shows "paused" next to any
+behind count, and stops scheduled and manual stable-promotion runs until an admin
+resumes.
+
 The public GET endpoint exposes only non-secret channel state, `eligible_at`, an
 `eligible_build` object (`sha`, `generation`, `built_at`, and digest when known),
 and maintained-hive smoke summaries; the PUT toggle is hub-admin gated and audit
@@ -110,11 +116,13 @@ when the channels have not resolved.
 
 The workflow writes the selected build digest, SHA, generation, build completion
 time and age, checks consulted, blocker count, smoke evidence, decision, and any
-exception note to the GitHub Actions step summary. If no build is eligible, the
-workflow leaves `stable` unchanged and exits successfully with a human-readable
-reason such as `build age 3600s < required 86400s (24h)` or `no eligible build
-has completed the 24h soak yet; newest unsoaked build <sha> generation <N>
-completed <time> and is eligible_at <time>`.
+exception note to the GitHub Actions step summary. If no build has crossed the
+line, the workflow leaves `stable` unchanged and exits successfully with a reason
+such as `no eligible build has completed the 24h soak yet; newest unsoaked build
+<sha> generation <N> completed <time> and is eligible_at <time>`. If a hard gate
+holds the selected build, the reason names the gate and build, for example
+`green evidence gate is holding build <sha> generation <N>` or `release-blocker
+gate is holding build <sha> generation <N>`.
 
 ## Emergency promotion exception
 
@@ -131,11 +139,11 @@ issue.
 
 `normalized_decision` in `src/scripts/promote-stable.sh` checks the emergency
 branch *before* the soak-age and smoke-evidence branches, so an exception waives
-exactly two of the five promotion conditions:
+exactly two promotion requirements:
 
-- **condition 1, per-build soak** — the selected build age is never compared
+- **the 24-hour chase line** — the selected build age is never compared
   against `soak-hours`; and
-- **condition 5, operator smoke signal** — the `smoke_evidence` test is only
+- **the smoke-signal gate** — the `smoke_evidence` test is only
   reached on the non-exception path, so an exception promotes even when both the
   `smoke-evidence` input and `STABLE_SMOKE_EVIDENCE` are empty.
 
@@ -175,7 +183,7 @@ all four:
 
 3. **The gate works unassisted.** The next scheduled `promote-stable.yml` run
    promotes a v5 build on the normal path — step-summary decision `promote`
-   with reason `all stable per-build soak promotion conditions passed`, no
+   with reason `all stable chases-candidate promotion gates passed`, no
    exception note:
 
    ```bash

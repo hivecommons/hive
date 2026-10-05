@@ -456,7 +456,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// PULL ONLY — no kubectl push. The manual Upgrade button now does exactly
+	// Heartbeat-delivered — no kubectl push. The manual Upgrade button now does exactly
 	// what auto-upgrade does: record the target and arm the heartbeat. The
 	// spoke collects it on its next beat and patches its own Deployment.
 	//
@@ -940,13 +940,13 @@ func (s *HubServer) clusterRecentlyUnreachable(clusterID string) bool {
 	if clusterID == "" {
 		return false
 	}
-	// A pull-only cluster is unreachable BY DECLARATION and permanently, so it
+	// A push-reported cluster is unreachable BY DECLARATION and permanently, so it
 	// never has to be learned the expensive way. This breaker exists because
 	// discovering unreachability costs a full dial timeout per hive per cycle —
 	// ~90s a call, with a pool of hives serialising into tens of minutes of
 	// blocking. Saying so in clusters.json means that price is never paid even
 	// once, and every caller that already consults this breaker is covered
-	// without needing its own pull-only check.
+	// without needing its own push-reported check.
 	if c, ok := s.clusters[clusterID]; ok && c.PullOnly {
 		return true
 	}
@@ -1205,7 +1205,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 					}
 					s.heartbeatUpgrade[h.ID] = recoverTarget
 					s.mu.Unlock()
-					// PULL ONLY — the heartbeat armed above IS the delivery, as
+					// Heartbeat-delivered — the heartbeat armed above IS the delivery, as
 					// the previous comment here already conceded ("the heartbeat
 					// fallback armed above is what actually delivers the
 					// upgrade"). The kubectl push that followed it was pure
@@ -1377,9 +1377,9 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// pullonly_upgrade.go for the full measured loop.
 		//
 		// This is deliberately NOT gated on cluster reachability. The hub's
-		// kubectl path is only a fast-path optimisation, so a pull-only cluster
+		// kubectl path is only a fast-path optimisation, so a push-reported cluster
 		// is irrelevant here; gating on it would silently disable auto-upgrade
-		// for the 40+ pull-only spokes that heartbeat perfectly well.
+		// for the 40+ push-reported spokes that heartbeat perfectly well.
 		//
 		// Refused LOUDLY, never silently: a hive with auto_upgrade=true that
 		// simply never upgrades is indistinguishable from one already at latest,
@@ -1443,7 +1443,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.Unlock()
-		// PULL ONLY — no kubectl push. Arming the heartbeat is the delivery:
+		// Heartbeat-delivered — no kubectl push. Arming the heartbeat is the delivery:
 		// the spoke reads UpgradeTo off its next heartbeat response and patches
 		// its own Deployment with its own ServiceAccount (cmd/hive/main.go →
 		// self_upgrade.go). The former `rolloutRestartHive` call here was only a

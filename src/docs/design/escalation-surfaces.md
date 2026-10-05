@@ -75,7 +75,7 @@ Severity is the routing key, set by the producer:
 ### Outbound (phase 1)
 
 Plain SMTP submission — `net/smtp` with STARTTLS/implicit-TLS, no third-party
-mail dependency. Works from pull-only clusters (outbound 465/587 only).
+mail dependency. Works from push-reported clusters (outbound 465/587 only).
 
 ```yaml
 email:
@@ -106,7 +106,7 @@ email:
 ### Inbound reply-to-act (phase 2, explicitly later)
 
 Mirrors the Linear inbound model (`pkg/linearagent`: guards → ack → kick,
-decoupled): an IMAP poller (outbound-only, fits pull-only clusters) watches a
+decoupled): an IMAP poller (outbound-only, fits push-reported clusters) watches a
 dedicated mailbox; a reply to an escalation mail can carry exactly the verbs
 the mail offered (`approve`, `deny`, `kick <agent>: <prompt>`).
 
@@ -185,7 +185,7 @@ sinks are tested against local fakes (`net/smtp` test server, httptest).
 ## What this deliberately does not do
 
 - No webhook *receiver* for provider callbacks (PagerDuty ack-back etc.) —
-  outbound-only keeps the pull-only story intact.
+  outbound-only keeps the push-reported story intact.
 - No templating language for mail bodies; producers compose, full stop.
 - No SMS provider (Twilio) — Pushover/ntfy cover the phone story without
   per-message billing; revisit only on demand.

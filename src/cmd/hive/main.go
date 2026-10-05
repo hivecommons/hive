@@ -1393,7 +1393,7 @@ func (b *boot) wireBootClosures() {
 		}
 		// Prefer the host our OWN Route/Ingress actually serves. The synthesised
 		// "<hiveID>.<hub host>" below is only correct when this spoke is fronted by
-		// the hub's wildcard domain; pull-only clusters must report their live host.
+		// the hub's wildcard domain; push-reported clusters must report their live host.
 		if host := spoke.SpokeServedHost(b.ctx); host != "" {
 			return "https://" + host
 		}
@@ -4444,7 +4444,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Hash only, never the raw token: lets the hub verify this
 				// spoke's upgrade-proof credential without reading the
 				// hive-secrets secret from a cluster it may not reach
-				// (pull-only). Empty when no token is configured.
+				// (push-reported). Empty when no token is configured.
 				DashboardTokenHash: func() string {
 					if b.cfg.Dashboard.AuthToken == "" {
 						return ""
@@ -4636,7 +4636,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that
-				// reaches every spoke, pull-only ones included (D1). nil until
+				// reaches every spoke, push-reported ones included (D1). nil until
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
 				ComponentReach: tracing.ReachSnapshot(),

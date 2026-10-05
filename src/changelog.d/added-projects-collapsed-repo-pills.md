@@ -1,0 +1,1 @@
+- Add collapsed Projects header repo pills with per-repository work, pause, auto-merge, and hold indicators.
