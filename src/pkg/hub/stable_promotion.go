@@ -249,11 +249,6 @@ func stableNextPromotionAt(targets []ChannelTarget) string {
 	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
 		return ""
 	}
-	stableGeneration := ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, slog.Default())
-	_, eligibleAt := stablePromotionEligibleBuild(stableGeneration, time.Now().UTC(), slog.Default())
-	if eligibleAt != "" {
-		return eligibleAt
-	}
 	return stablePromotionEligibleAt(candidate.CommittedAt)
 }
 

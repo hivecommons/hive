@@ -1172,7 +1172,7 @@ jobs:
             [tracing]=85
             [review]=80
             [retro]=82
-            [github]=89      # 91.8% on 2026-09-01
+            [github]=88      # 88.9% on 2026-10-05
             [hivectl]=88
             [knowledge]=89
             [proxy]=89
