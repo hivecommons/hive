@@ -27284,6 +27284,10 @@ function burnAreaChart() {
     const acmmLevelColor = level => ACMM_LEVEL_COLORS[level] || 'var(--status-info)';
 
     function renderACMMPacks() {
+      // Level 6 is the only level that merges unattended, so its card links the
+      // operating guide (hivecommons/hive#10516). Declared locally because tests
+      // evaluate this function in isolation.
+      const guide = { level: 6, url: 'https://docs.hivecommons.dev/docs/hive/running-at-level-6' };
       const container = document.getElementById('acmm-packs-list');
       const currentLevel = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
 
@@ -27316,6 +27320,7 @@ function burnAreaChart() {
             <div style="flex:1">
               <div style="font-weight:700;font-size:0.9rem">${esc(p.name)} ${isCurrent ? '<span style="font-size:0.7rem;background:' + color + ';color:#fff;padding:var(--sp-1) var(--sp-4);border-radius:8px;margin-left:var(--sp-3)">CURRENT</span>' : ''}</div>
               <div style="font-size:0.78rem;color:var(--muted);margin-top:var(--sp-1)">${esc(p.description || '')}</div>
+              ${p.level === guide.level ? '<div class="mt-2 fs-sm"><a class="text-accent" href="' + guide.url + '" target="_blank" rel="noopener">Read the Level 6 operating guide ↗</a> before switching: unattended merging needs real required checks and a tested merge stop.</div>' : ''}
             </div>
             <div style="text-align:right;min-width:80px">
               <div style="font-size:0.7rem;color:var(--muted)">${p.agentCount} agent${p.agentCount !== 1 ? 's' : ''}</div>
@@ -27337,7 +27342,7 @@ function burnAreaChart() {
       const pack = (_acmmPacks || []).find(p => p.level === level);
       if (!pack) return;
 
-      if (!(await hiveConfirm(`Apply ACMM Level ${level} (${pack.name})?\n\nThis will:\n• Create ${pack.agentCount} agent(s) (existing agents with the same name are skipped)\n• Pause agents not in this level's pack\n• Resume agents that are in this level's pack`))) return;
+      if (!(await hiveConfirm(`Apply ACMM Level ${level} (${pack.name})?\n\nThis will:\n• Create ${pack.agentCount} agent(s) (existing agents with the same name are skipped)\n• Pause agents not in this level's pack\n• Resume agents that are in this level's pack${level === 6 ? '\n\nLevel 6 merges unattended. Read the operating guide first: https://docs.hivecommons.dev/docs/hive/running-at-level-6' : ''}`))) return;
 
       showACMMLoading('Applying Level ' + level + '…');
       try {
