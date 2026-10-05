@@ -41,7 +41,12 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewPartitionInfo") + `
 ` + jsFunc(t, html, "overviewActionableTermHTML") + `
 ` + jsFunc(t, html, "renderActionableEquationSubline") + `
+` + jsFunc(t, html, "overviewEquationTermCount") + `
+` + jsFunc(t, html, "overviewOutsideBreakdownText") + `
+` + jsFunc(t, html, "renderOverviewTotalPartitionSubline") + `
+` + jsFunc(t, html, "renderOverviewSplitSubline") + `
 ` + jsFunc(t, html, "overviewKPIEquation") + `
+` + jsFunc(t, html, "overviewKPIKindEquation") + `
 ` + jsFunc(t, html, "overviewKPIRepoScope") + `
 ` + jsFunc(t, html, "overviewKPILocalKey") + `
 ` + jsFunc(t, html, "overviewKPILoadLocal") + `
@@ -83,9 +88,9 @@ assert.deepEqual(Object.fromEntries(values), {
   'Total open PRs': '7',
   'Actionable now (issues and PRs)': '103',
   'Held': '1',
-  'Blocked / needs-human': '1',
+  'Blocked / needs-human': '3',
 });
-assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ [\s\S]*1 held[\s\S]* \+ [\s\S]*1 blocked\/needs-human[\s\S]* \+ 2 confirm\/close</);
+assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ [\s\S]*1 held[\s\S]* \+ [\s\S]*3 blocked\/needs-human</);
 
 repos[0].issues = 123;
 repos[0].prs = 45;
