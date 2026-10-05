@@ -388,10 +388,11 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands *OverviewBands        `json:"overview_bands,omitempty"`
-	ActionableNow FrontendActionableNow `json:"actionableNow"`
-	Timestamp     string                `json:"timestamp"`
-	TimeZone      string                `json:"timeZone,omitempty"`
+	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
+	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
+	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	Timestamp      string                 `json:"timestamp"`
+	TimeZone       string                 `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -487,6 +488,19 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+type FrontendOverviewTotals struct {
+	Issues FrontendOverviewTotal `json:"issues"`
+	PRs    FrontendOverviewTotal `json:"prs"`
+}
+
+type FrontendOverviewTotal struct {
+	Forge     int            `json:"forge"`
+	Tracked   int            `json:"tracked"`
+	Held      int            `json:"held"`
+	Outside   int            `json:"outside"`
+	Breakdown map[string]int `json:"breakdown,omitempty"`
 }
 
 // FrontendFeatures is the secret-free set of dashboard feature flags consumed

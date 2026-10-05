@@ -27,11 +27,17 @@ const window = { _lastStatus: {} };
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
 function renderSparkline(){ return '<svg></svg>'; }
+const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
+const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 ` + jsFunc(t, html, "esc") + `
 ` + jsFunc(t, html, "overviewItemAgeMinutes") + `
 ` + jsFunc(t, html, "overviewMedianAgeLabel") + `
 ` + jsFunc(t, html, "overviewMedianAgeSeconds") + `
 ` + jsFunc(t, html, "fmtDurationFromSeconds") + `
+` + jsFunc(t, html, "overviewBreakdownTotal") + `
+` + jsFunc(t, html, "overviewRepoForgeTotals") + `
+` + jsFunc(t, html, "overviewKPIForgeTotals") + `
+` + jsFunc(t, html, "overviewKPIBreakdownSubline") + `
 ` + jsFunc(t, html, "overviewKPIRepoScope") + `
 ` + jsFunc(t, html, "overviewKPILocalKey") + `
 ` + jsFunc(t, html, "overviewKPILoadLocal") + `
@@ -94,8 +100,10 @@ func TestOverviewKPIRenderEscapesNumericValues10139(t *testing.T) {
 	html := indexHTML(t)
 	kpis := jsFunc(t, html, "renderOverviewKPIs")
 	for _, want := range []string{
-		"const openIssues = repoIssueCounts.length ? repoIssueCounts.reduce((n, count) => n + count, 0) : (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
-		"const openPRs = repoPRCounts.length ? repoPRCounts.reduce((n, count) => n + count, 0) : (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);",
+		"const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);",
 		"${esc(String(value ?? '—'))}",
 	} {
 		if !strings.Contains(kpis, want) {
