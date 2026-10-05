@@ -1,0 +1,1 @@
+- Contribute now shows an unavailable version state when the dashboard version API is inaccessible, fails, or takes longer than ten seconds, instead of remaining on loading (#10682).
