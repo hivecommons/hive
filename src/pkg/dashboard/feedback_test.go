@@ -26,6 +26,7 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 		IncludeDiagnostics: true,
 		Diagnostics:        &feedbackDiagnostics{HiveID: "hive-one", Page: "/?token=secret", Agents: []feedbackAgentDiagnostic{{Name: "scanner", Repo: "private/repo"}}},
 	}
+
 	if err := validateFeedbackRequest(&req); err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +40,90 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 	}
 	if !strings.Contains(feedbackFallbackURL(req), "github.com/hivecommons/hive/issues/new") {
 		t.Fatalf("fallback did not target hive repo")
+	}
+}
+
+func TestFeedbackIssueBodyAttributionCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		submitter feedbackSubmitterIdentity
+		want      []string
+		notWant   []string
+	}{
+		{
+			name:      "github oauth login",
+			submitter: feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub OAuth dashboard login"},
+			want: []string{
+				"| Submitted by | @alice (GitHub OAuth dashboard login) |",
+				"Opened by the hive on behalf of @alice.",
+				"/cc @alice",
+			},
+		},
+		{
+			name:      "authenticated dashboard user",
+			submitter: feedbackSubmitterIdentity{Name: "basic-user", Source: "authenticated dashboard user"},
+			want: []string{
+				"| Submitted by | basic-user (authenticated dashboard user) |",
+				"Opened by the hive on behalf of basic-user.",
+			},
+			notWant: []string{"/cc @basic-user"},
+		},
+		{
+			name:      "anonymous dashboard session",
+			submitter: feedbackSubmitterIdentity{Name: "anonymous dashboard session", Source: "anonymous dashboard session"},
+			want: []string{
+				"| Submitted by | anonymous dashboard session |",
+				"Opened by the hive on behalf of anonymous dashboard session.",
+			},
+			notWant: []string{"/cc @"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := buildFeedbackIssueBody(feedbackReportRequest{
+				Title:        "Bug from dashboard",
+				Description:  "Something went wrong",
+				RequestType:  feedbackTypeBug,
+				TargetRepo:   feedbackTargetHive,
+				Submitter:    tt.submitter,
+				OpenedByHive: true,
+				Diagnostics:  &feedbackDiagnostics{HiveID: "hive-one", Channel: "edge"},
+			})
+			for _, want := range tt.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("feedback body missing %q:\n%s", want, body)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(body, notWant) {
+					t.Fatalf("feedback body unexpectedly contained %q:\n%s", notWant, body)
+				}
+			}
+			if !strings.Contains(body, "| Hive ID | hive-one |") || !strings.Contains(body, "| Channel | edge |") {
+				t.Fatalf("feedback body missing hive diagnostics:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestFeedbackSubmitterIdentitySources(t *testing.T) {
+	s := NewServer(0, dismissLogger())
+	sessionID := s.createUserSession("octocat", "owner")
+	oauthReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	oauthReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+	if got := s.feedbackSubmitterIdentity(oauthReq); got.Name != "octocat" || got.GitHubLogin != "octocat" || got.Source != "GitHub OAuth dashboard login" {
+		t.Fatalf("oauth identity = %+v", got)
+	}
+
+	headerReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	headerReq.Header.Set("X-Hive-User", "basic-user")
+	if got := s.feedbackSubmitterIdentity(headerReq); got.Name != "basic-user" || got.GitHubLogin != "" || got.Source != "authenticated dashboard user" {
+		t.Fatalf("header identity = %+v", got)
+	}
+
+	anonReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	if got := s.feedbackSubmitterIdentity(anonReq); got.Name != "anonymous dashboard session" || got.GitHubLogin != "" {
+		t.Fatalf("anonymous identity = %+v", got)
 	}
 }
 
@@ -82,6 +167,7 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(`{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug","include_diagnostics":false}`))
 	markOwnerRequest(req)
+	req.Header.Set("X-Hive-User", "dashboard-user")
 	s.handleFeedbackReport(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -91,6 +177,12 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 	}
 	if got.Diagnostics != nil {
 		t.Fatalf("diagnostics should remain excluded, got %+v", got.Diagnostics)
+	}
+	if got.Submitter.Name != "dashboard-user" || got.Submitter.Source != "authenticated dashboard user" {
+		t.Fatalf("submitter = %+v", got.Submitter)
+	}
+	if !got.OpenedByHive {
+		t.Fatal("hub-relayed feedback should be marked as opened by hive")
 	}
 }
 

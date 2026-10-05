@@ -2,7 +2,7 @@
 
 The spoke dashboard has a **Feedback** button in the avatar menu, a top-bar 🐛 button, and a **Report an Issue** item in the left sidebar. Use it to report a bug or request a feature; each submission becomes a GitHub issue in `hivecommons/hive`, or `hivecommons/docs` when you choose **Documentation**.
 
-Submissions include the title, description, feedback type, target repository, and optional pasted or uploaded screenshots. Diagnostics are optional and previewed before submit. Tokens, bearer values, emails, and secret-like key/value text are redacted before sending.
+Submissions include the title, description, feedback type, target repository, the submitting dashboard identity, and optional pasted or uploaded screenshots. Diagnostics are optional and previewed before submit. Tokens, bearer values, emails, and secret-like key/value text are redacted before sending.
 
 When **Include diagnostics** is checked, the dashboard discloses the collected fields in the modal before submit and adds the same "Diagnostics included" table to the GitHub issue:
 
@@ -27,7 +27,14 @@ When **Include diagnostics** is checked, the dashboard discloses the collected f
 - Recent browser console errors — so maintainers can see client-side failures that happened before submit.
 - Recent failed `/api` calls — so maintainers can see backend requests that failed before submit.
 
-Hub-linked spokes relay feedback to the hub so the hub can create the issue with its GitHub credentials. Standalone spokes use the signed-in dashboard user's GitHub auth when available; otherwise the dashboard opens a prefilled GitHub issue URL and asks you to paste screenshots manually.
+The GitHub issue body always includes a **Submitted by** diagnostics row. If the dashboard knows a GitHub OAuth login, the row uses an `@login` mention and adds `/cc @login`; otherwise it records the authenticated dashboard user name or `anonymous dashboard session`.
+
+Issue authorship depends on the deployment shape:
+
+- Hub-linked spokes relay feedback to the hub, so the issue appears authored by the hub's GitHub credential (typically the GitHub App bot when configured). The body says the hive opened it on behalf of the real submitter.
+- Hub-less standalone spokes create the issue with the spoke's configured GitHub credential. If that credential is an operator PAT, GitHub shows the operator as the issue author; the body carries the real dashboard submitter instead.
+- Hosted spokes prefer the configured GitHub App installation when it is available, so issues appear from the App bot rather than an operator token. The body still carries the real dashboard submitter.
+- If no server-side credential can create the issue, the dashboard opens a prefilled GitHub issue URL. In that fallback path, GitHub authors the issue as the browser user who submits the form on github.com.
 
 Screenshots must decode to a real PNG or JPEG image (the bytes are sniffed; the data-URI media type alone is not trusted). Accepted images are committed to a dedicated `feedback-screenshots` branch of the target repository — never its default branch — under `feedback-screenshots/<issue>/`, and linked from an issue comment. The branch is created from the default-branch head the first time it is needed.
 
