@@ -3288,13 +3288,14 @@
     .dash-card-header .section-chevron, .dash-card-header .cost-chevron { width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; }
     .dash-card-badges, .dash-card-actions { display: inline-flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
     .dash-card-actions { margin-left: auto; }
+    .dash-card.collapsed .dash-card-actions { display: none; }
     .dash-card-action, .dash-card-actions > button, .dash-card-actions > a, .dash-card-actions > .hv-btn, .dash-card-actions > .config-gear { display: inline-flex !important; align-items: center; justify-content: center; min-height: 24px !important; height: 24px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; border: 1px solid var(--line-subtle) !important; background: color-mix(in srgb, var(--surface-2) 70%, transparent) !important; color: var(--text) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; text-decoration: none !important; line-height: 1 !important; white-space: nowrap; }
     .dash-card-action:hover, .dash-card-actions > button:hover, .dash-card-actions > a:hover { background: var(--surface-2) !important; border-color: var(--border) !important; }
     .dash-card-badge, .dash-card-badges > * { display: inline-flex !important; align-items: center; min-height: 22px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; line-height: 1 !important; text-transform: uppercase; white-space: nowrap; }
     .dash-card-badges #review-queue-count { display: none !important; }
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
-    .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }

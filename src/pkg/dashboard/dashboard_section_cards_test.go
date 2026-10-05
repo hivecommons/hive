@@ -98,6 +98,10 @@ func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 			t.Fatalf("shared header action/badge normalization is missing %q", want)
 		}
 	}
+	if !strings.Contains(html, ".dash-card.collapsed .dash-card-actions { display: none; }") {
+		t.Fatal("collapsed dashboard cards must hide expanded-content header action buttons")
+	}
+
 	ensureBody := jsFunctionBody(t, html, "function ensureSectionCard(sectionId)")
 	if !strings.Contains(ensureBody, `el.setAttribute('data-stop', '1')`) {
 		t.Fatal("runtime-migrated header links/buttons are not forced to stop propagation")
