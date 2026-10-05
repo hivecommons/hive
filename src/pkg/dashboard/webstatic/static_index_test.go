@@ -524,6 +524,27 @@ func TestStaticIndexRepoTileReorderHandle(t *testing.T) {
 	}
 }
 
+func TestStaticVersionMenuEscapesSidebarClipping(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`.oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed;`,
+		`.avatar-menu.oc-version-menu { position: fixed;`,
+		`z-index: 10002`,
+		`function positionVersionMenu()`,
+		`const rect = chip.getBoundingClientRect`,
+		`window.addEventListener('resize', positionVersionMenuIfOpen);`,
+		`window.addEventListener('scroll', positionVersionMenuIfOpen, true);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard version menu clipping fix missing %q", want)
+		}
+	}
+}
+
 func TestStaticTopbarACMMAndSidebarVersionPlacement(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
