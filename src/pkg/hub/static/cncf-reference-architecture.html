@@ -246,7 +246,7 @@
         <p>Two ideas define the architecture:</p>
         <ol>
           <li><strong>Deterministic before judgment.</strong> A pipeline of Go and shell steps enumerates GitHub work, classifies it, gates which PRs are mergeable, and enforces permissions <em>before</em> any model sees a task. Agents only make the judgment calls.</li>
-          <li><strong>Autonomy is a dial, enforced in depth.</strong> An AI-native Capability Maturity Model (ACMM) with six levels is the single control a human turns; each level maps to a per-agent permission mode enforced at three independent layers.</li>
+          <li><strong>Autonomy is a dial, enforced in depth.</strong> The AI Codebase Maturity Model (ACMM) with six levels is the single control a human turns; each level maps to a per-agent permission mode enforced at three independent layers.</li>
         </ol>
 
         <figure>
@@ -293,7 +293,7 @@ flowchart LR
         </figure>
 
         <blockquote>The hub holds a registry of all spokes, a cross-hive leaderboard, and provisions reachable spokes with <code>kubectl</code>. Firewalled spokes it cannot reach directly are still fully managed over the 2-minute heartbeat — the control plane that lets independent teams (KubeStellar Console, Project Bluefin) each run a spoke against their own repositories under one shared hub.</blockquote>
-        <p style="margin-top:1.1rem">The autonomy framework (ACMM) is described in depth in the paper <a href="https://arxiv.org/abs/2604.09388"><em>An AI-native Capability Maturity Model</em></a>.</p>
+        <p style="margin-top:1.1rem">The autonomy framework (ACMM) is described in depth in the paper <a href="https://arxiv.org/abs/2604.09388"><em>The AI Codebase Maturity Model</em></a>.</p>
       </section>
 
       <!-- ── Guiding principles ── -->

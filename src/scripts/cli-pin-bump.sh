@@ -238,12 +238,12 @@ resolve_github_release_tag() {
 
 resolve_goose() {
   local tag v f
-  tag="$(resolve_github_release_tag block/goose)"
+  tag="$(resolve_github_release_tag aaif-goose/goose)"
   v="${tag#v}"; require_version goose "$v"
   echo "VERSION=$v"
   for pair in x86_64:AMD64 aarch64:ARM64; do
     f="$WORK/goose-${pair%%:*}.tar.gz"
-    http "https://github.com/block/goose/releases/download/v${v}/goose-${pair%%:*}-unknown-linux-gnu.tar.gz" "$f"
+    http "https://github.com/aaif-goose/goose/releases/download/v${v}/goose-${pair%%:*}-unknown-linux-gnu.tar.gz" "$f"
     echo "SHA256_${pair##*:}=$(digest 256 "$f")"
   done
 }

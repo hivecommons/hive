@@ -388,10 +388,11 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands *OverviewBands        `json:"overview_bands,omitempty"`
-	ActionableNow FrontendActionableNow `json:"actionableNow"`
-	Timestamp     string                `json:"timestamp"`
-	TimeZone      string                `json:"timeZone,omitempty"`
+	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
+	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
+	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	Timestamp      string                 `json:"timestamp"`
+	TimeZone       string                 `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -487,6 +488,19 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+type FrontendOverviewTotals struct {
+	Issues FrontendOverviewTotal `json:"issues"`
+	PRs    FrontendOverviewTotal `json:"prs"`
+}
+
+type FrontendOverviewTotal struct {
+	Forge     int            `json:"forge"`
+	Tracked   int            `json:"tracked"`
+	Held      int            `json:"held"`
+	Outside   int            `json:"outside"`
+	Breakdown map[string]int `json:"breakdown,omitempty"`
 }
 
 // FrontendFeatures is the secret-free set of dashboard feature flags consumed
@@ -747,9 +761,30 @@ type FrontendConfiguredAgent struct {
 }
 
 type FrontendActionableNow struct {
-	Issues int `json:"issues"`
-	PRs    int `json:"prs"`
-	Total  int `json:"total"`
+	Issues        int                         `json:"issues"`
+	PRs           int                         `json:"prs"`
+	Total         int                         `json:"total"`
+	Equation      *FrontendActionableEquation `json:"equation,omitempty"`
+	IssueEquation *FrontendActionableEquation `json:"issueEquation,omitempty"`
+	PREquation    *FrontendActionableEquation `json:"prEquation,omitempty"`
+}
+
+type FrontendActionableEquation struct {
+	Kind       string                           `json:"kind,omitempty"`
+	Open       int                              `json:"open,omitempty"`
+	OpenIssues int                              `json:"openIssues"`
+	OpenPRs    int                              `json:"openPrs"`
+	TotalOpen  int                              `json:"totalOpen"`
+	Result     int                              `json:"result,omitempty"`
+	Terms      []FrontendActionableEquationTerm `json:"terms"`
+	Text       string                           `json:"text"`
+	Title      string                           `json:"title,omitempty"`
+}
+
+type FrontendActionableEquationTerm struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
 }
 
 type FrontendGovernor struct {
@@ -1058,8 +1093,6 @@ type TrendHistoryEntry struct {
 	OverviewActionable   int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
-	OverviewMedianSample bool `json:"overviewMedianSample,omitempty"`
-	OverviewMedianAgeSec int  `json:"overviewMedianAgeSec,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -1494,7 +1527,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
-		if isPublicPath(r.URL.Path) {
+		if s.isPublicPath(r.URL.Path) {
 			// Public endpoints remain reachable anonymously, but identity headers are
 			// visible to handlers only when backed by the hub's proxy proof.
 			trustProxyIdentity(true)
@@ -1822,7 +1855,7 @@ func (s *Server) hubProxied() bool {
 // isPublicPath returns true for paths that should be accessible without
 // authentication even when DASHBOARD_AUTH_TOKEN is set. This covers health
 // checks, the snapshot preview, the contribute flow, and auth negotiation.
-func isPublicPath(path string) bool {
+func (s *Server) isPublicPath(path string) bool {
 	switch {
 	case strings.HasPrefix(path, "/api/health"):
 		return true
@@ -1835,6 +1868,12 @@ func isPublicPath(path string) bool {
 	case path == "/api/auth/token":
 		return true
 	case path == "/auth/return":
+		return true
+	case path == publicKnowledgeMCPPath && s.publicKnowledgeEnabled():
+		// Owner-switched, read-only MCP knowledge endpoint (#10615). Public only
+		// while the dashboard setting or HIVE_PUBLIC_KNOWLEDGE is on;
+		// handlePublicKnowledgeMCP re-checks the switch and 404s otherwise,
+		// and serves no write method at all.
 		return true
 	case path == "/metrics" && metricsEnabled():
 		// Prometheus scrape target — bypasses dashboard auth only when
@@ -1924,6 +1963,10 @@ func isPublicPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isPublicPath(path string) bool {
+	return (&Server{}).isPublicPath(path)
 }
 
 // loginPage is a self-contained HTML page served to unauthenticated browser
@@ -3438,7 +3481,6 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		cfg = s.deps.Config.Dashboard.IssueBands
 	}
-	var ages []int
 	for _, r := range status.Repos {
 		repoName := overviewRepoName(r)
 		e.OverviewOpenIssues += r.Issues
@@ -3453,11 +3495,8 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			}
 			if !overviewKPIExcludedBand(band) {
 				e.OverviewActionable++
-				if sec, ok := overviewItemAgeSec(item, now); ok {
-					ages = append(ages, sec)
-				}
 			}
-			if band == "waiting" || band == "blocked" || overviewItemNeedsHumanBlocked(item) {
+			if band == "waiting" {
 				e.OverviewBlockedHuman++
 			}
 		}
@@ -3469,32 +3508,11 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			}
 			if !overviewKPIExcludedBand(band) {
 				e.OverviewActionable++
-				if sec, ok := overviewItemAgeSec(item, now); ok {
-					ages = append(ages, sec)
-				}
 			}
-			if band == "waiting" || band == "blocked" || overviewItemNeedsHumanBlocked(item) {
+			if band == "waiting" || band == "blocked" {
 				e.OverviewBlockedHuman++
 			}
 		}
-		for _, item := range r.HeldIssues {
-			if overviewItemNeedsHumanBlocked(item) {
-				e.OverviewBlockedHuman++
-			}
-		}
-		for _, item := range r.HeldPrs {
-			if overviewItemNeedsHumanBlocked(item) {
-				e.OverviewBlockedHuman++
-			}
-		}
-	}
-	if e.OverviewHeld == 0 {
-		e.OverviewHeld = status.Hold.Total
-	}
-	if len(ages) > 0 {
-		sort.Ints(ages)
-		e.OverviewMedianSample = true
-		e.OverviewMedianAgeSec = ages[len(ages)/2]
 	}
 }
 
@@ -3505,90 +3523,6 @@ func overviewKPIExcludedBand(band string) bool {
 	default:
 		return false
 	}
-}
-
-func overviewItemAgeSec(item any, now time.Time) (int, bool) {
-	var created, updated time.Time
-	switch v := item.(type) {
-	case github.Issue:
-		created, updated = v.CreatedAt, v.UpdatedAt
-	case *github.Issue:
-		if v != nil {
-			created, updated = v.CreatedAt, v.UpdatedAt
-		}
-	case github.PullRequest:
-		created, updated = v.CreatedAt, v.UpdatedAt
-	case *github.PullRequest:
-		if v != nil {
-			created, updated = v.CreatedAt, v.UpdatedAt
-		}
-	case FrontendPR:
-		created, updated = v.CreatedAt, v.UpdatedAt
-	case *FrontendPR:
-		if v != nil {
-			created, updated = v.CreatedAt, v.UpdatedAt
-		}
-	case github.HoldItem:
-		created = v.CreatedAt
-	case *github.HoldItem:
-		if v != nil {
-			created = v.CreatedAt
-		}
-	}
-	basis := updated
-	if basis.IsZero() {
-		basis = created
-	}
-	if basis.IsZero() || now.Before(basis) {
-		return 0, false
-	}
-	return int(now.Sub(basis).Seconds()), true
-}
-
-func overviewItemHasLabel(item any, want string) bool {
-	want = strings.ToLower(want)
-	var labels []string
-	switch v := item.(type) {
-	case github.Issue:
-		labels = v.Labels
-	case *github.Issue:
-		if v != nil {
-			labels = v.Labels
-		}
-	case github.PullRequest:
-		labels = v.Labels
-	case *github.PullRequest:
-		if v != nil {
-			labels = v.Labels
-		}
-	case FrontendPR:
-		labels = v.Labels
-	case *FrontendPR:
-		if v != nil {
-			labels = v.Labels
-		}
-	case github.HoldItem:
-		labels = v.Labels
-	case *github.HoldItem:
-		if v != nil {
-			labels = v.Labels
-		}
-	}
-	for _, label := range labels {
-		if strings.EqualFold(label, want) {
-			return true
-		}
-	}
-	return false
-}
-
-func overviewItemNeedsHumanBlocked(item any) bool {
-	for _, label := range []string{"needs-human", "blocked", "waiting", "needs-decision"} {
-		if overviewItemHasLabel(item, label) {
-			return true
-		}
-	}
-	return false
 }
 
 // TrendHistory returns a copy of the trend history.
@@ -3610,7 +3544,6 @@ type OverviewKPIHistoryEntry struct {
 	OverviewActionable   *int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
-	OverviewMedianAgeSec *int  `json:"overviewMedianAgeSec,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3623,15 +3556,12 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 	out := make([]OverviewKPIHistoryEntry, 0, len(entries))
 	for _, e := range entries {
 		row := OverviewKPIHistoryEntry{Timestamp: e.Timestamp}
-		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 || e.OverviewMedianAgeSec != 0 {
+		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 {
 			row.OverviewOpenIssues = intPtr(e.OverviewOpenIssues)
 			row.OverviewOpenPRs = intPtr(e.OverviewOpenPRs)
 			row.OverviewActionable = intPtr(e.OverviewActionable)
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
-		}
-		if e.OverviewMedianSample || e.OverviewMedianAgeSec != 0 {
-			row.OverviewMedianAgeSec = intPtr(e.OverviewMedianAgeSec)
 		}
 		out = append(out, row)
 	}

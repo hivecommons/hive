@@ -565,6 +565,19 @@ governor:
 #     enabled: false
 #     binary: spektacular
 #     poll_interval_s: 30
+#     recheck:
+#       enabled: false
+#       default_interval: 168h
+#       max_delta_tasks: 50
+#       discovery:
+#         enabled: false
+#         timeout: 30s
+#         max_total_items: 100
+#         sources:
+#           - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
+#           - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
+#           - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
+#           - {kind: landscape, name: project-landscape, max_items: 20}
 #   max_stage_retries: 2
 #   max_worktrees: 8
 

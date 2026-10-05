@@ -10,6 +10,35 @@ after model judgment, and exposes live dashboard, cost, hub/spoke, and
 contributor-compute surfaces. This page positions that design against nearby
 agentic orchestration tools.
 
+## Agentic AI Foundation (AAIF) and Goose
+
+The Linux Foundation's [Agentic AI Foundation](https://aaif.io/) hosts
+[Goose](https://github.com/aaif-goose/goose), originally developed at Block.
+Goose is an execution backend; Hive is a downstream orchestration layer that
+dispatches to Goose at fleet scale, with operator-controlled policy and
+contributor-compute relays. This is an integration relationship, not AAIF
+membership, hosting, or endorsement of Hive.
+
+The [AAIF landscape submission instructions](https://github.com/aaif/aaif-landscape#new-entries)
+ask for an alphabetical `landscape.yml` PR and an SVG logo, and generally
+require 1,000 GitHub stars. Hive had 63 stars when checked for
+[#10627](https://github.com/hivecommons/hive/issues/10627).
+[Listing eligibility request aaif/aaif-landscape#22](https://github.com/aaif/aaif-landscape/issues/22)
+asks whether Hive qualifies below that threshold and which category fits;
+it is a pending submission inquiry, not an accepted listing.
+
+Review material: [OpenSSF Best Practices badge](https://www.bestpractices.dev/projects/14261),
+[Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md),
+and [CNCF reference architecture](cncf-reference-architecture.md).
+
+The [unattended Goose integration guide](../../docs/goose-at-scale.md) is
+maintained here for now. Goose's [contribution workflow](https://github.com/aaif-goose/goose/blob/main/CONTRIBUTING.md#from-issue-to-pull-request)
+requires a **Ready** issue on its board before any external docs PR, and asks
+humans to write new issues themselves. No open Hive issue was found there
+when checked for #10627, so no upstream PR has been opened. A human sponsor
+must file the documentation proposal and obtain Ready status before the
+page can be proposed upstream; the local guide is not upstream approval.
+
 ## Fullsend
 
 Public references: [fullsend.sh](https://fullsend.sh),
@@ -19,7 +48,7 @@ Public references: [fullsend.sh](https://fullsend.sh),
 [Fullsend runtimes](https://github.com/fullsend-ai/fullsend/blob/main/docs/runtimes.md),
 [Fullsend intent representation](https://github.com/fullsend-ai/fullsend/blob/main/docs/problems/intent-representation.md).
 
-Fullsend is the most directly comparable open-source project. Its public README
+Fullsend is a closely comparable open-source project. Its public README
 positions it as autonomous agentic software development for Git-hosted
 organizations, including GitHub, GitLab, and Forgejo. Its docs emphasize a
 repo-visible coordination model: target repositories carry `.fullsend/`
@@ -51,6 +80,43 @@ already the trusted execution substrate, and the team wants minimal standing
 infrastructure. Hive is a better fit when operators need live fleet visibility,
 multiple runtimes, graduated autonomy, hub-managed spokes, contributor compute,
 or network-level enforcement independent of agent runtime hooks.
+
+## OpenAI Symphony
+
+Reviewed against [OpenAI Symphony](https://github.com/openai/symphony) at
+[`be10a1b`](https://github.com/openai/symphony/tree/be10a1b79df723d6d7612b5651c8522704dafb2e).
+Public references: [README](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/README.md),
+[Draft v1 SPEC.md](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/SPEC.md).
+Symphony is Apache-2.0 licensed and describes its Elixir reference implementation
+as an engineering preview for trusted environments. Its demo monitors Linear,
+runs isolated coding agents, and presents proof of work (CI status, review
+feedback, complexity analysis, and walkthrough videos) before accepted PRs land.
+Those demo artifacts and auto-landing are **not** mandatory spec requirements:
+a successful spec run can stop at a human-review handoff.
+
+Hive applies the Symphony operating model—manage work rather than supervise
+every coding turn—to GitHub/GitLab-native projects, with deterministic policy
+gating in front of the agent. This is a positioning analogy, **not** a claim
+that Hive implements Symphony's `WORKFLOW.md` or Codex app-server contracts.
+
+| Dimension | Symphony | Hive |
+| --- | --- | --- |
+| Work source | Linear in the demo; the current spec defines a provider-neutral tracker adapter. | GitHub/GitLab forge workflows; primary planning adapters include GitHub Issues/Projects, Linear, and Jira. |
+| Pre-agent gating | Config preflight, active/terminal states, required labels, adapter dispatchability, claims, and concurrency checks (spec §§6–8). | Deterministic shell enumeration/classification/merge eligibility before a kick, plus ACMM and network-level write enforcement. |
+| Agents | Codex app-server is the specified runner protocol. | Multiple CLI backends, including Claude, Copilot, Gemini, Goose, and Codex; confinement depends on backend and deployment. |
+| Scale model | Per-issue persistent workspace, bounded concurrent runs, reconciliation, continuation, and retry. | Queue-depth-driven cadence, long-lived agents, isolated execution paths, hub/spoke, and convergence audits. |
+| Packaging | Language-neutral draft specification and experimental Elixir reference implementation. | Go runtime and supporting scripts, Compose/Quadlet deployment, dashboard, and contributor relay. |
+
+Choose Symphony when a repo-owned `WORKFLOW.md`, the Codex app-server contract,
+and per-ticket workspace lifecycle are the desired integration surface. Choose
+Hive when fleet operations, multiple runtimes, forge-native review/merge policy,
+and graduated autonomy are central. Neither tool's workspace isolation alone
+constitutes a sandbox.
+
+See the [section-by-section alignment review](../../docs/design/symphony-spec-alignment.md)
+for gaps and intentional divergences, the existing
+[Linear work source](work-sources.md), and
+[work-source provider contract](integrations/work-source-providers.md).
 
 ## Single-agent and service-oriented tools
 
@@ -85,6 +151,8 @@ multi-agent fleet operation.
 - Choose **GitHub Copilot coding agent** when you need the quickest hosted path
   for GitHub issues and do not need a separate fleet governor or custom policy
   plane.
+- Choose **Symphony** when you want a spec-first, repo-owned `WORKFLOW.md`
+  and Codex app-server orchestration with per-ticket persistent workspaces.
 - Choose **Fullsend-style tooling** when you have a small number of repos, want
   GitHub Actions or native CI to be the execution substrate, prefer repo-visible
   `.fullsend/` configuration, and want little or no always-on infrastructure.

@@ -207,6 +207,40 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 	}
 }
 
+func TestNextScheduledAutoUpgradeAt(t *testing.T) {
+	loc, err := autoUpgradeLocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	format := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+	beforeDaily := time.Date(2026, 10, 5, 12, 30, 0, 0, loc)
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeDaily, "", beforeDaily), format(time.Date(2026, 10, 5, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("daily before window = %q, want %q", got, want)
+	}
+
+	afterFired := time.Date(2026, 10, 5, 14, 20, 0, 0, loc)
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeDaily, "2026-10-05", afterFired), format(time.Date(2026, 10, 6, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("daily after fired = %q, want %q", got, want)
+	}
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeDaily, "", afterFired), format(time.Date(2026, 10, 5, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("daily open window not fired = %q, want %q", got, want)
+	}
+
+	monday := time.Date(2026, 10, 5, 14, 20, 0, 0, loc)
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeWeekly, "", monday), format(time.Date(2026, 10, 6, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("weekly before Tuesday window = %q, want %q", got, want)
+	}
+
+	wednesdayFired := time.Date(2026, 10, 7, 9, 0, 0, 0, loc)
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeWeekly, "2026-10-06", wednesdayFired), format(time.Date(2026, 10, 13, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("weekly after this week fired = %q, want %q", got, want)
+	}
+	if got, want := nextScheduledAutoUpgradeAt(AutoUpgradeModeWeekly, "", wednesdayFired), format(time.Date(2026, 10, 6, 13, 0, 0, 0, loc)); got != want {
+		t.Fatalf("weekly open window not fired = %q, want %q", got, want)
+	}
+}
+
 func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

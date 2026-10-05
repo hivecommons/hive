@@ -24,6 +24,34 @@ func TestSidebarVersionChipHasExplicitAffordance(t *testing.T) {
 	}
 }
 
+func TestSidebarVersionMenuKeepsReadableValueColumn(t *testing.T) {
+	html := indexHTML(t)
+	menuRule := cssRule(t, html, ".oc-version-menu")
+	for _, want := range []string{
+		"--oc-version-menu-width: min(640px, calc(100vw - 24px))",
+		"width: var(--oc-version-menu-width)",
+		"max-width: var(--oc-version-menu-width)",
+	} {
+		if !strings.Contains(menuRule, want) {
+			t.Fatalf("version menu width rule missing %q in %s", want, menuRule)
+		}
+	}
+
+	rowRule := cssRule(t, html, ".oc-version-row")
+	if !strings.Contains(rowRule, "grid-template-columns: max-content minmax(0, 1fr)") {
+		t.Fatalf("version row value column must be allowed to grow: %s", rowRule)
+	}
+	valueRule := cssRule(t, html, ".oc-version-row strong")
+	for _, forbidden := range []string{"text-overflow: ellipsis", "white-space: nowrap", "overflow: hidden"} {
+		if strings.Contains(valueRule, forbidden) {
+			t.Fatalf("version values should not truncate with %q in %s", forbidden, valueRule)
+		}
+	}
+	if !strings.Contains(html, "function positionVersionMenu()") {
+		t.Fatal("version menu should be repositioned to stay inside the viewport when widened")
+	}
+}
+
 func TestSidebarVersionChipShowsUpgradeProgressAnimation(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

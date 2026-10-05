@@ -10359,6 +10359,93 @@
         }
       }
     },
+    "/api/knowledge/public": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read public knowledge MCP sharing status",
+        "description": "Returns whether the anonymous read-only MCP knowledge endpoint is enabled, the tag allow-list, whether the value comes from hive.yaml or environment variables, and the endpoint URL. Requires any authenticated dashboard session.",
+        "responses": {
+          "200": {
+            "description": "Public knowledge sharing status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "env",
+                        "setting"
+                      ]
+                    },
+                    "endpoint": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Set public knowledge MCP sharing",
+        "description": "Persists the owner-controlled dashboard override for the anonymous read-only MCP knowledge endpoint. The persisted setting takes precedence over HIVE_PUBLIC_KNOWLEDGE and HIVE_PUBLIC_KNOWLEDGE_TAGS and is applied per request. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Public knowledge sharing setting updated"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
     "/api/knowledge/channels": {
       "get": {
         "tags": [
@@ -18844,6 +18931,38 @@
       }
     },
 
+    "/api/feedback/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard feedback attribution status",
+        "description": "Returns the identity context the dashboard will attach to a feedback report, including whether a standalone hive still needs the user to enter a contact identity before submitting.",
+        "responses": {
+          "200": {
+            "description": "Feedback attribution context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential_login": { "type": "string" },
+                    "submitter_login": { "type": "string" },
+                    "submitter_name": { "type": "string" },
+                    "submitter_source": { "type": "string" },
+                    "hive_id": { "type": "string" },
+                    "hub_linked": { "type": "boolean" },
+                    "hub_name": { "type": "string" },
+                    "needs_identity": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
     "/api/feedback/report": {
       "post": {
         "tags": [
@@ -25028,6 +25147,44 @@
           },
           "404": {
             "description": "Campaign not found"
+          }
+        }
+      }
+    },
+    "/api/campaigns/{id}/recheck": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create a Spek recheck revision",
+        "description": "Creates an immediate linked Spektacular recheck revision using the same cadence path. Returns 409 when a recheck revision is already in flight and 404 when recheck is disabled unless force=true is supplied.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spek recheck revision created"
+          },
+          "404": {
+            "description": "Campaign not found or recheck disabled"
+          },
+          "409": {
+            "description": "A recheck revision is already in flight"
           }
         }
       }

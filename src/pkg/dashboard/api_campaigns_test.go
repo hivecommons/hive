@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -233,6 +234,39 @@ func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
 	}
 	if resp.Campaign.CurrentStage != StagePlan || !strings.Contains(spektacularResumeCommand(resp.Campaign), "spektacular plan status ") {
 		t.Fatalf("spektacular revision resume shape = %+v command=%q", resp.Campaign, spektacularResumeCommand(resp.Campaign))
+	}
+}
+
+func TestCampaignRecheckManualForceAndConflict(t *testing.T) {
+	s, deps := runsTestServer(t)
+	deps.Config.Runs.Spektacular = config.SpektacularConfig{Enabled: true}
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	now := time.Now()
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-8665", "myorg/repo1", 8665, "myorg/repo1!stable-spec-8665:implement", "contributor", StageImplement, 3, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+
+	disabled := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/recheck", "bob", map[string]string{})
+	if disabled.Code != http.StatusNotFound {
+		t.Fatalf("disabled recheck = %d body=%s, want 404", disabled.Code, disabled.Body.String())
+	}
+	forced := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/recheck?force=true", "bob", map[string]string{})
+	if forced.Code != http.StatusOK {
+		t.Fatalf("forced recheck = %d body=%s", forced.Code, forced.Body.String())
+	}
+	var resp struct {
+		OK       bool     `json:"ok"`
+		Campaign Campaign `json:"campaign"`
+	}
+	if err := json.Unmarshal(forced.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode forced recheck: %v", err)
+	}
+	if !resp.OK || resp.Campaign.RevisionOf == "" || resp.Campaign.CurrentStage != StageSpec || resp.Campaign.Drift == nil || resp.Campaign.Drift.RecheckReason != recheckReasonManual {
+		t.Fatalf("forced recheck campaign = %+v", resp.Campaign)
+	}
+	conflict := doOwnerPostAsUser(s, "/api/campaigns/stable-spec-8665/recheck?force=true", "bob", map[string]string{})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("second recheck = %d body=%s, want 409", conflict.Code, conflict.Body.String())
 	}
 }
 

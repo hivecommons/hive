@@ -756,18 +756,57 @@ func (e *InceptionEngine) GetState() *InceptionState {
 // InceptionCampaignArchive is the durable snapshot created before an inception
 // reset so New Inception never discards the session that just finished.
 type InceptionCampaignArchive struct {
-	ID         string          `json:"id"`
-	Title      string          `json:"title,omitempty"`
-	Source     string          `json:"source,omitempty"`
-	Repos      []string        `json:"repos,omitempty"`
-	Engine     string          `json:"engine"`
-	Type       string          `json:"type"`
-	RevisionOf string          `json:"revision_of,omitempty"`
-	Revision   int             `json:"revision,omitempty"`
-	Lease      *CampaignLease  `json:"lease,omitempty"`
-	ArchivedAt time.Time       `json:"archived_at"`
-	State      *InceptionState `json:"state"`
-	WikiFiles  []string        `json:"wiki_files,omitempty"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title,omitempty"`
+	Source     string   `json:"source,omitempty"`
+	Repos      []string `json:"repos,omitempty"`
+	Engine     string   `json:"engine"`
+	Type       string   `json:"type"`
+	RevisionOf string   `json:"revision_of,omitempty"`
+	Revision   int      `json:"revision,omitempty"`
+	// RecheckInterval is the per-campaign continuous-convergence override.
+	RecheckInterval time.Duration    `json:"recheck_interval,omitempty"`
+	Recheck         *CampaignRecheck `json:"recheck,omitempty"`
+	Drift           *CampaignDrift   `json:"drift,omitempty"`
+	Lease           *CampaignLease   `json:"lease,omitempty"`
+	ArchivedAt      time.Time        `json:"archived_at"`
+	State           *InceptionState  `json:"state"`
+	WikiFiles       []string         `json:"wiki_files,omitempty"`
+}
+
+// CampaignRecheck records continuous-convergence cadence state for a campaign.
+type CampaignRecheck struct {
+	Enabled        bool          `json:"enabled"`
+	Interval       time.Duration `json:"interval,omitempty"`
+	LastAt         time.Time     `json:"last_at,omitempty"`
+	LastDeltaCount int           `json:"last_delta_count,omitempty"`
+}
+
+// CampaignDrift records the evidence attached to a Spek recheck revision.
+type CampaignDrift struct {
+	CodebaseChanged bool                       `json:"codebase_changed"`
+	PriorHeadSHA    string                     `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string                     `json:"current_head_sha,omitempty"`
+	PriorRevision   string                     `json:"prior_revision,omitempty"`
+	DeltaCount      int                        `json:"delta_count"`
+	RecheckReason   string                     `json:"recheck_reason,omitempty"`
+	External        []CampaignExternalEvidence `json:"external,omitempty"`
+	ExternalCount   int                        `json:"external_count,omitempty"`
+	SourcesFailed   []CampaignSourceFailure    `json:"sources_failed,omitempty"`
+}
+
+type CampaignExternalEvidence struct {
+	Source      string    `json:"source"`
+	Kind        string    `json:"kind"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url,omitempty"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+	Summary     string    `json:"summary,omitempty"`
+}
+
+type CampaignSourceFailure struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // CampaignLease is the dashboard-level lock that prevents two operators from
@@ -988,6 +1027,76 @@ func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, camp
 		}
 		next++
 	}
+}
+
+// UpsertExternalCampaign records metadata for a non-Inception campaign without
+// creating a revision. Existing archives keep their revision linkage and lease.
+func (e *InceptionEngine) UpsertExternalCampaign(id, title, source, engine, campaignType string, repos []string, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	id = slugify(strings.TrimSpace(id))
+	if id == "" {
+		return nil, fmt.Errorf("campaign id required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		archive = InceptionCampaignArchive{ID: id, ArchivedAt: now}
+	}
+	archive.Title = strings.TrimSpace(title)
+	archive.Source = strings.TrimSpace(source)
+	archive.Repos = repos
+	archive.Engine = strings.TrimSpace(engine)
+	archive.Type = strings.TrimSpace(campaignType)
+	if archive.Engine == "" {
+		archive.Engine = "Spektacular"
+	}
+	if archive.Type == "" {
+		archive.Type = "spektacular"
+	}
+	if archive.ArchivedAt.IsZero() {
+		archive.ArchivedAt = now
+	}
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
+}
+
+// SetCampaignRecheck records continuous-convergence cadence state for a
+// retained campaign.
+func (e *InceptionEngine) SetCampaignRecheck(id string, recheck *CampaignRecheck) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	archive.Recheck = recheck
+	if recheck != nil && recheck.Interval > 0 {
+		archive.RecheckInterval = recheck.Interval
+	}
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
+}
+
+// SetCampaignDrift attaches recheck evidence to a retained campaign revision.
+func (e *InceptionEngine) SetCampaignDrift(id string, drift *CampaignDrift) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	archive.Drift = drift
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
 }
 
 // RestoreCampaignArchive makes an archived inception campaign the active L1

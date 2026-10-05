@@ -58,7 +58,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if m := readUpgradeMarker(); m != nil {
 		resp["upgradeMarker"] = m
 	}
-	manualUpgrade := s.reconcileDashboardUpgradeState(readDashboardUpgradeState(), versionHash, time.Now().UTC())
+	// Read the persisted last-LANDED upgrade record once and share it: the
+	// auto-update object uses it to answer "when was this hive last updated"
+	// (#10038), the release-status view below uses it to classify the last
+	// attempt (#7092), and dashboard-initiated upgrades use it to distinguish a
+	// floating-tag overshoot that actually landed from a superseded request.
+	upgradeOutcomeRec := readUpgradeOutcome()
+	manualUpgrade := s.reconcileDashboardUpgradeState(readDashboardUpgradeState(), versionHash, time.Now().UTC(), upgradeOutcomeRec)
 	if manualUpgrade != nil {
 		resp["manualUpgrade"] = manualUpgrade
 	}
@@ -71,6 +77,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	s.versionMu.RUnlock()
 	if policy != nil {
 		resp["upgradePolicy"] = policy
+		if channel == "" && policy.Channel != "" {
+			channel = policy.Channel
+			resp["channel"] = channel
+		}
 	}
 
 	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
@@ -163,11 +173,6 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if m, ok := resp["upgradeMarker"].(map[string]any); ok {
 		marker = m
 	}
-	// Read the persisted last-LANDED upgrade record once and share it: the
-	// auto-update object uses it to answer "when was this hive last updated"
-	// (#10038) and the release-status view below uses it to classify the last
-	// attempt (#7092).
-	upgradeOutcomeRec := readUpgradeOutcome()
 	resp["autoUpdate"] = buildAutoUpdateStatus(autoUpdateInputs{
 		Enabled:       enabled,
 		Period:        period,
@@ -190,7 +195,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	// proves this is a hub-managed release-channel spoke.
 	lastBeat, beatOK := spoke.LastHeartbeatAttempt()
 	releaseStatus := buildSpokeReleaseStatus(
-		imageRef, "",
+		imageRef, channel,
 		upgradeOutcomeRec, marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
@@ -450,7 +455,7 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	return count, true
 }
 
-func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runningSHA string, now time.Time) *dashboardUpgradeState {
+func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runningSHA string, now time.Time, outcome *upgradeOutcome) *dashboardUpgradeState {
 	if st == nil || st.State != dashboardUpgradeStateStarted {
 		return st
 	}
@@ -479,6 +484,10 @@ func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runni
 	}
 	if target != "" && s.dashboardCommitAtOrAhead(runningSHA, target) {
 		return markDone("running commit " + shortSHADashboard(runningSHA) + " is at or ahead of requested target " + shortSHADashboard(target))
+	}
+	if outcome != nil && !outcome.CompletedAt.IsZero() && !outcome.CompletedAt.Before(st.StartedAt) &&
+		runningSHA != "" && sameCommitDashboard(runningSHA, outcome.TargetSHA) {
+		return markDone("floating tag landed " + shortSHADashboard(outcome.TargetSHA) + " after the request")
 	}
 	if st.StartedFrom != "" && runningSHA != "" && !sameCommitDashboard(runningSHA, st.StartedFrom) {
 		reason := "running commit changed from " + shortSHADashboard(st.StartedFrom) + " to " + shortSHADashboard(runningSHA)

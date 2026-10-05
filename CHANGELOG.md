@@ -11,6 +11,47 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-05 (v5.134.0)
+
+### Added
+
+- dashboard: upgrade bee animation in the top navbar; sidebar pill no longer clips (#10606)
+- dashboard: Review Queue collapsed row shows a priority-split history sparkline (#10613)
+- dashboard: move project actions to toolbar (#10619)
+- knowledge: owner-switched, read-only public MCP endpoint for external agents (#10621)
+- dashboard: Agents sidebar link + up-next agent tiles in top navbar (#10632)
+- dashboard: expose Wavefront (Crustify) work source in settings (#10633)
+- **`openhands` contributor backend (T3, headless-only).** `AGENT_BACKEND=openhands` now dispatches work through the OpenHands CLI's documented one-shot entry point, `openhands --headless -t "<prompt>" --always-approve --override-with-envs`, on the contributor relay under `CONTRIBUTOR_MODE=headless`. `--override-with-envs` is passed deliberately: without it the CLI ignores `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` in favour of its persisted settings, so an env-only credential never reached the agent; `AGENT_MODEL` is forwarded as `LLM_MODEL` because OpenHands has no `--model` flag. The bare CLI has no sandbox, allowlist, or deny-list hive can wire, so `just contribute-hive openhands local` refuses to launch without `HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1` (the #4918 refusal gate), `detect_cli` probes the credential rather than trusting `--version`, and the backend stays out of the headless K8s allowlist and the contributor image (it needs Python 3.12). See `docs/backend-setup.md` and `src/docs/backend-support-tiers.md`.
+
+### Changed
+
+- docs: credit Crustify/Wavefront in integration guide (#10620)
+- dashboard: restore shaded-area hive-vs-human graph in expanded throughput (#10646)
+- docs: ACMM is the AI Codebase Maturity Model everywhere (#10649)
+- ci: run lightweight per-PR checks on self-hosted runners (#10651)
+- hub: revert duplicate /stories page (#10644); stories live on hivecommons.dev (#10653)
+- Remove unlabelled Knowledge collapsed-header sparklines while keeping the facts summary visible.
+- Refresh the public hub landing page with the current agent backend tiers, OpenHands, inference gateways, and related ecosystem links.
+
+### Fixed
+
+- Clarify that stable chases candidate by promoting the newest v5 build that crossed the 24-hour line.
+- dashboard: cap histories, dedupe intervals, cancel animations to stop tab memory growth (#10568)
+- hub dashboard: NPS section header matches sibling section styling (#10604)
+- hub: call push-reporting clusters push-reported, and say why vllm-d has no node health (#10607)
+- feedback: drop unsupported regexp lookahead that panicked at init (#10612)
+- Fixed the review queue collapsed summary escape helper used by visual summary tests.
+- fix: dashboard init panic from lookahead in feedback login regexp (#10617)
+- hub: cache stable-promotion status and use authenticated GitHub reads (#10630)
+- dashboard: Overview open-issue/PR totals explain their gap to the forge counts (#10638)
+- dashboard: surface alerts section at top of page (#10640)
+- dashboard: time-window filter pills clipped behind following tile (#10645)
+- dashboard: hide Clear filter / Rescan / Reset layout while Projects is collapsed (#10647)
+- dashboard: overview under-reports total open issues (#10648)
+- Show and carry dashboard feedback attribution before submit, including creator identity, submitter GitHub username, and hive context.
+- Restore the `pkg/github` coverage gate above its 89% floor by testing the reporter-trust wait notice paths added in #10586.
+- Route reporter-trust intake wait comments and `needs-triage` labels through the core poller path with audited writes and a 10-notice poll cap.
+
 ## 2026-10-05 (v5.133.0)
 
 ### Added

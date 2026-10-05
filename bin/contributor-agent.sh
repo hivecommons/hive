@@ -446,6 +446,12 @@ GOOSECFG
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
+    openhands)
+      # OpenHands reads AGENTS.md at the repository root and also recognizes
+      # CLAUDE.md as model-specific context (docs.openhands.dev, Skills).
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
     muse)
       # Muse Code reads AGENTS.md (its settings panel names "Agents.md", and
       # AGENTS.md dominates the binary's own instruction-file strings). Keep
@@ -691,6 +697,20 @@ detect_cli() {
     kilo)
       # Credentials are environment-only; never mount a whole Kilo home.
       if kilo --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
+      ;;
+    openhands)
+      # `openhands --version` is an argparse version action: it exits 0 with
+      # no credential at all, so the binary alone proves nothing. Probe the
+      # credential the CLI itself documents: LLM_API_KEY (honoured with
+      # --override-with-envs, which hive passes) or the persisted
+      # ~/.openhands/settings.json an interactive first run writes.
+      if ! openhands --version &>/dev/null; then
+        echo "NOT_AUTHED"
+      elif [[ -n "${LLM_API_KEY:-}" || -s "${OPENHANDS_PERSISTENCE_DIR:-${HOME}/.openhands}/settings.json" ]]; then
+        echo "OK"
+      else
+        echo "NOT_AUTHED"
+      fi
       ;;
     muse)
       # `muse --version` answers 0 with NO credential at all, so probing the

@@ -507,7 +507,7 @@ github:
 
 ## ACMM Levels
 
-Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
+Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
 
 | Level | Name | Agents | What agents can do |
 |-------|------|--------|-------------------|
@@ -604,6 +604,14 @@ External and additive work integrations include the [Flue](https://github.com/wi
 A relay can subscribe to multiple hives — manage them as named profiles with `hivectl hives` (`add`, `use`, `list`, plus `export`/`import`/`session` for moving profiles between machines), which generates the `HIVE_HUB` / `HIVE_REGISTRATION_TOKEN` lists the relay reads so they stay aligned by construction. Operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to), [src/docs/contributor-relay.md](src/docs/contributor-relay.md), and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
 
 See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
+
+## Related projects
+
+- [Goose](https://github.com/aaif-goose/goose), an agent backend hosted by the
+  [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive orchestrates Goose;
+  it is not itself an AAIF member or hosted project. See
+  [unattended Goose with Hive](docs/goose-at-scale.md) and
+  [ecosystem listing status](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
 
 ## Repositories
 

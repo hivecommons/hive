@@ -34,6 +34,15 @@ hub verifies `hive-hub:<sha>` rather than `hive:<sha>` before targeting its
 own upgrade). Resolve all three before you change anything, and treat a
 missing tag on any of them as "this commit is not a rollback target".
 
+For the v5 moving channels, `candidate` is the newest successful `docker.yml`
+build and `stable` chases it by digest after a 24-hour soak. The promotion
+workflow chooses the newest v5 build newer than the current `stable` generation
+whose own `docker.yml` completion time is at least 24 hours old; it does not
+wait for the latest `candidate` to become quiet. A selected build can still hold
+promotion when its digest, green release evidence, `release-blocker`, or
+maintained-hive smoke gates fail, and the next hourly run re-evaluates from the
+current `stable` generation.
+
 Which image runs where:
 
 | Image | Runs as | Hosted (hub-managed) location | Self-managed location |

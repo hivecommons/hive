@@ -1,0 +1,1 @@
+- Extend stable-promotion lookback so busy v5 queues do not hide the build that just crossed the 24-hour soak line.

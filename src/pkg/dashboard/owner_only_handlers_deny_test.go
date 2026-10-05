@@ -94,6 +94,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"inception scan", http.MethodPost, "/api/inception/scan", srv.handleInceptionScan},
 		{"inception set questions", http.MethodPost, "/api/inception/questions", srv.handleInceptionSetQuestions},
 		{"inception start", http.MethodPost, "/api/inception/start", srv.handleInceptionStart},
+		{"knowledge public", http.MethodPut, "/api/knowledge/public", srv.handlePublicKnowledgePut},
 		{"knowledge toggle", http.MethodPut, "/api/knowledge/enabled", srv.handleKnowledgeToggle},
 		{"nous abort", http.MethodPost, "/api/nous/abort", srv.handleNousAbort},
 		{"nous approve", http.MethodPost, "/api/nous/approve", srv.handleNousApprove},

@@ -12,7 +12,7 @@ import (
 
 // Issue claims at enumeration time (hivecommons/hive#8380).
 //
-// The claim's source of truth is the issue on GitHub — a `hive-claim` marker
+// The claim's source of truth is the issue on GitHub — a `hive:claim` marker
 // comment, or an assignee — so this is where the hive reads it: once per
 // enumeration, for the actionable issues only, decorating each Issue with the
 // live claim (if any). Every downstream listing (contribute queue, kick

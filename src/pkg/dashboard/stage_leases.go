@@ -496,6 +496,13 @@ func (s *Server) ImportRunPlan(runKey, repo, taskList string, engineName ...stri
 			return errors.New("planning engine name is required")
 		}
 	}
+	if handled, err := s.importRecheckDelta(runKey, repo, taskList, source); handled {
+		return err
+	}
+	return s.importRunPlanDirect(runKey, repo, taskList, source)
+}
+
+func (s *Server) importRunPlanDirect(runKey, repo, taskList, source string) error {
 	store, epic := s.findRunEpic(runKey)
 	// Never take over a run epic owned by another planner, even when its
 	// plan-status marker is absent. Keep lookup shared with approval/reset.
@@ -877,9 +884,39 @@ func (a *runStageAccessor) PendingRunStages(_ context.Context) ([]worksource.Run
 		if l.stage == StageImplement && l.identity != runFanoutIdentity && s.runPlanHasWaves(l.runKey) {
 			continue
 		}
-		out = append(out, worksource.RunStage{RunKey: l.runKey, Stage: l.stage, Repo: l.repo, Title: l.runKey})
+		title := l.runKey
+		if l.stage == StageSpec {
+			title = s.recheckSpecStageTitle(l.runKey, title)
+		}
+		out = append(out, worksource.RunStage{RunKey: l.runKey, Stage: l.stage, Repo: l.repo, Title: title})
 	}
 	return out, nil
+}
+
+func (s *Server) recheckSpecStageTitle(runKey, fallback string) string {
+	if s == nil || s.deps == nil || s.deps.Inception == nil {
+		return fallback
+	}
+	archive, err := s.deps.Inception.LoadCampaignArchive(runKey)
+	if err != nil || archive == nil || archive.Drift == nil || len(archive.Drift.External) == 0 {
+		return fallback
+	}
+	var b strings.Builder
+	b.WriteString(fallback)
+	b.WriteString(" — recheck external evidence for spec input: ")
+	for i, ev := range archive.Drift.External {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(ev.Source)
+		b.WriteString(": ")
+		b.WriteString(ev.Title)
+		if ev.URL != "" {
+			b.WriteString(" ")
+			b.WriteString(ev.URL)
+		}
+	}
+	return b.String()
 }
 
 // StageHasLiveLease reports whether a connection is currently working that
