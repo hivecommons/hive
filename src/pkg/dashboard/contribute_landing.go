@@ -5616,13 +5616,24 @@ function ccLookupDecisions(user){
   if(!user){el.innerHTML='<div class="ops-empty">Look up a contributor above to see what the hub decided about them.</div>';return;}
   ccDecUser=user;
   el.innerHTML='<div class="ops-empty">Loading hub decisions for '+esc(user)+'&hellip;</div>';
-  fetch('/api/contribute/decisions?username='+encodeURIComponent(user)+'&limit=100')
+  return fetch('/api/contribute/decisions?username='+encodeURIComponent(user)+'&limit=100',{headers:{'Accept':'application/json'}})
     .then(function(r){
+      if(r.status===401)throw new Error('Sign in to view hub decisions, then retry the lookup');
       if(r.status===403){var e=new Error('forbidden');e.gated=true;throw e;}
       if(!r.ok)throw new Error('HTTP '+r.status);
-      return r.json();
+      // Proxies and older deployments can return a login page or HTML fallback
+      // with status 200. Do not expose a JSON parser error or call it no decisions.
+      var contentType=(r.headers.get('Content-Type')||'').split(';')[0].trim().toLowerCase();
+      if(contentType!=='application/json'){
+        throw new Error(r.redirected?'The request was redirected instead of returning decisions. Sign in again if needed, then retry; if this persists, ask the hive operator to check API routing':'The hub decisions API returned an unexpected response. Ask the hive operator to check the deployed version and API routing');
+      }
+      return r.json().catch(function(){throw new Error('The hub decisions API returned invalid JSON. Retry the lookup or contact the hive operator');});
     })
-    .then(function(d){if(ccDecUser!==user)return;ccRenderDecisions(user,d);})
+    .then(function(d){
+      if(ccDecUser!==user)return;
+      if(!d||!Array.isArray(d.decisions))throw new Error('The hub decisions API returned an unexpected response. Ask the hive operator to check the deployed version and API routing');
+      ccRenderDecisions(user,d);
+    })
     .catch(function(err){
       if(ccDecUser!==user)return;
       if(err&&err.gated){
