@@ -283,7 +283,7 @@ func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiv
 	return BulkHiveResult{HiveID: id, Ok: false, Error: "unknown bulk action"}
 }
 
-// bulkRestartOrUpgrade restarts or upgrades one hive, PULL ONLY — the hub never
+// bulkRestartOrUpgrade restarts or upgrades one hive, heartbeat-delivered — the hub never
 // kubectls into the spoke's cluster.
 //
 // An upgrade arms s.heartbeatUpgrade[id] with the branch's latest SHA and marks
@@ -326,7 +326,7 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 	}
 	latestSHA := reach.SHA
 
-	// PULL ONLY — no kubectl push. An upgrade is delivered by arming
+	// Heartbeat-delivered — no hub kubectl push. An upgrade is delivered by arming
 	// heartbeatUpgrade below; a plain restart is delivered by arming the
 	// durable RequestedRestartAt, which the heartbeat path turns into
 	// resp.RestartSpoke and the spoke applies to itself. Neither needs the hub
@@ -414,7 +414,7 @@ func (s *HubServer) bulkSwitchBranch(h *SaaSHive, id, username, branch string) B
 	imageTag := branchToTag(branch) + "-latest"
 	image := bulkHiveImageRepo + ":" + imageTag
 
-	// PULL ONLY — no `kubectl set image` push. heartbeatSwitchTag armed below
+	// Heartbeat-delivered — no `kubectl set image` push. heartbeatSwitchTag armed below
 	// is the delivery: the spoke holds the hive-self-upgrade RBAC to patch its
 	// own Deployment and applies the new tag on its next check-in, which the
 	// doc comment above already describes as the mechanism. Dropping the push

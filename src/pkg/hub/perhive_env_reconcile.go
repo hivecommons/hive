@@ -557,7 +557,7 @@ type PerHiveEnvStatus struct {
 	ConsideredHives int `json:"considered_hives"`
 	SkippedByStatus int `json:"skipped_by_status"`
 	// UnreachableHives is how many hives the LAST sweep admitted by status but
-	// then could not read at all, because their cluster is pull-only, has no
+	// then could not read at all, because their cluster is push-reported, has no
 	// registry entry, or is inside the unreachable-cluster breaker's window.
 	//
 	// WHY THIS COUNTER EXISTS. Every counter above is sourced from successful
@@ -565,7 +565,7 @@ type PerHiveEnvStatus struct {
 	// recording anything. A hive on an unreachable cluster therefore left NO
 	// trace on this surface: it was absent from ObservedHives, absent from
 	// MissingPerHiveEnv, and absent from every generation bucket. With 44 of 66
-	// hosted spokes on pull-only clusters, the surface reported the 22
+	// hosted spokes on push-reported clusters, the surface reported the 22
 	// reachable ones as a fully converged fleet while two thirds of it was
 	// never examined. "The hub cannot see this spoke" and "this spoke is fine"
 	// rendered identically, which is the condition under which an operator

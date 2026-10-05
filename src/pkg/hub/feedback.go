@@ -375,10 +375,20 @@ func sanitizeHubFeedbackIdentityValue(v string) string {
 	return hubFeedbackRedact(v)
 }
 
-var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$`)
+// hubFeedbackGitHubLoginPattern mirrors dashboard.feedbackGitHubLoginPattern:
+// GitHub logins with single, non-leading, non-trailing hyphens and an optional
+// "[bot]" suffix. RE2 has no lookahead, so the length cap lives in
+// hubGitHubLoginForMention.
+var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:-?[A-Za-z0-9])*(?:\[bot\])?$`)
+
+// hubGitHubLoginMaxLen is GitHub's documented username length limit.
+const hubGitHubLoginMaxLen = 39
 
 func hubGitHubLoginForMention(login string) string {
 	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if len(strings.TrimSuffix(login, "[bot]")) > hubGitHubLoginMaxLen {
+		return ""
+	}
 	if hubFeedbackGitHubLoginPattern.MatchString(login) {
 		return login
 	}

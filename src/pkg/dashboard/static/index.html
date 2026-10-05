@@ -1411,7 +1411,11 @@
     .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
+    .lc-fleet.prt-headline { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .prt-tile-spark { display:block; margin-top: var(--sp-2); min-height: 20px; }
+    .prt-share-tile { position: relative; }
+    .prt-share-tile .prt-role-select { position:absolute; top:var(--sp-3); right:var(--sp-3); max-width:5.8rem; padding:var(--sp-1) var(--sp-6) var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); }
+    .prt-share-tile .prt-caption { margin-top:var(--sp-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .prt-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-2); margin: var(--sp-3) 0; }
     .prt-metric { background: color-mix(in srgb, var(--bg) 85%, transparent); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); min-height: 4.5rem; }
     .prt-metric .mval { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
@@ -1424,8 +1428,8 @@
     .prt-breakdown { color: var(--muted); font-size: var(--fs-xs); }
     .prt-breakdown b { color: var(--text); display:block; margin-bottom: var(--sp-1); }
     .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
-    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr) minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
-    .prt-matrix, .prt-trend { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
+    .prt-matrix { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
     .prt-matrix table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
     .prt-matrix th, .prt-matrix td { padding:var(--sp-2) var(--sp-2); border-top:1px solid var(--border); text-align:left; vertical-align:middle; }
     .prt-matrix th { color:var(--muted); font-weight:600; border-top:0; }
@@ -1433,19 +1437,15 @@
     .prt-stack .hive { fill:var(--prt-actor-hive); }
     .prt-stack .human { fill:var(--prt-actor-human); }
     .prt-stack .other { fill:var(--prt-actor-other); }
-    .prt-legend .hive { background:var(--prt-actor-hive); }
-    .prt-legend .human { background:var(--prt-actor-human); }
-    .prt-legend .other { background:var(--prt-actor-other); }
     .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
-    .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
-    .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
-    .prt-legend i { display:inline-block; width:8px; height:8px; border-radius:var(--r-pill); margin-right:var(--sp-1); vertical-align:middle; }
     .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
+    @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
     .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
@@ -3293,22 +3293,28 @@
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
-    .agents-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(820px, 56vw); max-width: 820px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
-    .agent-collapsed-tile { flex: 0 0 136px; min-width: 118px; max-width: 154px; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: 1fr 1fr; gap: 0 var(--sp-2); align-items: center; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; text-align: left; }
-    .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
-    .agent-collapsed-tile.disabled { opacity: 0.58; }
-    .agent-collapsed-tile.stopped { border-color: color-mix(in srgb, var(--red) 35%, var(--line-subtle)); }
+    .agents-collapsed-tiles, .repos-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(820px, 56vw); max-width: 820px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
+    .repos-collapsed-tiles { overflow: hidden; }
+    .agent-collapsed-tile, .repo-collapsed-tile { flex: 0 0 136px; min-width: 118px; max-width: 154px; border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: 1fr 1fr; gap: 0 var(--sp-2); align-items: center; padding: var(--sp-1) var(--sp-2); font: inherit; font-size: var(--fs-2xs); line-height: 1.1; text-align: left; }
+    .agent-collapsed-tile:hover, .agent-collapsed-tile:focus-visible, .repo-collapsed-tile:hover, .repo-collapsed-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-collapsed-tile.disabled, .repo-collapsed-tile.paused, .repo-collapsed-tile.idle { opacity: 0.58; }
+    .agent-collapsed-tile.stopped, .repo-collapsed-tile.error { border-color: color-mix(in srgb, var(--red) 35%, var(--line-subtle)); }
     .agent-collapsed-tile.needs-login { border-color: color-mix(in srgb, var(--red) 55%, var(--line-subtle)); }
-    .agent-collapsed-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
-    .agent-collapsed-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .agent-collapsed-tile.active, .repo-collapsed-tile.healthy { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
+    .repo-collapsed-tile.blocked { border-color: color-mix(in srgb, var(--yellow) 65%, var(--line-subtle)); }
+    .agent-collapsed-tile.up-next, .repo-collapsed-tile.working { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-tile-name { font-weight: 800; color: var(--text); }
+    .repo-collapsed-owner { color: var(--muted); font-weight: 700; }
+    .repo-collapsed-icons { display: inline-flex; align-items: center; gap: var(--sp-1); justify-self: end; min-width: 0; }
+    .repo-collapsed-am { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 0.8rem; padding: 0 var(--sp-1); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; line-height: 1; }
     .agent-up-next { justify-self: end; align-self: center; color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
-    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
-    .agent-collapsed-tile.disabled .agent-tile-dot { background: var(--muted); box-shadow: none; }
+    .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
+    .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
@@ -5544,7 +5550,7 @@
       } else if (sectionId === 'repos-section') {
         const open = nums[1] || 0, issues = nums[2] || 0;
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
-        inner = miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
+        inner = typeof reposCollapsedTilesHtml === 'function' ? reposCollapsedTilesHtml(repos, data) : miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
       } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
         inner = miniSpark(hist('count', n0), sectionId === 'audit-section' ? 'var(--yellow)' : 'var(--cyan)', text);
       } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
@@ -5566,7 +5572,7 @@
         const series = hist('headline', n0);
         inner = miniDelta(n0, series.length > 1 ? series[series.length - 2] : n0, text);
       }
-      if (sectionId === 'agents-section' && inner) return inner;
+      if ((sectionId === 'agents-section' || sectionId === 'repos-section') && inner) return inner;
       return miniWrap(sectionId, title || text, inner || miniDelta(n0, n0, text));
     }
 
@@ -5765,6 +5771,95 @@
       if (!list.length) return '';
       ensureAgentsCollapsedCountdownTicker();
       return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map((a, i) => agentCollapsedTileHtml(a, nowMs, i === 0)).join('')}</span>`;
+    }
+    const REPOS_COLLAPSED_TILE_LIMIT = 6;
+    function repoDisplayParts(repo) {
+      const full = String((repo && (repo.full || repo.name)) || '').trim();
+      const parts = full.split('/');
+      if (parts.length > 1) return { full, owner: parts[0] + '/', name: parts.slice(1).join('/') };
+      return { full, owner: '', name: full || 'repo' };
+    }
+    function repoOpenWorkCount(repo) {
+      repo = repo || {};
+      const issues = Array.isArray(repo.actionableIssues) ? repo.actionableIssues.length : Number(repo.openIssues || repo.open_issues || repo.issues || 0) || 0;
+      const prs = (Array.isArray(repo.openPrs) ? repo.openPrs.length : Number(repo.openPRs || repo.open_prs || repo.prs || 0) || 0)
+        + (Array.isArray(repo.heldPrs) ? repo.heldPrs.length : 0);
+      return issues + prs;
+    }
+    function repoHeldCount(repo) {
+      repo = repo || {};
+      const labelBlocked = item => {
+        const labels = ((item && item.labels) || []).map(l => String(l).toLowerCase());
+        return labels.some(l => l === 'blocked' || l === 'needs-human' || l.indexOf('hold') >= 0 || l.indexOf('pause') >= 0);
+      };
+      return (Array.isArray(repo.heldIssues) ? repo.heldIssues.length : 0)
+        + (Array.isArray(repo.heldPrs) ? repo.heldPrs.length : 0)
+        + (Array.isArray(repo.actionableIssues) ? repo.actionableIssues.filter(labelBlocked).length : 0)
+        + (Array.isArray(repo.openPrs) ? repo.openPrs.filter(labelBlocked).length : 0);
+    }
+    function repoHasFailingCI(repo) {
+      const prs = (Array.isArray(repo && repo.openPrs) ? repo.openPrs : []).concat(Array.isArray(repo && repo.heldPrs) ? repo.heldPrs : []);
+      return prs.some(pr => String((pr && pr.ci_status) || '').toLowerCase() === 'failure' || ((pr && pr.failing_checks) || []).length);
+    }
+    function repoIsWorking(repo, data) {
+      const full = repoDisplayParts(repo).full.toLowerCase();
+      const activeSwarmRepo = String((((data || {}).swarm || {}).active || {}).repo || '').toLowerCase();
+      if (full && activeSwarmRepo === full) return true;
+      const agents = Array.isArray((data || {}).agents) ? data.agents : [];
+      return agents.some(a => a && a.busy === 'working' && String(a.repo || a.fullRepo || '').toLowerCase() === full);
+    }
+    function repoCollapsedStatus(repo, data) {
+      if (repo && repo.paused) return 'paused';
+      if (repoHasFailingCI(repo)) return 'error';
+      if (repoHeldCount(repo) > 0) return 'blocked';
+      if (repoIsWorking(repo, data) || repoOpenWorkCount(repo) > 0) return 'healthy';
+      return 'idle';
+    }
+    function repoCollapsedSortKey(repo, data) {
+      const working = repoIsWorking(repo, data) ? 0 : 1;
+      const paused = repo && repo.paused ? 1 : 0;
+      return { working, paused, work: repoOpenWorkCount(repo), name: repoDisplayParts(repo).full.toLowerCase() };
+    }
+    function sortReposForCollapsedTiles(repos, data) {
+      return (Array.isArray(repos) ? repos : []).slice().sort((a, b) => {
+        const ak = repoCollapsedSortKey(a, data), bk = repoCollapsedSortKey(b, data);
+        return (ak.working - bk.working) || (ak.paused - bk.paused) || (bk.work - ak.work) || ak.name.localeCompare(bk.name);
+      });
+    }
+    function repoCollapsedTileTitle(repo, data) {
+      const parts = repoDisplayParts(repo);
+      const issueCount = Array.isArray(repo && repo.actionableIssues) ? repo.actionableIssues.length : Number(repo && (repo.openIssues || repo.open_issues || repo.issues)) || 0;
+      const prCount = (Array.isArray(repo && repo.openPrs) ? repo.openPrs.length : Number(repo && (repo.openPRs || repo.open_prs || repo.prs)) || 0) + (Array.isArray(repo && repo.heldPrs) ? repo.heldPrs.length : 0);
+      const held = repoHeldCount(repo);
+      const status = repoCollapsedStatus(repo, data);
+      const activeText = repoIsWorking(repo, data) ? 'working/active' : (repo && repo.paused ? 'paused' : (repoOpenWorkCount(repo) ? 'healthy' : 'idle'));
+      const am = repo && repo.autoMerge !== false ? 'auto-merge on (AM/⚡)' : 'auto-merge off';
+      const pause = repo && repo.paused ? '⏸ paused: agents do not write or receive work here' : '▶ active: agents may receive work here';
+      const dot = status === 'error' ? 'red dot: CI red or repo error' : (status === 'blocked' ? 'amber dot: blocked/held work' : (status === 'paused' || status === 'idle' ? 'grey dot: paused/idle' : 'green dot: healthy/working'));
+      return `${parts.full}\n${activeText}; ${pause}; ${am}; ${dot}\n${issueCount} actionable issues · ${prCount} open hive PRs · ${held} blocked/held`;
+    }
+    function repoCollapsedTileHtml(repo, data, extraCount) {
+      if (extraCount > 0) {
+        return `<button type="button" class="repo-collapsed-tile idle" data-action="openRepoCollapsedMore" data-stop="1" title="${esc(extraCount + ' more configured repos — expand Projects to see all')}" aria-label="${esc(extraCount + ' more configured repos — expand Projects to see all')}"><span class="agent-tile-name">+${extraCount} more</span><span class="agent-up-next" aria-hidden="true"></span><span class="agent-tile-dot" aria-hidden="true"></span><span class="agent-tile-next">expand Projects</span></button>`;
+      }
+      const parts = repoDisplayParts(repo);
+      const issueCount = Array.isArray(repo && repo.actionableIssues) ? repo.actionableIssues.length : Number(repo && (repo.openIssues || repo.open_issues || repo.issues)) || 0;
+      const prCount = (Array.isArray(repo && repo.openPrs) ? repo.openPrs.length : Number(repo && (repo.openPRs || repo.open_prs || repo.prs)) || 0) + (Array.isArray(repo && repo.heldPrs) ? repo.heldPrs.length : 0);
+      const held = repoHeldCount(repo);
+      const working = repoIsWorking(repo, data);
+      const status = repoCollapsedStatus(repo, data);
+      const classes = ['repo-collapsed-tile', status, working ? 'working' : ''].filter(Boolean).join(' ');
+      const am = repo && repo.autoMerge !== false ? '<span class="repo-collapsed-am" title="Auto-merge enabled">AM</span>' : '';
+      const play = repo && repo.paused ? '⏸' : '▶';
+      const active = working ? '<span class="repo-collapsed-am" title="Currently being worked">ACTIVE</span>' : '';
+      return `<button type="button" class="${classes}" data-action="openRepoCollapsedTile" data-arg0="${esc(parts.full)}" data-repo="${esc(parts.full)}" data-stop="1" title="${esc(repoCollapsedTileTitle(repo, data))}" aria-label="${esc(repoCollapsedTileTitle(repo, data))}"><span class="agent-tile-name"><span class="repo-collapsed-owner">${esc(parts.owner)}</span>${esc(parts.name)}</span><span class="repo-collapsed-icons"><span title="${repo && repo.paused ? 'Repo paused' : 'Repo active'}">${play}</span>${am}${active}</span><span class="agent-tile-dot" data-status="${esc(status)}" aria-hidden="true"></span><span class="agent-tile-next">${esc(issueCount + ' issues · ' + prCount + ' PRs · ' + held + ' hold' + (held === 1 ? '' : 's'))}</span></button>`;
+    }
+    function reposCollapsedTilesHtml(repos, data) {
+      const list = sortReposForCollapsedTiles(repos, data);
+      if (!list.length) return '';
+      const visible = list.slice(0, REPOS_COLLAPSED_TILE_LIMIT);
+      const more = Math.max(0, list.length - visible.length);
+      return `<span class="repos-collapsed-tiles" data-mini-summary="repos-section">${visible.map(r => repoCollapsedTileHtml(r, data, 0)).join('')}${more ? repoCollapsedTileHtml(null, data, more) : ''}</span>`;
     }
     function contributorsSectionSummary(contributors, pool) {
       contributors = Array.isArray(contributors) ? contributors : [];
@@ -6444,6 +6539,35 @@
       ocUpdateFocusedState();
       const after = () => scrollToAgentCard(name, 'smooth');
       ocAfterNavLayoutSettles(['agents-section'], after);
+    }
+    function scrollToRepoCard(repo, behavior) {
+      const key = repoOrderName(repo || '');
+      const safeKey = (window.CSS && CSS.escape) ? CSS.escape(key) : String(key).replace(/["\\]/g, '\\$&');
+      const selector = `.repo-card[data-repo-order-key="${safeKey}"]`;
+      const card = document.querySelector(selector);
+      if (!card) return false;
+      card.scrollIntoView({ block: 'center', behavior: behavior || 'smooth' });
+      card.classList.remove('anchor-highlight');
+      void card.offsetWidth;
+      card.classList.add('anchor-highlight');
+      setTimeout(() => card.classList.remove('anchor-highlight'), 1800);
+      return true;
+    }
+    function openRepoCollapsedMore() {
+      navPeekRestore('repos-section', { instant: true });
+      const expanded = navPeekExpand('repos-section');
+      if (!expanded && isSectionCollapsed('repos-section')) toggleSection('repos-section', { collapsed: false, persist: false, navPeek: true });
+      ocAfterNavLayoutSettles(['repos-section'], function() { ocScrollSectionIntoView('repos-section'); });
+    }
+    function openRepoCollapsedTile(repo) {
+      if (!repo) return;
+      const state = repoPillFilterState();
+      writeRepoPillFilterState({ mode: state.mode, kinds: [], repo });
+      navPeekRestore('repos-section', { instant: true });
+      const expanded = navPeekExpand('repos-section');
+      if (!expanded && isSectionCollapsed('repos-section')) toggleSection('repos-section', { collapsed: false, persist: false, navPeek: true });
+      repaintReposForWidth();
+      ocAfterNavLayoutSettles(['repos-section'], function() { scrollToRepoCard(repo, 'smooth') || ocScrollSectionIntoView('repos-section'); });
     }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
@@ -11533,7 +11657,8 @@
       const src = value && typeof value === 'object' ? value : {};
       const mode = src.mode === 'all' ? 'all' : 'any';
       const kinds = Array.isArray(src.kinds) ? src.kinds.map(k => String(k).trim()).filter(Boolean) : [];
-      return { mode, kinds: Array.from(new Set(kinds)).sort() };
+      const repo = String(src.repo || '').trim();
+      return { mode, kinds: Array.from(new Set(kinds)).sort(), repo };
     }
     function repoPillFilterState() {
       try { return normalizeRepoPillFilter(JSON.parse(localStorage.getItem(repoPillFilterKey()) || '{}')); } catch { return normalizeRepoPillFilter(null); }
@@ -11541,12 +11666,15 @@
     function writeRepoPillFilterState(state) {
       state = normalizeRepoPillFilter(state);
       try {
-        if (state.kinds.length) localStorage.setItem(repoPillFilterKey(), JSON.stringify(state));
+        if (state.kinds.length || state.repo) localStorage.setItem(repoPillFilterKey(), JSON.stringify(state));
         else localStorage.removeItem(repoPillFilterKey());
       } catch {}
       return state;
     }
-    function repoPillFilterActive(state) { return normalizeRepoPillFilter(state || repoPillFilterState()).kinds.length > 0; }
+    function repoPillFilterActive(state) {
+      state = normalizeRepoPillFilter(state || repoPillFilterState());
+      return state.kinds.length > 0 || !!state.repo;
+    }
     function repoPillFilterMatches(rowKinds, state) {
       state = normalizeRepoPillFilter(state || repoPillFilterState());
       if (!state.kinds.length) return true;
@@ -11564,20 +11692,27 @@
     function repoPillFilterHiddenClass(kinds, state) {
       return repoPillFilterMatches(kinds, state) ? '' : ' repo-pill-row-filtered-hidden';
     }
+    function repoPillFilterRepoMatches(repo, state) {
+      state = normalizeRepoPillFilter(state || repoPillFilterState());
+      if (!state.repo) return true;
+      const full = String(repo || '').toLowerCase();
+      const want = state.repo.toLowerCase();
+      return full === want || full.endsWith('/' + want);
+    }
     function toggleRepoPillFilter(kind) {
       const state = repoPillFilterState();
       const set = new Set(state.kinds);
       if (set.has(kind)) set.delete(kind); else set.add(kind);
-      writeRepoPillFilterState({ mode: state.mode, kinds: Array.from(set) });
+      writeRepoPillFilterState({ mode: state.mode, kinds: Array.from(set), repo: state.repo });
       repaintReposForWidth();
     }
     function setRepoPillFilterMode(mode) {
       const state = repoPillFilterState();
-      writeRepoPillFilterState({ mode: mode === 'all' ? 'all' : 'any', kinds: state.kinds });
+      writeRepoPillFilterState({ mode: mode === 'all' ? 'all' : 'any', kinds: state.kinds, repo: state.repo });
       repaintReposForWidth();
     }
     function clearRepoPillFilter() {
-      writeRepoPillFilterState({ mode: repoPillFilterState().mode, kinds: [] });
+      writeRepoPillFilterState({ mode: repoPillFilterState().mode, kinds: [], repo: '' });
       repaintReposForWidth();
     }
     function repoPillFilterRowCounts(rows, state) {
@@ -11586,7 +11721,9 @@
       return { shown, total };
     }
     function repoPillFilterClearChip(counts) {
-      return `<span class="repo-filtered-chip">🔎 filtered · ${counts.shown} of ${counts.total}<button type="button" data-action="clearRepoPillFilter" data-stop="1" data-prevent="1" aria-label="Clear repository pill filter" title="Clear filter">✕</button></span>`;
+      const state = repoPillFilterState();
+      const repoText = state.repo ? `${state.repo} · ` : '';
+      return `<span class="repo-filtered-chip">🔎 filtered · ${esc(repoText)}${counts.shown} of ${counts.total}<button type="button" data-action="clearRepoPillFilter" data-stop="1" data-prevent="1" aria-label="Clear repository pill filter" title="Clear filter">✕</button></span>`;
     }
     function repoIssueFilterKinds(issue, info, held) {
       const issueLabels = ((issue && issue.labels) || []).map(l => String(l).toLowerCase());
@@ -13228,6 +13365,7 @@
       const status = window._lastStatus || {};
       const pillFilter = repoPillFilterState();
       const pillFilterIsActive = repoPillFilterActive(pillFilter);
+      const visibleRepos = (repos || []).filter(r => repoPillFilterRepoMatches(r && (r.full || r.name), pillFilter));
       renderRepoLegend();
       renderOverviewCharts(repos);
       const activeSwarmRepo = ((status.swarm || {}).active || {}).repo || '';
@@ -13276,7 +13414,7 @@
       if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       const clearFilterBtn = document.getElementById('repos-clear-pill-filter-btn');
       if (clearFilterBtn) clearFilterBtn.hidden = !pillFilterIsActive;
-      setIfChanged(el, repos.map(r => {
+      setIfChanged(el, visibleRepos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes(), `repo:${r.name}:issues`);
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes(), `repo:${r.name}:prs`);
         const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
@@ -16598,6 +16736,25 @@ function burnAreaChart() {
         wrapperTitle: title,
       })}</span>`;
     }
+    function prtHiveShareSpark(series) {
+      if (!Array.isArray(series) || series.length < 2) return '';
+      const values = series.map((p) => {
+        const hive = Math.max(0, Number(p && p.hive) || 0);
+        const human = Math.max(0, Number(p && p.human) || 0);
+        const other = Math.max(0, Number(p && p.other) || 0);
+        const total = hive + human + other;
+        return total ? Math.round((hive / total) * 100) : 0;
+      });
+      return renderSparkline(null, values, {
+        color: 'var(--prt-actor-hive)',
+        title: prtSparkTitle(values, v => `${Math.round(v)}%`),
+        svgTitle: prtSparkTitle(values, v => `${Math.round(v)}%`),
+        ariaLabel: 'hive share trend',
+        label: 'hive share',
+        id: 'change-throughput:hive-share',
+        wrapperClass: 'sparkline--flush',
+      });
+    }
     function prtBucketMetricSeries(dto) {
       const buckets = Array.isArray(dto.buckets) ? dto.buckets : [];
       const bucketDays = Math.max((Number(dto.bucket_seconds) || 3600) / 86400, 1 / 1440);
@@ -16693,23 +16850,32 @@ function burnAreaChart() {
       };
       return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="100% stacked area trend for hive, human, and other automation actor shares">${['other','human','hive'].map(area).join('')}</svg>`;
     }
-    function prtTrendCaption(dto) {
+    function prtTrendStats(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
       const totals = series.reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), human:a.human+(Number(p.human)||0), other:a.other+(Number(p.other)||0) }), {hive:0,human:0,other:0});
       const total = totals.hive + totals.human + totals.other;
-      if (!total) return 'No attribution data yet — counters start now.';
+      if (!total) return { totals, total, cur: null, prevPct: null, noun: '', shortNoun: '', caption: 'No attribution data yet — counters start now.' };
       const cur = Math.round((totals.hive / total) * 100);
       const half = Math.floor(series.length / 2);
       const prev = series.slice(0, half).reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), total:a.total+(Number(p.hive)||0)+(Number(p.human)||0)+(Number(p.other)||0) }), {hive:0,total:0});
       const prevPct = prev.total ? Math.round((prev.hive / prev.total) * 100) : null;
       const noun = prtRole === 'created' ? 'created changes' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
-      return `hive ${cur}% of ${noun} this window${prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}%`}`;
+      const shortNoun = prtRole === 'created' ? 'created' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
+      const caption = `hive ${cur}% of ${noun} this window${prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}%`}`;
+      return { totals, total, cur, prevPct, noun, shortNoun, caption };
     }
-    function prtActorTrend(dto) {
+    function prtTrendCaption(dto) {
+      return prtTrendStats(dto).caption;
+    }
+    function prtHiveHumanTile(dto) {
       const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
-      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
-      return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+      const stats = prtTrendStats(dto);
+      const tooltip = stats.total
+        ? `hive ${stats.totals.hive} · human ${stats.totals.human} · other automation ${stats.totals.other} · ${stats.caption}`
+        : `hive · human · other automation · ${stats.caption}`;
+      const sub = stats.total ? `of ${stats.shortNoun}${stats.prevPct == null ? '' : ` · was ${stats.prevPct}%`}` : 'No attribution data yet';
+      return `<div class="lc-fleet-stat prt-share-tile" title="${escapeHtml(tooltip)}"><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v" data-stop="1" title="Hive vs human mode">${opts}</select><div class="val merged">${stats.cur == null ? '—' : stats.cur + '%'}</div><div class="lbl">Hive vs human</div><div class="prt-caption">${escapeHtml(sub)}</div><span class="prt-tile-spark">${prtHiveShareSpark(series)}</span></div>`;
     }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
@@ -16758,7 +16924,8 @@ function burnAreaChart() {
           <div class="lc-fleet-stat" title="Pull/merge requests opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
-        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
+          ${prtHiveHumanTile(dto)}
+        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }
 

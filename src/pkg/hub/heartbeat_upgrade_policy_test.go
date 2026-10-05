@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -209,6 +210,13 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
+	// stableNextPromotionAt consults the live stable generation and the
+	// release workflow runs before falling back to the candidate soak
+	// (#10587); stub both so the assertion is hermetic.
+	origGen, origRuns := ghcrTagGeneration, stablePromotionFetchRuns
+	ghcrTagGeneration = func(string, string, *slog.Logger) int { return 0 }
+	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun { return nil }
+	defer func() { ghcrTagGeneration, stablePromotionFetchRuns = origGen, origRuns }()
 	builtAt := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	queued := []ChannelTarget{
 		{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:stable"},
