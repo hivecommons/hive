@@ -484,11 +484,12 @@
     }
     .admin-collapsible-section { margin-top: 48px; }
     .admin-collapsible-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-6); }
-    .admin-collapsible-title { color: var(--hub-dashboard-accent); margin: var(--sp-0); cursor: pointer; user-select: none; display: flex; align-items: center; gap: var(--sp-4); }
+    .admin-collapsible-title { font-size: 1.3rem; color: var(--hub-dashboard-accent); margin: var(--sp-0); cursor: pointer; user-select: none; display: flex; align-items: center; gap: var(--sp-4); }
+    .admin-collapsible-toggle { font-size: 0.7rem; }
+    .admin-collapsible-summary { font-size: var(--fs-sm); color: var(--muted); font-weight: 400; }
     /* NPS feedback card (#9610). Admin-only; every value is set with
        textContent, so this block only lays out plain text nodes. Tokens only,
        per the style ratchet. */
-    .nps-admin-title { font-size: var(--fs-md); color: var(--hub-dashboard-accent); font-weight: 600; margin-bottom: var(--sp-4); }
     .nps-admin-summary { font-size: var(--fs-sm); color: var(--text); margin-bottom: var(--sp-2); }
     .nps-admin-sub { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-4) 0 var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
     .nps-admin-row { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-2); font-size: var(--fs-xs); }
@@ -639,8 +640,8 @@
       <div class="admin-collapsible-head">
         <h2 id="nps-header" class="admin-collapsible-title" role="button" tabindex="0" aria-expanded="false" aria-controls="nps-body"
             onclick="toggleAdminNPSSection()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminNPSSection();}">
-          <span id="nps-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; NPS feedback</span>
-          <span id="nps-summary" class="fs-sm text-muted"></span>
+          <span id="nps-toggle" class="admin-collapsible-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; NPS feedback</span>
+          <span id="nps-summary" class="admin-collapsible-summary"></span>
         </h2>
       </div>
       <div id="nps-body" hidden>
@@ -653,13 +654,12 @@
       </div>
     </div>
 
-    <div id="admin-section" style="display:none;margin-top:48px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
-        <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
-            onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}"
-            style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0);cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-4)">
-          <span id="admin-users-toggle" aria-hidden="true" style="font-size:0.7rem">&#9656;</span><span>Hub Admin &mdash; Users</span>
-          <span id="admin-users-count" style="font-size:var(--fs-sm);color:var(--muted);font-weight:400"></span>
+    <div id="admin-section" class="admin-collapsible-section" style="display:none">
+      <div class="admin-collapsible-head">
+        <h2 id="admin-users-header" class="admin-collapsible-title" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
+            onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}">
+          <span id="admin-users-toggle" class="admin-collapsible-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; Users</span>
+          <span id="admin-users-count" class="admin-collapsible-summary"></span>
         </h2>
         <input type="text" id="user-search" placeholder="Search users..." oninput="filterUsers()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
       </div>
