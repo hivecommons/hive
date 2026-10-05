@@ -175,6 +175,11 @@ type ContributorReading struct {
 	Cause  string                   `json:"cause,omitempty"`
 	Error  string                   `json:"error,omitempty"`
 	Limits []ContributorLimitWindow `json:"limits"`
+	// ResetCreditsAvailable is the provider-stated rate-limit reset credit count
+	// (kubestellar/hive#10596), fresh as of captured_at. Absent means unknown,
+	// which is distinct from an explicit 0; consumers must not treat absence as
+	// evidence a reset exists.
+	ResetCreditsAvailable *int `json:"reset_credits_available,omitempty"`
 }
 
 // HeadroomToContributorReading normalizes a probed Headroom into the reading the
@@ -200,12 +205,12 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 			cause = ProbeCauseProbeFailed
 		}
 		if h.Stale && len(h.Limits) > 0 {
-			r := ContributorReading{State: "available", CapturedAt: capturedAt, Cause: string(cause), Error: h.ProbeError(), Limits: contributorLimitWindows(h.Limits)}
+			r := ContributorReading{State: "available", CapturedAt: capturedAt, Cause: string(cause), Error: h.ProbeError(), Limits: contributorLimitWindows(h.Limits), ResetCreditsAvailable: h.ResetCreditsAvailable}
 			return r
 		}
 		return ContributorReading{State: "unknown", CapturedAt: capturedAt, Cause: string(cause), Error: h.ProbeError(), Limits: []ContributorLimitWindow{}}
 	}
-	return ContributorReading{State: "available", CapturedAt: capturedAt, Limits: contributorLimitWindows(h.Limits)}
+	return ContributorReading{State: "available", CapturedAt: capturedAt, Limits: contributorLimitWindows(h.Limits), ResetCreditsAvailable: h.ResetCreditsAvailable}
 }
 
 func contributorLimitWindows(windows []LimitWindow) []ContributorLimitWindow {
