@@ -242,6 +242,24 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      openhands)
+        if command -v openhands &>/dev/null; then
+          echo "OpenHands CLI detected ($(openhands --version 2>&1 | head -1))"
+          echo "  Headless only: openhands --headless -t \"<prompt>\" --always-approve --override-with-envs"
+          echo "  Model:  export AGENT_MODEL=provider/model (any litellm model id; forwarded as LLM_MODEL)"
+          echo "  Auth:   export LLM_API_KEY=... (and LLM_BASE_URL for an OpenAI-compatible gateway),"
+          echo "          or run 'openhands' once interactively (credential stored at ~/.openhands/settings.json)"
+          echo "  openhands has NO sandbox on this path (its Docker sandbox exists only behind 'openhands serve');"
+          echo "  local mode refuses to launch without HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1."
+          echo "  Note: the contributor image does not ship openhands (needs Python 3.12; the image is bookworm/3.11)."
+          if [[ -z "${LLM_API_KEY:-}" && ! -s "${OPENHANDS_PERSISTENCE_DIR:-$HOME/.openhands}/settings.json" ]]; then
+            echo "  WARNING: no LLM_API_KEY and no ~/.openhands/settings.json — openhands will fail at task time."
+          fi
+        else
+          echo "ERROR: openhands CLI not found. Install: uv tool install openhands --python 3.12 (https://docs.openhands.dev/openhands/usage/cli/installation)"
+          exit 1
+        fi
+        ;;
       muse)
         if command -v muse &>/dev/null; then
           echo "Muse Code CLI detected ($(muse --version 2>&1 | head -1))"
@@ -281,7 +299,7 @@ contribute-check-backend backend="claude":
         fi
         ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
         exit 1
         ;;
     esac
@@ -1143,9 +1161,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo|omp)
+        goose|agy|bob|pi|aider|kilo|omp|openhands)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these seven (see the "no confinement mechanism at all"
+          # any of these eight (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
