@@ -372,16 +372,16 @@
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
-    .oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; }
-    .avatar-menu.oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
+    .oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; }
+    .avatar-menu.oc-version-menu { left: 0; right: auto; bottom: calc(100% + 10px); top: auto; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); box-sizing: border-box; }
     .oc-version-menu:empty { display: none; }
     .oc-version-focus-pulse { outline: 2px solid color-mix(in srgb, var(--amber) 72%, transparent); outline-offset: 3px; border-radius: var(--r); }
     .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
-    .oc-version-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); color: var(--muted); font-size: var(--fs-sm); min-width: 0; max-width: 100%; overflow: hidden; }
-    .oc-version-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .oc-version-row strong { min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; white-space: nowrap; }
+    .oc-version-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); color: var(--muted); font-size: var(--fs-sm); min-width: 0; max-width: 100%; overflow: visible; }
+    .oc-version-row > span { min-width: 0; white-space: nowrap; }
+    .oc-version-row strong { min-width: 0; text-align: right; overflow-wrap: anywhere; }
     .oc-version-row strong, .oc-version-row a { color: var(--text); }
-    .oc-version-row strong a { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
@@ -26204,6 +26204,23 @@ function burnAreaChart() {
       if (chip) chip.setAttribute('aria-expanded', 'false');
     }
 
+    function positionVersionMenu() {
+      const wrap = document.getElementById('oc-git-version');
+      const menu = document.getElementById('oc-version-menu');
+      if (!wrap || !menu || typeof window === 'undefined') return;
+      const viewport = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 0);
+      const width = Math.min(640, Math.max(0, viewport - 24));
+      const rect = wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : { left: 0 };
+      let left = 0;
+      const overflowRight = rect.left + width - viewport + 12;
+      if (overflowRight > 0) left -= overflowRight;
+      if (rect.left + left < 12) left = 12 - rect.left;
+      menu.style.width = width + 'px';
+      menu.style.maxWidth = width + 'px';
+      menu.style.left = left + 'px';
+      menu.style.right = 'auto';
+    }
+
     function toggleVersionMenu() {
       const menu = document.getElementById('oc-version-menu');
       const chip = document.getElementById('oc-version-chip');
@@ -26215,6 +26232,7 @@ function burnAreaChart() {
       menu.hidden = nextHidden;
       chip.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
       if (!nextHidden) {
+        positionVersionMenu();
         const first = menu.querySelector('button, a, [tabindex]:not([tabindex="-1"])');
         if (first) first.focus();
       }
