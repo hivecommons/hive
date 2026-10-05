@@ -5616,8 +5616,9 @@
         wrapperClass: 'mini-audit-rate-wrap audit-entry-rate-spark'
       });
       const chipClass = sensitive > 0 ? 'warning' : 'muted';
-      const label = title || text || `${today} entries today`;
-      return `<span class="mini-summary-strip audit-collapsed-summary" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="audit-section">${spark}<span class="audit-last-entry" title="${escapeHtml(tooltip)}">${escapeHtml(lastLabel)}</span><span class="audit-today-count">${escapeHtml(String(today))} entries today</span><span class="audit-sensitive-chip ${chipClass}" title="${escapeHtml(sensitive + ' sensitive audit actions in the last 24h')}">${escapeHtml(String(sensitive))} sensitive</span></span>`;
+      const todayLabel = `${formatCount(today)} ${plural(today, 'event')} today`;
+      const label = title || text || todayLabel;
+      return `<span class="mini-summary-strip audit-collapsed-summary" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="audit-section">${spark}<span class="audit-last-entry" title="${escapeHtml(tooltip)}">${escapeHtml(lastLabel)}</span><span class="audit-today-count">${escapeHtml(todayLabel)}</span><span class="audit-sensitive-chip ${chipClass}" title="${escapeHtml(sensitive + ' sensitive audit actions in the last 24h')}">${escapeHtml(formatCount(sensitive))} sensitive</span></span>`;
     }
     function miniGauge(value, max, color, label) {
       const v = Math.max(0, Number(value) || 0);
@@ -5667,7 +5668,8 @@
     function miniText(value, label) {
       const text = textOrDash(value);
       const title = label || text;
-      return `<svg class="mini-text" width="74" height="24" viewBox="0 0 74 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}<text x="72" y="16" text-anchor="end" fill="currentColor" font-size="11" font-weight="800">${escapeHtml(text.slice(0, 10))}</text></svg>`;
+      const width = Math.max(74, Math.min(160, text.length * 7 + 8));
+      return `<svg class="mini-text" width="${width}" height="24" viewBox="0 0 ${width} 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}<text x="${width - 2}" y="16" text-anchor="end" fill="currentColor" font-size="11" font-weight="800">${escapeHtml(text)}</text></svg>`;
     }
     function reviewQueueHistoryEntries() {
       const cutoff = Date.now() - (REVIEW_QUEUE_WINDOWS[_reviewQueueWindow] || REVIEW_QUEUE_WINDOWS['24h']);
@@ -5696,6 +5698,13 @@
     }
     function reviewQueueRangeControls() {
       return `<span class="overview-kpi-range review-queue-collapsed-range" aria-label="Review Queue history range">${Object.keys(REVIEW_QUEUE_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _reviewQueueWindow ? ' active' : ''}" data-action="setReviewQueueWindow" data-arg0="${escapeHtml(win)}" data-stop="1" aria-pressed="${win === _reviewQueueWindow ? 'true' : 'false'}" title="Show ${escapeHtml(win)} review queue history">${escapeHtml(win)}</button>`).join('')}</span>`;
+    }
+    function plural(n, singular, pluralForm) {
+      return Number(n) === 1 ? singular : (pluralForm || singular + 's');
+    }
+    function formatCount(n) {
+      const value = Number(n) || 0;
+      return value.toLocaleString();
     }
     function reviewQueueSparkline(entries) {
       const total = reviewQueueSeries(entries, 'total');
@@ -5776,8 +5785,14 @@
       if (id === 'unblock-human-issues') return { n: first('needs_human'), label: `−${first('needs_human')} holds` };
       if (id === 'review-stale-prs') return { n: first('stale_blocked'), label: `−${first('stale_blocked')} stale` };
       if (id === 'confirm-and-close') return { n: first('agent_done'), label: `−${first('agent_done')} queue` };
-      if (id === 'enable-disabled-agent') return { n: first('disabled_agents'), label: `+${first('disabled_agents')} lane` };
-      if (id === 'add-agent-cadence') return { n: first('no_cadence_agents'), label: `+${first('no_cadence_agents')} kicks` };
+      if (id === 'enable-disabled-agent') {
+        const n = first('disabled_agents');
+        return { n, label: `+${n} ${plural(n, 'lane')}` };
+      }
+      if (id === 'add-agent-cadence') {
+        const n = first('no_cadence_agents');
+        return { n, label: `+${n} ${plural(n, 'kick')}` };
+      }
       if (id === 'fix-merge-blockers') return { n: first('open_holds'), label: `−${first('open_holds')} holds` };
       if (id === 'reduce-blocked-prs') return { n: first('blocked'), label: `−${first('blocked')} queue` };
       return { n: items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1, label: `−${items || adviceSignalNumber(rec, ['governor_prs', 'governor_issues']) || 1} queue` };
@@ -5795,7 +5810,7 @@
         'review-stale-prs': `Review ${n} stale PRs`,
         'confirm-and-close': `Close ${n} done issues`,
         'enable-disabled-agent': `Enable ${n} disabled agent${n === 1 ? '' : 's'}`,
-        'add-agent-cadence': `Set cadence on ${n} agents`,
+        'add-agent-cadence': `Set cadence on ${n} ${plural(n, 'agent')}`,
         'fix-merge-blockers': `Drain ${n} held PRs`,
         'throttle-pr-producing-lanes': 'Throttle PR-producing lanes',
         'raise-budget-if-starving': 'Raise agent budget',
@@ -5885,10 +5900,10 @@
         inner = miniBar([{ label: 'merged', value: nums[0] || 0, color: 'var(--green)' }, { label: 'opened', value: nums[1] || 0, color: 'var(--yellow)' }], text);
       } else if (sectionId === 'token-panel') {
         const sessions = nums.length > 1 ? nums[1] : Number(data.tokens?.totals?.sessions || 0);
-        inner = miniText(text.replace(/\s+/g, ''), text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
+        inner = miniText(text, text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
       } else if (sectionId === 'cost-panel') {
         const costSeries = (typeof costHist === 'function' ? costHist() : []).map(e => Number(e.usd || e.total_usd) || 0);
-        inner = miniSpark(costSeries.length ? costSeries : hist('usd', n0), 'var(--green)', text) + miniText(text.replace(/\s+/g, ''), text);
+        inner = miniSpark(costSeries.length ? costSeries : hist('usd', n0), 'var(--green)', text) + miniText(text, text);
       } else if (sectionId === 'repos-section') {
         const open = nums[1] || 0, issues = nums[2] || 0;
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
@@ -5896,7 +5911,7 @@
       } else if (sectionId === 'audit-section') {
         return renderAuditCollapsedSummary(text, title);
       } else if (sectionId === 'knowledge-section') {
-        inner = miniText(text.replace(/\s+/g, ''), text);
+        inner = miniText(text, text);
       } else if (sectionId === 'acmm-eval-section') {
         return acmmCollapsedEvalHtml(title || text);
       } else if (sectionId === 'acmm-reco-section') {
@@ -5909,6 +5924,8 @@
         inner = miniAvatarDots((typeof _cachedContributors === 'undefined' ? [] : _cachedContributors), n0, text);
       } else if (sectionId === 'debug-section') {
         return (typeof debugQuotaWidgetHtml === 'function' && debugQuotaWidgetHtml(data)) || miniWrap(sectionId, title || text, miniText(text, text));
+      } else if (sectionId === 'faq-section') {
+        return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
         inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now()) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
@@ -6288,7 +6305,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const advWhen = relativeTimeShort(adv.generatedAt || adv.updatedAt || adv.latest || data.timestamp);
       setSectionSummary('advisory-section', `${advCount} advisories${advWhen ? ' · ' + advWhen : ''}`);
       setSectionSummary('acmm-eval-section', `L${data.acmmLevel || '—'}${data.acmmEvalAt ? ' · last eval ' + relativeTimeShort(data.acmmEvalAt) : ''}`);
-      const auditToday = (document.querySelectorAll('#audit-panel .audit-entry').length || Number(data.auditEventsToday || 0) || 0);
+      const auditSummaryToday = Number(window._auditSummary && window._auditSummary.today);
+      const auditToday = (Number.isFinite(auditSummaryToday) ? auditSummaryToday : (Number(data.auditEventsToday || 0) || document.querySelectorAll('#audit-panel .audit-entry').length || 0));
       setSectionSummary('audit-section', `${auditToday} events today`);
       const rq = document.getElementById('review-queue-count');
       setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent));
@@ -6306,8 +6324,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('logs-section', `${agents.length} agents`);
       setSectionSummary('overview-section', data.governor && data.governor.mode ? `${data.governor.mode} · ${repos.length} repos` : `${repos.length} repos`);
       setSectionSummary('inception-section', inceptionSectionSummary());
-      const faqCount = document.querySelectorAll('#faq-panel h4').length;
-      setSectionSummary('faq-section', faqCount ? `${faqCount} questions` : '—');
+      setSectionSummary('faq-section', '');
     }
 
     /** Check whether a dashboard section is collapsed in localStorage */
@@ -19352,6 +19369,7 @@ function burnAreaChart() {
       const layers = _kbCache.layers || [];
       const totalPages = kbTotalFactsFromStats(_kbCache);
       const healthyCount = layers.filter(l => l.healthy).length;
+      setSectionSummary('knowledge-section', kbFactsLabel(totalPages));
       if (badge) {
         if (!kbPrimed) {
           badge.textContent = 'not primed';
@@ -20697,7 +20715,7 @@ function burnAreaChart() {
         };
         window._auditSummary = _auditSummary;
         filterAuditLog();
-        setSectionSummary('audit-section', _auditSummary.today + ' entries today', auditEntryTooltip(_auditSummary.last));
+        setSectionSummary('audit-section', _auditSummary.today + ' events today', auditEntryTooltip(_auditSummary.last));
       } catch(e) {}
     }
     // fetchAuditLog() — deferred to _deferredInit
@@ -23112,8 +23130,7 @@ function burnAreaChart() {
 
     function renderFAQ() {
       refreshSectionCardShell('faq-section');
-      const faqCount = document.querySelectorAll('#faq-panel h4').length;
-      setSectionSummary('faq-section', faqCount ? `${faqCount} questions` : '—');
+      setSectionSummary('faq-section', '');
     }
 
     function renderLogs() {
