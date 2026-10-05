@@ -4183,7 +4183,26 @@ func (h *ContributeWSHub) checkEffortAllowed(backend, effort string) (bool, stri
 	return true, ""
 }
 
+// blockedClaimsLoop polls labels separately from connection cleanup. Five minutes
+// bounds steady-state traffic to 12 reads per claim/hour; slow GitHub calls
+// cannot delay heartbeat reaping, and passes never overlap.
+func (h *ContributeWSHub) blockedClaimsLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.stopCh:
+			return
+		case <-ticker.C:
+			if n := h.claimsLedger().ReleaseBlocked(); n > 0 {
+				h.logger.Info("[claims] blocked claims released", "count", n)
+			}
+		}
+	}
+}
+
 func (h *ContributeWSHub) cleanupLoop() {
+	go h.blockedClaimsLoop(5 * time.Minute)
 	if h.doneCh != nil {
 		defer close(h.doneCh)
 	}
@@ -4218,11 +4237,6 @@ func (h *ContributeWSHub) cleanupLoop() {
 			// labels come off and the issue returns to the offer pool.
 			if n := h.claimsLedger().Expire(); n > 0 {
 				h.logger.Info("[claims] expired claims released", "count", n)
-			}
-			// A needs-human/hold label added after assignment releases the
-			// automated claim rather than leaving a false In Flight state.
-			if n := h.claimsLedger().ReleaseBlocked(); n > 0 {
-				h.logger.Info("[claims] blocked claims released", "count", n)
 			}
 
 			// Deregister under the lock; CLOSE outside it.
