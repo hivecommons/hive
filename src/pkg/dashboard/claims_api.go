@@ -9,7 +9,10 @@ import (
 	"strings"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/claims"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -290,6 +293,10 @@ func (s *Server) handleClaimCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Sign in with GitHub (or use an owner token) to claim an issue.", http.StatusUnauthorized)
 		return
 	}
+	if refused, msg := s.RefuseAlreadyDoneClaim(r.Context(), repo, number); refused {
+		jsonError(w, msg, http.StatusConflict)
+		return
+	}
 	var body claimRequestBody
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -311,6 +318,90 @@ func (s *Server) handleClaimCreate(w http.ResponseWriter, r *http.Request) {
 		s.fireClaimHook(r, hooks.TransitionIssueClaimed, res.Claim, holder)
 	}
 	writeClaimsJSON(w, status, claimResultJSON(res))
+}
+
+const alreadyDoneClaimRefusalMarker = "<!-- hive:claim-refused already_done -->"
+
+// RefuseAlreadyDoneClaim refuses to create a new worker claim on an issue Hive
+// has already marked as fixed. This is a soft suppression: removing the display
+// label makes the issue claimable again, and a GitHub read failure fails open
+// so a transient API problem does not break otherwise-valid claims.
+func (s *Server) RefuseAlreadyDoneClaim(ctx context.Context, repo string, number int) (bool, string) {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil || number <= 0 || repo == "" {
+		return false, ""
+	}
+	gh := s.deps.GHClient.GoGitHub()
+	if gh == nil {
+		return false, ""
+	}
+	owner, name, ok := strings.Cut(repo, claimsRepoSep)
+	if !ok || strings.TrimSpace(owner) == "" || strings.TrimSpace(name) == "" {
+		return false, ""
+	}
+	issue, _, err := gh.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("[claims] already-done claim guard failed open", "repo", repo, "issue", number, "error", err)
+		}
+		return false, ""
+	}
+	label, ok := s.alreadyDoneLabelOn(issue.Labels)
+	if !ok {
+		return false, ""
+	}
+	claim, hasClaim := s.mergedIssueClaim(repo, number)
+	body := alreadyDoneClaimRefusalComment(label, claim, hasClaim)
+	alreadyCommented := false
+	if ok, err := s.deps.GHClient.IssueCommentsContain(ctx, repo, number, alreadyDoneClaimRefusalMarker); err == nil {
+		alreadyCommented = ok
+	}
+	if !alreadyCommented {
+		if err := s.deps.GHClient.CreateIssueComment(ctx, repo, number, body); err != nil && s.logger != nil {
+			s.logger.Warn("[claims] already-done claim refusal comment failed", "repo", repo, "issue", number, "error", err)
+		}
+	}
+	return true, "issue is marked " + label + "; not claimable until the label is removed"
+}
+
+func (s *Server) alreadyDoneLabelOn(labels []*gh.Label) (string, bool) {
+	want := ghpkg.AlreadyDoneLabel
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		want = s.deps.Config.Hub.ContributeAlreadyDoneLabelOrDefault()
+	}
+	for _, label := range labels {
+		name := strings.TrimSpace(label.GetName())
+		if strings.EqualFold(name, ghpkg.AlreadyDoneLabel) || strings.EqualFold(name, want) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func (s *Server) mergedIssueClaim(repo string, number int) (ghpkg.IssueClaim, bool) {
+	if s == nil || s.deps == nil || s.deps.IssueClaimed == nil {
+		return ghpkg.IssueClaim{}, false
+	}
+	if claim, ok := s.deps.IssueClaimed(repo, number); ok && claim.MergedPR {
+		return claim, true
+	}
+	if _, name, ok := strings.Cut(repo, claimsRepoSep); ok {
+		if claim, ok := s.deps.IssueClaimed(name, number); ok && claim.MergedPR {
+			return claim, true
+		}
+	}
+	return ghpkg.IssueClaim{}, false
+}
+
+func alreadyDoneClaimRefusalComment(label string, claim ghpkg.IssueClaim, hasClaim bool) string {
+	target := "a merged fix"
+	if hasClaim && claim.PRNumber > 0 {
+		target = fmt.Sprintf("merged PR #%d", claim.PRNumber)
+		if claim.PRURL != "" {
+			target = fmt.Sprintf("merged PR #%d (%s)", claim.PRNumber, claim.PRURL)
+		}
+	}
+	return fmt.Sprintf("%s\nNot claiming this issue because it is marked `%s`; %s already fixed it. Remove `%s` (or mark `%s`) if work remains.",
+		alreadyDoneClaimRefusalMarker, label, target, label, ghpkg.VerifiedOpenLabel)
 }
 
 func (s *Server) handleClaimRelease(w http.ResponseWriter, r *http.Request) {
