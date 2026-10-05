@@ -163,6 +163,8 @@ assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
 assert.equal((markup.match(/<svg/g) || []).length, 6);
 assert.match(markup, />39<\/span><span class="overview-kpi-label">Total open issues<\/span>/);
 assert.match(markup, />31<\/span><span class="overview-kpi-label">Total open PRs<\/span>/);
+assert.match(markup, />—<\/span><span class="overview-kpi-label">Median actionable age \(updated\)<\/span>/);
+assert.match(markup, /Median time since updated for actionable open issues and PRs in the selected repos \(not MTTR, which measures time-to-resolve for closed items\)\./);
 for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','median-age']) {
   assert.match(markup, new RegExp('overview-kpi:' + key));
 }
