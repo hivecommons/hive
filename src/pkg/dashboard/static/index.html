@@ -3159,12 +3159,13 @@
     .kb-detail-label { font-weight: 600; color: var(--fg); }
     .kb-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: var(--sp-4); }
     .kb-summary-stats { display: flex; flex-wrap: nowrap; gap: var(--sp-4); margin-bottom: var(--sp-2); overflow-x: auto; }
-    .kb-stat { text-align: center; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .kb-stat { text-align: center; padding: calc(var(--sp-4) + var(--sp-1)); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
     .kb-summary-stats .kb-stat { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-1); }
     .kb-summary-stats .val { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .kb-stat .val { font-size: 1.2rem; font-weight: 700; color: var(--fg); }
     .kb-stat .lbl { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
     .kb-stat-spark { width: 100%; height: 28px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-top: var(--sp-1); }
+    .collapsed-with-headline .kb-summary-stats .kb-stat-spark { display: none; }
     .kb-stat-spark .sparkline { width: 100%; max-width: 100%; height: 20px; margin-left: 0; }
     .kb-stat-spark .sparkline svg { width: 100%; max-width: 100%; height: 20px; }
     .kb-stats-help { margin-bottom: var(--sp-5); }
@@ -5519,7 +5520,7 @@
       if (sectionId === 'overview-section') {
         const issueTotal = repos.reduce((n, r) => n + ((r.actionableIssues || r.issues || []).length || Number(r.openIssues || r.open_issues || r.issues || 0) || 0), 0);
         const prTotal = repos.reduce((n, r) => n + ((r.openPrs || r.prs || []).length || Number(r.open_prs || r.openPRs || r.prs || 0) || 0), 0);
-        inner = miniBar([{ label: 'issues', value: issueTotal, color: 'var(--blue)' }, { label: 'open PRs', value: prTotal, color: 'var(--purple)' }], text) + miniSpark(hist('open-prs', prTotal), 'var(--purple)', text);
+        inner = miniBar([{ label: 'issues', value: issueTotal, color: 'var(--blue)' }, { label: 'open PRs', value: prTotal, color: 'var(--purple)' }], text);
       } else if (sectionId === 'governor') {
         const gov = data.governor || {};
         const mode = String(gov.mode || text.split(/\s+/)[0] || 'idle').toLowerCase();
@@ -5530,15 +5531,10 @@
         const series = hist('count', n0);
         inner = miniDelta(n0, series.length > 1 ? series[series.length - 2] : n0, text) + miniSpark(series, 'var(--blue)', text);
       } else if (sectionId === 'pr-throughput-section') {
-        const buckets = prtLast && Array.isArray(prtLast.buckets) ? prtLast.buckets : [];
-        const merged = buckets.map(b => Number(b.merged) || 0);
-        const opened = buckets.map(b => Number(b.opened) || 0);
-        inner = miniSpark(merged.length ? merged : hist('merged', nums[0] || 0), 'var(--green)', text) + miniSpark(opened.length ? opened : hist('opened', nums[1] || 0), 'var(--yellow)', text);
+        inner = miniBar([{ label: 'merged', value: nums[0] || 0, color: 'var(--green)' }, { label: 'opened', value: nums[1] || 0, color: 'var(--yellow)' }], text);
       } else if (sectionId === 'token-panel') {
-        const tokenRates = (typeof computeHourlyBurnRates === 'function' ? computeHourlyBurnRates() : []).map(r => Number(r.rate) || 0);
         const sessions = nums.length > 1 ? nums[1] : Number(data.tokens?.totals?.sessions || 0);
-        const series = tokenRates.length ? tokenRates : hist('tok-hr', n0);
-        inner = miniSpark(series, 'var(--cyan)', text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
+        inner = miniText(text.replace(/\s+/g, ''), text) + miniDelta(sessions, hist('sessions', sessions).slice(-2)[0], text);
       } else if (sectionId === 'cost-panel') {
         const costSeries = (typeof costHist === 'function' ? costHist() : []).map(e => Number(e.usd || e.total_usd) || 0);
         inner = miniSpark(costSeries.length ? costSeries : hist('usd', n0), 'var(--green)', text) + miniText(text.replace(/\s+/g, ''), text);
@@ -5547,7 +5543,7 @@
         const needsHuman = Number((document.getElementById('repos-needs-human') || {}).textContent) || 0;
         inner = typeof reposCollapsedTilesHtml === 'function' ? reposCollapsedTilesHtml(repos, data) : miniBar([{ label: 'eligible', value: Math.max(0, open - needsHuman), color: 'var(--green)' }, { label: 'blocked', value: needsHuman, color: 'var(--red)' }, { label: 'issues', value: issues, color: 'var(--blue)' }], text);
       } else if (sectionId === 'knowledge-section' || sectionId === 'audit-section') {
-        inner = miniSpark(hist('count', n0), sectionId === 'audit-section' ? 'var(--yellow)' : 'var(--cyan)', text);
+        inner = miniText(text.replace(/\s+/g, ''), text);
       } else if (sectionId === 'acmm-eval-section' || sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
       } else if (sectionId === 'review-queue-section') {

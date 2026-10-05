@@ -71,6 +71,10 @@ for (const [section, text] of Object.entries(fixtures)) {
   if (!/svg class="mini-[^"]+"/.test(html)) throw new Error(section + ' did not render a mini SVG: ' + html);
   if (!html.includes('aria-label="')) throw new Error(section + ' missing accessible label');
 }
+for (const section of ['knowledge-section', 'audit-section', 'overview-section', 'pr-throughput-section', 'token-panel']) {
+  const html = visualSectionSummary(section, fixtures[section]);
+  if (/mini-spark/.test(html)) throw new Error(section + ' rendered an unlabelled collapsed-header sparkline: ' + html);
+}
 miniHistorySeries('persist-section', 'count', 10);
 miniHistorySeries('persist-section', 'count', 12);
 const saved = JSON.parse(store.get('hive_visual_summary_history:hive-visual-test'));

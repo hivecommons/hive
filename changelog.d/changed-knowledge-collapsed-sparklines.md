@@ -1,0 +1,1 @@
+- Remove unlabelled Knowledge collapsed-header sparklines while keeping the facts summary visible.
