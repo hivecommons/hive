@@ -199,9 +199,14 @@ var ghcrTagRevision = func(repo, tag string, logger *slog.Logger) string {
 }
 
 // ghcrTagGeneration returns the docker.yml run number stamped onto repo:tag, or
-// 0 when it cannot be determined. The stable-promotion card uses this only as
-// advisory display state; the workflow re-checks the labels before moving tags.
-var ghcrTagGeneration = func(repo, tag string, logger *slog.Logger) int {
+// 0 when it cannot be determined, cached for channelDigestTTL. The
+// stable-promotion card uses this only as advisory display state; the workflow
+// re-checks the labels before moving tags.
+var ghcrTagGeneration = cachedGHCRTagGeneration
+
+// fetchGHCRTagGeneration is the uncached registry lookup behind
+// ghcrTagGeneration.
+var fetchGHCRTagGeneration = func(repo, tag string, logger *slog.Logger) int {
 	client := &http.Client{Timeout: channelResolveTimeout}
 	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:" + repo + ":pull")
 	if err != nil {
