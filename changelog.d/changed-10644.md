@@ -1,0 +1,1 @@
+- docs: add contributor story  Ral Mndez (Hive | Bluefin) (#10644)
