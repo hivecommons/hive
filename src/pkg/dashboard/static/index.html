@@ -1841,11 +1841,11 @@
     .overview-animate .overview-chart-area { opacity: 0; animation: overview-area-fade var(--anim-band-grow) var(--anim-ease-out-cubic) both; animation-delay: var(--anim-chart-slow); }
     .overview-chart-point { fill: var(--slice-c); }
     .overview-chart-hist-cell { fill: var(--slice-c); }
-    .overview-panel-in { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-panel-out { animation-duration: var(--overview-transition-duration, 1000ms); animation-timing-function: ease; animation-fill-mode: both; }
-    .overview-duration-fast { --overview-transition-duration: 500ms; }
-    .overview-duration-normal { --overview-transition-duration: 1000ms; }
-    .overview-duration-slow { --overview-transition-duration: 1800ms; }
+    .overview-panel-in { animation-duration: var(--overview-transition-duration, var(--overview-transition-normal, 2000ms)); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-panel-out { animation-duration: var(--overview-transition-duration, var(--overview-transition-normal, 2000ms)); animation-timing-function: ease; animation-fill-mode: both; }
+    .overview-duration-fast { --overview-transition-duration: var(--overview-transition-fast); }
+    .overview-duration-normal { --overview-transition-duration: var(--overview-transition-normal); }
+    .overview-duration-slow { --overview-transition-duration: var(--overview-transition-slow); }
     .overview-panel-in.overview-transition-fade { animation-name: overview-fade-in; }
     .overview-panel-out.overview-transition-fade { animation-name: overview-fade-out; }
     .overview-panel-in.overview-transition-rise-from-bottom { animation-name: overview-rise-from-bottom-in; }
@@ -13055,7 +13055,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const OVERVIEW_CHART_TYPE_LABELS = { donut: 'Donut', pie: 'Pie', bar: 'Horizontal bar', stacked: '100% stacked bar', line: 'Line / spark', histogram: 'Age histogram' };
     const OVERVIEW_TRANSITIONS = ['fade', 'rise-from-bottom', 'lower-from-top', 'slide-from-left', 'slide-from-right', 'zoom', 'flip', 'blur', 'random'];
     const OVERVIEW_DURATIONS = ['fast', 'normal', 'slow'];
-    const OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 };
+    const OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 };
     const OVERVIEW_CAROUSEL_MIN_MS = 5000;
     const OVERVIEW_CAROUSEL_MAX_MS = 300000;
     const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
@@ -13314,6 +13314,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         name = choices[Math.floor(Math.random() * choices.length)] || 'fade';
       }
       return 'overview-transition-' + name;
+    }
+
+    function installOverviewTransitionDurationVars() {
+      const rootStyle = document.documentElement && document.documentElement.style;
+      if (!rootStyle) return;
+      OVERVIEW_DURATIONS.forEach(duration => {
+        rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms');
+      });
     }
 
     function overviewLegendHTML(slices, kind, state) {
@@ -13868,6 +13876,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _overviewLastRepos = Array.isArray(repos) ? repos : [];
       _overviewCarouselTimers.splice(0).forEach(id => clearInterval(id));
       const state = overviewChartsState();
+      installOverviewTransitionDurationVars();
       const selectedRepos = overviewFilterRepos(_overviewLastRepos);
       const selectedNames = overviewSelectedRepoNames(_overviewLastRepos);
       const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
