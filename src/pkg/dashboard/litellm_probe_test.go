@@ -226,8 +226,8 @@ func TestProbeLiteLLMModels_HTMLForbiddenNoProxyConfigured(t *testing.T) {
 		t.Fatal("expected an error for an HTTP 403 probe response")
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "HTTPS_PROXY egress proxy was configured") == false {
-		t.Errorf("error %q does not note the absence of an egress proxy: %v", msg, err)
+	if !strings.Contains(msg, "no HTTPS_PROXY proxy applies") || !strings.Contains(msg, "NO_PROXY") {
+		t.Errorf("error %q does not note the resolved egress path: %v", msg, err)
 	}
 	if strings.Contains(msg, "://") && strings.Contains(msg, "egress proxy http") {
 		t.Errorf("error %q wrongly names a proxy URL when none is configured", msg)
