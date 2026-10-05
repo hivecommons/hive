@@ -1,1 +1,0 @@
-- Keep the Ready-work queue’s end marker after the last row inside the scrollable area, so overflowing queues no longer announce the end before it is reached ([#10681](https://github.com/hivecommons/hive/issues/10681)).
