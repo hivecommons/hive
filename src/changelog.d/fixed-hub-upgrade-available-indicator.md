@@ -1,0 +1,1 @@
+- Fixed the Hub Admin Version cell so release-channel spokes show an explicit pending-image state instead of a green check when newer branch commits exist but the channel image has not been published yet.
