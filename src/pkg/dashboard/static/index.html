@@ -384,7 +384,7 @@
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: hidden; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
     .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
-    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: 0.68rem; }
+    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: var(--fs-xs); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
     .oc-version-navbar-upgrade .oc-version-progress-copy { min-width: 0; padding-left: var(--oc-version-bee-lane); line-height: 1.1; overflow: hidden; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -25602,6 +25602,13 @@ function burnAreaChart() {
         if (ocEl) {
           window._lastVersionData = v;
           window._lastVersionContext = { deliveryLabel, trackingLabel, offeredUpgradeHash, offeredUpgradeShort, offeredUpgradeLabel, upgradeHTML, manualUpdateHTML, hasUpgrade, statusText: versionStatusSummary(v, offeredUpgradeShort), upgradeProgress };
+          if (typeof renderVersionSurfaces !== 'function' && typeof globalThis !== 'undefined') {
+            globalThis.renderVersionSurfaces = function(data, context) {
+              renderVersionChip(data, context);
+              renderVersionMenu(data, context);
+              if (typeof renderNavbarUpgradeIndicator === 'function') renderNavbarUpgradeIndicator(data, context);
+            };
+          }
           renderVersionSurfaces(v, window._lastVersionContext);
         }
         versionScheduleUpgradePoll(upgradeProgress);
