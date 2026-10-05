@@ -1,0 +1,1 @@
+- Follow Goose's canonical AAIF release repository without changing verified pins, and document unattended Goose operation and AAIF listing eligibility ([#10627](https://github.com/hivecommons/hive/issues/10627)).
