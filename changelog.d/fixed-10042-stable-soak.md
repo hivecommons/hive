@@ -1,0 +1,1 @@
+- Promote the newest eligible soaked v5 build to stable, even after candidate has moved on.
