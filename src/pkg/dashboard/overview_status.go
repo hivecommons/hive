@@ -97,5 +97,57 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		repo.OpenPrs = prs(repo.OpenPrs, false)
 		repo.HeldPrs = prs(repo.HeldPrs, true)
 	}
+	out.ActionableNow = overviewActionableNow(&out)
 	return &out
+}
+
+func overviewActionableNow(status *StatusPayload) FrontendActionableNow {
+	var counts FrontendActionableNow
+	if status == nil {
+		return counts
+	}
+	for _, repo := range status.Repos {
+		for _, raw := range repo.ActionableIssues {
+			if !overviewKPIExcludedBand(overviewStatusIssueBand(raw)) {
+				counts.Issues++
+			}
+		}
+		for _, raw := range repo.OpenPrs {
+			if !overviewKPIExcludedBand(overviewStatusPRBand(raw)) {
+				counts.PRs++
+			}
+		}
+	}
+	counts.Total = counts.Issues + counts.PRs
+	return counts
+}
+
+func overviewStatusIssueBand(raw any) string {
+	switch v := raw.(type) {
+	case overviewStatusIssue:
+		return v.Band
+	case *overviewStatusIssue:
+		if v != nil {
+			return v.Band
+		}
+	case overviewStatusHold:
+		return v.Band
+	case *overviewStatusHold:
+		if v != nil {
+			return v.Band
+		}
+	}
+	return ""
+}
+
+func overviewStatusPRBand(raw any) string {
+	switch v := raw.(type) {
+	case overviewStatusPR:
+		return v.Band
+	case *overviewStatusPR:
+		if v != nil {
+			return v.Band
+		}
+	}
+	return ""
 }

@@ -10794,12 +10794,10 @@
       const issuesSpark = sparkline('govIssues');
       const prsSpark = sparkline('govPrs');
       const totalSpark = sparkline('govTotal');
-      const issueCount = gov.issues || 0;
-      // Mode pressure = actionable issues + open PRs, matching the governor's
-      // computeMode input. The gauge previously read issues alone, so the
-      // needle sat at "2" in the idle band while the mode said surge.
-      const prCount = gov.prs || 0;
-      const govPressure = issueCount + prCount;
+      const sharedActionable = (data && data.actionableNow) || {};
+      const issueCount = Number(sharedActionable.issues ?? gov.issues ?? 0) || 0;
+      const prCount = Number(sharedActionable.prs ?? gov.prs ?? 0) || 0;
+      const govPressure = Number(sharedActionable.total ?? (issueCount + prCount)) || 0;
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
 
@@ -10834,7 +10832,7 @@
       const holdData = data.hold || {};
       const holdTotal = holdData.total || 0;
       const holdItems = holdData.items || [];
-      const holdExplain = 'ON HOLD — work intentionally paused, awaiting a human.\n\nWHAT: Issues and PRs that agents will NOT act on until a maintainer clears them. Excluded from the actionable-issue count that drives the mode.\n\nHOW: Count of open issues/PRs carrying a hold label (hold / do-not-merge / blocked). The list below names each held item; the sparkline shows how the backlog of held work is trending.\n\n';
+      const holdExplain = 'ON HOLD — work intentionally paused, awaiting a human.\n\nWHAT: Issues and PRs that agents will NOT act on until a maintainer clears them. Excluded from the shared Actionable now count.\n\nHOW: Count of open issues/PRs carrying a hold label (hold / do-not-merge / blocked). The list below names each held item; the sparkline shows how the backlog of held work is trending.\n\n';
       // Hold items arrive pre-sorted by review class (fixes > refactors/docs
       // > tests) then age (#6183); the class tag makes that order legible.
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
@@ -10846,9 +10844,9 @@
         <div class="gov-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Governor section" aria-pressed="false">⠿</button>Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
         <div class="gov-grid sec-headline" data-collapsed-keep>
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
-          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open issues across all monitored KubeStellar projects, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
-          <div class="gov-stat" title="PRS — open pull requests in flight.&#10;&#10;WHAT: How many PRs are currently open across the fleet. The sparkline shows the recent trend.&#10;&#10;HOW: Count of open pull requests across all monitored KubeStellar repos at the last scan (includes both agent-authored and human PRs; does not subtract held PRs)."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
+          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: The mode comes from the governor's latest queue evaluation; the gauge uses the shared Overview Actionable now total so the Governor split and Overview KPI agree. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
+          <div class="gov-stat" title="ACTIONABLE ISSUES — issue work that can move without waiting.&#10;&#10;WHAT: The issue split of the Overview Actionable now set. The sparkline shows the recent governor issue trend.&#10;&#10;HOW: Count of open enumerated issues after hold/exempt filters, excluding waiting, done, draft, and blocked Overview bands."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
+          <div class="gov-stat" title="ACTIONABLE PRS — pull requests that can move without waiting.&#10;&#10;WHAT: The PR split of the Overview Actionable now set. The sparkline shows the recent governor PR trend.&#10;&#10;HOW: Count of open enumerated PRs after hold/exempt filters, excluding waiting, done, draft, and blocked Overview bands."><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${(() => {
@@ -12835,13 +12833,15 @@
       if (!state.showKPIs) return '';
       const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       const openPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
-      const actionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
+      const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
       const held = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
       const blockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
       const age = overviewMedianAgeLabel((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
       const ageSec = overviewMedianAgeSeconds((issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)), state);
-      _overviewKPILocalScope = overviewKPIRepoScope(repos);
       const useServerHistory = _overviewKPILocalScope === 'all';
       const cards = [
         { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'Actionable plus held issues in the selected repos.' },
