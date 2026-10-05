@@ -94,8 +94,8 @@ func TestPRThroughputCollapsedHeadlineKeepsWindowPill(t *testing.T) {
 	}
 	html := indexHTML(t)
 	for _, snippet := range []string{
-		`.prt-window-controls { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }`,
-		`.prt-window-controls { justify-self: start; justify-content: flex-start; }`,
+		`.window-pills-toolbar { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }`,
+		`.window-pills-toolbar { justify-self: start; justify-content: flex-start; }`,
 		`.prt-share-tile .prt-role-select { position:absolute; right:var(--sp-3); bottom:var(--sp-3);`,
 		`.prt-share-tile .prt-tile-spark { max-width: calc(100% - 6.4rem); overflow: hidden; }`,
 	} {
@@ -126,7 +126,7 @@ const PRT_WINDOWS = [[1, '1h'], [6, '6h'], [12, '12h'], [24, '24h'], [48, '48h']
 let prtHours = 168;
 ` + jsFunc(t, html, "prtWindowControls") + `
 const out = prtWindowControls();
-assert.match(out, /class="gov-pr-models-toggle prt-window-controls"/);
+assert.match(out, /class="gov-pr-models-toggle window-pills-toolbar prt-window-controls"/);
 assert.match(out, /data-stop="1"/);
 assert.match(out, /data-action="setPRThroughputHours"/);
 assert.match(out, /data-arg0="168"[^>]*>7d<\/button>/);

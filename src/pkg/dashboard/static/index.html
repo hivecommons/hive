@@ -1427,7 +1427,7 @@
     .prt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); }
     .prt-controls { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
     .prt-headline { position: relative; }
-    .prt-window-controls { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+    .window-pills-toolbar { grid-column: 1 / -1; justify-self: end; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
     .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
@@ -1473,7 +1473,7 @@
     .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
     @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .prt-window-controls { justify-self: start; justify-content: flex-start; } }
+    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .window-pills-toolbar { justify-self: start; justify-content: flex-start; } }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
     .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
@@ -1784,8 +1784,9 @@
     .overview-settings-field input, .overview-settings-field select, .overview-chart-select { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); color: var(--text); padding: var(--sp-1) var(--sp-2); font: inherit; }
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: min(16rem, 32vh); overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-    .overview-kpis { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); padding-top: var(--sp-6); }
-    .overview-kpi-range { position: absolute; top: 0; right: 0; display: inline-flex; gap: var(--sp-1); }
+    .overview-headline { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); }
+    .overview-kpi-range { display: inline-flex; gap: var(--sp-1); }
     .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
     .overview-kpi-range-btn.active { border-color: var(--accent); color: var(--accent); }
     .overview-kpi { display: grid; gap: var(--sp-1); text-align: left; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text); padding: var(--sp-3); min-height: 5.9rem; cursor: pointer; }
@@ -13296,7 +13297,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       })}</span>`;
     }
     function overviewKPIWindowControls() {
-      return `<span class="overview-kpi-range" aria-label="Overview KPI history range">${Object.keys(OVERVIEW_KPI_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _overviewKPIWindow ? ' active' : ''}" data-action="setOverviewKPIWindow" data-arg0="${esc(win)}" data-stop="1" aria-pressed="${win === _overviewKPIWindow ? 'true' : 'false'}" title="Show ${esc(win)} KPI history">${esc(win)}</button>`).join('')}</span>`;
+      return `<div class="gov-pr-models-toggle window-pills-toolbar overview-window-toolbar" aria-label="Overview KPI history range" data-stop="1">${Object.keys(OVERVIEW_KPI_WINDOWS).map(win => `<button type="button" class="${win === _overviewKPIWindow ? 'active' : ''}" data-action="setOverviewKPIWindow" data-arg0="${esc(win)}" data-stop="1" aria-pressed="${win === _overviewKPIWindow ? 'true' : 'false'}" title="Show ${esc(win)} KPI history">${esc(win)}</button>`).join('')}</div>`;
     }
 
     function saveOverviewChartsState(state) {
@@ -13652,13 +13653,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         { key: 'median-age', field: 'overviewMedianAgeSec', label: `Median actionable age (${state.timeBasis === 'created' ? 'created' : 'updated'})`, value: age, rawValue: ageSec, color: 'var(--purple)', sparkFmt: fmtDurationFromSeconds, tip: `Median time since ${state.timeBasis === 'created' ? 'created' : 'updated'} for actionable open issues and PRs in the selected repos (not MTTR, which measures time-to-resolve for closed items).` }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
-      return `<div class="overview-kpis sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${cards.map(card => {
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${esc(card.subline)}</span>` : '';
         return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" title="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
-      }).join('')}</div>`;
+      }).join('')}</div></div>`;
     }
 
     function overviewRepoFilterHTML(repos) {
@@ -17478,7 +17479,7 @@ function burnAreaChart() {
     }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
-      return `<div class="gov-pr-models-toggle prt-window-controls" data-stop="1">${buttons}</div>`;
+      return `<div class="gov-pr-models-toggle window-pills-toolbar prt-window-controls" data-stop="1">${buttons}</div>`;
     }
 
     function renderPRThroughput(dto) {
