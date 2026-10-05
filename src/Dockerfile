@@ -57,10 +57,10 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     RESOLVED_VERSION="$VERSION" && \
     if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always 2>/dev/null || echo ""); fi && \
     if [ -n "$RESOLVED_VERSION" ]; then VERSION_LDFLAG="-X main.version=${RESOLVED_VERSION}"; fi && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /bd ./cmd/bd && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /hive-backup ./cmd/hive-backup && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /hivectl ./cmd/hivectl
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
