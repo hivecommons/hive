@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/convergence/proof"
+	"github.com/hivecommons/hive/pkg/effects"
 )
 
 // Convergence mode gating mirrors the proof package's resolved-mode contract
@@ -25,7 +26,9 @@ func FencingEnabled(mode string) bool { return proof.EnforcementEnabled(mode) }
 // EffectFunc performs the one external effect and returns bounded provenance
 // of the applied result (e.g. the created PR URL). An error means the effect
 // outcome is UNCERTAIN — it may or may not have taken place externally — and
-// the operation must be reconciled before any retry.
+// the operation must be reconciled before any retry — unless the error wraps
+// effects.ErrNotApplied (effects.NotApplied), a definite refusal proving the
+// effect did not take place, which authorizes a retry of the same operation.
 type EffectFunc func() (result string, err error)
 
 // Executor binds the durable claim ledger and operation journal around the
@@ -68,7 +71,9 @@ func (x Executor) now() time.Time {
 // An effect error records Unknown — never NotApplied, because an errored call
 // may still have taken effect externally — and returns the error; Reconcile
 // against authoritative external state then resolves the same logical
-// operation before any retry.
+// operation before any retry. The one exception is an error wrapping
+// effects.ErrNotApplied: the external system definitively refused, so the
+// attempt records NotApplied and the original error returns unchanged.
 //
 // A replay of an already-Applied logical operation skips the effect and
 // returns the recorded Operation together with ErrAlreadyApplied, so the
@@ -116,6 +121,12 @@ func (x Executor) Execute(e Effect, epoch uint64, holder string, effect EffectFu
 	result, effectErr := effect()
 	after := x.now()
 
+	if effectErr != nil && errors.Is(effectErr, effects.ErrNotApplied) {
+		if _, recErr := x.Journal.RecordResult(op.LogicalID, epoch, StatusNotApplied, "", after); recErr != nil {
+			return Operation{}, fmt.Errorf("recording refused effect: %v (effect error: %w)", recErr, effectErr)
+		}
+		return Operation{}, effectErr
+	}
 	if effectErr != nil {
 		// Uncertain: the call failed but the effect may exist externally.
 		if _, recErr := x.Journal.RecordResult(op.LogicalID, epoch, StatusUnknown, "", after); recErr != nil {

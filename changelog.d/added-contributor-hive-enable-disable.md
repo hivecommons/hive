@@ -1,1 +1,0 @@
-- Contributors can enable/disable saved hives with `hivectl hives enable|disable <name>` or `e` in `just contribute-tui`, retaining credentials while the running relay skips disabled hives under every routing strategy and lets in-flight work finish ([#10186](https://github.com/hivecommons/hive/issues/10186)).

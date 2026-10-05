@@ -2,7 +2,10 @@ package review
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 type PullRequest struct {
@@ -168,7 +171,8 @@ type PromptOptions struct {
 	// review bots (Codex, Copilot, …) whose unresolved inline threads the
 	// reviewer must read and answer (hivecommons/hive#9360). Empty means the
 	// hive has not named any, and the prompt says nothing about bot threads.
-	ReviewBotLogins []string
+	ReviewBotLogins      []string
+	ReviewBotMinPriority string
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -194,7 +198,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
-	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins))
+	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	b.WriteString(groundingSection(pr))
 	if p == PerspectivePlanMatch {
 		b.WriteString(planMatchSection(pr))
@@ -277,7 +281,7 @@ func buildReadInstruction(pr PullRequest) string {
 // grounds it in the code like one of its own and the scope contract applies
 // unchanged. The reviewer stays comment-only here, as everywhere — answering
 // happens in its own review, never in the bot's thread.
-func buildReviewBotFindingsInstruction(pr PullRequest, logins []string) string {
+func buildReviewBotFindingsInstruction(pr PullRequest, logins []string, minPriority ...string) string {
 	bots := reviewBotMatchLogins(logins)
 	if len(bots) == 0 {
 		return ""
@@ -290,10 +294,20 @@ func buildReviewBotFindingsInstruction(pr PullRequest, logins []string) string {
 	for i, l := range bots {
 		quoted[i] = `"` + l + `"`
 	}
+	priorityFilter := ""
+	if len(minPriority) > 0 {
+		threshold := (config.ReviewBotsConfig{MinPriority: minPriority[0]}).PriorityThreshold()
+		if threshold >= 0 {
+			priorityFilter = fmt.Sprintf(" | select(([(.comments.nodes[0].body // \"\") | match(%s)] | .[0].captures[0].string // null) as $p | if $p == null then true else ($p | tonumber) <= %d end)", strconv.Quote(config.ReviewBotPriorityPattern), threshold)
+		}
+	}
 	var b strings.Builder
 	b.WriteString("REVIEW-BOT FINDINGS — answer them before you judge.\n")
 	fmt.Fprintf(&b, "This hive treats these accounts as review bots: %s. Their unresolved inline threads on this PR are findings a maintainer reads next to your review, so a review that is silent about them is incomplete. Fetch them:\n", strings.Join(bots, ", "))
-	fmt.Fprintf(&b, "  gh api graphql --paginate -f owner=%s -f name=%s -F number=%d -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | sub(\"\\\\[bot\\\\]$\"; \"\")) as $a | [%s] | index($a)) | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body, url}]}'\n", owner, name, pr.Number, strings.Join(quoted, ","))
+	fmt.Fprintf(&b, "  gh api graphql --paginate -f owner=%s -f name=%s -F number=%d -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | sub(\"\\\\[bot\\\\]$\"; \"\")) as $a | [%s] | index($a))%s | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body, url}]}'\n", owner, name, pr.Number, strings.Join(quoted, ","), priorityFilter)
+	if priorityFilter != "" {
+		b.WriteString("The command applies the configured min_priority to Codex badges; unknown formats remain included. Lower-priority threads are left for humans and need not be answered here.\n")
+	}
 	b.WriteString("Answer EVERY thread that command returns, in your review, by its path:line and link — one line each:\n")
 	b.WriteString("  - agree: you read the code and the finding holds;\n")
 	b.WriteString("  - disagree: say why, citing the file:line that refutes it;\n")
@@ -462,7 +476,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
-	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins))
+	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	if hasPerspective(perspectives, PerspectivePlanMatch) {
 		b.WriteString(planMatchSection(pr))
 	}

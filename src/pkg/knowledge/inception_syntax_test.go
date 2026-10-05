@@ -254,7 +254,7 @@ func TestDockerfileAllLanguages(t *testing.T) {
 
 func TestK8sManifests(t *testing.T) {
 	name := "test-app"
-	
+
 	deployment := buildK8sDeployment(name)
 	if !strings.Contains(deployment, "kind: Deployment") {
 		t.Error("missing Deployment kind")
@@ -295,7 +295,7 @@ func TestPomXmlSpecialChars(t *testing.T) {
 	// XML special chars in vision should be escaped
 	vision := &Fact{Title: `Project with <tags> & "quotes"`}
 	pom := buildPomXml("test-project", vision)
-	
+
 	if strings.Contains(pom, "&\"") {
 		t.Error("pom.xml has unescaped ampersand before quote")
 	}
@@ -309,7 +309,7 @@ func TestPomXmlSpecialChars(t *testing.T) {
 func TestCargoTomlSpecialChars(t *testing.T) {
 	vision := &Fact{Title: "Project with \"quotes\" and\nnewlines"}
 	cargo := buildCargoToml("test-project", vision)
-	
+
 	if !strings.Contains(cargo, "[package]") {
 		t.Error("Cargo.toml missing [package]")
 	}
@@ -539,7 +539,7 @@ func TestScaffoldShellKubernetes(t *testing.T) {
 
 func TestScaffoldCIMatchesLanguage(t *testing.T) {
 	langs := []struct {
-		idea      string
+		idea       string
 		ciMustHave string
 		ciMustNot  string
 	}{
@@ -585,8 +585,8 @@ func TestScaffoldCIMatchesLanguage(t *testing.T) {
 
 func TestScaffoldMakefileMatchesLanguage(t *testing.T) {
 	langs := []struct {
-		idea      string
-		mustHave  string
+		idea     string
+		mustHave string
 	}{
 		{"A Go CLI", "go build"},
 		{"A Python tool", "pytest"},

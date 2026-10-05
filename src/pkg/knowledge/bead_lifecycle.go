@@ -11,18 +11,18 @@ import (
 )
 
 const (
-	retentionBaseScore   = 100
-	retentionCritBonus   = 50
-	retentionHighBonus   = 30
-	retentionMedBonus    = 10
-	retentionBugBonus    = 20
-	retentionDecBonus    = 15
-	retentionAdvBonus    = 10
-	retentionFeatBonus   = 5
-	retentionChorePenalty = 10
-	retentionDepPinBonus = 100
-	retentionAgeDayDecay = 2
-	retentionSynthDecay  = 30
+	retentionBaseScore        = 100
+	retentionCritBonus        = 50
+	retentionHighBonus        = 30
+	retentionMedBonus         = 10
+	retentionBugBonus         = 20
+	retentionDecBonus         = 15
+	retentionAdvBonus         = 10
+	retentionFeatBonus        = 5
+	retentionChorePenalty     = 10
+	retentionDepPinBonus      = 100
+	retentionAgeDayDecay      = 2
+	retentionSynthDecay       = 30
 	retentionArchiveThreshold = 0
 	retentionHeadroomRatio    = 0.8
 
@@ -62,9 +62,9 @@ func NewBeadLifecycleManager(
 }
 
 type scoredBead struct {
-	bead      *beads.Bead
-	agent     string
-	score     float64
+	bead  *beads.Bead
+	agent string
+	score float64
 }
 
 // RunCulling scores all closed/done beads and archives those below the

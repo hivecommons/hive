@@ -737,11 +737,13 @@ governor:
 # (hive-review --thread / --resolve-thread). The watcher refuses to touch any
 # thread a human opened. The same key may live in hive-project.yaml instead
 # (hive.yaml wins when both name a login). Absent or empty logins = off.
+# Logins match case-insensitively; either spelling with or without [bot] works.
 # classification:
 #   review_bots:
 #     logins:
 #       - "chatgpt-codex-connector[bot]"
 #       - "Copilot"
+#     min_priority: P1            # optional: P0/P1 and unknown badges only
 #     max_attempts_per_thread: 1   # hive replies per thread before a human takes over
 #     resolve_after_fix: true      # false: reply but leave the thread open
 

@@ -93,7 +93,7 @@ Two mitigations, in order of how much they are worth relying on:
   `******` forms other layers emit — the layer that masks the text is not
   always one of ours.
 - **The reviewer prompts say so.** `groundingSection`
-  (`pkg/review/prompts.go:71`) and the reviewer policies
+  (`pkg/review/prompts.go:74`) and the reviewer policies
   (`policies/reviewer-queue.md`, `policies/reviewer-advisory.md`) tell the
   reviewer that a mask is a hive artifact, never a defect, and that a line
   carrying one must be re-read from the repository before it is quoted.

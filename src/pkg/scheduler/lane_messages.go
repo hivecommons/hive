@@ -533,17 +533,18 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		return "(none)\n"
 	}
 	type ciFailingRow struct {
-		Number        int      `json:"number"`
-		Repo          string   `json:"repo"`
-		Title         string   `json:"title"`
-		Author        string   `json:"author"`
-		HeadSHA       string   `json:"head_sha"`
-		HeadRef       string   `json:"head_ref"`
-		HeadRepo      string   `json:"head_repo"`
-		FromFork      bool     `json:"from_fork"`
-		Held          bool     `json:"held"`
-		FailingChecks []string `json:"failing_checks"`
-		Excerpt       string   `json:"excerpt"`
+		Number           int      `json:"number"`
+		Repo             string   `json:"repo"`
+		Title            string   `json:"title"`
+		Author           string   `json:"author"`
+		HeadSHA          string   `json:"head_sha"`
+		HeadRef          string   `json:"head_ref"`
+		HeadRepo         string   `json:"head_repo"`
+		FromFork         bool     `json:"from_fork"`
+		Held             bool     `json:"held"`
+		FailingChecks    []string `json:"failing_checks"`
+		Excerpt          string   `json:"excerpt"`
+		DeferredIncident int      `json:"deferred_incident"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -569,10 +570,20 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// fix-before-new block carries the narrow exception. Keep them out here
 	// so a repair agent does not push to a PR a human is reviewing.
 	held := 0
+	// A red PR already deferred to a still-open shared-CI incident
+	// (hivecommons/hive#10528) has no repair an agent can make: listing it
+	// under the repair queue had agents re-derive the DEFER_TO_INCIDENT
+	// verdict on every kick. It is named under its own heading, without
+	// repair instructions, until the incident closes.
+	var deferred []ciFailingRow
 	kept := payload.Items[:0]
 	for _, pr := range payload.Items {
 		if pr.Held {
 			held++
+			continue
+		}
+		if pr.DeferredIncident > 0 {
+			deferred = append(deferred, pr)
 			continue
 		}
 		kept = append(kept, pr)
@@ -607,6 +618,16 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, heldMarker(pr.Held), pr.Title))
+	}
+	if len(deferred) > 0 {
+		b.WriteString(fmt.Sprintf("DEFERRED TO OPEN SHARED-CI INCIDENTS (%d — no repair: the base/infra failure is tracked on the incident issue; do not push, retry, or comment again; each PR returns to the list above when its incident closes):\n", len(deferred)))
+		for i, pr := range deferred {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(deferred)-i, limit))
+				break
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s — deferred to incident #%d — %s\n", pr.Number, pr.Repo, pr.DeferredIncident, pr.Title))
+		}
 	}
 	if len(forks) > 0 {
 		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, do not push unless an explicit contributor-PR gate says this hive may):\n", len(forks)))

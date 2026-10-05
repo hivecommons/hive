@@ -80,7 +80,10 @@ case "${args[0]:-}" in
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;
   daemon-reload) : ;;
-  is-enabled)
+  is-enabled|is-active)
+    if [ "${args[1]:-}" = hive-upgrade.path ]; then
+      [ -f "$sd/bridge-enabled" ]; exit $?
+    fi
     # podman-auto-update.timer (#4411). FAKE_TIMER_STATE is what the manager
     # reports; FAKE_TIMER_RC lets a case model a host with no podman systemd
     # units installed, which is the `enable` failure path.
@@ -88,6 +91,10 @@ case "${args[0]:-}" in
     [ "${FAKE_TIMER_STATE:-disabled}" = "enabled" ] || exit 1
     ;;
   enable|disable)
+    if [ "${args[*]}" = 'enable --now hive-upgrade.path' ]; then
+      [ "${FAKE_TIMER_RC:-0}" = 0 ] || exit "$FAKE_TIMER_RC"
+      touch "$sd/bridge-enabled"
+    fi
     printf '%s\n' "${args[*]}" >>"${sd}/timer.log"
     exit "${FAKE_TIMER_RC:-0}"
     ;;
@@ -125,6 +132,15 @@ cat >"${FAKE_BIN}/podman" <<'EOF'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" >>"$PODMAN_CALL_LOG"
 case "${1:-}" in
+  unshare)
+    shift
+    if [ "${1:-}" = stat ]; then
+      [ -d "${!#}" ] || exit 1
+      printf '0:%s\n' "${HIVE_SETUP_LAUNCH_GID:-1002}"
+    elif [ "${1:-}" != chown ]; then
+      exec "$@"
+    fi
+    ;;
   pull)
     ref="${!#}"
     if [ -n "${FAKE_PULL_FAIL_SUBSTR:-}" ] && [ "${ref#*"$FAKE_PULL_FAIL_SUBSTR"}" != "$ref" ]; then
@@ -139,6 +155,15 @@ case "${1:-}" in
       *io.containers.autoupdate*) printf '%s\n' "${FAKE_AUTOUPDATE_LABEL:-}" ;;
       *)                printf '%s@%s\n' "${FAKE_TAG_REF%:*}" "${FAKE_TAG_ARCH_DIGEST}" ;;
     esac
+    ;;
+  # podman-auto-update.timer's own trigger (#4411), and now also `upgrade`'s
+  # registry-tracked path (#10421). FAKE_AUTO_UPDATE_UPDATED models the
+  # UPDATED column podman reports for OUR unit: true, false, or "rolled back".
+  auto-update)
+    printf 'hive.service|hive|%s@%s|registry|%s\n' \
+      "${FAKE_TAG_REF%:*}" "${FAKE_TAG_LIST_DIGEST}" \
+      "${FAKE_AUTO_UPDATE_UPDATED:-true}"
+    exit "${FAKE_AUTO_UPDATE_RC:-0}"
     ;;
   exec) printf 'hive 3.0.0 (commit deadbee, branch v4)\n' ;;
   *) exit 0 ;;
@@ -204,6 +229,9 @@ reset_env() {
   # The real checkout by default, so the comparison runs against the files this
   # PR actually ships; cases that want a host with no repo override it.
   export HIVE_UPDATE_SRC_ROOT="$ROOT"
+  export HIVE_UPDATE_BIN_DIR="${TEST_TMP}/installed-bin"
+  rm -rf "$HIVE_UPDATE_BIN_DIR"; mkdir -p "$HIVE_UPDATE_BIN_DIR"
+  unset HIVE_SETUP_LAUNCH_GID || true
 
   export STATE_DIR="${TEST_TMP}/state"
   rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
@@ -222,6 +250,8 @@ reset_env() {
   export FAKE_TIMER_STATE=disabled
   export FAKE_TIMER_RC=0
   export FAKE_AUTOUPDATE_LABEL=""
+  export FAKE_AUTO_UPDATE_UPDATED="true"
+  export FAKE_AUTO_UPDATE_RC=0
   # The gateway (#4493): known, startable, and answering by default; each case
   # breaks exactly the link it is about. Retries are collapsed so a dead
   # gateway costs the suite nothing.
@@ -630,6 +660,74 @@ FAKE_AUTOUPDATE_LABEL=registry FAKE_TIMER_STATE=enabled \
   case_expect "status reports the label the RUNNING container carries" 0 "registry" autoupdate status
 
 echo
+echo "== upgrade: the tracking-aware entry point (#10344 gap 3) =="
+
+# With tracking OFF, `upgrade` must be indistinguishable from `pin`: same
+# drop-in, same restart, same report.
+reset_env
+case_expect "tracking OFF: upgrade behaves exactly like pin" 0 "updated to $DIGEST_NEW" upgrade "${REPO}:stable"
+reset_env
+run_update upgrade "${REPO}:stable" >/dev/null
+check "tracking OFF: upgrade writes the same digest drop-in pin would" \
+  'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
+
+# With tracking ON and the SAME tag the unit already names, `upgrade` must run
+# podman auto-update instead -- and must NOT write a pin, which is the one
+# thing that would shadow the timer.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "tracking ON + tracked tag: upgrade runs podman auto-update" 0 \
+  "registry-tracked upgrade completed" upgrade "${REPO}:stable"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}:stable" >/dev/null
+check "tracking ON + tracked tag: upgrade actually calls podman auto-update" \
+  'grep -q "podman auto-update --rollback=true" "$PODMAN_CALL_LOG"'
+check "tracking ON + tracked tag: upgrade writes NO digest pin" '[ ! -f "$(dropin)" ]'
+check "tracking ON + tracked tag: the timer drop-in is untouched" '[ -f "$(au_dropin)" ]'
+
+# A ref that is not the tracked tag -- a digest, or a different tag -- cannot
+# be served by auto-update (it polls one tag) and must be REFUSED, not
+# silently pinned over the top of a tracked host.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "tracking ON + a digest ref: upgrade refuses rather than pinning silently" 78 \
+  "refusing to pin" upgrade "${REPO}@${DIGEST_NEW}"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "the refusal names the override" 78 "--force-pin" upgrade "${REPO}@${DIGEST_NEW}"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}@${DIGEST_NEW}" >/dev/null
+check "the refusal changes nothing -- no pin, no podman auto-update call" \
+  '[ ! -f "$(dropin)" ] && ! grep -q "auto-update" "$PODMAN_CALL_LOG"'
+
+# `--force-pin` is the explicit override: it accepts the trade-off and pins
+# anyway, leaving the timer's drop-in in place but with nothing left to poll.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "--force-pin pins over tracking, as asked" 0 "updated to $DIGEST_NEW" \
+  upgrade "${REPO}@${DIGEST_NEW}" --force-pin
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update upgrade "${REPO}@${DIGEST_NEW}" --force-pin >/dev/null
+check "--force-pin writes the digest pin" 'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
+
+# podman's own rollback signal (the UPDATED column reading "rolled back", per
+# src/docs/podman-auto-update.md) must surface as a FAILED upgrade here too,
+# not a silent success.
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+export FAKE_AUTO_UPDATE_UPDATED="rolled back"
+case_expect "podman rolling the image back is reported as a failed upgrade" 78 \
+  "rolled back" upgrade "${REPO}:stable"
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+export FAKE_GATEWAY_CURL_RC=7
+case_expect "a registry-tracked upgrade whose gateway never answers exits 78" 78 \
+  "DEPLOYMENT is not serving" upgrade "${REPO}:stable"
+
+echo
 echo "== reconcile: the files this host RUNS FROM, not the image (#6078) =="
 
 # Puts the host in the state a fresh install leaves it in: every repo-owned
@@ -645,6 +743,14 @@ seed_managed_host() {
   for u in hive-boot.target hive-boot-gate.service; do
     install -Dm644 "${ROOT}/src/deploy/systemd/${u}" "${BOOT_UNIT_DIR}/${u}"
   done
+  if [ -f "${ROOT}/src/deploy/systemd/hive-upgrade.path" ]; then
+    for u in hive-upgrade.path hive-upgrade.service; do
+      install -Dm644 "${ROOT}/src/deploy/systemd/${u}" "${BOOT_UNIT_DIR}/${u}"
+    done
+    for u in hive-upgrade-request.sh hive-podman-update.sh; do
+      install -Dm755 "${ROOT}/bin/${u}" "${HIVE_UPDATE_BIN_DIR}/${u}"
+    done
+  fi
 }
 
 # The operator files reconcile must never write. Seeded with contents no
@@ -758,6 +864,92 @@ case_expect "and it says how to get one" 78 "git clone" reconcile check
 
 reset_env
 case_expect "reconcile rejects a bad action" 64 "reconcile takes check or apply" reconcile sideways
+
+echo
+echo "== existing-install upgrade bridge migration (#10419) =="
+
+# A complete bridge checkout fixture keeps these tests independent of whether
+# #10416 has merged yet. No fixture unit is ever loaded by a real manager.
+seed_bridge_checkout() {
+  export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/bridge-checkout"
+  rm -rf "$HIVE_UPDATE_SRC_ROOT"
+  mkdir -p "$HIVE_UPDATE_SRC_ROOT/src/deploy" "$HIVE_UPDATE_SRC_ROOT/bin"
+  cp -R "$ROOT/src/deploy/quadlet" "$ROOT/src/deploy/systemd" "$HIVE_UPDATE_SRC_ROOT/src/deploy/"
+  cp "$ROOT/src/deploy/nginx.conf" "$HIVE_UPDATE_SRC_ROOT/src/deploy/"
+  cp "$UPDATE" "$HIVE_UPDATE_SRC_ROOT/bin/hive-podman-update.sh"
+  printf '#!/bin/sh\nexit 0\n' >"$HIVE_UPDATE_SRC_ROOT/bin/hive-upgrade-request.sh"
+  chmod +x "$HIVE_UPDATE_SRC_ROOT/bin/hive-upgrade-request.sh"
+  printf '[Path]\nPathExistsGlob=%%E/hive/upgrade-requests/*.request\n' >"$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.path"
+  printf '[Service]\nType=oneshot\n' >"$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.service"
+  # Strip any real mount before adding exactly one fixture mount.
+  sed -i '\|^Volume=%E/hive/upgrade-requests:|d' "$HIVE_UPDATE_SRC_ROOT/src/deploy/quadlet/hive.container"
+  printf 'Volume=%%E/hive/upgrade-requests:/run/hive/upgrade-requests:rw,Z\n' >>"$HIVE_UPDATE_SRC_ROOT/src/deploy/quadlet/hive.container"
+}
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+printf '# keep this comment\nUNRELATED=value with spaces\nHIVE_DEPLOYMENT_RUNTIME=unknown\n HIVE_DEPLOYMENT_RUNTIME=compose\nHIVE_DEPLOYMENT_PODMAN_MODE=rootful\nHIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/wrong\n' >>"$CONF_DIR/hive.env"
+grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
+cp "$CONF_DIR/hive.yaml" "$TEST_TMP/operator.yaml"
+cp "$CONF_DIR/secrets/id_ed25519" "$TEST_TMP/operator.key"
+case_expect "one command migrates a pre-bridge rootless host" 0 "migration complete" reconcile migrate
+check "runtime is repaired without duplicate conflicting lines" \
+  '[ "$(grep -c HIVE_DEPLOYMENT_RUNTIME= "$CONF_DIR/hive.env")" = 1 ] && grep -qx HIVE_DEPLOYMENT_RUNTIME=podman-quadlet "$CONF_DIR/hive.env"'
+check "rootless mode and container-side request directory are repaired" \
+  'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootless "$CONF_DIR/hive.env" && grep -qx HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/run/hive/upgrade-requests "$CONF_DIR/hive.env"'
+grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
+check "non-Hive env lines and token are byte-preserved" 'cmp -s "$TEST_TMP/unrelated.env" "$TEST_TMP/unrelated.after"'
+check "yaml and secrets are untouched" 'cmp -s "$TEST_TMP/operator.yaml" "$CONF_DIR/hive.yaml" && cmp -s "$TEST_TMP/operator.key" "$CONF_DIR/secrets/id_ed25519"'
+check "request directory is private and mapped in the Podman namespace" \
+  '[ "$(stat -c %a "$CONF_DIR/upgrade-requests")" = 770 ] && grep -q "podman unshare chown 0:1002" "$PODMAN_CALL_LOG"'
+check "both host helpers are installed executable" \
+  '[ -x "$HIVE_UPDATE_BIN_DIR/hive-upgrade-request.sh" ] && [ -x "$HIVE_UPDATE_BIN_DIR/hive-podman-update.sh" ]'
+check "only the path is enabled and Hive is recreated" \
+  'grep -q "enable --now hive-upgrade.path" "$SYSTEMCTL_CALL_LOG" && ! grep -q "enable.*hive-upgrade.service" "$SYSTEMCTL_CALL_LOG" && grep -q "restart hive.service" "$SYSTEMCTL_CALL_LOG"'
+find "$CONF_DIR" "$QUADLET_DIR" "$BOOT_UNIT_DIR" "$HIVE_UPDATE_BIN_DIR" -type f -printf '%p %T@\n' | sort >"$TEST_TMP/before.times"
+: >"$SYSTEMCTL_CALL_LOG"; : >"$PODMAN_CALL_LOG"
+case_expect "second migration is already current and exits zero" 0 "already current" reconcile migrate
+find "$CONF_DIR" "$QUADLET_DIR" "$BOOT_UNIT_DIR" "$HIVE_UPDATE_BIN_DIR" -type f -printf '%p %T@\n' | sort >"$TEST_TMP/after.times"
+check "second migration writes no files" 'cmp -s "$TEST_TMP/before.times" "$TEST_TMP/after.times"'
+check "second migration reloads/restarts/enables nothing" \
+  '! grep -qE "(restart|daemon-reload|enable --now)" "$SYSTEMCTL_CALL_LOG" && ! grep -q chown "$PODMAN_CALL_LOG"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export HIVE_SETUP_LAUNCH_GID="$(id -g)"
+case_expect "rootful migration succeeds through sudo" 0 "migration complete" reconcile migrate --rootful
+check "rootful metadata and ownership match the system manager" \
+  'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootful "$CONF_DIR/hive.env" && [ "$(stat -c %g "$CONF_DIR/upgrade-requests")" = "$HIVE_SETUP_LAUNCH_GID" ] && grep -q "sudo systemctl restart hive.service" "$SUDO_CALL_LOG"'
+case_expect "rootful migration is idempotent too" 0 "already current" reconcile migrate --rootful
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_RESTART_RC=1
+case_expect "failed recreation fails migration" 78 "" reconcile migrate
+export FAKE_RESTART_RC=0
+case_expect "retry recreates even when files already match" 0 "migration complete" reconcile migrate
+check "successful retry clears pending migration" '[ ! -e "$CONF_DIR/.upgrade-bridge-migration-pending" ]'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+rm "$HIVE_UPDATE_SRC_ROOT/src/deploy/systemd/hive-upgrade.path"
+cp "$CONF_DIR/hive.env" "$TEST_TMP/preflight.env"
+case_expect "incomplete bridge checkout fails before modifying the install" 78 "migration needs the host bridge" reconcile migrate
+check "failed bridge preflight preserves env and creates no request directory" \
+  'cmp -s "$TEST_TMP/preflight.env" "$CONF_DIR/hive.env" && [ ! -e "$CONF_DIR/upgrade-requests" ]'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_TIMER_RC=1
+case_expect "path activation failure is not reported as success" 78 "" reconcile migrate
+check "path activation failure keeps a retry marker" '[ -f "$CONF_DIR/.upgrade-bridge-migration-pending" ]'
+export FAKE_TIMER_RC=0
+case_expect "path activation failure can be retried" 0 "migration complete" reconcile migrate
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+secrets_mode="$(stat -c %a "$CONF_DIR/secrets")"
+ln -s "$CONF_DIR/secrets" "$CONF_DIR/upgrade-requests"
+case_expect "symlinked request directories are rejected" 78 "refuses symlinked" reconcile migrate
+check "symlink rejection never changes secrets permissions" '[ "$(stat -c %a "$CONF_DIR/secrets")" = "$secrets_mode" ]'
+
+reset_env; seed_managed_host; seed_bridge_checkout
+case_expect "migration refuses an absent operator env rather than provisioning" 78 "needs an existing" reconcile migrate
+check "absent env remains absent" '[ ! -e "$CONF_DIR/hive.env" ]'
 
 echo
 echo "== drift is visible without being asked for (#6078) =="
@@ -913,6 +1105,90 @@ check "hive.yaml is never listed as a managed file" \
   '! grep -qE "(match|STALE|missing) +[a-z ]*: .*hive[.]yaml" <<<"$out"'
 check "hive.env is never listed as a managed file" \
   '! grep -qE "(match|STALE|missing) +[a-z ]*: .*hive[.]env" <<<"$out"'
+
+echo "== upgrade-request archive never follows a container-planted symlink =="
+
+# bin/hive-upgrade-request.sh drains a directory the Hive CONTAINER writes
+# into, as the HOST user (root on a rootful install). Everything in that
+# directory is untrusted — including symlinks. These cases plant the links a
+# container could and assert the drain refuses to write through any of them.
+REQUEST_SCRIPT="${ROOT}/bin/hive-upgrade-request.sh"
+run_request() {
+  NO_COLOR=1 HIVE_UPGRADE_REQUEST_DIR="$REQ_DIR" HIVE_PODMAN_UPDATE_SCRIPT="$FAKE_UPDATE" \
+    "$BASH_BIN" "$REQUEST_SCRIPT" "$@" 2>&1
+}
+request_expect() {
+  local name="$1" want_rc="$2" want_txt="$3"; shift 3
+  local out rc why=""
+  out="$(run_request "$@")"; rc=$?
+  [ "$rc" != "$want_rc" ] && why="exit $rc, wanted $want_rc"
+  if [ -n "$want_txt" ] && ! grep -qF -- "$want_txt" <<<"$out"; then
+    why="${why:+$why; }missing text: $want_txt"
+  fi
+  if [ -z "$why" ]; then
+    PASS=$((PASS + 1)); printf 'ok   %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf 'FAIL %s (%s)\n' "$name" "$why"
+    printf '%s\n' "$out" | sed 's/^/       | /'
+  fi
+}
+reset_request() {
+  export REQ_DIR="${TEST_TMP}/upgrade-requests"
+  export FAKE_UPDATE="${TEST_TMP}/fake-update.sh"
+  export VICTIM="${TEST_TMP}/host-victim"
+  export HOST_DIR="${TEST_TMP}/host-dir"
+  rm -rf "$REQ_DIR" "$VICTIM" "$HOST_DIR"; mkdir -p "$REQ_DIR" "$HOST_DIR"
+  printf 'host file\n' >"$VICTIM"
+  printf '#!/bin/sh\nexit %s\n' "${1:-0}" >"$FAKE_UPDATE"; chmod +x "$FAKE_UPDATE"
+}
+
+# A pre-planted `<stamp>-<name>.result` symlink, for every second the drain
+# could plausibly run in. Before the fix the result redirect followed it.
+reset_request 1
+mkdir -p "$REQ_DIR/failed"
+for i in 0 1 2 3 4 5 6 7 8; do
+  ln -s "$VICTIM" "$REQ_DIR/failed/$(date -u -d "+${i} sec" +%Y%m%dT%H%M%SZ)-evil.json.result"
+done
+printf '{"target_ref":"not-an-allowed-ref"}\n' >"$REQ_DIR/evil.json"
+request_expect "a planted .result symlink is not written through" 78 "something already occupied" apply --rootless
+check "the host file behind the planted .result link is untouched" '[ "$(cat "$VICTIM")" = "host file" ]'
+check "the rejected request is still removed from the watched directory" '[ -z "$(find "$REQ_DIR" -maxdepth 1 -name "*.json")" ]'
+
+# done/ or failed/ replaced by a symlink to a host directory: the archived
+# request file carries container-authored bytes and must not land there.
+reset_request 1
+ln -s "$HOST_DIR" "$REQ_DIR/failed"
+printf '{"target_ref":"not-an-allowed-ref"}\n' >"$REQ_DIR/payload.json"
+request_expect "a symlinked failed/ archive is refused" 78 "not a real directory" apply --rootless
+check "nothing is written into the directory the link points at" '[ -z "$(ls -A "$HOST_DIR")" ]'
+check "the request is deleted rather than left to replay" '[ ! -e "$REQ_DIR/payload.json" ]'
+
+reset_request 0
+ln -s "$HOST_DIR" "$REQ_DIR/done"
+printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/payload.json"
+request_expect "a symlinked done/ archive is refused after a successful upgrade" 0 "not a real directory" apply --rootless
+check "a successful upgrade still writes nothing through the done/ link" '[ -z "$(ls -A "$HOST_DIR")" ]'
+
+# The request directory itself as a symlink: refuse the whole drain, and never
+# call the update script.
+reset_request 0
+rm -rf "$REQ_DIR"; ln -s "$HOST_DIR" "$REQ_DIR"
+printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$HOST_DIR/payload.json"
+printf '#!/bin/sh\ntouch "%s/update-ran"\nexit 0\n' "$TEST_TMP" >"$FAKE_UPDATE"
+request_expect "a symlinked request directory is refused" 78 "request directory is a symlink" apply --rootless
+check "no upgrade runs from a symlinked request directory" '[ ! -e "$TEST_TMP/update-ran" ]'
+rm -f "$REQ_DIR"
+
+# The regular case still archives and records, so the guard costs nothing.
+reset_request 0
+printf '{"target_ref":"%s:abc","requester":"op\033[31mRED\033[0m","requested_at":"2026-01-01T00:00:00Z"}\n' "$REPO" >"$REQ_DIR/ok.json"
+out="$(run_request apply --rootless)"; rc=$?
+check "a real archive directory is created and the upgrade applied" '[ "$rc" = 0 ] && grep -qF "completed and ended healthy" <<<"$out"'
+check "the handled request is archived under done/" '[ -n "$(find "$REQ_DIR/done" -maxdepth 1 -name "*-ok.json")" ]'
+check "the result file records the upgrade" 'grep -qF "ok: upgraded to ${REPO}:abc" "$REQ_DIR"/done/*-ok.json.result'
+check "the requester is still reported, minus the escape bytes" 'grep -qF "requested by op[31mRED[0m at 2026-01-01T00:00:00Z" <<<"$out"'
+check "control bytes in advisory fields never reach the log" '! grep -q "$(printf "\033")" <<<"$out"'
+unset REQ_DIR FAKE_UPDATE VICTIM HOST_DIR
 
 echo "== invocation =="
 reset_env

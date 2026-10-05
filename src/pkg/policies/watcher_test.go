@@ -95,10 +95,10 @@ func TestLoadPolicies_BasicMapping(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"scanner":   "scanner policy content",
-		"ci-maintainer":  "ci-maintainer policy content",
-		"architect": "architect policy content",
-		"plain":     "plain content",
+		"scanner":       "scanner policy content",
+		"ci-maintainer": "ci-maintainer policy content",
+		"architect":     "architect policy content",
+		"plain":         "plain content",
 	}
 
 	for agent, wantContent := range want {
@@ -536,7 +536,7 @@ func TestStart_FreshClone(t *testing.T) {
 
 	// Both policy files written in setupBareRepo must be present.
 	for agent, want := range map[string]string{
-		"scanner":  "scanner policy v1",
+		"scanner":       "scanner policy v1",
 		"ci-maintainer": "ci-maintainer policy v1",
 	} {
 		data, ok := w.GetPolicy(agent)

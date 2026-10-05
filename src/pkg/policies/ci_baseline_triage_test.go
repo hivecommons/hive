@@ -63,3 +63,58 @@ func TestFixPoliciesRequireSharedCIBaselineTriage(t *testing.T) {
 		})
 	}
 }
+
+// The shared-CI incident marker is the only durable record of which PRs an
+// incident broke, so every policy that can defer a PR to an incident must
+// describe the exact marker format it stamps.
+func TestFixPoliciesStampSharedCIIncidentMarker(t *testing.T) {
+	t.Parallel()
+
+	policyNames := []string{
+		"scanner.md",
+		"scanner-full.md",
+		"scanner-holdgated.md",
+		"scanner-automerge.md",
+		"ci-maintainer.md",
+		"ci-maintainer-full.md",
+		"ci-maintainer-holdgated.md",
+		"quality.md",
+		"quality-full.md",
+		"quality-holdgated.md",
+	}
+	required := [][]byte{
+		[]byte("<!-- hive-shared-ci-<n> -->"),
+		[]byte("<!-- hive-shared-ci-10397 -->"),
+		[]byte("incident issue number with no"),
+		[]byte("exactly one marker per PR per incident"),
+		[]byte("only for a `DEFER_TO_INCIDENT` verdict"),
+	}
+
+	for _, name := range policyNames {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			embedded, err := DefaultPolicies.ReadFile(path.Join("defaults", name))
+			if err != nil {
+				t.Fatalf("read embedded policy: %v", err)
+			}
+			source, err := os.ReadFile(filepath.Join("..", "..", "policies", name))
+			if err != nil {
+				t.Fatalf("read source policy: %v", err)
+			}
+			if !bytes.Equal(embedded, source) {
+				t.Errorf("embedded policy %s drifted from src/policies/%s", name, name)
+			}
+			for variant, policy := range map[string][]byte{
+				"embedded": embedded,
+				"source":   source,
+			} {
+				for _, marker := range required {
+					if !bytes.Contains(policy, marker) {
+						t.Errorf("%s policy is missing shared-CI incident marker guidance %q", variant, marker)
+					}
+				}
+			}
+		})
+	}
+}

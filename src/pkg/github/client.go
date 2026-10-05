@@ -615,6 +615,12 @@ type PullRequest struct {
 	// It is what distinguishes a real fix attempt from a `ci: retrigger`
 	// commit, which is a new SHA over an identical tree (hivecommons/hive#9473).
 	HeadTree string `json:"head_tree,omitempty"`
+	// SharedCIIncident is the open [shared-ci] incident issue (same repo)
+	// that the newest `<!-- hive-shared-ci-<n> -->` marker on this red PR
+	// defers it to; 0 when the PR carries no marker, the incident is closed,
+	// or the lookup failed. Kick builders keep such a PR out of their repair
+	// lists until the incident closes (hivecommons/hive#10528).
+	SharedCIIncident int `json:"shared_ci_incident,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
 	// repo-grounded review can be pinned to a specific commit rather than to
@@ -1652,13 +1658,21 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 // "blocked". Those facts are gathered from data this pass already walks
 // plus at most one GraphQL query per repository; nothing here is per-hover
 // and nothing here is per-PR beyond the calls that were already made.
+//
+// For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528):
+// one comment listing per red PR, plus one issue GET per distinct incident
+// number named by a `<!-- hive-shared-ci-<n> -->` marker in this pass.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	if c == nil {
 		return
 	}
 	facts := newProtectionCollector(c)
+	incidents := map[string]bool{}
 	for i := range prs {
 		reported := c.enrichPRCI(ctx, &prs[i])
+		if prs[i].CIStatus == "failure" {
+			prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], incidents)
+		}
 		facts.attach(ctx, &prs[i], reported)
 	}
 }

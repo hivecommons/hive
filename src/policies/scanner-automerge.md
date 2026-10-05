@@ -61,6 +61,17 @@ narrow exact-title lookup for this incident are the only exceptions to the
 work-list prohibition on listing PRs/issues; they must not be used to select new
 work.
 
+When you reference the incident on an affected PR, that one comment is also the
+durable record of which PRs the incident broke: end it with the hidden marker
+`<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number with no
+`#` (incident `#10397` is stamped `<!-- hive-shared-ci-10397 -->`). It follows the
+same `<!-- hive-* -->` comment-marker convention as `<!-- hive-finding: HASH -->`
+and `<!-- hive-pr-overlap -->`, and it is the only greppable handle later
+automation has for re-running those PRs once the incident is fixed. Stamp
+exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
+(never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
+remove it while the incident is open.
+
 ## Dispatching Fixes (MANDATORY — use Agent tool)
 
 Do NOT fix issues yourself in the main thread. For each issue, **launch a background agent** using the Agent tool.
@@ -72,6 +83,8 @@ For each issue in the ISSUE_LIST below, call the Agent tool with `run_in_backgro
 - **Heavy model** (opus, gemini-ultra, or equivalent) — multi-file refactors, architecture changes, complex logic bugs, anything requiring cross-file reasoning
 
 Available model families: Claude (haiku/sonnet/opus), Gemini, Codex. Pick whichever is available and fits the tier.
+
+On the Copilot CLI backend, do NOT pass the bare `haiku`/`sonnet`/`opus` aliases — Copilot CLI resolves them one generation back (Sonnet 5 / Opus 5 while 5.5 is available, #10461). Pass the concrete Copilot model ids instead: `claude-haiku-4.5` (light), `claude-sonnet-5.5` (mid), `claude-opus-5.5` (heavy). On Claude Code the aliases resolve correctly and are fine.
 
 Set the model parameter explicitly on every agent call. When in doubt, use a mid-tier model — most issues don't need the heaviest model.
 

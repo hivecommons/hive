@@ -90,6 +90,12 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		// dialog always sends the full sub-object it rendered. Absent key
 		// still leaves the block untouched, matching the contract above.
 		Recommendations *config.RecommendationsConfig `json:"recommendations"`
+		// ReviewBots carries the one editable classification.review_bots
+		// field (#10481). Logins are deliberately not accepted: adding one
+		// grants thread-resolution rights and stays a config-file edit.
+		ReviewBots *struct {
+			MinPriority *string `json:"min_priority"`
+		} `json:"review_bots"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -104,6 +110,18 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.MaxPerspectives != nil && *body.MaxPerspectives < 0 {
 		jsonError(w, "max_perspectives_per_pr must be >= 0", http.StatusBadRequest)
 		return
+	}
+
+	// Normalized before any mutation so a bad value rejects the whole
+	// request rather than leaving the other fields half-applied.
+	var minPriority *string
+	if body.ReviewBots != nil && body.ReviewBots.MinPriority != nil {
+		p, ok := config.NormalizeReviewBotsMinPriority(*body.ReviewBots.MinPriority)
+		if !ok {
+			jsonError(w, "review_bots.min_priority must be all, P0, P1, P2, P3, or empty", http.StatusBadRequest)
+			return
+		}
+		minPriority = &p
 	}
 
 	cfg := s.deps.Config
@@ -246,6 +264,13 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			rec.Labels = cfg.Review.Recommendations.Labels
 		}
 		cfg.Review.Recommendations = rec
+	}
+
+	// Written into hive.yaml's review_bots block only; EffectiveReviewBots
+	// lets it override the project file's threshold without copying the
+	// project file's logins here. "" clears the override.
+	if minPriority != nil {
+		cfg.Classification.ReviewBots.MinPriority = *minPriority
 	}
 
 	if err := s.saveConfig(); err != nil {

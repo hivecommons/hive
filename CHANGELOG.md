@@ -11,6 +11,154 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-04 (v5.132.8)
+
+### Fixed
+
+- The `hive-merge` relay no longer blocks a PR's merge forever after one refused attempt ([#10536](https://github.com/hivecommons/hive/issues/10536)). A definite GitHub refusal (`405` not mergeable, `409` head moved, `422`) was journaled by the mutation boundary as `Unknown`, and since nothing reconciled merge operations every later request — including the watcher's own retries — failed with `operation must be reconciled against authoritative external state before retry`, hiding GitHub's actual reason. Definite refusals are now journaled `NotApplied` so the same merge can retry once CI or base state changes, and a merge already left unresolved is reconciled against the PR itself: an already-merged PR replays as success with its merge SHA, an unmerged one retries and reports GitHub's own answer.
+
+## 2026-10-04 (v5.132.7)
+
+### Fixed
+
+- Kicks no longer hand an agent red PRs it already deferred to a still-open shared-CI incident ([#10528](https://github.com/hivecommons/hive/issues/10528)). The governor now reads the newest `<!-- hive-shared-ci-<n> -->` marker on each red PR and, while incident `#<n>` is open, records it as `deferred_incident` in `ci-failing.json`; the FIX-BEFORE-NEW block and the CI-FAILING work list name such PRs only as deferred, with no repair instructions, and the FIX-BEFORE-NEW banner is not emitted when every red PR an agent owns is deferred. When the incident closes, the PR is listed for repair again.
+
+## 2026-10-04 (v5.132.6)
+
+### Fixed
+
+- Switching an agent to the `bob` backend from the dashboard no longer breaks its launch ([#10509](https://github.com/hivecommons/hive/issues/10509)). The CLI Pin Value switch rewrote a direct launch command such as `/usr/bin/copilot --allow-all --model …` to `/usr/bin/bob --allow-all --model …`, but the hive image installs bob under `/usr/local/bin`, so the pane failed with "No such file or directory" (and would have passed copilot's flags to bob anyway). The dashboard now clears a direct-path launch command on a CLI switch so hive builds the backend's own command, and at launch hive ignores a saved launch command whose backend binary path does not exist, falling back to the built-in launcher that resolves the binary via `PATH` — so agents already saved with `/usr/bin/bob` recover on their next restart. Sandbox-mode agents still run the saved `launch_cmd` verbatim inside the sandbox and are not recovered by this change.
+
+### Security
+
+- `bin/hive-upgrade-request.sh` no longer follows symlinks when archiving a handled dashboard upgrade request. The request directory is a bind mount the Hive container writes into, and the drain runs on the host — as root on a rootful install. A `done/` or `failed/` entry replaced by a symlink, or a pre-planted `<stamp>-<name>.json.result` link, previously steered the archive move and the result write onto whatever host path the link named. The archive directories are now rejected unless they are real directories, result files are created `O_EXCL`, a symlinked request directory refuses to drain, and the advisory `requester`/`requested_at` fields are stripped of control bytes before they reach the journal. Standalone Podman/Quadlet hosts with the upgrade bridge installed should re-run `bin/hive-podman-setup.sh` to pick up the new script.
+
+## 2026-10-04 (v5.132.5)
+
+### Fixed
+
+- Run CI runner tool-cache integrity repair even when an earlier setup or PATH check fails, allowing missing npm/npx cache entries to recover on the next job (#10518).
+
+## 2026-10-04 (v5.132.4)
+
+### Changed
+
+- images: bump omp 18.5.0 -> 18.6.0 (#10504)
+
+## 2026-10-04 (v5.132.3)
+
+### Fixed
+
+- The CI runner canary and the `warm-toolcache` init container now verify `npm`/`npx` (and `gofmt`) rather than only `bin/node`/`bin/go`, and the canary removes the stale `.complete` marker of a half-written node tool cache so the node self-repairs on the next job ([#10505](https://github.com/hivecommons/hive/issues/10505)). Previously a cache entry with `bin/node` but no `bin/npm` passed both guards and failed every job on that node with `npm: command not found`. The values.yaml part needs a `helm upgrade` of the `hive-runners` release.
+
+## 2026-10-04 (v5.132.2)
+
+### Fixed
+
+- check-changelog-fragment.sh now writes its scratch files to a temp dir; removed four empty scratch files accidentally committed to the repo root by #10499.
+
+## 2026-10-04 (v5.132.1)
+
+### Fixed
+
+- `src/scripts/check-changelog-fragment.sh` now recognises forward-merge sync PRs on `<lane>/sync-vN-to-vM` branches as well as `sync/*`, exiting green before the three-dot diff. Agent-opened hand-rolled top-ups are forced onto lane-prefixed branches by the push broker, so the guard's workflow-level `sync/*` exemption never matched them and the autofix step pushed a bogus self-describing fragment onto the forward-merge PR (#10475); since the autofix is gated on this script failing, the script-level exemption stops that regardless of the workflow pattern ([#10498](https://github.com/hivecommons/hive/issues/10498)).
+
+## 2026-10-04 (v5.132.0)
+
+### Added
+
+- Make `classification.review_bots.min_priority` editable from the dashboard Review card (All / P0–P3) via the owner-only `PUT /api/config/review`, and include it in the `review_bots` section of `GET /api/config/governor`. The value is saved to `hive.yaml` and overrides the project file's threshold without copying its logins; review-bot logins stay read-only.
+- Show the effective `classification.review_bots` settings (logins, per-thread attempt limit, resolve-after-fix, project-file load errors) read-only in the dashboard Review card and the `GET /api/config/governor` settings bundle.
+
+## 2026-10-03 (v5.131.0)
+
+### Added
+
+- Add optional `classification.review_bots.min_priority` to route only findings at or above a Codex priority badge, preserve unknown formats, and report per-PR filtered counts while leaving lower-priority threads for humans ([#10479](https://github.com/hivecommons/hive/issues/10479)).
+
+### Changed
+
+- Clarify Reporter trust help text: commit-history associations can grant trust automatically when checked, while the default associations require org membership or repo access; explain Always-trusted logins and remove the obsolete rollout note and issue link ([#10487](https://github.com/hivecommons/hive/issues/10487)).
+
+## 2026-10-03 (v5.130.2)
+
+### Fixed
+
+- Match configured review-bot logins with or without the `[bot]` suffix so Codex GraphQL threads are discovered and can be replied to and resolved ([#10478](https://github.com/hivecommons/hive/issues/10478)).
+
+## 2026-10-03 (v5.130.1)
+
+### Fixed
+
+- Existing Podman installs can run `hive-podman-update.sh reconcile migrate` to repair deployment metadata and activate the dashboard upgrade request bridge without replacing operator configuration, tokens, or secrets; repeated runs are no-ops ([#10419](https://github.com/hivecommons/hive/issues/10419)).
+- Standalone dashboard upgrades target the installed release channel instead of a build-branch head, show the channel image ref and OCI revision before confirmation, and accept validated explicit image refs as overrides.
+- Closing a shared-CI incident now requests branch updates for open PRs carrying its `hive-shared-ci-N` marker, even when their changed files do not intersect the incident fix.
+
+## 2026-10-03 (v5.130.0)
+
+### Added
+
+- The dashboard agent detail shows observed Copilot sub-agent types and effective models for the latest kick, flagging older Claude generations than the parent launch model ([#10469](https://github.com/hivecommons/hive/issues/10469)).
+
+### Fixed
+
+- Keep contributor-card message drafts open across fleet polls, refreshing the cards after the last message form closes ([#10473](https://github.com/hivecommons/hive/issues/10473)).
+
+## 2026-10-03 (v5.129.4)
+
+### Fixed
+
+- fix(dashboard): escape /metrics label values per Prometheus text format (#10471)
+
+## 2026-10-03 (v5.129.3)
+
+### Fixed
+
+- Scanner policies now name the concrete Copilot CLI model ids for sub-agent complexity tiers (`claude-haiku-4.5` light, `claude-sonnet-5.5` mid, `claude-opus-5.5` heavy) on the copilot backend ([#10461](https://github.com/hivecommons/hive/issues/10461)). Previously they passed the bare `sonnet`/`opus` aliases, which Copilot CLI 1.0.88 resolves to Sonnet 5 / Opus 5 even when 5.5 is available, so "heavy" sub-agents silently ran a generation back. Claude Code keeps the aliases, which resolve correctly there.
+
+## 2026-10-03 (v5.129.2)
+
+### Fixed
+
+- The stable promotion gate now measures a candidate's 24-hour soak from the completion of the `docker.yml` run that published it instead of when that run was queued, so a build can no longer reach the `stable` channel short of a full soak window ([#10042](https://github.com/hivecommons/hive/issues/10042)).
+
+## 2026-10-03 (v5.129.1)
+
+### Fixed
+
+- PR follow-ups now prioritize known base conflicts or behind states over review feedback, including owned fork pointers; contributor review cycles check fork base drift before pushing review fixes ([#10457](https://github.com/hivecommons/hive/issues/10457)).
+
+## 2026-10-03 (v5.129.0)
+
+### Added
+
+- Podman/Quadlet hives now have a host-side upgrade request bridge, so the dashboard Upgrade button can finally do something on a rootless install ([#10344](https://github.com/hivecommons/hive/issues/10344)). Hive runs in its own mount, PID and user namespace, so the old design — exec a host-side upgrade helper from inside the container — could never work there: the helper is not in the image, and `systemctl`, `podman` and the Quadlet drop-ins are not reachable from a container that deliberately mounts no Podman, Docker or systemd socket. Instead of mounting one, Hive writes a small JSON request into a single bind-mounted directory and a new host-side `hive-upgrade.path` unit starts `hive-upgrade.service`, which runs `bin/hive-upgrade-request.sh` outside every container namespace and delegates to the existing `bin/hive-podman-update.sh`. The container's whole capability across that boundary is "cause that script to run": the image reference is re-validated against the closed `ghcr.io/hivecommons/hive` allow-list, passed as argv and never as shell text, the root mode is taken from the host's own systemd manager rather than from the request, stale requests are archived unapplied, and handled requests are moved out of the watched directory so no upgrade can be replayed. `bin/hive-podman-setup.sh` installs and enables the bridge on new installs; existing installs keep today's honest "upgrade from the host" reason until they reconcile.
+- Diagnostics collapsed row: per-source quota gauge replaces dot/sparkline (#10428)
+- Agents collapsed row: per-agent tiles ordered by next kick (#10430)
+- A PR deferred to a shared repository CI incident now carries a durable, greppable marker ([#10441](https://github.com/hivecommons/hive/issues/10441)). When `bin/hive-baseline-check.sh` returns `DEFER_TO_INCIDENT`, the fix lanes already leave one comment pointing at the single `[shared-ci]` incident issue, but that note was free text: nothing recorded *which* PRs an incident broke, so when the incident was fixed there was no list to re-run. The `scanner*`, `ci-maintainer*` and `quality*` policy variants that own PR repair now require that comment to end with `<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number — the same hidden `<!-- hive-* -->` convention as `<!-- hive-finding: HASH -->` and `<!-- hive-pr-overlap -->`. Exactly one marker is stamped per PR per incident, only for a `DEFER_TO_INCIDENT` verdict, and it is never edited or removed while the incident is open. The marker is documented alongside the other non-label control signals, and a policy test pins the format in both the embedded and source copies of every affected variant.
+- Contributors can enable/disable saved hives with `hivectl hives enable|disable <name>` or `e` in `just contribute-tui`, retaining credentials while the running relay skips disabled hives under every routing strategy and lets in-flight work finish ([#10186](https://github.com/hivecommons/hive/issues/10186)).
+- Show disabled/powered-off agents in the dashboard Agents card grid with the same enable affordance as the sidebar.
+- Add `needs-direction` un-park handling, on-demand `/hive help` replies on any open issue or pull request for triage-and-above users, and maintainer command documentation.
+
+### Changed
+
+- Clarify Overview KPI labels (total open / actionable issues and PRs) (#10436)
+- Changed the dashboard default section order to match the sidebar navigation.
+- Remove the Beads card and sidebar link from the dashboard UI while keeping the underlying bead ledger APIs and agent workflows intact.
+- Rename the system diagnostics quality stats changelog fragment to match the dashboard diagnostics test contract.
+
+### Fixed
+
+- Docs: the stable promotion rule now describes the per-build candidate soak the gate actually enforces (a freshly cut build cannot ride an older build's soak), and the candidate race paragraph names the two events it compares ([#10042](https://github.com/hivecommons/hive/issues/10042)).
+- Campaign Release now returns an explicit conflict for run-backed Spektacular campaigns instead of revoking the contributor's stage lease and making the run disappear; Inception campaign leases can still be released.
+- dashboard: standalone Podman/Quadlet upgrades triggered via the upgrade bridge or the host helper now use `podman-auto-update` semantics (leaving `podman-auto-update.timer` and the `AutoUpdate=registry` drop-in in place) on a host tracking the registry, instead of silently converting it to a digest pin; a ref the tracked tag cannot serve is refused rather than pinned unless `--force-pin` is given explicitly (#10344 gap 3, #10421)
+- Podman/Quadlet dashboard upgrades now atomically submit requests to a configured writable host bridge directory instead of executing an in-container helper; acceptance does not claim rollout completion.
+- Hold-gated PRs no longer get a misleading "sweep will merge when green" note, and the hold now gates only the merge, not the branch: the hive keeps a held PR mergeable by merging its base in (without re-triggering the hold guard's drift check) and comments once if a real conflict blocks that automatically ([#10427](https://github.com/hivecommons/hive/issues/10427), [#10437](https://github.com/hivecommons/hive/issues/10437)).
+- Removed a dashboard test that asserted its own changelog fragment existed; the release workflow consumes fragments, which turned every post-release v5 build red.
+- Fixed dashboard dialogs to sit above the navbar with blurred backdrops, unified Escape dismissal, and a compact release channel strip.
+- Removed console-specific workflow stats from the topbar health dropdown so it only shows real spoke health checks.
+- Fix Change Throughput actor attribution and render the Hive vs human trend as a stacked share area.
+
 ## 2026-10-03 (v5.128.0)
 
 ### Added

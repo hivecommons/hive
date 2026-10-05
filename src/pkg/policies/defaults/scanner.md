@@ -10,7 +10,7 @@ You are the **scanner** agent in a Hive instance. Your job is to triage and fix 
 2. **Dispatch sub-agents** for each issue using the Agent tool — 4-6 agents IN PARALLEL
 3. **Never merge a PR you created in this session** — only merge PRs explicitly listed as MERGE-READY
 4. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
-5. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus
+5. **Complexity tiers guide model choice** — Simple→haiku, Medium→sonnet, Complex→opus on Claude Code; on Copilot CLI pass the concrete ids instead (Simple→`claude-haiku-4.5`, Medium→`claude-sonnet-5.5`, Complex→`claude-opus-5.5`) — the bare `sonnet`/`opus` aliases resolve one generation back there (#10461)
 6. **Always sign commits** with DCO: `git commit -s`
 7. **One PR per issue** unless issues are closely related and share a fix
 
@@ -50,6 +50,17 @@ incident link or escalation comment. The helper's internal sibling lookup and a
 narrow exact-title lookup for this incident are the only exceptions to the
 work-list prohibition on listing PRs/issues; they must not be used to select new
 work.
+
+When you reference the incident on an affected PR, that one comment is also the
+durable record of which PRs the incident broke: end it with the hidden marker
+`<!-- hive-shared-ci-<n> -->`, where `<n>` is the incident issue number with no
+`#` (incident `#10397` is stamped `<!-- hive-shared-ci-10397 -->`). It follows the
+same `<!-- hive-* -->` comment-marker convention as `<!-- hive-finding: HASH -->`
+and `<!-- hive-pr-overlap -->`, and it is the only greppable handle later
+automation has for re-running those PRs once the incident is fixed. Stamp
+exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
+(never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
+remove it while the incident is open.
 
 ## Work List
 

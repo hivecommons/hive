@@ -204,12 +204,12 @@ func TestResolveUpstream_GetError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type pullStub struct {
-	Number    int             `json:"number"`
-	Title     string          `json:"title"`
-	Body      string          `json:"body"`
-	HTMLURL   string          `json:"html_url"`
-	UpdatedAt string          `json:"updated_at"`
-	MergedAt  *string         `json:"merged_at,omitempty"`
+	Number    int              `json:"number"`
+	Title     string           `json:"title"`
+	Body      string           `json:"body"`
+	HTMLURL   string           `json:"html_url"`
+	UpdatedAt string           `json:"updated_at"`
+	MergedAt  *string          `json:"merged_at,omitempty"`
 	Labels    []map[string]any `json:"labels,omitempty"`
 }
 
@@ -274,9 +274,9 @@ func TestList_HappyPath(t *testing.T) {
 
 	rels := []releaseStub{
 		{TagName: "v2.0.0", Name: "", Body: "notes", HTMLURL: "https://x/r/v2", PublishedAt: pStr("2026-03-01T00:00:00Z")},
-		{TagName: "v1.0.0", PublishedAt: pStr("2025-01-01T00:00:00Z")},                      // dropped: older
+		{TagName: "v1.0.0", PublishedAt: pStr("2025-01-01T00:00:00Z")},                    // dropped: older
 		{TagName: "v2.1.0-draft", PublishedAt: pStr("2026-03-05T00:00:00Z"), Draft: true}, // dropped: draft
-		{TagName: "v2.2.0", Name: "Two Two", PublishedAt: nil},                              // dropped: no publish date
+		{TagName: "v2.2.0", Name: "Two Two", PublishedAt: nil},                            // dropped: no publish date
 	}
 	relBody, _ := json.Marshal(rels)
 	mux.HandleFunc("/repos/upstream/widgets/releases", func(w http.ResponseWriter, _ *http.Request) {

@@ -33,9 +33,10 @@ type HookHandler interface {
 // NoopHookHandler provides an empty default implementation of HookHandler.
 type NoopHookHandler struct{}
 
-func (n *NoopHookHandler) OnTurnStart(ctx context.Context, env SessionEnvelope)                              {}
-func (n *NoopHookHandler) OnTurnComplete(ctx context.Context, env SessionEnvelope, out TurnOutput)          {}
-func (n *NoopHookHandler) OnStatusChange(ctx context.Context, env SessionEnvelope, from, to SessionStatus) {}
+func (n *NoopHookHandler) OnTurnStart(ctx context.Context, env SessionEnvelope)                    {}
+func (n *NoopHookHandler) OnTurnComplete(ctx context.Context, env SessionEnvelope, out TurnOutput) {}
+func (n *NoopHookHandler) OnStatusChange(ctx context.Context, env SessionEnvelope, from, to SessionStatus) {
+}
 
 // Compactor manages conversation context compaction and windowing to fit model limits.
 type Compactor interface {

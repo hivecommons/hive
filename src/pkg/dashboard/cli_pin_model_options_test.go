@@ -80,3 +80,51 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 		t.Errorf("empty model must stay on (from launch command): %+v", got[2])
 	}
 }
+
+// Switching CLI Pin Value must never write "/usr/bin/<cli>": the image installs
+// bob (and the other npm CLIs) under /usr/local/bin, so the rewritten command
+// died with "No such file or directory" and kept the previous CLI's flags
+// (#10509). A direct-path command is cleared so hive builds the launch command;
+// the agent-launch.sh wrapper form still just swaps its --backend.
+func TestUpdateLaunchCmdNeverWritesUsrBinPath(t *testing.T) {
+	html := indexHTML(t)
+	fn := extractJSFunction(t, html, "updateLaunchCmd")
+	if strings.Contains(fn, "`/usr/bin/${cli}`") {
+		t.Error("updateLaunchCmd must not synthesize a /usr/bin/<cli> path")
+	}
+
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed; the source assertion above still ran")
+	}
+	script := fn + "\n    }\n" +
+		`const input = {value: ''};
+		const document = {getElementById: () => input};
+		function markDirty() {}
+		const run = (cli, current) => { input.value = current; updateLaunchCmd(cli); return input.value; };
+		console.log(JSON.stringify([
+			run('bob', '/usr/bin/copilot --allow-all --model claude-sonnet-4-6'),
+			run('bob', 'agent-launch.sh --backend copilot --model claude-sonnet-4-6'),
+			run('bob', ''),
+			run('bob', '/opt/custom/run.sh'),
+		]));`
+
+	out, err := exec.Command("node", "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node failed: %v\n%s", err, out)
+	}
+	var got []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &got); err != nil {
+		t.Fatalf("could not decode node output %q: %v", out, err)
+	}
+	want := []string{
+		"",
+		"agent-launch.sh --backend bob --model claude-sonnet-4-6",
+		"",
+		"/opt/custom/run.sh",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("case %d: launch cmd = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

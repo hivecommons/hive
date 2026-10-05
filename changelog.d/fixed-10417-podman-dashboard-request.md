@@ -1,1 +1,0 @@
-- Podman/Quadlet dashboard upgrades now atomically submit requests to a configured writable host bridge directory instead of executing an in-container helper; acceptance does not claim rollout completion.

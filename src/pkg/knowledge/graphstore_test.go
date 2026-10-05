@@ -226,10 +226,10 @@ A test fact body.
 
 func TestParseObsidianFile_Confidence(t *testing.T) {
 	tests := []struct {
-		name       string
-		content    string
-		wantConf   float64
-		wantTitle  string
+		name      string
+		content   string
+		wantConf  float64
+		wantTitle string
 	}{
 		{
 			name:      "with confidence",

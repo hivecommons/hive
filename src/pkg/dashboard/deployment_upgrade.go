@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,7 @@ var (
 	defaultDashboardUpgradeHelper         = "/usr/local/libexec/hive-dashboard-upgrade-helper"
 	standaloneUpgradeTimeout              = 10 * time.Minute
 	standaloneUpgradeTargetRE             = regexp.MustCompile(`\A[0-9a-fA-F]{7,40}\z`)
+	standaloneUpgradeRefRE                = regexp.MustCompile(`\Aghcr\.io/hivecommons/hive(:[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})\z`)
 )
 
 type deploymentInfo struct {
@@ -241,9 +243,31 @@ func fileExists(path string) bool {
 }
 
 func parseStandaloneUpgradeTarget(r *http.Request) (string, error) {
-	target := dashboardUpgradeTargetFromRequest(r)
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", fmt.Errorf("invalid upgrade query: %w", err)
+	}
+	target := strings.TrimSpace(query.Get("target"))
+	if target == "" && r.Body != nil {
+		var body struct {
+			Target string `json:"target"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil && err != io.EOF {
+			return "", fmt.Errorf("invalid upgrade target JSON: %w", err)
+		}
+		target = strings.TrimSpace(body.Target)
+	}
+	if target == "" {
+		target = standaloneTrackedChannelRef()
+		if target == "" {
+			return "", fmt.Errorf("no tracked release channel; supply an explicit Hive image ref")
+		}
+	}
+	if standaloneUpgradeRefRE.MatchString(target) {
+		return target, nil
+	}
 	if !standaloneUpgradeTargetRE.MatchString(target) {
-		return "", fmt.Errorf("target must be a 7-40 character hexadecimal Hive image tag")
+		return "", fmt.Errorf("target must be a Hive image ref or a 7-40 character hexadecimal Hive image tag")
 	}
 	if len(target) > 7 {
 		target = target[:7]
@@ -263,7 +287,20 @@ func dashboardUpgradeTargetFromRequest(r *http.Request) string {
 	if len(target) > 7 && standaloneUpgradeTargetRE.MatchString(target) {
 		target = target[:7]
 	}
-	return strings.ToLower(target)
+	if standaloneUpgradeTargetRE.MatchString(target) {
+		return strings.ToLower(target)
+	}
+	return target
+}
+
+// Use the installed deployment metadata, not the branch this binary was built
+// from. A digest pin is not a channel subscription, even if it carries a tag.
+func standaloneTrackedChannelRef() string {
+	ref := strings.TrimSpace(os.Getenv("HIVE_SELF_IMAGE"))
+	if !standaloneUpgradeRefRE.MatchString(ref) || standaloneReleaseChannel(ref) == "" {
+		return ""
+	}
+	return ref
 }
 
 func (s *Server) precheckKubernetesSelfUpgrade(target string) error {

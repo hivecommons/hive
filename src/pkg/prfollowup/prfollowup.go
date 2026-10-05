@@ -287,6 +287,7 @@ func pointerIs(env turn.SessionEnvelope, repo string, number int) bool {
 type EventKind string
 
 const (
+	EventBaseMoved        EventKind = "base_moved"
 	EventCIFailure        EventKind = "ci_failure"
 	EventChangesRequested EventKind = "changes_requested"
 	EventReviewThread     EventKind = "review_thread"
@@ -428,7 +429,7 @@ func skipReason(pr *github.PullRequest, opts Options) string {
 	switch {
 	case pr.Draft:
 		return SkipDraft
-	case pr.FromFork:
+	case pr.FromFork && !needsBaseSync(pr):
 		return SkipFork
 	case opts.Skip != nil && opts.Skip(pr.Repo, pr.Number):
 		return SkipEscalated
@@ -502,7 +503,7 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 		pending = append(pending, ev)
 	}
 	for _, e := range env.Journal.Ambiguous() {
-		if e.Kind == turn.OpFollowUpKick && !live[e.IdempotencyKey] {
+		if e.Kind == turn.OpFollowUpKick && !live[e.IdempotencyKey] && !needsBaseSync(pr) {
 			env.Journal.Settle(e.IdempotencyKey, turn.OpFailed, "", fallbackPrefix+ReasonSuperseded, now)
 			changed = true
 		}
@@ -628,7 +629,23 @@ func resumeBlocker(env *turn.SessionEnvelope, r Resumer, opts Options, now time.
 // detectEvents derives the follow-up events visible on pr, its unresolved
 // review-bot threads, and the human comments left since the pointer was
 // created (since).
+func needsBaseSync(pr *github.PullRequest) bool {
+	return pr.BaseSHA != "" && (pr.MergeableState == "dirty" || pr.MergeableState == "behind")
+}
+
 func detectEvents(pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, since time.Time) []Event {
+	// Base repair takes precedence over review feedback. Do not settle review
+	// events until the PR is mergeable again; they will be detected next pass.
+	// Key by base, not head: pushing onto the stale head must not create a
+	// fresh repair event on every tick. Include state so behind -> dirty wakes
+	// the owner again even if an earlier update attempt did not complete.
+	if needsBaseSync(pr) {
+		return []Event{{
+			Kind:   EventBaseMoved,
+			Key:    "base:" + pr.BaseSHA + ":" + pr.MergeableState,
+			Detail: fmt.Sprintf("<!-- hive-base-moved --> Base %s is now at %s; this PR is %s. Before addressing review threads or pushing any new work, fetch the base and merge or rebase your own PR branch onto it, resolving conflicts while preserving the PR's intent. Do not rewrite a branch you do not own. Reply on the PR naming this base commit after repair.", pr.BaseRef, pr.BaseSHA, pr.MergeableState),
+		}}
+	}
 	var events []Event
 	// A settled red CI: CIChecksRunning means other shards are still
 	// reporting, and the whole failure set is not known yet.

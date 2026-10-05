@@ -480,7 +480,7 @@ type HeartbeatUpgradePolicy struct {
 	// pending or in-flight upgrade), "" when none.
 	ArmedTarget string `json:"armed_target,omitempty"`
 	// NextUpdateAt is when the next promotion into Channel is expected
-	// (RFC3339 UTC, #10256): the end of the 24-hour lineage soak of the
+	// (RFC3339 UTC, #10256): the end of the 24-hour candidate soak of the
 	// queued candidate build (docs/stable-soak-policy.md). The hourly
 	// promotion run lands it at or after this time once its other gates pass,
 	// and it may be in the past while a gate holds. Omitted when unknown:

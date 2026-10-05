@@ -281,7 +281,7 @@ var copilotStaticModels = []string{
 	"gpt-4o",
 	// The -5 family is DASHED in copilot CLI nomenclature; the 4.x family is
 	// DOTTED, including 5.5 (the dashed -5-5 spelling is rejected by the CLI,
-// #9927). Keep in sync with agent.copilotCLIAcceptedModels (#4262).
+	// #9927). Keep in sync with agent.copilotCLIAcceptedModels (#4262).
 	"claude-opus-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
