@@ -93,7 +93,7 @@ func TestStablePromotionDefaultTruePublicGETAndMaintainedSummary(t *testing.T) {
 		t.Fatalf("channel build summary missing: %+v", got)
 	}
 	if got.EligibleBuild.SHA != "d5a638e" || got.EligibleBuild.Generation != 200 {
-		t.Fatalf("eligible build = %+v, want current candidate generation 200", got.EligibleBuild)
+		t.Fatalf("eligible build = %+v, want next build crossing the 24-hour line at generation 200", got.EligibleBuild)
 	}
 	if len(got.MaintainedHives) != 1 || !got.MaintainedHives[0].Healthy || got.MaintainedHives[0].ID != "candidate-hive" {
 		t.Fatalf("maintained candidate summary = %+v, want one healthy candidate hive", got.MaintainedHives)

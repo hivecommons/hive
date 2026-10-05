@@ -123,7 +123,7 @@ normalized_decision() {
     reason="operator smoke signal is missing"
   else
     decision=promote
-    reason="all stable per-build soak promotion conditions passed"
+    reason="all stable chases-candidate promotion gates passed"
   fi
 
   printf 'decision=%s\nreason=%s\n' "$decision" "$reason"
@@ -474,11 +474,6 @@ promote() {
   soak_seconds=$(hours_to_seconds "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}")
   blockers=$(blocker_count "$repo")
   [[ $blockers =~ ^[0-9]+$ ]] || blockers=0
-  if (( blockers != 0 )); then
-    hold_with_reason "${blockers} open release blocker(s) labelled ${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}"
-    write_output promoted false
-    return 0
-  fi
 
   for image in "${images[@]}"; do
     stable_generation=$(generation_for_ref "${image_prefix}/${image}:${stable_channel}")
@@ -519,7 +514,7 @@ built = datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00')).astimezone(ti
 print((built + timedelta(hours=float(sys.argv[2]))).isoformat().replace('+00:00', 'Z'))
 PYEOF
 )
-      if [[ -z $next_unsoaked_at || $eligible > $next_unsoaked_at ]]; then
+      if [[ -z $next_unsoaked_at || $eligible < $next_unsoaked_at ]]; then
         next_unsoaked_at=$eligible
         next_unsoaked_sha=${run_sha:0:7}
         next_unsoaked_generation=$run_number
@@ -551,13 +546,18 @@ PYEOF
       fi
     done
     if [[ $missing == true || $same != true ]]; then
-      continue
+      best_reason="digest integrity gate is holding build ${run_sha:0:7} generation ${run_number}: image digests are missing or metadata does not match"
+      break
     fi
 
     evidence_text=$(collect_required_workflows "$repo" "$run_sha" 2>&1) && green=true || green=false
     if [[ $green != true ]]; then
-      best_reason="required v2 CI / v2 Tests evidence is not green for ${run_sha:0:7}"
-      continue
+      best_reason="green evidence gate is holding build ${run_sha:0:7} generation ${run_number}: required v2 CI / v2 Tests evidence is not green"
+      break
+    fi
+    if (( blockers != 0 )); then
+      best_reason="release-blocker gate is holding build ${run_sha:0:7} generation ${run_number}: ${blockers} open issue(s) labelled ${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}"
+      break
     fi
 
     smoke=${SMOKE_EVIDENCE:-}
@@ -570,12 +570,9 @@ PYEOF
     if [[ -z $smoke && -n ${current_smoke:-} && ${current_candidate_generation:-0} =~ ^[0-9]+$ ]] && (( current_candidate_generation >= run_number )); then
       smoke="hub later-candidate smoke: ${current_smoke}"
     fi
-    if [[ -z $smoke && -n ${STABLE_PROMOTION_STATE_JSON:-} ]]; then
-      smoke="hub smoke summary unavailable for selected soaked build; stable-promotion hub state was reachable"
-    fi
     if [[ -z $smoke ]]; then
-      best_reason="operator smoke signal is missing for ${run_sha:0:7}"
-      continue
+      best_reason="smoke signal gate is holding build ${run_sha:0:7} generation ${run_number}: operator smoke signal is missing"
+      break
     fi
 
     best_digest=$first_digest
@@ -589,10 +586,12 @@ PYEOF
   done < <(docker_success_runs "$repo")
 
   if [[ -z $best_digest ]]; then
-    if [[ -n $next_unsoaked_at ]]; then
-      hold_with_reason "no eligible build has completed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h soak yet; newest unsoaked build ${next_unsoaked_sha} generation ${next_unsoaked_generation} completed ${next_unsoaked_completed} and is eligible_at ${next_unsoaked_at}"
+    if [[ -n $best_reason ]]; then
+      hold_with_reason "$best_reason"
+    elif [[ -n $next_unsoaked_at ]]; then
+      hold_with_reason "no eligible build has completed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h soak yet; next unsoaked build ${next_unsoaked_sha} generation ${next_unsoaked_generation} completed ${next_unsoaked_completed} and is eligible_at ${next_unsoaked_at}"
     else
-      hold_with_reason "no eligible docker.yml build newer than stable generation ${max_stable_generation}; ${best_reason:-no soaked build with matching image digests was found}"
+      hold_with_reason "no docker.yml build newer than stable generation ${max_stable_generation} has crossed the ${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}h line"
     fi
     write_output promoted false
     return 0

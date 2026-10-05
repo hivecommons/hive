@@ -185,7 +185,7 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 	}
 	got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable)
 	if got.NextUpdateAt != want {
-		t.Errorf("NextUpdateAt = %q, want the candidate soak deadline %q", got.NextUpdateAt, want)
+		t.Errorf("NextUpdateAt = %q, want the stable chases-candidate deadline %q", got.NextUpdateAt, want)
 	}
 	if status := s.stablePromotionStatus(targets); status.EligibleAt == nil || *status.EligibleAt != got.NextUpdateAt {
 		t.Errorf("NextUpdateAt %q disagrees with the hub card's eligible_at %v", got.NextUpdateAt, status.EligibleAt)

@@ -196,7 +196,7 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 		if !eligible.After(now) {
 			return build, now.UTC().Format(time.RFC3339)
 		}
-		if nextAt == "" || eligible.After(mustParseRFC3339(nextAt)) {
+		if nextAt == "" || eligible.Before(mustParseRFC3339(nextAt)) {
 			nextAt = eligible.Format(time.RFC3339)
 			nextBuild = build
 		}
@@ -212,9 +212,8 @@ func mustParseRFC3339(value string) time.Time {
 	return parsed
 }
 
-// stablePromotionEligibleAt is when the current candidate's 24-hour soak
-// (rule 1 in docs/stable-soak-policy.md) is satisfied for a candidate built at
-// builtAt, RFC3339 UTC, or "" when builtAt is unknown.
+// stablePromotionEligibleAt is when a build crosses the stable channel's
+// 24-hour line, or "" when builtAt is unknown.
 func stablePromotionEligibleAt(builtAt string) string {
 	if builtAt == "" {
 		return ""
@@ -227,11 +226,10 @@ func stablePromotionEligibleAt(builtAt string) string {
 }
 
 // stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same current-candidate soak rule the
-// release-channel block's eligible_at uses, so the spoke and the hub card
-// cannot disagree. Returns "" (unknown) when stable auto-promotion is
-// paused, either channel is unresolved, or nothing is queued (candidate and
-// stable are the same build).
+// stable channel (#10256), from the same "stable chases candidate and is always
+// 24 hours behind it" rule the release-channel block's eligible_at uses, so
+// the spoke and the hub card cannot disagree. Returns "" (unknown) when stable
+// auto-promotion is paused, either channel is unresolved, or nothing is queued.
 func stableNextPromotionAt(targets []ChannelTarget) string {
 	if !loadStablePromotionState().AutoPromote {
 		return ""
@@ -250,6 +248,11 @@ func stableNextPromotionAt(targets []ChannelTarget) string {
 	}
 	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
 		return ""
+	}
+	stableGeneration := ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, slog.Default())
+	_, eligibleAt := stablePromotionEligibleBuild(stableGeneration, time.Now().UTC(), slog.Default())
+	if eligibleAt != "" {
+		return eligibleAt
 	}
 	return stablePromotionEligibleAt(candidate.CommittedAt)
 }
