@@ -782,14 +782,25 @@ type CampaignRecheck struct {
 	LastDeltaCount int           `json:"last_delta_count,omitempty"`
 }
 
+// CampaignDriftSource is a bounded, untrusted discovery snapshot, not an instruction.
+type CampaignDriftSource struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	URL      string `json:"url"`
+	SHA256   string `json:"sha256,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 // CampaignDrift records the evidence attached to a Spek recheck revision.
 type CampaignDrift struct {
-	CodebaseChanged bool   `json:"codebase_changed"`
-	PriorHeadSHA    string `json:"prior_head_sha,omitempty"`
-	CurrentHeadSHA  string `json:"current_head_sha,omitempty"`
-	PriorRevision   string `json:"prior_revision,omitempty"`
-	DeltaCount      int    `json:"delta_count"`
-	RecheckReason   string `json:"recheck_reason,omitempty"`
+	DriftSource     []CampaignDriftSource `json:"drift_source,omitempty"`
+	CodebaseChanged bool                  `json:"codebase_changed"`
+	PriorHeadSHA    string                `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string                `json:"current_head_sha,omitempty"`
+	PriorRevision   string                `json:"prior_revision,omitempty"`
+	DeltaCount      int                   `json:"delta_count"`
+	RecheckReason   string                `json:"recheck_reason,omitempty"`
 }
 
 // CampaignLease is the dashboard-level lock that prevents two operators from

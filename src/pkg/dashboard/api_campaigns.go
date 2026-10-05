@@ -46,12 +46,13 @@ type CampaignRecheck struct {
 }
 
 type CampaignDrift struct {
-	CodebaseChanged bool   `json:"codebase_changed"`
-	PriorHeadSHA    string `json:"prior_head_sha,omitempty"`
-	CurrentHeadSHA  string `json:"current_head_sha,omitempty"`
-	PriorRevision   string `json:"prior_revision,omitempty"`
-	DeltaCount      int    `json:"delta_count"`
-	RecheckReason   string `json:"recheck_reason,omitempty"`
+	DriftSource     []knowledge.CampaignDriftSource `json:"drift_source,omitempty"`
+	CodebaseChanged bool                            `json:"codebase_changed"`
+	PriorHeadSHA    string                          `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string                          `json:"current_head_sha,omitempty"`
+	PriorRevision   string                          `json:"prior_revision,omitempty"`
+	DeltaCount      int                             `json:"delta_count"`
+	RecheckReason   string                          `json:"recheck_reason,omitempty"`
 }
 
 type CampaignArtifact struct {

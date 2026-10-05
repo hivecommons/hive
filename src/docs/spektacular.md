@@ -274,10 +274,48 @@ imports the first capped set and records `campaign_recheck_delta_capped`.
 Each revision carries a `drift` evidence block with `codebase_changed`,
 `prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
 The codebase signal compares the prior recorded head SHA with the current Git
-HEAD when available. Outward-looking external-source discovery (upstreams,
-competitors, standards trackers, landscape entries) is deliberately not in
-this PR; the Go extension point is `RecheckEvidenceSource`, with only the
-codebase-head source implemented. Follow-up: [#10667](https://github.com/hivecommons/hive/issues/10667).
+HEAD when available. Before the revision's `spec` lease starts, optional
+outward discovery captures declared documents as `drift.drift_source` evidence.
+An empty `sources` list (the default) performs no discovery network access.
+
+```yaml
+runs:
+  spektacular:
+    recheck:
+      enabled: true
+      discovery_proxy: http://relay:18443
+      egress_allowlist: [api.github.com]
+      sources:
+        - name: upstream-release
+          kind: release
+          url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest
+```
+
+`discovery_proxy` must be the operator's existing relay egress proxy, with its
+normal network policy and trust roots installed. It is required when sources
+are configured; discovery never falls back to direct access, including when
+`NO_PROXY` matches. `egress_allowlist` contains exact DNS hostnames, with no
+wildcards or IP literals. Config validation rejects a source outside that list,
+even when cadence is disabled (a forced manual recheck uses the same policy).
+
+Each source declares a unique `name`, a `kind` (`release`, `changelog`, `repo`,
+`standards`, or `landscape`), and an exact HTTPS `url`. Named repositories can
+point to a bounded API document; standards trackers can point to their change
+feed. A `landscape` source must be explicitly copied from a project's
+`landscape.md` into this list: Hive does not parse that file or discover more
+URLs from its contents. Source kind labels provenance; it does not enable
+crawling or additional API calls.
+
+A pass makes one GET per declared document, at most 16 sources, with a
+10-second request timeout and a 30-second total deadline. Redirects are refused,
+and responses over 32 KiB or invalid UTF-8 are rejected. The relay enforces its
+normal destination policy as well. No links are followed and no writes are
+issued. Each retained snapshot includes its name, kind, URL, SHA-256 and text;
+failed reads retain an error instead of claiming no drift. Source text is
+untrusted evidence for review, never an instruction or an automatically applied
+change. The existing spec/plan approval checkpoints remain in force. This
+exact-document snapshot path does not invoke `upstreamwatch`'s multi-page PR
+and release scanner, which would exceed the one-document source boundary.
 
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count}`;

@@ -36,9 +36,13 @@ Each revision records drift evidence:
 - `delta_count`
 - `recheck_reason` (`cadence` or `manual`)
 
-The evidence source interface is `RecheckEvidenceSource`. This ADR accepts only
-the codebase-head source for now; external upstream/competitor/standards
-discovery remains a follow-up.
+The codebase evidence source interface is `RecheckEvidenceSource`. Optional
+external document snapshots are declared in `recheck.sources` and retained as
+`drift.drift_source` before the revision starts its spec lease. They require an
+explicit relay egress proxy and exact-host allow-list, never follow redirects
+or links, and have fixed request, time and response-size bounds. Empty sources
+perform no discovery network access. Snapshots are untrusted evidence only;
+they do not bypass human checkpoints or automatically apply external changes.
 
 ## Consequences
 
