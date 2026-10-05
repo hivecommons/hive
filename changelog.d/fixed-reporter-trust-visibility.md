@@ -1,1 +1,0 @@
-- Make reporter-trust intake waits visible with a one-shot comment, the conventional `needs-triage` label, and dashboard/docs wording.

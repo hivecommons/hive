@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-05 (v5.133.0)
+
+### Added
+
+- hub dashboard: NPS feedback gets its own collapsible section above Users (#10562)
+- dashboard: Agents tiles show 'up next' and per-agent minute countdown (#10566)
+
+### Fixed
+
+- Issues labelled `needs-direction`, `needs-decision` or `needs-spec` are now filtered from the actionable work list like `needs-human`, so agent kicks no longer name, and re-claim every cycle, an issue parked on a maintainer ([#10553](https://github.com/hivecommons/hive/issues/10553)).
+- Dashboard: bound client-side sparkline history and the sparkline replay cache, skip animating detached sparklines, and close the previous `/api/events` stream and Jam WebSocket before reconnecting so a long-open tab no longer grows until the browser reloads it (#10557).
+- release: keep promotion evidence API authenticated (#10564)
+- hub: restore node stats for pull-only clusters via heartbeat health; neutral awaiting-heartbeat state (#10567)
+- dashboard: section titles match sidebar labels (Repositories  Projects) (#10569)
+- dashboard: Projects card separates issue buckets from PR buckets (#10571)
+- dashboard: Overview and Governor actionable counts share one definition (#10572)
+- release: fetch docker runs without gh auth state (#10584)
+- Attribute dashboard feedback issues to the submitting dashboard user in the issue body and prefer the GitHub App credential when available.
+- Make reporter-trust intake waits visible with a one-shot comment, the conventional `needs-triage` label, and dashboard/docs wording.
+
 ## 2026-10-05 (v5.132.9)
 
 ### Fixed
