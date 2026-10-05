@@ -1160,6 +1160,8 @@ jobs:
 
       - name: Build Docker image
         if: env.skip != 'true'
+        env:
+          DOCKER_BUILDKIT: "1"
         run: docker build -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
