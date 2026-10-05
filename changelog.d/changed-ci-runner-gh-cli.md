@@ -1,0 +1,1 @@
+- Add the pinned GitHub CLI package to the self-hosted CI runner image so `gh`-using workflows can move to the fleet after rollout.

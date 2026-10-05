@@ -47,7 +47,7 @@ template:
         whenUnsatisfiable: ScheduleAnyway
     initContainers:
       - name: stage-runner
-        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
         command:
           - bash
           - -c
@@ -83,7 +83,7 @@ template:
       # for `node-version: '22'`; a mismatch is harmless (setup-* just
       # downloads), it only forfeits the protection.
       - name: warm-toolcache
-        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
         command:
           - bash
           - -ec
@@ -125,7 +125,7 @@ template:
             name: toolcache
     containers:
       - name: runner
-        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+        image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
         command: ["/home/runner/run.sh"]
         workingDir: /home/runner
         env:

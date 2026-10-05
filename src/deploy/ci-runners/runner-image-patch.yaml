@@ -15,14 +15,16 @@
 #
 # Applying this rolls all runner pods, so do it while runners are idle.
 #
-# ── The tag below is already the published one ──────────────────────────────
+# ── The tag below is the next rollout target ────────────────────────────────
 #
 # hivecommons/hive#7398: this file used to carry a `REPLACE_ME` placeholder, so
 # applying the command above verbatim put every runner pod into
-# ImagePullBackOff. `ci-runner-image.yml` run 35215122771 published
-# ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
-# (digest sha256:5a26c5dd7c4bbfd7d2707c99ed51b3fb6115b44f5532569452ad036b35c31224),
-# so the concrete reference lives here and the patch is copy-pasteable.
+# ImagePullBackOff. `ci-runner-image.yml` run 35215122771 published the
+# original toolchain-only tag; the tag below is the next immutable runner-image
+# tag to dispatch after the GitHub CLI Dockerfile change lands:
+# ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
+# so the concrete reference lives here and the patch is copy-pasteable once the
+# image has been published.
 #
 # When a rebuild publishes a new tag (the workflow refuses to overwrite an
 # existing one — bump `tag_suffix`), update this line in the same change.
@@ -43,5 +45,5 @@
 spec:
   template:
     spec:
-      # Published by ci-runner-image.yml run 35215122771 — see note above.
-      image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+      # Publish with ci-runner-image.yml, then apply this patch — see note above.
+      image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1

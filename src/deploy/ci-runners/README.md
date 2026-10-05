@@ -85,7 +85,11 @@ at **9.99 GB of its 10 GB** Actions cache ceiling, buildkit blobs are **96.6%**
 of it, and **6.57 GB** of blobs were written in one day. LRU always evicts the
 small apt entry, so shards are forced back onto the mirrors.
 
-`Dockerfile` here removes the dependency instead of mitigating it.
+`Dockerfile` here removes the dependency instead of mitigating it and also
+adds the GitHub CLI (`gh`) from GitHub's official apt repository. The CLI is
+intentionally baked into the image before moving the hosted-only issue/PR
+automation workflows: those workflow migrations should land only after this
+tag has been published and rolled out to the runner pool.
 `.github/scripts/ci-install-tool.sh` already no-ops when a tool is present, so
 **no workflow change is needed** — the moment pods run this image, every
 `ci-install-tool.sh` call site takes the zero-network path.
@@ -93,26 +97,26 @@ small apt entry, so shards are forced back onto the mirrors.
 ### Build and push
 
 CI does this part (#7289): dispatch **CI Runner Image**
-(`.github/workflows/ci-runner-image.yml`) from `v4`. It builds the
+(`.github/workflows/ci-runner-image.yml`) from `v5`. It builds the
 Dockerfile on a GitHub-hosted runner — deliberately *not* on the self-hosted
 cluster, whose egress is the problem the image exists to remove — and pushes
 with the job's own `GITHUB_TOKEN`, so no personal GHCR write access is needed.
 
 ```console
-gh workflow run ci-runner-image.yml --ref v4 \
+gh workflow run ci-runner-image.yml --ref v5 \
   -f runner_base_image=summerwind/actions-runner:v2.337.0-ubuntu-24.04 \
-  -f tag_suffix=toolchain-1
+  -f tag_suffix=toolchain-gh-1
 gh run watch   # the job summary prints the pushed tag, its digest, and the apply commands
 ```
 
 The pushed tag is `<runner version>-<tag_suffix>`, e.g.
-`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1`, and
+`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1`, and
 the workflow refuses to overwrite a tag that already exists — bump
 `tag_suffix` for every rebuild on the same base. The same workflow also runs
 on any PR that touches the Dockerfile, build-only, as the gate that keeps a
 Dockerfile change from shipping an image that quietly sends CI back to the
-network: the build verifies `gcc --version` and `tmux -V` itself, so a stale
-base image or a dead mirror fails there.
+network or lacks the GitHub CLI: the build verifies `gcc --version`, `tmux -V`
+and `gh --version` itself, so a stale base image or a dead mirror fails there.
 
 **First push only:** GHCR creates the `hive-ci-runner` package **private**,
 and ARC pulls images anonymously (the RunnerDeployment carries no
@@ -135,9 +139,9 @@ laptop with `docker` and GHCR write access:
 cd "$(git rev-parse --show-toplevel)"
 docker build -f src/deploy/ci-runners/Dockerfile \
   --build-arg RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04 \
-  -t ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1 \
+  -t ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1 \
   src/deploy/ci-runners
-docker push ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1
+docker push ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
 ```
 
 ### Apply
@@ -146,9 +150,10 @@ This is the step CI cannot do — it needs `vllm-d` cluster access. Nothing in
 this repository can perform it, and until it is done the runners keep the old
 image and CI keeps hitting the mirrors (#7398).
 
-`runner-image-patch.yaml` already names the published tag
-`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-1`, so the
-patch applies as-is; if you pushed a newer tag, set it there first. Then:
+`runner-image-patch.yaml` already names the next rollout tag
+`ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1`, so the
+patch applies as-is after the workflow publishes that tag; if you pushed a
+newer tag, set it there first. Then:
 
 ```console
 kubectl -n arc-systems patch runnerdeployment hivecommons-hive-runners \
@@ -164,12 +169,15 @@ On a fresh pod from the new generation, as the runner user:
 ```console
 $ gcc --version | head -1   # no sudo, no apt — already present
 $ tmux -V
+$ gh --version | head -1
 ```
 
 Then on the next `v2 Tests` run, **Prepare cgo toolchain for race tests**
 should report the tool already present and perform no apt network operations,
 and no `hive-cgo-race-apt-*` cache restore should be needed for a race shard to
-pass.
+pass. After the pool reports the new `toolchain-gh-*` tag, the hosted-only
+workflows that invoke `gh` can be moved to the same fork-safe runner expression
+used by the rest of CI.
 
 ### Rollback
 
