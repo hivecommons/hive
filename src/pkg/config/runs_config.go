@@ -162,6 +162,12 @@ type SpektacularConfig struct {
 
 // SpektacularRecheckConfig controls cadence-driven Spek revision campaigns.
 type SpektacularRecheckConfig struct {
+	// Sources is an opt-in list of exact discovery documents; empty disables all discovery I/O.
+	Sources []SpektacularDiscoverySource `yaml:"sources,omitempty" json:"sources,omitempty"`
+	// DiscoveryProxy is the relay egress proxy. Direct network fallback is forbidden.
+	DiscoveryProxy string `yaml:"discovery_proxy,omitempty" json:"discovery_proxy,omitempty"`
+	// EgressAllowlist contains exact HTTPS hostnames permitted for discovery.
+	EgressAllowlist []string `yaml:"egress_allowlist,omitempty" json:"egress_allowlist,omitempty"`
 	// Enabled turns scheduler-owned recheck cadence on. Manual recheck requires
 	// this too unless the request supplies force=true.
 	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`

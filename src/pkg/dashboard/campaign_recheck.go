@@ -27,8 +27,7 @@ const (
 )
 
 // RecheckEvidenceSource is the extension point for evidence gathered before a
-// recheck revision starts. This PR implements only the codebase-head source;
-// external-source discovery is intentionally a follow-up.
+// recheck revision starts. Discovery snapshots remain evidence only.
 type RecheckEvidenceSource interface {
 	Evidence(ctx context.Context, campaign Campaign, priorHead string) (CampaignDrift, error)
 }
@@ -151,6 +150,7 @@ func (s *Server) triggerCampaignRecheck(ctx context.Context, id, actor, reason s
 	evidence.RecheckReason = reason
 	external, failures := s.collectRecheckDiscovery(ctx, base, parseCampaignTime(base.LastActivity))
 	revision.Drift = &knowledge.CampaignDrift{
+		DriftSource:     s.discoverRecheckSources(ctx),
 		CodebaseChanged: evidence.CodebaseChanged,
 		PriorHeadSHA:    evidence.PriorHeadSHA,
 		CurrentHeadSHA:  evidence.CurrentHeadSHA,
@@ -280,6 +280,7 @@ func campaignDriftFromArchive(archive knowledge.InceptionCampaignArchive) *Campa
 		return nil
 	}
 	return &CampaignDrift{
+		DriftSource:     archive.Drift.DriftSource,
 		CodebaseChanged: archive.Drift.CodebaseChanged,
 		PriorHeadSHA:    archive.Drift.PriorHeadSHA,
 		CurrentHeadSHA:  archive.Drift.CurrentHeadSHA,
