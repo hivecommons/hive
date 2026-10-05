@@ -10,6 +10,35 @@ after model judgment, and exposes live dashboard, cost, hub/spoke, and
 contributor-compute surfaces. This page positions that design against nearby
 agentic orchestration tools.
 
+## Agentic AI Foundation (AAIF) and Goose
+
+The Linux Foundation's [Agentic AI Foundation](https://aaif.io/) hosts
+[Goose](https://github.com/aaif-goose/goose), originally developed at Block.
+Goose is an execution backend; Hive is a downstream orchestration layer that
+dispatches to Goose at fleet scale, with operator-controlled policy and
+contributor-compute relays. This is an integration relationship, not AAIF
+membership, hosting, or endorsement of Hive.
+
+The [AAIF landscape submission instructions](https://github.com/aaif/aaif-landscape#new-entries)
+ask for an alphabetical `landscape.yml` PR and an SVG logo, and generally
+require 1,000 GitHub stars. Hive had 63 stars when checked for
+[#10627](https://github.com/hivecommons/hive/issues/10627).
+[Listing eligibility request aaif/aaif-landscape#22](https://github.com/aaif/aaif-landscape/issues/22)
+asks whether Hive qualifies below that threshold and which category fits;
+it is a pending submission inquiry, not an accepted listing.
+
+Review material: [OpenSSF Best Practices badge](https://www.bestpractices.dev/projects/14261),
+[Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md),
+and [CNCF reference architecture](cncf-reference-architecture.md).
+
+The [unattended Goose integration guide](../../docs/goose-at-scale.md) is
+maintained here for now. Goose's [contribution workflow](https://github.com/aaif-goose/goose/blob/main/CONTRIBUTING.md#from-issue-to-pull-request)
+requires a **Ready** issue on its board before any external docs PR, and asks
+humans to write new issues themselves. No open Hive issue was found there
+when checked for #10627, so no upstream PR has been opened. A human sponsor
+must file the documentation proposal and obtain Ready status before the
+page can be proposed upstream; the local guide is not upstream approval.
+
 ## Fullsend
 
 Public references: [fullsend.sh](https://fullsend.sh),

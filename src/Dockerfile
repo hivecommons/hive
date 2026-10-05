@@ -280,8 +280,8 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
     node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs && \
     claude --version
 
-# --- Layer 8: Goose CLI (official block/goose upstream) ---
-# Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
+# --- Layer 8: Goose CLI (official AAIF upstream) ---
+# Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
 ARG GOOSE_VERSION=1.53.0
@@ -293,7 +293,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
     esac && \
-    if curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
+    if curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
       echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c - && \
       tar xz -C /usr/local/bin -f /tmp/goose.tar.gz && \
       chmod +x /usr/local/bin/goose && \

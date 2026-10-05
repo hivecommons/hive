@@ -176,6 +176,9 @@ url="$1"; out="$2"
 case "$url" in
   *"/@anthropic-ai/claude-code/latest") printf '{"version":"%s"}' "${STUB_CLAUDE_VERSION:-2.1.280}" > "$out" ;;
   *"/@openai/codex/latest") printf '{"version":"0.153.4"}' > "$out" ;;
+  "https://api.github.com/repos/aaif-goose/goose/releases/latest") printf '{"tag_name":"v1.53.0"}' > "$out" ;;
+  "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-x86_64-unknown-linux-gnu.tar.gz") printf 'goose-amd64' > "$out" ;;
+  "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-aarch64-unknown-linux-gnu.tar.gz") printf 'goose-arm64' > "$out" ;;
   *"/api/cask/antigravity-cli.json")
     amd64="$(printf 'agy-amd64' | shasum -a 256 | cut -d' ' -f1)"
     arm64="$(printf 'agy-arm64' | shasum -a 256 | cut -d' ' -f1)"
@@ -187,6 +190,16 @@ esac
 STUB
 chmod +x "$TMP/http-stub.sh"
 export HIVE_PIN_HTTP="$TMP/http-stub.sh"
+run resolve goose
+GOOSE_AMD64="$(printf 'goose-amd64' | shasum -a 256 | cut -d' ' -f1)"
+GOOSE_ARM64="$(printf 'goose-arm64' | shasum -a 256 | cut -d' ' -f1)"
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'VERSION=1.53.0\nSHA256_AMD64=%s\nSHA256_ARM64=%s' "$GOOSE_AMD64" "$GOOSE_ARM64")" ] \
+  && pass "goose resolves both architecture digests from canonical AAIF release URLs" || fail "goose canonical source" "$OUT $ERR"
+for dockerfile in "$HERE/../Dockerfile" "$HERE/../Dockerfile.contributor"; do
+  grep -Fq 'https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz' "$dockerfile" \
+    && ! grep -Fq 'github.com/block/goose/releases/' "$dockerfile" \
+    && pass "$(basename "$dockerfile") downloads Goose from the canonical AAIF source" || fail "Goose image source" "$dockerfile"
+done
 HIVE_PIN_PATCH_ELIGIBLE= run bump claude
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.1.226\nNEW=2.1.280\nMAJOR=false\nCHANGED=false\nSKIPPED=patch')" ] \
   && [ "$(arg Dockerfile CLAUDE_CODE_VERSION)" = "2.1.226" ] \

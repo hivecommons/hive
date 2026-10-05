@@ -326,7 +326,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
-# Install Goose CLI (Block's AI agent)
+# Install Goose CLI (AAIF's AI agent, originally from Block)
 # Version pinned — was fetching releases/latest which resolves to HEAD at
 # build time (sec-check issue #2919). Pin to a specific release tag and verify
 # the tarball before extraction. Download failures are tolerated because Goose
@@ -341,7 +341,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
      esac \
   && mkdir -p /tmp/goose-dl \
-  && if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
+  && if curl -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
        -o /tmp/goose-dl/goose.tar.gz; then \
        echo "${GOOSE_SHA256}  /tmp/goose-dl/goose.tar.gz" | sha256sum -c - \
        && cd /tmp/goose-dl && tar -xzf goose.tar.gz \

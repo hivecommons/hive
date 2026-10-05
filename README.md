@@ -605,6 +605,14 @@ A relay can subscribe to multiple hives — manage them as named profiles with `
 
 See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
 
+## Related projects
+
+- [Goose](https://github.com/aaif-goose/goose), an agent backend hosted by the
+  [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive orchestrates Goose;
+  it is not itself an AAIF member or hosted project. See
+  [unattended Goose with Hive](docs/goose-at-scale.md) and
+  [ecosystem listing status](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
+
 ## Repositories
 
 Hive is one of several repositories in the hivecommons organization. See
