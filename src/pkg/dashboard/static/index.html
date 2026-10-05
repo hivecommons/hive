@@ -25602,13 +25602,6 @@ function burnAreaChart() {
         if (ocEl) {
           window._lastVersionData = v;
           window._lastVersionContext = { deliveryLabel, trackingLabel, offeredUpgradeHash, offeredUpgradeShort, offeredUpgradeLabel, upgradeHTML, manualUpdateHTML, hasUpgrade, statusText: versionStatusSummary(v, offeredUpgradeShort), upgradeProgress };
-          if (typeof renderVersionSurfaces !== 'function' && typeof globalThis !== 'undefined') {
-            globalThis.renderVersionSurfaces = function(data, context) {
-              renderVersionChip(data, context);
-              renderVersionMenu(data, context);
-              if (typeof renderNavbarUpgradeIndicator === 'function') renderNavbarUpgradeIndicator(data, context);
-            };
-          }
           renderVersionSurfaces(v, window._lastVersionContext);
         }
         versionScheduleUpgradePoll(upgradeProgress);
