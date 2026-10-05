@@ -82,7 +82,16 @@ jobs:
           # still the gate, so a labelling failure must not mask it.
           # REST, not `gh pr edit`: the latter also queries Projects, which the
           # workflow token cannot read, so it fails even with pull-requests: write.
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f 'labels[]=needs-human' >/dev/null \
-            || echo "::warning::could not add needs-human (read-only token?) — the failing check is still the gate"
+          # curl, not `gh`: the self-hosted hive-runners image does not ship gh.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d '{"labels":["needs-human"]}' \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels") || status="curl-failed"
+          case "$status" in
+            2??) ;;
+            *) echo "::warning::could not add needs-human (HTTP ${status}; fork PRs get a read-only token) — the failing check is still the gate" ;;
+          esac
           echo "::error::v4 is feature-frozen: PR #${PR_NUMBER} is not labelled as a security/critical fix"
           exit 1
