@@ -220,6 +220,40 @@ func TestHandleVersionUsesHubUpgradePolicyTarget(t *testing.T) {
 	}
 }
 
+func TestHandleVersionFallsBackToPolicyChannelWhenImageRefUnavailable(t *testing.T) {
+	oldVersionSource := versionImageSource
+	versionImageSource = func() string { return "" }
+	t.Cleanup(func() { versionImageSource = oldVersionSource })
+
+	s := NewServer(0, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	deps := testDeps(t)
+	deps.Config.Hub.URL = "https://hive.hivecommons.dev"
+	deps.Config.HiveID = "hosted-test"
+	s.RegisterAPI(deps)
+	s.SetHubUpgradePolicy(&spoke.HeartbeatUpgradePolicy{
+		HubManaged: true, Schedule: "daily", Branch: "v5", Channel: "candidate",
+		TargetSHA: "a9edaea", TargetResolved: true,
+	})
+
+	rec := doGet(s, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Channel       string             `json:"channel"`
+		ReleaseStatus SpokeReleaseStatus `json:"releaseStatus"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Channel != "candidate" || body.ReleaseStatus.Channel.Channel != "candidate" || !body.ReleaseStatus.Channel.Resolved {
+		t.Fatalf("channel=%q release=%+v, want candidate resolved from hub policy when image ref is unavailable", body.Channel, body.ReleaseStatus.Channel)
+	}
+	if !body.ReleaseStatus.Channel.SelectorEnabled {
+		t.Fatalf("selector should stay available once the hub policy identifies the release channel: %+v", body.ReleaseStatus.Channel)
+	}
+}
+
 // Regression for #9832: a release-channel spoke can be current on its channel
 // while its built-from branch has moved on. The spoke dashboard must not offer
 // a manual upgrade to the branch tip when the hub policy says the reachable
@@ -398,7 +432,7 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		StartedFrom: "1234567",
 		StartedAt:   now.Add(-5 * time.Minute),
 		UpdatedAt:   now.Add(-5 * time.Minute),
-	}, "f29ba7aabcdef", now)
+	}, "f29ba7aabcdef", now, nil)
 	if targetlessMoved.State != dashboardUpgradeStateDone || !sameCommitDashboard(targetlessMoved.Target, "f29ba7a") {
 		t.Fatalf("targetless moved state = %+v, want done at running commit", targetlessMoved)
 	}
@@ -412,9 +446,25 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		StartedFrom: "1234567",
 		StartedAt:   now.Add(-5 * time.Minute),
 		UpdatedAt:   now.Add(-5 * time.Minute),
-	}, "f29ba7aabcdef", now)
+	}, "f29ba7aabcdef", now, nil)
 	if targetedMoved.State != dashboardUpgradeStateSuperseded {
 		t.Fatalf("targeted moved state = %+v, want superseded until ancestry proves completion", targetedMoved)
+	}
+
+	floatingLanded := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:       dashboardUpgradeStateStarted,
+		Target:      "84d54fa",
+		StartedFrom: "0904d04",
+		StartedAt:   now.Add(-5 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	}, "a9edaeaabcdef", now, &upgradeOutcome{
+		TargetSHA:   "a9edaea",
+		CurrentSHA:  "0904d04",
+		RequestedAt: now.Add(-5 * time.Minute),
+		CompletedAt: now.Add(-2 * time.Minute),
+	})
+	if floatingLanded.State != dashboardUpgradeStateDone || !sameCommitDashboard(floatingLanded.Target, "a9edaea") {
+		t.Fatalf("floating landed state = %+v, want done at the landed commit", floatingLanded)
 	}
 
 	stale := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
@@ -422,7 +472,7 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		Target:    "990d0b2",
 		StartedAt: now.Add(-31 * time.Minute),
 		UpdatedAt: now.Add(-31 * time.Minute),
-	}, "1234567abcdef", now)
+	}, "1234567abcdef", now, nil)
 	if stale.State != dashboardUpgradeStateSuperseded {
 		t.Fatalf("stale state = %+v, want superseded", stale)
 	}
