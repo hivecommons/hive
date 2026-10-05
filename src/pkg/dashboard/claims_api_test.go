@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 )
 
@@ -66,6 +67,27 @@ func TestClaims_SelectTaskSkipsHumanClaimedIssue(t *testing.T) {
 	}
 	if _, ok := l.Lookup("myorg/repo1", 1); !ok {
 		t.Fatal("alice's claim was disturbed by another identity's revoke")
+	}
+}
+
+func TestClaims_SelectTaskSkipsAlreadyDoneIssue(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	done := intgIssue(1, "already fixed", "someone", nil)
+	done["labels"] = []any{ghpkg.AlreadyDoneLabel}
+	free := intgIssue(2, "free", "someone", nil)
+	free["labels"] = []any{"bug"}
+	setStatusIssues(s, done, free)
+	c := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "worker", ContributorID: "c-worker", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+
+	msg := hub.selectTask(c)
+	if msg == nil || msg.Type != "task_assign" || msg.Number != 2 {
+		t.Fatalf("expected #2 (the not-already-done issue), got %+v", msg)
+	}
+	if _, ok := l.Lookup("myorg/repo1", 1); ok {
+		t.Fatal("already-done issue was claimed")
 	}
 }
 
@@ -200,6 +222,51 @@ func TestClaims_APIRoutes(t *testing.T) {
 	}
 	if code, _ := do(http.MethodPost, "/api/claims/o/r/5", "", asAlice); code != http.StatusNotFound {
 		t.Fatalf("disabled claim code=%d want 404", code)
+	}
+}
+
+func TestClaims_APIRouteRefusesAlreadyDoneIssue(t *testing.T) {
+	_, s, l := claimsHub(t)
+	var posted string
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/5":
+			_, _ = w.Write([]byte(`{"number":5,"labels":[{"name":"hive/already-done"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/5/comments":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/5/comments":
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			posted = body["body"]
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			t.Fatalf("unexpected GitHub request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(ghSrv.Close)
+	s.deps.GHClient = ghpkg.NewClientForTest(ghSrv.URL, "o", []string{"r"}, s.logger)
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		if repo == "o/r" && number == 5 {
+			return ghpkg.IssueClaim{Repo: repo, Issue: number, PRNumber: 10617, PRURL: "https://github.com/hivecommons/hive/pull/10617", MergedPR: true}, true
+		}
+		return ghpkg.IssueClaim{}, false
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/claims/o/r/5", strings.NewReader(""))
+	req.Header.Set("X-Hive-User", "alice")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("claim code=%d body=%s, want 409", w.Code, w.Body.String())
+	}
+	if _, ok := l.Lookup("o/r", 5); ok {
+		t.Fatal("already-done issue was claimed")
+	}
+	for _, want := range []string{"hive:claim-refused", "hive/already-done", "#10617", "https://github.com/hivecommons/hive/pull/10617"} {
+		if !strings.Contains(posted, want) {
+			t.Fatalf("refusal comment missing %q: %q", want, posted)
+		}
 	}
 }
 

@@ -1,0 +1,1 @@
+- Keep `hive/already-done` issues out of contributor offers, agent kick claims, and new issue claims until the label is removed.
