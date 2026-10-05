@@ -57,11 +57,14 @@ func interceptFeedbackGitHub(t *testing.T, handler http.HandlerFunc) *feedbackGi
 	capture := &feedbackGitHubCapture{handler: handler}
 	prevTransport := http.DefaultTransport
 	prevClientTransport := http.DefaultClient.Transport
+	prevLogin := lookupHubFeedbackTokenLogin
 	http.DefaultTransport = capture
 	http.DefaultClient.Transport = nil
+	lookupHubFeedbackTokenLogin = func(string) string { return "" }
 	t.Cleanup(func() {
 		http.DefaultTransport = prevTransport
 		http.DefaultClient.Transport = prevClientTransport
+		lookupHubFeedbackTokenLogin = prevLogin
 	})
 	return capture
 }
@@ -166,10 +169,16 @@ func TestHubFeedbackIngestRejectsBeforeReachingGitHub(t *testing.T) {
 func TestHubFeedbackIngestCreatesIssueWithHubToken(t *testing.T) {
 	resetHubFeedbackRate(t)
 	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(77))
+	lookupHubFeedbackTokenLogin = func(token string) string {
+		if token != "hub-token" {
+			t.Fatalf("lookup token = %q want hub-token", token)
+		}
+		return "hub-bot"
+	}
 	s := npsTestHub("h1")
 	s.envGitHubToken = "hub-token"
 
-	body := `{"title":"Docs page 404s","description":"The install guide link is dead","request_type":"feature","target_repo":"docs","hive_id":"h1","include_diagnostics":true,"diagnostics":{"version":"v5.1.0","hive_id":"h1"}}`
+	body := `{"title":"Docs page 404s","description":"The install guide link is dead","request_type":"feature","target_repo":"docs","hive_id":"h1","credential_login":"spoke-claimed","hub_name":"https://hub.example","submitter":{"github_login":"alice"},"include_diagnostics":true,"diagnostics":{"version":"v5.1.0","hive_id":"h1"}}`
 	rec := feedbackIngest(s, body, s.heartbeatKeyFor("h1"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -201,6 +210,9 @@ func TestHubFeedbackIngestCreatesIssueWithHubToken(t *testing.T) {
 	}
 	if payload.Title != "Docs page 404s" || !strings.Contains(payload.Body, "Target: Documentation") || !strings.Contains(payload.Body, "| Version | v5.1.0 |") {
 		t.Fatalf("issue payload = %+v", payload)
+	}
+	if !strings.HasPrefix(payload.Body, "Opened by @hub-bot on behalf of @alice from hive h1 (https://hub.example)") || strings.Contains(payload.Body, "@spoke-claimed") {
+		t.Fatalf("issue body attribution used the wrong credential:\n%s", payload.Body)
 	}
 	if strings.Join(payload.Labels, ",") != "enhancement,user-feedback" {
 		t.Fatalf("labels = %v", payload.Labels)

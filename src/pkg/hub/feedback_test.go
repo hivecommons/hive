@@ -44,56 +44,78 @@ func TestHubFeedbackCreateIssueRetriesWithoutLabels(t *testing.T) {
 	}
 }
 
-func TestHubFeedbackIssueBodyAttributionCases(t *testing.T) {
+func TestHubFeedbackIssueBodyAttributionShapes(t *testing.T) {
 	tests := []struct {
-		name      string
-		submitter feedbackSubmitterIdentity
-		want      []string
-		notWant   []string
+		name            string
+		credentialLogin string
+		hubName         string
+		hiveID          string
+		submitter       feedbackSubmitterIdentity
+		wantLine        string
+		notWant         []string
 	}{
 		{
-			name:      "github oauth login",
-			submitter: feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub OAuth dashboard login"},
-			want: []string{
-				"| Submitted by | @alice (GitHub OAuth dashboard login) |",
-				"Opened by the hive on behalf of @alice.",
-				"/cc @alice",
-			},
+			name:            "hub-linked app bot",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "https://hub.example",
+			hiveID:          "hive-linked",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-linked (https://hub.example)",
 		},
 		{
-			name:      "authenticated dashboard user",
-			submitter: feedbackSubmitterIdentity{Name: "basic-user", Source: "authenticated dashboard user"},
-			want: []string{
-				"| Submitted by | basic-user (authenticated dashboard user) |",
-				"Opened by the hive on behalf of basic-user.",
-			},
-			notWant: []string{"/cc @basic-user"},
+			name:            "hub-less operator pat",
+			credentialLogin: "clubanderson",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @clubanderson on behalf of @alice from hive hive-solo (hub-less)",
 		},
 		{
-			name:      "anonymous dashboard session",
-			submitter: feedbackSubmitterIdentity{Name: "anonymous dashboard session", Source: "anonymous dashboard session"},
-			want: []string{
-				"| Submitted by | anonymous dashboard session |",
-				"Opened by the hive on behalf of anonymous dashboard session.",
-			},
-			notWant: []string{"/cc @"},
+			name:            "hosted app bot",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "hosted-hub",
+			hiveID:          "hive-hosted",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-hosted (hosted-hub)",
+		},
+		{
+			name:            "same actor",
+			credentialLogin: "alice",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @alice from hive hive-solo (hub-less)",
+			notWant:         []string{"on behalf of @alice"},
+		},
+		{
+			name:            "missing identity",
+			credentialLogin: "clubanderson",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "an unidentified dashboard user", Source: "unidentified dashboard user"},
+			wantLine:        "Opened by @clubanderson on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
+			notWant:         []string{"/cc @"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := buildHubFeedbackIssueBody(feedbackReportRequest{
-				Title:        "Bug from dashboard",
-				Description:  "Something went wrong",
-				RequestType:  feedbackTypeBug,
-				TargetRepo:   feedbackTargetHive,
-				Submitter:    tt.submitter,
-				OpenedByHive: true,
-				Diagnostics:  &feedbackDiagnostics{HiveID: "hive-one", Channel: "edge"},
+				Title:           "Bug from dashboard",
+				Description:     "Something went wrong",
+				RequestType:     feedbackTypeBug,
+				TargetRepo:      feedbackTargetHive,
+				HiveID:          tt.hiveID,
+				CredentialLogin: tt.credentialLogin,
+				HubName:         tt.hubName,
+				Submitter:       tt.submitter,
+				OpenedByHive:    true,
+				Diagnostics:     &feedbackDiagnostics{HiveID: "hive-one", Channel: "edge"},
 			})
-			for _, want := range tt.want {
-				if !strings.Contains(body, want) {
-					t.Fatalf("feedback body missing %q:\n%s", want, body)
-				}
+			if !strings.HasPrefix(body, tt.wantLine+"\n\nSomething went wrong") {
+				t.Fatalf("feedback body prefix mismatch; want %q:\n%s", tt.wantLine, body)
+			}
+			if tt.submitter.GitHubLogin != "" && !strings.Contains(body, "| Submitted by | @"+tt.submitter.GitHubLogin+" (GitHub dashboard identity) |") {
+				t.Fatalf("feedback body missing Submitted by row:\n%s", body)
 			}
 			for _, notWant := range tt.notWant {
 				if strings.Contains(body, notWant) {

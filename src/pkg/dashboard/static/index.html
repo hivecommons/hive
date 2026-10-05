@@ -4925,6 +4925,7 @@
 
     // ── Console-style dashboard feedback ───────────────────────────────────
     const FEEDBACK_DRAFT_KEY = 'hive-feedback-draft-v1';
+    const FEEDBACK_IDENTITY_KEY = 'hive-feedback-github-username-v1';
     const FEEDBACK_MAX_SCREENSHOTS = 5;
     const FEEDBACK_MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024;
     const FEEDBACK_POLL_MS = 5 * 60 * 1000;
@@ -4983,12 +4984,50 @@
         .replace(/(secret|token|password|key)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]');
     }
     function feedbackDraft() { try { return JSON.parse(localStorage.getItem(FEEDBACK_DRAFT_KEY) || '{}') || {}; } catch { return {}; } }
+    function feedbackGitHubLogin(login) {
+      login = String(login || '').trim().replace(/^@+/, '');
+      return /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/.test(login) ? login : '';
+    }
+    function feedbackStoredGitHubUsername() { try { return feedbackGitHubLogin(localStorage.getItem(FEEDBACK_IDENTITY_KEY) || ''); } catch { return ''; } }
+    function saveFeedbackGitHubUsername() { const v = feedbackGitHubLogin(feedbackVal('feedback-github-username')); try { if (v) localStorage.setItem(FEEDBACK_IDENTITY_KEY, v); else localStorage.removeItem(FEEDBACK_IDENTITY_KEY); } catch {} }
     function saveFeedbackDraft() {
       const overlay = document.getElementById('feedback-overlay'); if (!overlay) return;
       const d = { request_type: feedbackVal('feedback-type'), target_repo: feedbackVal('feedback-target'), title: feedbackVal('feedback-title'), description: feedbackVal('feedback-description'), include_diagnostics: document.getElementById('feedback-include-diagnostics')?.checked !== false, include_project_repos: document.getElementById('feedback-include-projects')?.checked === true };
       try { localStorage.setItem(FEEDBACK_DRAFT_KEY, JSON.stringify(d)); } catch {}
     }
     function feedbackVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+    function feedbackMention(login) { login = feedbackGitHubLogin(login); return login ? '@' + login : ''; }
+    function feedbackHubLabel(status) { return status && status.hub_linked ? ('hub-linked: ' + (status.hub_name || 'hub')) : 'hub-less'; }
+    async function loadFeedbackStatus() {
+      try {
+        const r = await fetch('/api/feedback/status');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        window._feedbackStatus = await r.json();
+      } catch {
+        window._feedbackStatus = { credential_login: '', submitter_login: '', submitter_name: '', hive_id: '', hub_linked: false, hub_name: 'hub-less', needs_identity: true };
+      }
+      const input = document.getElementById('feedback-github-username');
+      if (input) {
+        const known = (window._feedbackStatus && window._feedbackStatus.submitter_login) || '';
+        if (known) input.value = known;
+        else if (!input.value) input.value = feedbackStoredGitHubUsername();
+        input.placeholder = known ? known : 'your-github-login';
+      }
+      updateFeedbackAttributionLine();
+      updateFeedbackPreview();
+    }
+    function updateFeedbackAttributionLine() {
+      const el = document.getElementById('feedback-attribution-line'); if (!el) return;
+      const status = window._feedbackStatus || {};
+      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'the hive');
+      const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
+      const user = feedbackMention(entered || status.submitter_login) || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
+      const hive = status.hive_id || ((window._lastStatus || {}).hiveId) || 'unknown';
+      let line = 'Will be opened as ' + credential;
+      if (credential.toLowerCase() !== user.toLowerCase()) line += ' on behalf of ' + user;
+      line += ' · hive ' + hive + ' (' + feedbackHubLabel(status) + ')';
+      el.textContent = line;
+    }
     function feedbackPlaceholder(type) { return type === 'feature' ? 'What would you like Hive to do?\n\nWhy would it help your workflow?\n\nAny examples or constraints?' : 'What happened?\n\nWhat did you expect?\n\nSteps to reproduce:\n1.\n2.\n3.'; }
     function renderFeedbackDiagnosticsDisclosure() {
       const list = document.getElementById('feedback-disclosure-list'); if (!list) return;
@@ -5030,6 +5069,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute and @-mention you on the issue.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -5038,7 +5078,7 @@
           </section>
           <section id="feedback-reports-panel" role="tabpanel" aria-labelledby="feedback-reports-tab" hidden><div id="feedback-reports-list" class="feedback-preview">Loading…</div></section>
         </div>
-        <footer class="feedback-footer"><button class="hv-btn btn-secondary" data-action="closeFeedbackModal">Cancel</button><button class="hv-btn btn-primary" id="feedback-submit" data-action="submitFeedbackReport">Submit feedback</button></footer>
+        <footer class="feedback-footer"><div id="feedback-attribution-line" class="feedback-option-extra">Resolving feedback attribution…</div><button class="hv-btn btn-secondary" data-action="closeFeedbackModal">Cancel</button><button class="hv-btn btn-primary" id="feedback-submit" data-action="submitFeedbackReport">Submit feedback</button></footer>
       </div>`;
       document.body.appendChild(overlay);
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeFeedbackModal(); });
@@ -5050,12 +5090,13 @@
       document.getElementById('feedback-target').value = draft.target_repo || 'hive';
       document.getElementById('feedback-title').value = draft.title || '';
       document.getElementById('feedback-description').value = draft.description || '';
+      document.getElementById('feedback-github-username').value = feedbackStoredGitHubUsername();
       document.getElementById('feedback-description').placeholder = feedbackPlaceholder(type);
       document.getElementById('feedback-include-diagnostics').checked = draft.include_diagnostics !== false;
       document.getElementById('feedback-include-projects').checked = draft.include_project_repos === true;
       window._feedbackScreenshots = [];
       renderFeedbackDiagnosticsDisclosure();
-      overlay.addEventListener('input', function(e) { if (e.target && e.target.name === 'feedback-kind') { hidden.value = e.target.value; document.getElementById('feedback-description').placeholder = feedbackPlaceholder(e.target.value); } saveFeedbackDraft(); updateFeedbackPreview(); });
+      overlay.addEventListener('input', function(e) { if (e.target && e.target.name === 'feedback-kind') { hidden.value = e.target.value; document.getElementById('feedback-description').placeholder = feedbackPlaceholder(e.target.value); } if (e.target && e.target.id === 'feedback-github-username') { saveFeedbackGitHubUsername(); updateFeedbackAttributionLine(); } saveFeedbackDraft(); updateFeedbackPreview(); });
       overlay.addEventListener('change', function(e) { if (e.target && e.target.name === 'feedback-kind') { hidden.value = e.target.value; document.getElementById('feedback-description').placeholder = feedbackPlaceholder(e.target.value); } if (e.target && e.target.id === 'feedback-files') feedbackAddFiles(e.target.files); renderFeedbackDiagnosticsDisclosure(); saveFeedbackDraft(); updateFeedbackPreview(); });
       const desc = document.getElementById('feedback-description');
       desc.addEventListener('paste', function(e) { feedbackAddFiles(e.clipboardData && e.clipboardData.files); });
@@ -5063,6 +5104,7 @@
       drop.addEventListener('dragover', function(e) { e.preventDefault(); });
       drop.addEventListener('drop', function(e) { e.preventDefault(); feedbackAddFiles(e.dataTransfer && e.dataTransfer.files); });
       updateFeedbackPreview();
+      loadFeedbackStatus();
       feedbackShowTab(tab === 'reports' ? 'reports' : 'submit');
     }
     async function feedbackShowTab(tab) {
@@ -5094,7 +5136,8 @@
     }
     async function buildFeedbackPayload() {
       const diag = await collectFeedbackDiagnostics();
-      return { request_type: feedbackVal('feedback-type') || 'bug', target_repo: feedbackVal('feedback-target') || 'hive', title: feedbackRedact(feedbackVal('feedback-title')), description: feedbackRedact(feedbackVal('feedback-description')), screenshots: window._feedbackScreenshots || [], include_diagnostics: document.getElementById('feedback-include-diagnostics')?.checked !== false, diagnostics: diag, console_errors: feedbackConsoleErrors.map(e => ({...e, message: feedbackRedact(e.message), source: feedbackStripQuery(e.source || '')})), failed_api_calls: feedbackFailedApiCalls.map(c => ({...c, path: feedbackStripQuery(c.path || '')})) };
+      const enteredLogin = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
+      return { request_type: feedbackVal('feedback-type') || 'bug', target_repo: feedbackVal('feedback-target') || 'hive', title: feedbackRedact(feedbackVal('feedback-title')), description: feedbackRedact(feedbackVal('feedback-description')), submitter: { github_login: enteredLogin }, screenshots: window._feedbackScreenshots || [], include_diagnostics: document.getElementById('feedback-include-diagnostics')?.checked !== false, diagnostics: diag, console_errors: feedbackConsoleErrors.map(e => ({...e, message: feedbackRedact(e.message), source: feedbackStripQuery(e.source || '')})), failed_api_calls: feedbackFailedApiCalls.map(c => ({...c, path: feedbackStripQuery(c.path || '')})) };
     }
     async function collectFeedbackDiagnostics() {
       const st = window._lastStatus || {}; let version = {};
@@ -5107,6 +5150,13 @@
     async function submitFeedbackReport() {
       const btn = document.getElementById('feedback-submit'); if (btn) btn.disabled = true;
       try {
+        const usernameField = document.getElementById('feedback-github-username');
+        const rawUsername = usernameField ? usernameField.value.trim() : '';
+        if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
+          if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
+          showToast('Enter a valid GitHub username, or leave it blank', 'error');
+          return;
+        }
         const payload = await buildFeedbackPayload();
         if (!payload.title.trim() || !payload.description.trim()) { showToast('Title and description are required', 'error'); return; }
         if (!payload.include_diagnostics) { payload.diagnostics = null; payload.console_errors = []; payload.failed_api_calls = []; }

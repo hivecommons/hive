@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -60,8 +61,8 @@ func sanitizeFeedbackSubmitter(s *feedbackSubmitterIdentity) {
 	s.GitHubLogin = githubLoginForMention(s.GitHubLogin)
 	s.Source = truncateRunes(sanitizeFeedbackIdentityValue(s.Source), 80)
 	if s.Name == "" {
-		s.Name = "anonymous dashboard session"
-		s.Source = "anonymous dashboard session"
+		s.Name = "an unidentified dashboard user"
+		s.Source = "unidentified dashboard user"
 	}
 }
 
@@ -76,7 +77,7 @@ func sanitizeFeedbackIdentityValue(v string) string {
 	return feedbackRedact(v)
 }
 
-var feedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+var feedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$`)
 
 func githubLoginForMention(login string) string {
 	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
@@ -172,14 +173,28 @@ type feedbackSubmitterIdentity struct {
 	Source      string `json:"source,omitempty"`
 }
 
+type feedbackAttributionContext struct {
+	CredentialLogin string `json:"credential_login,omitempty"`
+	SubmitterLogin  string `json:"submitter_login,omitempty"`
+	SubmitterName   string `json:"submitter_name,omitempty"`
+	SubmitterSource string `json:"submitter_source,omitempty"`
+	HiveID          string `json:"hive_id,omitempty"`
+	HubLinked       bool   `json:"hub_linked"`
+	HubName         string `json:"hub_name,omitempty"`
+	NeedsIdentity   bool   `json:"needs_identity"`
+}
+
 type feedbackReportRequest struct {
 	Title              string                    `json:"title"`
 	Description        string                    `json:"description"`
 	RequestType        string                    `json:"request_type"`
 	TargetRepo         string                    `json:"target_repo"`
 	HiveID             string                    `json:"hive_id,omitempty"`
+	CredentialLogin    string                    `json:"credential_login,omitempty"`
+	HubName            string                    `json:"hub_name,omitempty"`
 	Submitter          feedbackSubmitterIdentity `json:"submitter,omitempty"`
 	OpenedByHive       bool                      `json:"opened_by_hive,omitempty"`
+	ManualFallback     bool                      `json:"-"`
 	Screenshots        []string                  `json:"screenshots,omitempty"`
 	IncludeDiagnostics bool                      `json:"include_diagnostics"`
 	Diagnostics        *feedbackDiagnostics      `json:"diagnostics,omitempty"`
@@ -208,6 +223,12 @@ var (
 	feedbackKVPattern     = regexp.MustCompile(`(?i)(secret|token|password|key)\s*[:=]\s*[^\s,;]+`)
 )
 
+var lookupFeedbackTokenLogin = agent.GitHubTokenLogin
+
+func (s *Server) handleFeedbackStatus(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.feedbackAttributionContext(r, ""))
+}
+
 func (s *Server) handleFeedbackReport(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, feedbackMaxRequestBytes+1))
 	if err != nil {
@@ -228,7 +249,14 @@ func (s *Server) handleFeedbackReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sanitizeFeedbackRequest(&req)
-	req.Submitter = s.feedbackSubmitterIdentity(r)
+	ctx := s.feedbackAttributionContext(r, req.Submitter.GitHubLogin)
+	req.Submitter = feedbackSubmitterIdentity{Name: ctx.SubmitterName, GitHubLogin: ctx.SubmitterLogin}
+	req.Submitter.Source = ctx.SubmitterSource
+	req.CredentialLogin = ctx.CredentialLogin
+	req.HubName = ctx.HubName
+	if req.HiveID == "" {
+		req.HiveID = ctx.HiveID
+	}
 
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.NPSHubLinked() {
 		req.HiveID = strings.TrimSpace(s.deps.Config.HiveID)
@@ -571,6 +599,8 @@ func mustFeedbackJSON(v any) string { b, _ := json.Marshal(v); return string(b) 
 func sanitizeFeedbackRequest(req *feedbackReportRequest) {
 	req.Title = truncateRunes(feedbackRedact(req.Title), 200)
 	req.Description = truncateRunes(feedbackRedact(req.Description), 5000)
+	req.CredentialLogin = githubLoginForMention(req.CredentialLogin)
+	req.HubName = truncateRunes(sanitizeFeedbackIdentityValue(req.HubName), 160)
 	sanitizeFeedbackSubmitter(&req.Submitter)
 	if len(req.ConsoleErrors) > 20 {
 		req.ConsoleErrors = req.ConsoleErrors[len(req.ConsoleErrors)-20:]
@@ -695,6 +725,10 @@ func (s *Server) feedbackIssueToken(ctx context.Context, r *http.Request, req *f
 		if token, err := s.deps.GHAppAuth.Token(ctx); err == nil && strings.TrimSpace(token) != "" {
 			if req != nil {
 				req.OpenedByHive = true
+				req.CredentialLogin = githubLoginForMention(s.deps.Config.GitHub.BotLogin())
+				if req.CredentialLogin == "" {
+					req.CredentialLogin = config.DefaultGitHubAppSlug + "[bot]"
+				}
 			}
 			return strings.TrimSpace(token)
 		} else if s.logger != nil && err != nil {
@@ -704,21 +738,85 @@ func (s *Server) feedbackIssueToken(ctx context.Context, r *http.Request, req *f
 	token := s.feedbackUserToken(r)
 	if token != "" && req != nil {
 		req.OpenedByHive = true
+		req.CredentialLogin = s.feedbackTokenLogin(token)
 	}
 	return token
 }
 
-func (s *Server) feedbackSubmitterIdentity(r *http.Request) feedbackSubmitterIdentity {
+func (s *Server) feedbackAttributionContext(r *http.Request, enteredLogin string) feedbackAttributionContext {
+	ctx := feedbackAttributionContext{HubName: "hub-less"}
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		cfg := s.deps.Config
+		ctx.HiveID = strings.TrimSpace(cfg.HiveID)
+		ctx.HubLinked = cfg.Hub.NPSHubLinked()
+		if ctx.HubLinked {
+			ctx.HubName = feedbackHubDisplayName(cfg)
+		}
+		if !ctx.HubLinked && strings.EqualFold(strings.TrimSpace(cfg.Hub.HiveType), config.HiveTypeHosted) && s.deps.GHAppAuth != nil {
+			if token, err := s.deps.GHAppAuth.Token(r.Context()); err == nil && strings.TrimSpace(token) != "" {
+				ctx.CredentialLogin = githubLoginForMention(cfg.GitHub.BotLogin())
+				if ctx.CredentialLogin == "" {
+					ctx.CredentialLogin = config.DefaultGitHubAppSlug + "[bot]"
+				}
+			} else if s.logger != nil && err != nil {
+				s.logger.Warn("feedback: could not resolve hosted App credential for status; falling back to dashboard credential", "error", err)
+			}
+		}
+	}
+	if ctx.CredentialLogin == "" && !ctx.HubLinked {
+		ctx.CredentialLogin = s.feedbackCredentialTokenLogin(r)
+	}
+	submitter := s.feedbackSubmitterIdentity(r, enteredLogin)
+	ctx.SubmitterName = submitter.Name
+	ctx.SubmitterLogin = submitter.GitHubLogin
+	ctx.SubmitterSource = submitter.Source
+	ctx.NeedsIdentity = ctx.SubmitterLogin == ""
+	return ctx
+}
+
+func feedbackHubDisplayName(cfg *config.Config) string {
+	if cfg == nil {
+		return "hub"
+	}
+	if u := strings.TrimSpace(cfg.Hub.URL); u != "" {
+		return u
+	}
+	return "hub"
+}
+
+func (s *Server) feedbackCredentialTokenLogin(r *http.Request) string {
+	token := s.feedbackUserToken(r)
+	if token == "" {
+		return ""
+	}
+	return s.feedbackTokenLogin(token)
+}
+
+func (s *Server) feedbackTokenLogin(token string) string {
+	return githubLoginForMention(lookupFeedbackTokenLogin(token))
+}
+
+func (s *Server) feedbackSubmitterIdentity(r *http.Request, enteredLogin string) feedbackSubmitterIdentity {
+	if login := githubLoginForMention(enteredLogin); login != "" {
+		return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: "entered GitHub username"}
+	}
 	if s != nil {
 		if sess := s.sessionFromRequest(r); sess != nil && strings.TrimSpace(sess.Username) != "" {
-			login := sanitizeFeedbackIdentityValue(sess.Username)
-			return feedbackSubmitterIdentity{Name: login, GitHubLogin: githubLoginForMention(login), Source: "GitHub OAuth dashboard login"}
+			name := sanitizeFeedbackIdentityValue(sess.Username)
+			login := githubLoginForMention(name)
+			if login == "" {
+				login = s.feedbackCredentialTokenLogin(r)
+			}
+			if login != "" {
+				return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: "GitHub dashboard identity"}
+			}
+			return feedbackSubmitterIdentity{Name: name, Source: "authenticated dashboard user"}
 		}
 	}
 	if user := sanitizeFeedbackIdentityValue(r.Header.Get("X-Hive-User")); user != "" {
 		return feedbackSubmitterIdentity{Name: user, Source: "authenticated dashboard user"}
 	}
-	return feedbackSubmitterIdentity{Name: "anonymous dashboard session", Source: "anonymous dashboard session"}
+	return feedbackSubmitterIdentity{Name: "an unidentified dashboard user", Source: "unidentified dashboard user"}
 }
 
 var feedbackGitHubAPIBase = func() string { return "https://api.github.com" }
@@ -808,15 +906,14 @@ func createFeedbackGitHubIssue(ctx context.Context, client *http.Client, token s
 func buildFeedbackIssueBody(req feedbackReportRequest) string {
 	sanitizeFeedbackSubmitter(&req.Submitter)
 	var b strings.Builder
+	b.WriteString(feedbackOpenedByLine(req))
+	b.WriteString("\n\n")
 	b.WriteString(req.Description)
 	b.WriteString("\n\n---\nSubmitted from the Hive spoke dashboard feedback form.\n")
 	if req.TargetRepo == feedbackTargetDocs {
 		b.WriteString("Target: Documentation\n")
 	} else {
 		b.WriteString("Target: Hive\n")
-	}
-	if req.OpenedByHive {
-		b.WriteString(fmt.Sprintf("Opened by the hive on behalf of %s.\n", feedbackSubmitterBodyText(req.Submitter)))
 	}
 	if req.Submitter.GitHubLogin != "" {
 		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
@@ -849,6 +946,61 @@ func buildFeedbackIssueBody(req feedbackReportRequest) string {
 		b.WriteString(fmt.Sprintf("\nScreenshots: %d attached; the dashboard will upload them as issue comments.\n", len(req.Screenshots)))
 	}
 	return truncateRunes(b.String(), 60000)
+}
+
+func feedbackOpenedByLine(req feedbackReportRequest) string {
+	if req.ManualFallback {
+		return feedbackManualFallbackOpenedByLine(req)
+	}
+	credential := feedbackCredentialBodyText(req.CredentialLogin)
+	submitter := feedbackSubmitterBodyText(req.Submitter)
+	hiveID := strings.TrimSpace(req.HiveID)
+	if hiveID == "" && req.Diagnostics != nil {
+		hiveID = strings.TrimSpace(req.Diagnostics.HiveID)
+	}
+	if hiveID == "" {
+		hiveID = "unknown"
+	}
+	hub := strings.TrimSpace(req.HubName)
+	if hub == "" {
+		hub = "hub-less"
+	}
+	line := "Opened by " + credential
+	if !feedbackSameActor(req.CredentialLogin, req.Submitter.GitHubLogin) {
+		line += " on behalf of " + submitter
+	}
+	line += " from hive " + hiveID + " (" + hub + ")"
+	return line
+}
+
+func feedbackManualFallbackOpenedByLine(req feedbackReportRequest) string {
+	submitter := feedbackSubmitterBodyText(req.Submitter)
+	hiveID := strings.TrimSpace(req.HiveID)
+	if hiveID == "" && req.Diagnostics != nil {
+		hiveID = strings.TrimSpace(req.Diagnostics.HiveID)
+	}
+	if hiveID == "" {
+		hiveID = "unknown"
+	}
+	hub := strings.TrimSpace(req.HubName)
+	if hub == "" {
+		hub = "hub-less"
+	}
+	return "Opened manually on GitHub on behalf of " + submitter + " from hive " + hiveID + " (" + hub + ")"
+}
+
+func feedbackCredentialBodyText(login string) string {
+	login = githubLoginForMention(login)
+	if login == "" {
+		return "the hive"
+	}
+	return "@" + login
+}
+
+func feedbackSameActor(credentialLogin, submitterLogin string) bool {
+	credentialLogin = githubLoginForMention(credentialLogin)
+	submitterLogin = githubLoginForMention(submitterLogin)
+	return credentialLogin != "" && strings.EqualFold(credentialLogin, submitterLogin)
 }
 
 type feedbackDiagnosticDisclosureRow struct {
@@ -928,6 +1080,7 @@ func feedbackFallbackURL(req feedbackReportRequest) string {
 	if req.TargetRepo == feedbackTargetDocs {
 		base = feedbackFallbackBaseDocs
 	}
+	req.ManualFallback = true
 	q := url.Values{}
 	q.Set("title", req.Title)
 	q.Set("body", buildFeedbackIssueBody(req)+"\n\nScreenshots cannot be attached automatically on this path. Please paste them into this issue.")
