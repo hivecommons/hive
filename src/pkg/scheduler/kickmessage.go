@@ -279,7 +279,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 				Agent:     agentName,
 				Repo:      repo,
 				Message:   msg,
-				IssueRefs: issueRefsForAgent(agentName, s.freeOfInflight(targetIssues), s.issueCap()),
+				IssueRefs: issueRefsForAgent(agentName, s.kickIssueRefs(targetIssues), s.issueCap()),
 			})
 		}
 	}
