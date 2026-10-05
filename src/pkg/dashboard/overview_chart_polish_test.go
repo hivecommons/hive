@@ -32,7 +32,7 @@ func TestOverviewChartPolish(t *testing.T) {
 		".overview-chart-legend-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm);",
 		".overview-chart-legend-count { font-size: var(--fs-sm); font-variant-numeric: tabular-nums;",
 		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
-		"`--overview-transition-duration:${overviewTransitionDurationMs(state)}ms`",
+		"rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms')",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

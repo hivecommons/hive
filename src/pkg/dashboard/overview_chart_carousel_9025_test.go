@@ -81,7 +81,8 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
 		"function overviewTransitionDurationMs(state)",
 		"function overviewCarouselDwellMs(state)",
-		"`--overview-transition-duration:${overviewTransitionDurationMs(state)}ms`",
+		"function installOverviewTransitionDurationVars()",
+		"rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms')",
 		"}, overviewCarouselDwellMs(state)));",
 		"transition: 'fade', duration: 'normal'",
 		"carousel: false",
@@ -96,8 +97,10 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 			t.Errorf("index.html missing transition %q", transition)
 		}
 	}
-	if !strings.Contains(html, "overview-duration-${state.duration}") {
-		t.Errorf("index.html missing selected duration class wiring")
+	for _, cls := range []string{"overview-duration-fast", "overview-duration-normal", "overview-duration-slow"} {
+		if !strings.Contains(html, cls) {
+			t.Errorf("index.html missing duration class %q", cls)
+		}
 	}
 	if !strings.Contains(html, "@media (prefers-reduced-motion: reduce) { .overview-panel-in, .overview-panel-out { animation: none; } }") {
 		t.Errorf("index.html missing reduced-motion instant swap rule")
