@@ -706,6 +706,8 @@ type FrontendAgent struct {
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
 	FrontendAgentContinuous
+	SubAgentModels []agent.SubAgentModel `json:"subAgentModels,omitempty"`
+
 	KicksUndeliverable     int    `json:"kicksUndeliverable,omitempty"`
 	BusySince              string `json:"busySince,omitempty"`
 	LastTranscriptActivity string `json:"lastTranscriptActivity,omitempty"`

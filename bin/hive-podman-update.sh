@@ -42,7 +42,24 @@
 #                   bad update, when the top of the history is the bad pin.
 #   unpin           remove the drop-in, returning the unit to the floating tag
 #                   in hive.container, and restart.
-#   reconcile [check|apply]
+#   upgrade <ref> [--force-pin]
+#                   The single entry point dashboard-triggered upgrades use
+#                   (#10344 gap 3), so the caller never has to know which
+#                   mechanism a host is on. If registry tracking is OFF, this
+#                   is `pin <ref>`, unchanged. If it is ON, <ref> must name the
+#                   SAME floating tag the unit already tracks -- that is what
+#                   `podman auto-update` polls -- and this runs that instead of
+#                   writing a digest pin, so podman-auto-update.timer and the
+#                   AutoUpdate=registry drop-in are both left in place. A <ref>
+#                   that does not match the tracked tag is REFUSED, not
+#                   silently pinned: a pin here would shadow registry tracking
+#                   (see src/docs/podman-auto-update.md), and that trade-off
+#                   needs `--force-pin` to opt into explicitly.
+#   reconcile [check|apply|migrate]
+#                   `migrate` also repairs deployment metadata, installs the
+#                   dashboard upgrade bridge and recreates Hive if needed.
+#                   This explicit migration can interrupt service; check/apply
+#                   retain their existing no-Hive-restart semantics.
 #                   Compare the repo-owned files this host RUNS FROM against
 #                   the checkout, and with `apply` re-copy the ones that have
 #                   fallen behind (#6078). Covers the gateway config and the
@@ -107,6 +124,7 @@ HISTORY_KEEP=10
 ROOTFUL=0
 CMD=""
 REF=""
+FORCE_PIN=0
 
 c_reset=""; c_bold=""; c_red=""; c_green=""; c_yellow=""
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -128,20 +146,21 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    status|resolve|pin|rollback|unpin|autoupdate|reconcile)
+    status|resolve|pin|rollback|unpin|autoupdate|reconcile|upgrade)
       # `autoupdate status` is a command plus an ACTION, and the action happens
       # to be spelled the same as another command. Only the argument-taking
       # commands may absorb a second one of these words; `status rollback` is
       # still two commands and still an error.
       if [ -z "$CMD" ]; then
         CMD="$1"
-      elif [ -z "$REF" ] && case "$CMD" in autoupdate|reconcile|pin|resolve) true ;; *) false ;; esac; then
+      elif [ -z "$REF" ] && case "$CMD" in autoupdate|reconcile|pin|resolve|upgrade) true ;; *) false ;; esac; then
         REF="$1"
       else
         printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage
       fi ;;
     --rootful)  ROOTFUL=1 ;;
     --rootless) ROOTFUL=0 ;;
+    --force-pin) FORCE_PIN=1 ;;
     -h|--help)  usage ;;
     -*) printf 'unknown option: %s\n' "$1" >&2; usage ;;
     *)
@@ -163,6 +182,7 @@ if [ "$ROOTFUL" -eq 1 ]; then
   # %E in the shipped units, which Quadlet expands to /etc for a system unit.
   CONF_DIR="${HIVE_UPDATE_CONF_DIR:-/etc/hive}"
   SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+  BIN_DIR="${HIVE_UPDATE_BIN_DIR:-/usr/local/bin}"
   sctl() { sudo systemctl "$@"; }
   pod()  { sudo podman "$@"; }
   as_owner() { sudo "$@"; }
@@ -174,6 +194,7 @@ else
   # %E expands to ~/.config for a user unit; both match bin/hive-podman-setup.sh.
   CONF_DIR="${HIVE_UPDATE_CONF_DIR:-$HOME/.config/hive}"
   SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-$HOME/.config/systemd/user}"
+  BIN_DIR="${HIVE_UPDATE_BIN_DIR:-$HOME/.local/bin}"
   sctl() { systemctl --user "$@"; }
   pod()  { podman "$@"; }
   as_owner() { "$@"; }
@@ -550,6 +571,18 @@ managed_files() {
     printf '%s\t%s\t%s\n' \
       "${SRC_ROOT}/src/deploy/systemd/${name}" "${SYSTEMD_UNIT_DIR}/${name}" "boot unit"
   done
+  # Bridge assets are introduced by #10416. Older checkouts still support
+  # check/apply; migrate below requires the complete bridge before writing.
+  if [ -f "${SRC_ROOT}/src/deploy/systemd/hive-upgrade.path" ]; then
+    for name in hive-upgrade.path hive-upgrade.service; do
+      printf '%s\t%s\t%s\n' \
+        "${SRC_ROOT}/src/deploy/systemd/${name}" "${SYSTEMD_UNIT_DIR}/${name}" "bridge unit"
+    done
+    for name in hive-upgrade-request.sh hive-podman-update.sh; do
+      printf '%s\t%s\t%s\n' \
+        "${SRC_ROOT}/bin/${name}" "${BIN_DIR}/${name}" "bridge helper"
+    done
+  fi
 }
 
 # Whether this script was run from somewhere that has the files to compare
@@ -563,7 +596,11 @@ managed_state() {
   local src="$1" dest="$2"
   [ -f "$src" ]  || { printf 'nosrc\n';  return 0; }
   [ -f "$dest" ] || { printf 'absent\n'; return 0; }
-  if cmp -s "$src" "$dest"; then printf 'same\n'; else printf 'drift\n'; fi
+  if cmp -s "$src" "$dest" && { [ ! -x "$src" ] || as_owner test -x "$dest"; }; then
+    printf 'same\n'
+  else
+    printf 'drift\n'
+  fi
 }
 
 # Report every managed file. With verbose=1 the matching ones are printed too,
@@ -691,11 +728,131 @@ restart_gateway_onto_new_config() {
   return 0
 }
 
+# Setup owns fresh provisioning; update owns in-place migration. In particular
+# this never runs setup --force, which would replace tokens and hive.yaml.
+do_migrate() {
+  local name mount mode=rootless gid="${HIVE_SETUP_LAUNCH_GID:-1002}"
+  local request_dir="${CONF_DIR}/upgrade-requests" changed=0 env_changed=0
+  local tmp out expected ownership mode_bits
+  local pending="${CONF_DIR}/.upgrade-bridge-migration-pending"
+  local mode_arg=--rootless
+  [ "$ROOTFUL" -eq 1 ] && mode_arg=--rootful
+  [ "$ROOTFUL" -eq 1 ] && mode=rootful
+  for name in src/deploy/systemd/hive-upgrade.path src/deploy/systemd/hive-upgrade.service \
+      bin/hive-upgrade-request.sh bin/hive-podman-update.sh; do
+    if [ ! -f "${SRC_ROOT}/${name}" ]; then
+      bad "migration needs the host bridge checkout (#10416): missing ${name}"
+      return "$EX_CONFIG"
+    fi
+  done
+  mount="$(sed -n 's|^Volume=%E/hive/upgrade-requests:\([^:]*\):.*|\1|p' "${SRC_ROOT}/src/deploy/quadlet/hive.container" | head -n1)"
+  if [ -z "$mount" ]; then
+    bad "migration needs the upgrade-requests mount in hive.container"
+    return "$EX_CONFIG"
+  fi
+  if as_owner test -L "$request_dir" || as_owner test -L "$pending"; then
+    bad "migration refuses symlinked request directory or pending marker"
+    return "$EX_CONFIG"
+  fi
+  # Refuse to manufacture a fresh configuration under a mistaken path.
+  if ! as_owner test -f "${CONF_DIR}/hive.env"; then
+    bad "migration needs an existing ${CONF_DIR}/hive.env; use setup for a new install"
+    return "$EX_CONFIG"
+  fi
+  tmp="$(mktemp)" || return "$EX_CONFIG"
+  out="$(mktemp)" || { rm -f "$tmp"; return "$EX_CONFIG"; }
+  # These files contain secrets; mktemp creates them 0600. No env is sourced.
+  if ! as_owner cat "${CONF_DIR}/hive.env" >"$tmp"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  awk -v mode="$mode" -v mount="$mount" '
+    BEGIN {
+      keys[1]="HIVE_DEPLOYMENT_RUNTIME"; values[1]="podman-quadlet"
+      keys[2]="HIVE_DEPLOYMENT_PODMAN_MODE"; values[2]=mode
+      keys[3]="HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR"; values[3]=mount
+    }
+    {
+      for (i=1; i<=3; i++) {
+        if ($0 ~ "^[[:space:]]*" keys[i] "=") {
+          if (!seen[i]++) print keys[i] "=" values[i]
+          next
+        }
+      }
+      print
+    }
+    END { for (i=1; i<=3; i++) if (!seen[i]) print keys[i] "=" values[i] }
+  ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return "$EX_CONFIG"; }
+  cmp -s "$tmp" "$out" || env_changed=1
+
+  # Only the directory itself is repaired: never chown pending request files
+  # or archives. Rootless ownership must be inspected in the user namespace.
+  if [ "$ROOTFUL" -eq 1 ]; then
+    ownership="$(as_owner stat -c %g "$request_dir" 2>/dev/null)"
+    expected="$gid"
+  else
+    ownership="$(pod unshare stat -c %u:%g "$request_dir" 2>/dev/null)"
+    expected="0:$gid"
+  fi
+  mode_bits="$(as_owner stat -c %a "$request_dir" 2>/dev/null)"
+  if [ "$ownership" != "$expected" ] || [ "$mode_bits" != 770 ]; then
+    if ! as_owner mkdir -p "$request_dir" || ! as_owner chmod 770 "$request_dir"; then
+      rm -f "$tmp" "$out"; return "$EX_CONFIG"
+    fi
+    if [ "$ROOTFUL" -eq 1 ]; then
+      as_owner chgrp "$gid" "$request_dir"
+    else
+      pod unshare chown "0:$gid" "$request_dir"
+    fi || { rm -f "$tmp" "$out"; return "$EX_CONFIG"; }
+    changed=1
+  fi
+  managed_report 0 || changed=1
+  [ "$env_changed" -eq 1 ] && changed=1
+  as_owner test -f "$pending" && changed=1
+  # Keep retrying a failed recreate even after all files match the checkout.
+  if [ "$changed" -eq 1 ] && ! as_owner touch "$pending"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  # Reuse the existing unit/config reconciliation, not a second file copier.
+  if ! "$0" reconcile apply "$mode_arg"; then
+    rm -f "$tmp" "$out"; return "$EX_CONFIG"
+  fi
+  if [ "$env_changed" -eq 1 ]; then
+    if ! as_owner install -m600 "$out" "${CONF_DIR}/hive.env"; then
+      rm -f "$tmp" "$out"; return "$EX_CONFIG"
+    fi
+    changed=1
+  fi
+  rm -f "$tmp" "$out"
+  if ! sctl is-enabled hive-upgrade.path >/dev/null 2>&1 || \
+      ! sctl is-active hive-upgrade.path >/dev/null 2>&1; then
+    as_owner touch "$pending" || return "$EX_CONFIG"
+    sctl enable --now hive-upgrade.path || return "$EX_CONFIG"
+    changed=1
+  fi
+  if [ "$changed" -eq 0 ]; then
+    ok "already current -- deployment metadata and upgrade bridge unchanged"
+    return 0
+  fi
+  # Also retries reload/path activation after a partially failed migration.
+  sctl daemon-reload || return "$EX_CONFIG"
+  sctl restart hive-upgrade.path || return "$EX_CONFIG"
+  # The existing container has neither the new env nor the bind mount until
+  # recreated. Restart only on migration, never on ordinary reconcile apply.
+  sctl restart "$UNIT" || return "$EX_CONFIG"
+  ensure_gateway_serving || return "$EX_CONFIG"
+  as_owner rm -f "$pending" || return "$EX_CONFIG"
+  ok "migration complete -- deployment metadata and upgrade bridge are live"
+}
+
 do_reconcile() {
   local action="${REF:-check}"
+  if [ "$action" = migrate ]; then
+    do_migrate
+    exit $?
+  fi
   case "$action" in
     check|apply) : ;;
-    *) printf 'reconcile takes check or apply (got %s)\n' "$action" >&2; usage ;;
+    *) printf 'reconcile takes check or apply or migrate (got %s)\n' "$action" >&2; usage ;;
   esac
 
   head1 "Managed files -- $MODE_LABEL"
@@ -748,7 +905,9 @@ do_reconcile() {
       failed=1
       continue
     fi
-    if ! as_owner install -Dm644 "$src" "$dest"; then
+    local file_mode=644
+    [ "$label" = "bridge helper" ] && file_mode=755
+    if ! as_owner install -Dm"$file_mode" "$src" "$dest"; then
       bad "could not write ${dest}"
       failed=1
       continue
@@ -761,8 +920,11 @@ do_reconcile() {
   done < <(managed_files)
 
   if [ "$units_changed" -eq 1 ]; then
-    sctl daemon-reload
-    ok "daemon-reload: the Quadlet generator has re-read the units"
+    if ! sctl daemon-reload; then
+      bad "daemon-reload failed -- the installed units are not yet live"
+      failed=1
+    fi
+    [ "$failed" -eq 0 ] && ok "daemon-reload: the Quadlet generator has re-read the units"
     # The measured trap behind the second half of #6078. A rewritten
     # hive.container can carry a NEW Image= -- the registry org moved from
     # ghcr.io/kubestellar to ghcr.io/hivecommons -- and the generated unit
@@ -963,6 +1125,105 @@ do_pin() {
   info "$GATEWAY_UNIT has stopped with it (Requires=), so the published dashboard port is down too"
   info "roll back now, deliberately:"
   info "    $0 rollback${MODE_FLAG}"
+  exit "$EX_CONFIG"
+}
+
+# --- upgrade: the one entry point a caller that does not want to know this
+# host's tracking mode should use (#10344 gap 3) -----------------------------
+#
+# `pin` and `podman auto-update` both want the same Image= line, and #4378
+# already measured that the pin wins silently: a digest cannot change, so
+# auto-update reports UPDATED=false, exits 0, and the timer looks exactly like
+# "up to date" forever after. `bin/hive-dashboard-upgrade-helper.sh` and
+# `bin/hive-upgrade-request.sh` used to call `pin` unconditionally, which did
+# that silently on every tracked host. `upgrade` is the fix: it looks at
+# whether registry tracking is on and picks the mechanism that will not shadow
+# it, or refuses outright rather than doing so without being told.
+do_upgrade() {
+  [ -n "$REF" ] || { printf 'upgrade needs a reference\n' >&2; usage; }
+  require_unit
+
+  if ! autoupdate_on_host; then
+    # No tracking to shadow: this is exactly #4378's pin, unchanged.
+    do_pin
+    return $?
+  fi
+
+  local tracked_tag; tracked_tag="$(unit_image)"
+  if [ "$FORCE_PIN" -eq 0 ] && { [ "$REF" != "$tracked_tag" ] || [[ "$REF" == *@sha256:* ]]; }; then
+    head1 "Upgrade -- $MODE_LABEL"
+    bad "registry tracking is ON ($AUTOUPDATE_TIMER) -- refusing to pin"
+    info "tracked tag: ${tracked_tag:-<unknown>}"
+    info "requested:   $REF"
+    info "podman auto-update polls the tracked tag; it cannot be told to poll a"
+    info "different tag or a digest, and pinning $REF here would SILENTLY disable"
+    info "$AUTOUPDATE_TIMER (the #10421 footgun -- see src/docs/podman-auto-update.md)"
+    info ""
+    info "to pin anyway and accept that trade-off: $0 upgrade $REF --force-pin${MODE_FLAG}"
+    exit "$EX_CONFIG"
+  fi
+  if [ "$FORCE_PIN" -eq 1 ] && { [ "$REF" != "$tracked_tag" ] || [[ "$REF" == *@sha256:* ]]; }; then
+    warn "--force-pin: pinning $REF over registry tracking, as asked"
+    info "$AUTOUPDATE_TIMER stays enabled but has nothing left to poll once this writes a digest"
+    do_pin
+    return $?
+  fi
+
+  do_registry_update "$tracked_tag"
+}
+
+# Drives an immediate check via the SAME mechanism podman-auto-update.timer
+# already runs on its own schedule, so a dashboard-triggered upgrade on a
+# tracked host costs nothing in posture: the timer and the AutoUpdate=registry
+# drop-in are both still there afterwards.
+do_registry_update() {
+  local tracked_tag="$1" out line rc=0 matched=0
+  head1 "Upgrade (registry-tracked) -- $MODE_LABEL"
+  info "polling ${tracked_tag} the way $AUTOUPDATE_TIMER already does (#4411);"
+  info "this does not write a digest pin"
+
+  head1 "podman auto-update"
+  out="$(pod auto-update --rollback=true --format '{{.Unit}}|{{.Container}}|{{.Image}}|{{.Policy}}|{{.Updated}}' 2>&1)"
+  rc=$?
+  [ -n "$out" ] && say "$out"
+  while IFS='|' read -r u_unit u_container u_image u_policy u_updated; do
+    [ "$u_unit" = "$UNIT" ] || continue
+    matched=1
+    case "$u_updated" in
+      true)         ok "updated to $u_image" ;;
+      false)        ok "already up to date on $u_image" ;;
+      "rolled back")
+        bad "the new image did not stay healthy; podman rolled it back to $u_image"
+        rc="$EX_CONFIG" ;;
+      *) warn "unexpected UPDATED value from podman: ${u_updated:-<empty>}" ;;
+    esac
+  done <<<"$out"
+  if [ "$matched" -eq 0 ]; then
+    warn "podman auto-update did not report on $UNIT -- see the raw output above"
+  fi
+
+  # #6078, same as `pin`: the image may have just moved, so the gateway
+  # config shipped alongside it has to move too.
+  head1 "Managed files"
+  refresh_gateway_config || true
+  if have_checkout && ! managed_report 0; then
+    warn "unit files on this host are older than the checkout, and were NOT rewritten"
+    info "a unit change needs a container recreate to mean anything:"
+    info "    $0 reconcile apply${MODE_FLAG}"
+  fi
+
+  head1 "Result"
+  if [ "$rc" -ne 0 ]; then
+    bad "the registry-tracked upgrade did not end healthy for $UNIT"
+    exit "$EX_CONFIG"
+  fi
+  if ensure_gateway_serving; then
+    ok "registry-tracked upgrade completed and the deployment is serving"
+    info "$AUTOUPDATE_TIMER remains enabled; this did not write a pin"
+    exit 0
+  fi
+  bad "podman reports $UNIT healthy, but the DEPLOYMENT is not serving"
+  info "the dashboard stays dead until the gateway is up: $SCTL_LABEL start $GATEWAY_UNIT"
   exit "$EX_CONFIG"
 }
 
@@ -1204,6 +1465,7 @@ case "$CMD" in
   autoupdate) do_autoupdate ;;
   resolve)    do_resolve ;;
   pin)        do_pin ;;
+  upgrade)    do_upgrade ;;
   rollback)   do_rollback ;;
   unpin)      do_unpin ;;
   reconcile)  do_reconcile ;;

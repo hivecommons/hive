@@ -598,6 +598,14 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// ReroutedFrom records the paused or unavailable lane whose conflicted PR
 		// was assigned to the fallback fixer instead.
 		ReroutedFrom string `json:"rerouted_from,omitempty"`
+		// DeferredIncident is the open [shared-ci] incident issue this red
+		// PR was already deferred to (github.PullRequest.SharedCIIncident,
+		// hivecommons/hive#10528); only red PRs carry one. It applies to a
+		// red PR that is also conflicted: it cannot go green before the
+		// incident closes, so a rebase now is wasted work, and it returns
+		// with its conflict instructions once the incident is closed. Kick
+		// builders list such a row as deferred, with no repair instructions.
+		DeferredIncident int `json:"deferred_incident,omitempty"`
 		// Mergeable and CIStatus are set on the escalated rows only
 		// (hivecommons/hive#9477): an escalated PR that is conflicted, green
 		// or pending has no failing check to explain it, so the reviewer lane
@@ -707,6 +715,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.MergeableState = pr.MergeableState
 			row.Conflict = bucket == mergeBucketConflict
 			row.ReroutedFrom = reroutedFrom
+			row.DeferredIncident = pr.SharedCIIncident
 			failing = append(failing, row)
 			continue
 		}

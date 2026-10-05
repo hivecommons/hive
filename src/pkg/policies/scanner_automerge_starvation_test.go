@@ -60,10 +60,10 @@ func TestScannerAutomergeHardTargetSkip(t *testing.T) {
 	policy := readScannerAutomergePolicy(t)
 
 	requiredMarkers := []string{
-		"Hard-target skip",          // the dedicated skip section exists
-		"CONFLICTING",               // the classification the guard keys on
-		"DIRTY",                     // ditto
-		"#2638",                     // the guard is explicitly tied to the bug it fixes
+		"Hard-target skip", // the dedicated skip section exists
+		"CONFLICTING",      // the classification the guard keys on
+		"DIRTY",            // ditto
+		"#2638",            // the guard is explicitly tied to the bug it fixes
 	}
 	for _, marker := range requiredMarkers {
 		if !strings.Contains(policy, marker) {

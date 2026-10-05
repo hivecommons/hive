@@ -93,6 +93,12 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	// stable branch: a v5 spoke measured against v4 said "35 behind" while its
 	// real distance to anything it could reach was 28.
 	target := resolveUpgradeTarget(policy, upstreamBranch(), cached)
+	deployment := s.detectDeployment()
+	if deployment.Runtime == deploymentRuntimePodmanQuadlet || deployment.Runtime == deploymentRuntimeDockerCompose {
+		if ref := standaloneTrackedChannelRef(); ref != "" {
+			target = resolveStandaloneChannelTarget(ref)
+		}
+	}
 
 	if cached != "" {
 		latestShort := shortSHADashboard(cached)
@@ -122,7 +128,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		// upgrade to, compare never attempted) from "the compare failed"
 		// (genuinely unknown). Without this the frontend renders a yellow
 		// "? behind" next to the green ✓ whenever the tip is unbuilt (#4804).
-		targetImageReady := ghcrTagExistsCached(target.Short)
+		targetImageReady := target.Resolved && (target.Source == "channel" || ghcrTagExistsCached(target.Short))
 		resp["stableV4ImageReady"] = targetImageReady
 		if sameCommitDashboard(versionHash, target.SHA) {
 			resp["behind"] = false
@@ -241,8 +247,11 @@ type upgradeTarget struct {
 	Channel string `json:"channel,omitempty"`
 	SHA     string `json:"sha,omitempty"`
 	Short   string `json:"short,omitempty"`
-	// Resolved is false only when the hub said the spoke tracks a channel it
-	// could not resolve to a commit; the UI must show "unknown", not a tip.
+	// Ref is the standalone helper's install target. SHA describes that image;
+	// it must not replace a channel ref with an immutable commit tag.
+	Ref string `json:"ref,omitempty"`
+	// Resolved is false when a channel could not resolve to a commit, whether
+	// resolved locally or by the hub; the UI must show "unknown", not a tip.
 	Resolved bool `json:"resolved"`
 	// ManagedBy is "hub", "spoke" or "" (nobody upgrades this hive automatically).
 	ManagedBy string `json:"managedBy,omitempty"`

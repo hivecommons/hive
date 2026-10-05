@@ -264,7 +264,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.288
+ARG CLAUDE_CODE_VERSION=2.1.289
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -333,9 +333,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.5.0
-ARG OMP_SHA256_AMD64=b8413e6e085a423c7a9b1d7bc025c2af794923b6b6c57330a309639b6176c8a1
-ARG OMP_SHA256_ARM64=1244860c58bb68a3a45390d4932e5c7983183ec8c12cb6848c1afd709de38a07
+ARG OMP_VERSION=18.6.0
+ARG OMP_SHA256_AMD64=844c640c620ec4c152abe4b3736049f963205da50e9e77bd9bdf2a981a6ead55
+ARG OMP_SHA256_ARM64=542083fe42a6169565861a4ee9118fbed64d09c93468b6907e6016cc76ef00d1
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

@@ -264,11 +264,11 @@ type testBufConn struct {
 	Writer io.Writer
 }
 
-func (c *testBufConn) Read([]byte) (int, error)          { return 0, io.EOF }
-func (c *testBufConn) Write(b []byte) (int, error)       { return c.Writer.Write(b) }
-func (c *testBufConn) Close() error                      { return nil }
-func (c *testBufConn) LocalAddr() net.Addr               { return &net.TCPAddr{} }
-func (c *testBufConn) RemoteAddr() net.Addr              { return &net.TCPAddr{} }
-func (c *testBufConn) SetDeadline(_ time.Time) error     { return nil }
-func (c *testBufConn) SetReadDeadline(_ time.Time) error { return nil }
+func (c *testBufConn) Read([]byte) (int, error)           { return 0, io.EOF }
+func (c *testBufConn) Write(b []byte) (int, error)        { return c.Writer.Write(b) }
+func (c *testBufConn) Close() error                       { return nil }
+func (c *testBufConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (c *testBufConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (c *testBufConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *testBufConn) SetReadDeadline(_ time.Time) error  { return nil }
 func (c *testBufConn) SetWriteDeadline(_ time.Time) error { return nil }

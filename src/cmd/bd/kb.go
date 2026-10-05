@@ -327,9 +327,9 @@ func cmdKBImportCtx7(args []string) {
 	}
 
 	payload := map[string]string{
-		"name":       docName,
+		"name":        docName,
 		"context7_id": libraryID,
-		"layer":      *layer,
+		"layer":       *layer,
 	}
 	if *query != "" {
 		payload["name"] = docName + " (" + *query + ")"

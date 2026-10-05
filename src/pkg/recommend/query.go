@@ -44,4 +44,3 @@ func (r Report) bucketQueryURL(b Bucket) string {
 		return ""
 	}
 }
-

@@ -372,6 +372,20 @@ jobs:
           echo "below_threshold=false" >> "$GITHUB_OUTPUT"
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
 
+      # `if: always()` keeps the profile when the gate above fails; `uses:`
+      # steps ignore defaults.run.working-directory, hence the src/ prefix.
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-profile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            src/coverage.out
+            src/cover-run.log
+            src/race-run.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   create-issue-on-coverage-drop:
     # Scheduled runs only. The bare `failure()` here previously fired on ANY
     # job failure regardless of cause, which is why issue #2191 accumulated 41

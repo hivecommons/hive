@@ -33,7 +33,7 @@ func TestThresholdForDefaults(t *testing.T) {
 func TestThresholdForConfigured(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"surge": {Threshold: 50},
+			"surge":  {Threshold: 50},
 			"custom": {Threshold: 7},
 		},
 	}

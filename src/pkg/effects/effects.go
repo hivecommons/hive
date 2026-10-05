@@ -30,6 +30,55 @@ const (
 
 var ErrDenied = errors.New("mutation boundary denied")
 
+// ErrNotApplied marks an effect error as a DEFINITE refusal: the external
+// system answered and the effect certainly did not take place, so a
+// journaling boundary may record it NotApplied (retry authorized) rather than
+// Unknown (reconciliation required). Wrap with NotApplied.
+var ErrNotApplied = errors.New("external effect definitely not applied")
+
+// ErrNeedsReconciliation reports that the boundary refused to run an effect
+// because an earlier attempt at the same logical operation is unresolved and
+// must be reconciled (see Reconcile) before any retry.
+var ErrNeedsReconciliation = errors.New("external effect needs reconciliation before retry")
+
+// NotApplied wraps err as a definite refusal (ErrNotApplied) while keeping
+// err's own message and chain, so callers still see the original error.
+func NotApplied(err error) error {
+	if err == nil {
+		return nil
+	}
+	return notAppliedError{err: err}
+}
+
+type notAppliedError struct{ err error }
+
+func (e notAppliedError) Error() string { return e.err.Error() }
+
+func (e notAppliedError) Unwrap() []error { return []error{e.err, ErrNotApplied} }
+
+// ExternalState is one authoritative observation of whether a claimed effect
+// exists externally, used to resolve an operation left unresolved.
+type ExternalState struct {
+	Applied    bool
+	Provenance string
+}
+
+// Reconciler is implemented by boundaries that journal effects and can
+// resolve an unresolved operation from authoritative external state.
+type Reconciler interface {
+	Reconcile(ctx context.Context, claim Claim, state ExternalState) error
+}
+
+// Reconcile resolves claim's operation on boundary from state. Boundaries that
+// do not journal (nil, NoopBoundary) have nothing to resolve.
+func Reconcile(ctx context.Context, boundary Boundary, claim Claim, state ExternalState) error {
+	r, ok := boundary.(Reconciler)
+	if !ok {
+		return nil
+	}
+	return r.Reconcile(ctx, claim, state)
+}
+
 type Claim struct {
 	Repo   string
 	Kind   string
@@ -160,6 +209,10 @@ func (b LoggingBoundary) Execute(ctx context.Context, claim Claim, effect func(c
 		b.Recorder.IncJournaled()
 	}
 	return res, err
+}
+
+func (b LoggingBoundary) Reconcile(ctx context.Context, claim Claim, state ExternalState) error {
+	return Reconcile(ctx, b.Next, claim, state)
 }
 
 func (c Claim) Validate() error {

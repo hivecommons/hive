@@ -17,7 +17,7 @@ import (
 func threadWatcherFixture(t *testing.T, bots config.ReviewBotsConfig) (*gqlMock, *Client, string) {
 	t.Helper()
 	mock := newGQLMock()
-	bot := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "nil deref"}
+	bot := gqlComment{Author: "chatgpt-codex-connector", Body: "nil deref"}
 	mock.add(&gqlThread{ID: "PRRT_bot", Path: "a.go", Line: 1, Comments: []gqlComment{bot}, PRNumber: 5, RepoOwner: "o", RepoName: "r"})
 	mock.add(&gqlThread{ID: "PRRT_human", Path: "a.go", Line: 2, Comments: []gqlComment{{Author: "alice", Body: "rename this"}}, PRNumber: 5, RepoOwner: "o", RepoName: "r"})
 	mock.add(&gqlThread{ID: "PRRT_done", Resolved: true, Comments: []gqlComment{bot}, PRNumber: 5, RepoOwner: "o", RepoName: "r"})
@@ -196,7 +196,7 @@ func TestReviewRequestWatcher_ThreadGuardDenials(t *testing.T) {
 // would be routed to an agent whose requests are all denied.
 func TestReviewRequestWatcher_ThreadGuardIgnoresPRAuthor(t *testing.T) {
 	mock := newGQLMock()
-	codex := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "Update the permission note for the newly refused options"}
+	codex := gqlComment{Author: "chatgpt-codex-connector", Body: "Update the permission note for the newly refused options"}
 	mock.add(&gqlThread{ID: "PRRT_relay_bot", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{codex}, PRNumber: 195, RepoOwner: "o", RepoName: "r", PRAuthor: "danathar"})
 	mock.add(&gqlThread{ID: "PRRT_relay_human", Path: "docs/perm.md", Line: 30, Comments: []gqlComment{{Author: "danathar", Body: "leave this"}}, PRNumber: 195, RepoOwner: "o", RepoName: "r", PRAuthor: "danathar"})
 	srv := httptest.NewServer(mock.handler(t))

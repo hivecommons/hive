@@ -55,7 +55,7 @@ func writePRFollowUpMetrics(b *strings.Builder, hiveID string, writeHeader func(
 	}
 	writeHeader("hive_pr_followup_resumed_total",
 		"PR follow-up events delivered into the live session that authored the PR.", "counter")
-	fmt.Fprintf(b, "hive_pr_followup_resumed_total{hive_id=%q} %d\n", hiveID, c.Resumed)
+	fmt.Fprintf(b, "hive_pr_followup_resumed_total{hive_id=%s} %d\n", promQuote(hiveID), c.Resumed)
 
 	writeHeader("hive_pr_followup_fallback_total",
 		"PR follow-up events handed to the fresh-dispatch path, by reason.", "counter")
@@ -67,12 +67,12 @@ func writePRFollowUpMetrics(b *strings.Builder, hiveID string, writeHeader func(
 
 	writeHeader("hive_pr_followup_deferred_total",
 		"PR follow-up routing attempts deferred because the authoring session was busy.", "counter")
-	fmt.Fprintf(b, "hive_pr_followup_deferred_total{hive_id=%q} %d\n", hiveID, c.Deferred)
+	fmt.Fprintf(b, "hive_pr_followup_deferred_total{hive_id=%s} %d\n", promQuote(hiveID), c.Deferred)
 
 	writeHeader("hive_pr_followup_handoffs_total",
 		"Human-feedback PR follow-ups queued for a fresh kick, and those a kick has since delivered.", "counter")
-	fmt.Fprintf(b, "hive_pr_followup_handoffs_total{hive_id=%q,state=%q} %d\n", hiveID, "queued", c.HandoffsQueued)
-	fmt.Fprintf(b, "hive_pr_followup_handoffs_total{hive_id=%q,state=%q} %d\n", hiveID, "delivered", c.HandoffsDelivered)
+	fmt.Fprintf(b, "hive_pr_followup_handoffs_total{hive_id=%s,state=%s} %d\n", promQuote(hiveID), promQuote("queued"), c.HandoffsQueued)
+	fmt.Fprintf(b, "hive_pr_followup_handoffs_total{hive_id=%s,state=%s} %d\n", promQuote(hiveID), promQuote("delivered"), c.HandoffsDelivered)
 
 	writeHeader("hive_pr_followup_pointers_pruned_total",
 		"PR follow-up pointers deleted by the sweep, by reason.", "counter")
@@ -86,6 +86,6 @@ func writeReasonSeries(b *strings.Builder, name, hiveID string, m map[string]int
 	}
 	sort.Strings(reasons)
 	for _, r := range reasons {
-		fmt.Fprintf(b, "%s{hive_id=%q,reason=%q} %d\n", name, hiveID, r, m[r])
+		fmt.Fprintf(b, "%s{hive_id=%s,reason=%s} %d\n", name, promQuote(hiveID), promQuote(r), m[r])
 	}
 }

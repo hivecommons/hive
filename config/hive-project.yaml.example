@@ -68,6 +68,7 @@ classification:                         # optional — deterministic classificat
   # hive addresses and resolves itself (hivecommons/hive#7360). Empty = off.
   review_bots:
     logins: []                          # e.g. ["chatgpt-codex-connector[bot]", "Copilot"]
+    # min_priority: P1                 # optional: P0/P1 and unknown badges only
     max_attempts_per_thread: 1          # hive replies per thread before a human takes over
     resolve_after_fix: true             # false: reply but leave the thread for a human
 

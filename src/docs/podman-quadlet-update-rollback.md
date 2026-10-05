@@ -97,14 +97,22 @@ bin/hive-podman-update.sh reconcile          # compare only. 0 in sync, 78 stale
 bin/hive-podman-update.sh reconcile apply    # re-copy the ones that fell behind
 ```
 
-It compares the eight repo-owned files against the checkout it is run from and,
+It compares repo-owned gateway, Quadlet, boot and upgrade-bridge files against
+the checkout it is run from and,
 with `apply`, re-copies the ones that differ. It **never** writes `hive.yaml`,
 `hive.env` or `secrets/`, and prints that list before it writes anything —
 which is the whole reason it exists rather than `setup --force`, since that
 re-copies those three too and regenerating `hive.env` takes
 `HIVE_DASHBOARD_TOKEN` with it.
 
-Two things it deliberately does not do:
+For the separate existing-install deployment metadata and dashboard bridge
+migration, use `bin/hive-podman-update.sh reconcile migrate --rootless` (or
+`--rootful`). Unlike `check`/`apply`, this explicit downtime action repairs only
+the three `HIVE_DEPLOYMENT_*` keys in `hive.env` and recreates Hive when needed;
+it leaves operator configuration, tokens and secrets alone. See
+[the migration guide](dashboard-standalone-upgrades.md#upgrading-an-existing-podman-install).
+
+Two things ordinary `check`/`apply` deliberately do not do:
 
 - **It needs a checkout.** Every other command in this script works against the
   host alone. Run it from a clone, or point `HIVE_UPDATE_SRC_ROOT` at one. With

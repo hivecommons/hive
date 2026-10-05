@@ -59,6 +59,8 @@ type ReviewThreadPR struct {
 	// own author made.
 	HumanOpened bool           `json:"human_opened,omitempty"`
 	Threads     []ReviewThread `json:"threads"`
+	// ExcludedByPriority counts otherwise actionable threads left for humans.
+	ExcludedByPriority int `json:"excluded_by_priority"`
 }
 
 // ReviewThread is one unresolved, non-outdated inline thread whose first
@@ -165,11 +167,17 @@ func (c *Client) isHiveLogin(login string) bool {
 // property the watcher's guard re-checks server-side, so an agent cannot be
 // prompted into a human's conversation even by a wrong kick.
 func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig, isHive func(string) bool) []ReviewThread {
+	out, _ := filterReviewThreadsWithPriorityCount(threads, bots, isHive)
+	return out
+}
+
+func filterReviewThreadsWithPriorityCount(threads []rawReviewThread, bots config.ReviewBotsConfig, isHive func(string) bool) ([]ReviewThread, int) {
 	if !bots.Enabled() {
-		return nil
+		return nil, 0
 	}
 	maxAttempts := bots.MaxAttempts()
 	var out []ReviewThread
+	excluded := 0
 	for _, t := range threads {
 		if t.IsResolved || t.IsOutdated || len(t.Comments.Nodes) == 0 {
 			continue
@@ -185,6 +193,10 @@ func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig
 			}
 		}
 		if replies >= maxAttempts {
+			continue
+		}
+		if !bots.IncludesPriority(first.Body) {
+			excluded++
 			continue
 		}
 		body := strings.TrimSpace(first.Body)
@@ -205,7 +217,7 @@ func filterReviewThreads(threads []rawReviewThread, bots config.ReviewBotsConfig
 			HiveReplies: replies,
 		})
 	}
-	return out
+	return out, excluded
 }
 
 // hasBlockedLabel reports whether the PR carries the "blocked" label
@@ -367,17 +379,18 @@ func (c *Client) CollectReviewThreads(ctx context.Context, prs []PullRequest, no
 		if !hasBotThread(raw, bots) {
 			continue
 		}
-		threads := filterReviewThreads(raw, bots, c.isHiveLogin)
+		threads, excluded := filterReviewThreadsWithPriorityCount(raw, bots, c.isHiveLogin)
 		if threads == nil {
 			threads = []ReviewThread{}
 		}
 		report.PRs = append(report.PRs, ReviewThreadPR{
-			Repo:        owner + "/" + repoName,
-			Number:      pr.Number,
-			Title:       pr.Title,
-			HeadRef:     headRef,
-			HumanOpened: !mediated,
-			Threads:     threads,
+			Repo:               owner + "/" + repoName,
+			Number:             pr.Number,
+			Title:              pr.Title,
+			HeadRef:            headRef,
+			HumanOpened:        !mediated,
+			Threads:            threads,
+			ExcludedByPriority: excluded,
 		})
 		report.TotalThreads += len(threads)
 	}

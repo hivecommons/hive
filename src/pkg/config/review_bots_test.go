@@ -36,18 +36,22 @@ func TestReviewBotsConfig_Defaults(t *testing.T) {
 	}
 }
 
-// IsBot matches case-insensitively and trims, exactly as GitHub renders logins.
+// IsBot accepts REST/web and GraphQL spellings of the same configured bot.
 func TestReviewBotsConfig_IsBot(t *testing.T) {
-	rb := ReviewBotsConfig{Logins: []string{" chatgpt-codex-connector[bot] ", "Copilot"}}
-	for _, login := range []string{"chatgpt-codex-connector[bot]", "COPILOT", " copilot "} {
-		if !rb.IsBot(login) {
-			t.Errorf("IsBot(%q) = false, want true", login)
-		}
-	}
-	for _, login := range []string{"", "copilot-swe-agent[bot]", "alice", "chatgpt-codex-connector"} {
-		if rb.IsBot(login) {
-			t.Errorf("IsBot(%q) = true, want false", login)
-		}
+	for _, configured := range []string{" chatgpt-codex-connector[bot] ", " CHATGPT-CODEX-CONNECTOR "} {
+		t.Run(configured, func(t *testing.T) {
+			rb := ReviewBotsConfig{Logins: []string{configured, "Copilot", "", "[bot]"}}
+			for _, login := range []string{"chatgpt-codex-connector[bot]", "chatgpt-codex-connector", " CHATGPT-CODEX-CONNECTOR[BOT] ", "COPILOT", " copilot "} {
+				if !rb.IsBot(login) {
+					t.Errorf("IsBot(%q) = false, want true", login)
+				}
+			}
+			for _, login := range []string{"", "  ", "[bot]", " [BOT] ", "copilot-swe-agent[bot]", "alice", "chatgpt-codex-connector-extra", "chatgpt-codex-connector[bot]-extra", "chatgpt-codex-connector[bot][bot]"} {
+				if rb.IsBot(login) {
+					t.Errorf("IsBot(%q) = true, want false", login)
+				}
+			}
+		})
 	}
 }
 

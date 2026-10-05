@@ -91,8 +91,12 @@ template:
             tc=/mnt/toolcache/hostedtoolcache
             warm() { # tool version url
               dest="$tc/$1/$2/x64"
-              # a marker without the binary is a half-written cache: rebuild it
-              [ -f "$dest.complete" ] && [ -x "$dest/bin/$1" ] && return 0
+              case "$1" in node) bins="node npm npx" ;; go) bins="go gofmt" ;; *) bins="$1" ;; esac
+              # a marker without every binary (e.g. bin/node but no bin/npm,
+              # hive#10505) is a half-written cache: rebuild it
+              ok=1
+              for b in $bins; do [ -x "$dest/bin/$b" ] || ok=0; done
+              [ -f "$dest.complete" ] && [ "$ok" = 1 ] && return 0
               rm -f "$dest.complete"
               echo "warm-toolcache: $1 $2"
               tmp=$(mktemp -d "$tc/.warm-$1-XXXXXX")

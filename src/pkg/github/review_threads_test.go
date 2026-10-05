@@ -211,7 +211,7 @@ func rawThread(id string, resolved, outdated bool, comments ...gqlComment) rawRe
 // attempt-limit-reached threads are all excluded; an open bot thread with
 // fewer hive replies than the cap passes with its location and body.
 func TestFilterReviewThreads(t *testing.T) {
-	bot := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "x may be nil"}
+	bot := gqlComment{Author: "chatgpt-codex-connector", Body: "x may be nil"}
 	hive := gqlComment{Author: "hive[bot]", Body: "fixed"}
 	human := gqlComment{Author: "alice", Body: "please rename"}
 	threads := []rawReviewThread{
@@ -239,7 +239,7 @@ func TestFilterReviewThreads(t *testing.T) {
 			t.Errorf("%s must be excluded", reject)
 		}
 	}
-	if open := ids["PRRT_open"]; open.Path != "src/x.go" || open.Line != 42 || open.Author != "chatgpt-codex-connector[bot]" || open.Body != "x may be nil" || open.CommentID != 1000 || open.HiveReplies != 0 {
+	if open := ids["PRRT_open"]; open.Path != "src/x.go" || open.Line != 42 || open.Author != "chatgpt-codex-connector" || open.Body != "x may be nil" || open.CommentID != 1000 || open.HiveReplies != 0 {
 		t.Errorf("unexpected projection: %+v", open)
 	}
 	if long := ids["PRRT_copilot"]; len([]rune(long.Body)) > reviewThreadBodyRunes+1 || !strings.HasSuffix(long.Body, "…") {
@@ -304,7 +304,7 @@ func reviewThreadTestClient(t *testing.T, srvURL string, bots config.ReviewBotsC
 // listed with zero threads; a human's thread never appears anywhere.
 func TestCollectReviewThreads(t *testing.T) {
 	mock := newGQLMock()
-	bot := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "nil deref"}
+	bot := gqlComment{Author: "chatgpt-codex-connector", Body: "nil deref"}
 	mock.add(&gqlThread{ID: "PRRT_1", Path: "a.go", Line: 3, Comments: []gqlComment{bot}, PRNumber: 1, RepoOwner: "o", RepoName: "r", HeadRef: "hive/fix-1", DatabaseID: 10})
 	mock.add(&gqlThread{ID: "PRRT_1h", Path: "a.go", Line: 9, Comments: []gqlComment{{Author: "alice", Body: "rename"}}, PRNumber: 1, RepoOwner: "o", RepoName: "r", HeadRef: "hive/fix-1", DatabaseID: 20})
 	mock.add(&gqlThread{ID: "PRRT_2", Resolved: true, Comments: []gqlComment{bot, {Author: "hive[bot]", Body: "done"}}, PRNumber: 2, RepoOwner: "o", RepoName: "r", HeadRef: "hive/fix-2", DatabaseID: 30})
@@ -316,7 +316,7 @@ func TestCollectReviewThreads(t *testing.T) {
 	// operator's own credentials, so GitHub shows a human author, but the body
 	// carries the `— hive:` trailer. Its bot thread must be listed; the human
 	// thread beside it must not. PR 4 (same author, no trailer) stays dropped.
-	mock.add(&gqlThread{ID: "PRRT_8", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{{Author: "chatgpt-codex-connector[bot]", Body: "Update the permission note"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 80})
+	mock.add(&gqlThread{ID: "PRRT_8", Path: "docs/perm.md", Line: 12, Comments: []gqlComment{{Author: "chatgpt-codex-connector", Body: "Update the permission note"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 80})
 	mock.add(&gqlThread{ID: "PRRT_8h", Path: "docs/perm.md", Line: 30, Comments: []gqlComment{{Author: "dave", Body: "typo"}}, PRNumber: 8, RepoOwner: "o", RepoName: "r", HeadRef: "relay/fix-8", DatabaseID: 90})
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
@@ -411,7 +411,7 @@ func TestCollectReviewThreads_Disabled(t *testing.T) {
 // regardless of the global resolve_after_fix setting.
 func TestCollectReviewThreads_FixHumanPRs(t *testing.T) {
 	mock := newGQLMock()
-	bot := gqlComment{Author: "chatgpt-codex-connector[bot]", Body: "nil deref"}
+	bot := gqlComment{Author: "chatgpt-codex-connector", Body: "nil deref"}
 	mock.add(&gqlThread{ID: "PRRT_1", Path: "a.go", Line: 3, Comments: []gqlComment{bot}, PRNumber: 1, RepoOwner: "o", RepoName: "r", HeadRef: "hive/fix-1", DatabaseID: 10})
 	mock.add(&gqlThread{ID: "PRRT_4", Path: "b.go", Line: 7, Comments: []gqlComment{bot}, PRNumber: 4, RepoOwner: "o", RepoName: "r", HeadRef: "human/branch", DatabaseID: 50})
 	srv := httptest.NewServer(mock.handler(t))

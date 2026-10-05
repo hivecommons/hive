@@ -1,1 +1,0 @@
-- Remove the Beads card and sidebar link from the dashboard UI while keeping the underlying bead ledger APIs and agent workflows intact.

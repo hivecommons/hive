@@ -77,23 +77,7 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 		}
 		entry = Entry{Claim: mclaim, Holder: holder, Epoch: 0}
 	}
-	inputs := map[string]string{
-		"repo":   claim.Repo,
-		"kind":   claim.Kind,
-		"target": claim.Target,
-	}
-	for k, v := range claim.Inputs {
-		inputs[k] = v
-	}
-	mutEffect := Effect{
-		OutcomeKey:        claim.Repo + "@mutation",
-		DesiredGeneration: 1,
-		Transition:        "external." + claim.Kind,
-		Subject:           mclaim.Subject,
-		ClaimKey:          mclaim.Key(),
-		Kind:              claim.Kind,
-		Inputs:            inputs,
-	}
+	mutEffect := boundaryEffect(claim)
 	var out effects.Result
 	op, execErr := executor.Execute(mutEffect, entry.Epoch, holder, func() (string, error) {
 		res, err := effect(ctx)
@@ -126,12 +110,67 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 			}
 			return out, fmt.Errorf("%w: %v", effects.ErrDenied, execErr)
 		}
+		if errors.Is(execErr, ErrNeedsReconciliation) {
+			return out, fmt.Errorf("%w: %w", effects.ErrNeedsReconciliation, execErr)
+		}
 		return out, execErr
 	}
 	if b.Stats != nil && op.LogicalID != "" {
 		b.Stats.IncJournaled()
 	}
 	return out, nil
+}
+
+// Reconcile resolves the journaled operation for claim from an authoritative
+// observation of external state (effects.Reconciler): Applied records the
+// found effect without repeating it, !Applied authorizes the same logical
+// operation to retry. Off mode journals nothing, so there is nothing to do.
+func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effects.ExternalState) error {
+	if b == nil {
+		return nil
+	}
+	executor := b.Executor
+	if b.Mode != nil {
+		executor.Mode = b.Mode()
+	}
+	if !JournalingEnabled(executor.Mode) {
+		return nil
+	}
+	if err := claim.Validate(); err != nil {
+		return fmt.Errorf("invalid mutation claim: %v", err)
+	}
+	if executor.Journal == nil {
+		return fmt.Errorf("mutation boundary requires a journal when mode is enabled")
+	}
+	_, err := executor.Journal.Reconcile(boundaryEffect(claim).LogicalID(), ExternalState{
+		Known:   true,
+		Applied: state.Applied,
+		Result:  state.Provenance,
+	}, executor.now())
+	return err
+}
+
+// boundaryEffect is the journaled description of claim's external effect;
+// Execute and Reconcile must derive the SAME logical ID from it.
+func boundaryEffect(claim effects.Claim) Effect {
+	mclaim := TaskClaim(claim.Repo, claimSubject(claim))
+	inputs := map[string]string{
+		"repo":   claim.Repo,
+		"kind":   claim.Kind,
+		"target": claim.Target,
+	}
+	for k, v := range claim.Inputs {
+		inputs[k] = v
+	}
+	return Effect{
+		OutcomeKey:        claim.Repo + "@mutation",
+		DesiredGeneration: 1,
+		Transition:        "external." + claim.Kind,
+		Subject:           mclaim.Subject,
+		ClaimKey:          mclaim.Key(),
+		Kind:              claim.Kind,
+		Inputs:            inputs,
+	}
 }
 
 func (b *Boundary) release(executor Executor, claim effects.Claim, mclaim Claim, entry Entry) {

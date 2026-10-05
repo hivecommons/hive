@@ -62,13 +62,16 @@ classification:
     logins:
       - "chatgpt-codex-connector[bot]"
       - "Copilot"
+    min_priority: P1            # optional: only P0/P1 plus unknown badges
     max_attempts_per_thread: 1   # default 1
     resolve_after_fix: true      # default true
 ```
 
 The key lives in `hive-project.yaml` next to its sibling monitor's config
 (`classification.copilot_check`), and the Go binary also accepts the identical
-block in `hive.yaml`; when both name a login, `hive.yaml` wins. It is the one
+block in `hive.yaml`; when both name a login, `hive.yaml` wins. A
+`hive.yaml` `min_priority` (the field the dashboard edits) also overrides the
+project file's threshold on its own. It is the one
 key the Go side reads from the project file
 (`config.LoadProjectReviewBots`, path `HIVE_PROJECT_YAML` or
 `/etc/hive/hive-project.yaml`).
@@ -76,12 +79,49 @@ key the Go side reads from the project file
 - **Absent, or empty `logins`: the feature is off.** The monitor writes an
   empty `review-threads.json` and the watcher denies every thread request.
 - `logins` are matched case-insensitively against the **first** comment's
-  author, exactly as GitHub renders it. Do not list a human here: it would let
-  agents resolve that person's threads.
+  author, ignoring surrounding whitespace and a trailing `[bot]` suffix. Both
+  REST/web (`chatgpt-codex-connector[bot]`) and GraphQL
+  (`chatgpt-codex-connector`) spellings match either configured form. Do not
+  list a human here: it would let agents resolve that person's threads.
 - `max_attempts_per_thread` is how many times the hive replies in one thread
   before leaving it for a human. The counter is the thread itself — replies
   authored by the App bot — so there is no state file to drift.
 - `resolve_after_fix: false` makes the agent reply but leave the thread open.
+- `min_priority` optionally limits routing to `P0` through `P3` (P0 is most
+  urgent). `P1` includes P0/P1 and excludes P2/P3. Unset or unrecognised
+  values preserve routing of every finding. Case and surrounding whitespace
+  in the threshold are ignored.
+  Only Codex's Markdown badge format, `![P0 Badge]` through `![P3 Badge]`,
+  is recognised today, using the first matching badge in the first comment.
+  Unknown formats (including unbadged Copilot/CodeRabbit findings) always
+  remain included. Filtered threads stay open for humans: they are omitted
+  from the FIX-BEFORE-NEW work list and are not auto-resolved.
+  Each PR in `review-threads.json` reports `excluded_by_priority`, counting
+  otherwise actionable threads excluded solely by this threshold (not
+  resolved, outdated, human-authored, or attempt-capped threads). The
+  reviewer's jq filter applies the same badge threshold, so it need not
+  answer the lower-priority threads in its review.
+
+The dashboard's **Settings → Features → Review Gate** card displays the
+effective review-bot settings, including defaults (one attempt per thread and
+resolve after fix enabled). The governor settings bundle at
+`GET /api/config/governor` exposes them in `review_bots` — `logins`,
+`min_priority` (`P0`–`P3`, or empty when every finding is routed),
+`max_attempts_per_thread`, `resolve_after_fix`, and `enabled`; `load_error`
+reports an unreadable or malformed project file rather than hiding it as an
+unconfigured feature. Logins, attempts, and resolve-after-fix are read-only
+there: logins stay config-file-only because adding one grants agents
+thread-resolution rights.
+
+`min_priority` is editable from the same card (**Minimum bot-finding
+priority**: All, P0, P1, P2, P3). The owner-only `PUT /api/config/review`
+accepts it as `{"review_bots": {"min_priority": "P1"}}`; an absent key leaves
+it untouched, an empty string clears the dashboard override, `all` routes
+every finding, and any other value is rejected with 400. The value is written
+to `hive.yaml`'s `classification.review_bots.min_priority` and overrides the
+project file's threshold even when `hive.yaml` names no login — the project
+file's logins are never copied into `hive.yaml`. The change applies to the
+thread reconciler and the reviewer without a restart.
 
 The dashboard's **Settings → Features → Review Gate** card displays the
 three effective review-bot settings read-only, including defaults (one attempt

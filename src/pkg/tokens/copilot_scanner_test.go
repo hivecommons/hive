@@ -209,7 +209,7 @@ func TestParseCopilotSessionFile_MultipleModelMetrics(t *testing.T) {
 			Data: mustMarshal(t, copilotShutdown{
 				CurrentModel: "claude-sonnet-4-20250514",
 				ModelMetrics: map[string]copilotModelMetric{
-					"gpt-4": {Usage: copilotUsage{InputTokens: 100, OutputTokens: 50}},
+					"gpt-4":                    {Usage: copilotUsage{InputTokens: 100, OutputTokens: 50}},
 					"claude-sonnet-4-20250514": {Usage: copilotUsage{InputTokens: 200, OutputTokens: 100}},
 				},
 			}),

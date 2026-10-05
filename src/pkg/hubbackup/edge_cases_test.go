@@ -133,8 +133,8 @@ func TestParseSpokeStreamIgnoresUnmarkedOutput(t *testing.T) {
 func TestParseSpokeStreamRecoversEveryFile(t *testing.T) {
 	stream := spokeStream(map[string]string{
 		"hive.yaml.runtime": "config-a",
-		"agents.json":   "config-b",
-		"app-key.pem":   "config-c",
+		"agents.json":       "config-b",
+		"app-key.pem":       "config-c",
 	})
 	files, err := parseSpokeStream([]byte(stream))
 	if err != nil {

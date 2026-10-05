@@ -15,7 +15,8 @@ name: CI runner canary
 #   canary    Self-hosted, PARALLEL copies so they spread across nodes. Each
 #             exercises exactly what has broken before: actions/setup-go and
 #             setup-node against the node-local tool cache, tool-cache
-#             integrity (a `.complete` marker with no binary), the dind
+#             integrity (a `.complete` marker with no binary, or with `bin/node` but
+#             no `bin/npm`, #10505), the dind
 #             socket, and free disk.
 # Both report into one deduplicated issue labelled `ci-runner-canary`, which
 # is closed again automatically on the next green run.
@@ -73,8 +74,14 @@ jobs:
           node --version
           npm --version
       - name: Tool cache integrity
+        # Missing npm fails the PATH probe above; still invalidate the broken
+        # cache marker so the next job can repair it (#10518).
+        if: ${{ always() }}
         # A `.complete` marker whose directory lacks bin/ makes setup-* report
-        # "Found in cache" and then fail every job on that node (#10234).
+        # "Found in cache" and then fail every job on that node (#10234). The
+        # same happens when bin/node exists but bin/npm/npx do not (a
+        # half-written extraction, #10505), so every binary the jobs use is
+        # checked. `[ -x ]` follows symlinks, so a dangling bin/npm is caught.
         run: |
           set -u
           bad=0
@@ -82,10 +89,23 @@ jobs:
             [ -e "$marker" ] || continue
             dir="${marker%.complete}"
             tool=$(basename "$(dirname "$(dirname "$dir")")")
-            if [ ! -x "$dir/bin/$tool" ]; then
-              echo "::error::tool cache entry $dir has a .complete marker but no bin/$tool"
-              bad=1
-            fi
+            case "$tool" in
+              node) bins="node npm npx" ;;
+              go) bins="go gofmt" ;;
+              *) bins="$tool" ;;
+            esac
+            for b in $bins; do
+              if [ ! -x "$dir/bin/$b" ]; then
+                echo "::error::tool cache entry $dir has a .complete marker but no executable bin/$b"
+                # Removing only the marker (never the directory: other jobs on
+                # this node may be mid-run) makes the next setup-* or
+                # warm-toolcache rebuild the entry, so the pool recovers
+                # without a human running kubectl.
+                rm -f "$marker"
+                bad=1
+                break
+              fi
+            done
           done
           exit $bad
       - name: Docker daemon reachable

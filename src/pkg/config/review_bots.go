@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -46,8 +47,8 @@ type ClassificationConfig struct {
 //     report and the watcher denies every resolve_thread request, so an
 //     agent can never resolve anything on a hive that has not opted in.
 //   - Logins are matched case-insensitively against the thread's first
-//     comment author, exactly as GitHub renders them ("Copilot",
-//     "chatgpt-codex-connector[bot]"). A human login listed here would let
+//     comment author, ignoring whitespace and a trailing "[bot]" suffix
+//     (REST/web include it; GraphQL omits it). A human login listed here would let
 //     agents resolve that human's threads; do not do that.
 //   - MaxAttemptsPerThread bounds how many times the hive replies in one
 //     thread before leaving it for a human. The counter IS the thread's
@@ -57,11 +58,38 @@ type ClassificationConfig struct {
 //     human to close.
 type ReviewBotsConfig struct {
 	Logins []string `yaml:"logins,omitempty" json:"logins,omitempty"`
+	// MinPriority is P0-P3, with P0 most urgent. Empty or unrecognised
+	// values preserve routing of every finding; unknown badges always pass.
+	MinPriority string `yaml:"min_priority,omitempty" json:"min_priority,omitempty"`
 	// MaxAttemptsPerThread defaults to 1 when unset or non-positive.
 	MaxAttemptsPerThread int `yaml:"max_attempts_per_thread,omitempty" json:"max_attempts_per_thread,omitempty"`
 	// ResolveAfterFix is a *bool so "unset" (default true) is distinguishable
 	// from an explicit false.
 	ResolveAfterFix *bool `yaml:"resolve_after_fix,omitempty" json:"resolve_after_fix,omitempty"`
+}
+
+// ReviewBotPriorityPattern recognises Codex's Markdown priority badge.
+// Keep the reviewer jq predicate on this same pattern and first-match rule.
+const ReviewBotPriorityPattern = `!\[P([0-3]) Badge\]`
+
+var reviewBotPriorityRE = regexp.MustCompile(ReviewBotPriorityPattern)
+
+// PriorityThreshold returns the largest numeric priority to route, or -1
+// when no recognised threshold is configured (fail open on typos).
+func (r ReviewBotsConfig) PriorityThreshold() int {
+	p := strings.ToUpper(strings.TrimSpace(r.MinPriority))
+	if len(p) == 2 && p[0] == 'P' && p[1] >= '0' && p[1] <= '3' {
+		return int(p[1] - '0')
+	}
+	return -1
+}
+
+// IncludesPriority keeps unknown formats so a new bot cannot silently hide
+// findings. Only the first comment's first recognised badge sets priority.
+func (r ReviewBotsConfig) IncludesPriority(body string) bool {
+	threshold := r.PriorityThreshold()
+	badge := reviewBotPriorityRE.FindStringSubmatch(body)
+	return threshold < 0 || badge == nil || int(badge[1][0]-'0') <= threshold
 }
 
 // DefaultReviewBotMaxAttempts is the per-thread reply budget when
@@ -81,14 +109,15 @@ func (r ReviewBotsConfig) Enabled() bool {
 }
 
 // IsBot reports whether login is one of the configured review-bot logins
-// (case-insensitive, whitespace-trimmed). An empty login never matches.
+// (case-insensitive, whitespace-trimmed, ignoring a trailing "[bot]" suffix).
+// An empty normalized login never matches.
 func (r ReviewBotsConfig) IsBot(login string) bool {
-	login = strings.TrimSpace(login)
+	login = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(login)), "[bot]")
 	if login == "" {
 		return false
 	}
 	for _, l := range r.Logins {
-		if strings.EqualFold(strings.TrimSpace(l), login) {
+		if strings.TrimSuffix(strings.ToLower(strings.TrimSpace(l)), "[bot]") == login {
 			return true
 		}
 	}
@@ -146,9 +175,44 @@ func LoadProjectReviewBots(path string) (ReviewBotsConfig, error) {
 // block can live next to its sibling monitor's config as #7360 specifies.
 // A project file that fails to parse yields the zero value AND the error, so
 // the caller can log it — the feature stays off rather than half-configured.
+//
+// One field crosses that boundary: a hive.yaml min_priority overrides the
+// project file's even when hive.yaml names no login. The dashboard edits it
+// there (hivecommons/hive#10481) without copying the project file's logins —
+// the trust grant — into hive.yaml. "all" is stored for an explicit
+// route-everything choice, since empty means "no override".
 func (c *Config) EffectiveReviewBots(projectPath string) (ReviewBotsConfig, error) {
 	if c != nil && c.Classification.ReviewBots.Enabled() {
 		return c.Classification.ReviewBots, nil
 	}
-	return LoadProjectReviewBots(projectPath)
+	rb, err := LoadProjectReviewBots(projectPath)
+	if err == nil && c != nil {
+		if p := strings.TrimSpace(c.Classification.ReviewBots.MinPriority); p != "" {
+			rb.MinPriority = p
+		}
+	}
+	return rb, err
+}
+
+// ReviewBotsMinPriorityAll is the explicit "route every finding" value for
+// min_priority. PriorityThreshold treats it like unset (-1); it exists so a
+// hive.yaml override can undo a project-file threshold.
+const ReviewBotsMinPriorityAll = "all"
+
+// NormalizeReviewBotsMinPriority canonicalises a min_priority value written
+// through the dashboard: "" (no override), "all", or P0-P3 (case and
+// surrounding whitespace ignored). ok is false for anything else so a typo is
+// refused at write time instead of silently routing every finding.
+func NormalizeReviewBotsMinPriority(v string) (string, bool) {
+	v = strings.TrimSpace(v)
+	switch {
+	case v == "":
+		return "", true
+	case strings.EqualFold(v, ReviewBotsMinPriorityAll):
+		return ReviewBotsMinPriorityAll, true
+	}
+	if t := (ReviewBotsConfig{MinPriority: v}).PriorityThreshold(); t >= 0 {
+		return fmt.Sprintf("P%d", t), true
+	}
+	return "", false
 }

@@ -89,6 +89,8 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				}
 			}
 
+			m.observeSubAgentModels(agent, filtered)
+
 			agent.paneMu.Lock()
 			// Advance the activity clock only when the pane actually changed.
 			// Comparing against the PREVIOUS capture (not prevLines, which the

@@ -140,6 +140,12 @@ takes a node-wide `flock`, the first one downloads Go `GO_VERSION` and Node
 or the `node-version: '22'` resolution moves; a stale value only forfeits the
 protection for that tool.
 
+A half-written node entry can also have `bin/node` but no `bin/npm`
+(hivecommons/hive#10505). The canary now checks npm/npx (and `gofmt`) too and
+removes the stale `.complete` marker, so the node self-repairs on the next
+job; `warm-toolcache` applies the same check. The values.yaml change only takes
+effect after a `helm upgrade` of the `hive-runners` release.
+
 ## 4. ARC controller and system services
 
 ```sh

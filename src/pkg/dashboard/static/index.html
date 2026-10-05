@@ -6793,6 +6793,14 @@
       return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
     }
 
+    function subAgentModelsHtml(a) {
+      const rows = a.subAgentModels || [];
+      if (!rows.length) return '';
+      return `<div class="oc-subagent-models"><strong>Observed sub-agent models</strong><ul>${rows.map(row =>
+        `<li>${esc(row.agentType)} → <code>${esc(row.model)}</code>${row.olderGeneration ? ' <span class="text-warn" title="Older model generation than the parent launch model">⚠ older generation</span>' : ''}</li>`
+      ).join('')}</ul></div>`;
+    }
+
     // Volatile stat fields of the focused agent-detail panel, factored out so
     // the fast path can refresh them on every status payload. Everything shown
     // here (pause/interval state, last/next run, restarts, tokens, auth) goes
@@ -6900,7 +6908,7 @@
       // The fingerprint guards the fields only the full template renders
       // (method/model/pins): without it a CLI or model switch stayed stale
       // in the focused panel until a hard refresh.
-      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || ''].join('|');
+      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || '', JSON.stringify(a.subAgentModels || [])].join('|');
       if (existingSummary && detail.dataset.agent === a.name && detail.dataset.cfgSig === cfgSig) {
         if (a.detailSummary) {
           const newText = escBlock(a.detailSummary);
@@ -7086,6 +7094,7 @@
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
+        ${subAgentModelsHtml(a)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span class="text-muted">No activity summary</span>'}</div>
@@ -25830,6 +25839,7 @@ function burnAreaChart() {
       var t = v && v.target;
       if (!t) return 'Upstream tip';
       var branch = t.branch || 'upstream';
+      if (t.source === 'channel') return 'Tracked channel :' + t.channel + ' (' + t.ref + ')';
       if (t.channel) return 'Hub target (' + branch + ' via :' + t.channel + ')';
       if (t.source === 'hub') return 'Hub target (' + branch + ' tip)';
       return branch + ' tip';
@@ -26013,7 +26023,7 @@ function burnAreaChart() {
         const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
         return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false);
       }
-      return versionButtonHTML('Upgrade to ' + targetShort, runtimeLabel + ': current ' + (v.short || '?') + ' → ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort, targetHash, true);
+      return versionButtonHTML('Upgrade to ' + targetShort, runtimeLabel + ': current ' + (v.short || '?') + ' → ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort, target.ref || targetHash, true);
     }
 
     function renderVersionDetails(v, ctx) {
@@ -26131,8 +26141,10 @@ function burnAreaChart() {
         const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
         const policyTargetHash = v.upgradePolicy && (v.upgradePolicy.target_sha || v.upgradePolicy.armed_target) || '';
         const hasHubTarget = !!(v.target && v.target.source === 'hub');
-        const offeredUpgradeHash = (v.target && v.target.sha) || policyTargetHash || v.stableV4Hash || (hasHubTarget ? '' : (v.latestHash || ''));
-        const offeredUpgradeShort = (v.target && v.target.short) || versionShortSHA(policyTargetHash) || v.stableV4Short || (hasHubTarget ? '' : (v.latestShort || 'latest'));
+        const channelTarget = v.target && v.target.source === 'channel';
+        const offeredUpgradeHash = channelTarget ? (v.target.sha || '') : ((v.target && v.target.sha) || policyTargetHash || v.stableV4Hash || (hasHubTarget ? '' : (v.latestHash || '')));
+        const offeredUpgradeShort = channelTarget ? (v.target.short || '') : ((v.target && v.target.short) || versionShortSHA(policyTargetHash) || v.stableV4Short || (hasHubTarget ? '' : (v.latestShort || 'latest')));
+        const offeredUpgradeRef = (v.target && v.target.ref) || offeredUpgradeHash;
         const offeredUpgradeLabel = upgradeTargetLabel(v) || 'target';
         const upgradeTargetLanded = upgradeTargetHash && (upgradeCurrentHash.startsWith(upgradeTargetHash) || upgradeTargetHash.startsWith(upgradeCurrentHash));
         let compactStatusHTML = '';
@@ -26170,7 +26182,7 @@ function burnAreaChart() {
             compactStatusHTML += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
             upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade ${escapeHtml(runtimeLabel)} deployment to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
           } else {
-            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)}">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
+            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeRef || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)}">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
           }
         } else if (v.latestHash) {
           statusText = 'Up to date';
@@ -26385,11 +26397,20 @@ function burnAreaChart() {
     // SSE connection
     var _upgradeInProgress = false;
     var _upgradeTargetHash = null;
-    function selfUpgrade(targetHash) {
+
+    async function selfUpgrade(targetHash) {
+      const target = window._lastVersionData && window._lastVersionData.target;
+      let displayHash = targetHash || '';
+      if (target && target.ref && target.source === 'channel' && (targetHash === target.ref || targetHash === target.sha)) {
+        if (!(await hiveConfirm('Upgrade to ' + target.ref + ' (current channel revision ' + (target.short || 'unknown') + ')? The channel may advance before the host pulls it.'))) return;
+        targetHash = target.ref;
+        displayHash = target.sha || '';
+      }
+
       var btn = document.getElementById('spoke-upgrade-btn');
-      const targetShort = versionShortSHA(targetHash || '') || 'latest';
+      const targetShort = versionShortSHA(displayHash) || 'latest';
       const currentHash = window._lastVersionData && (window._lastVersionData.hash || window._lastVersionData.short) || '';
-      const progress = versionRecordUpgradeStart(targetHash || 'latest', targetShort, currentHash);
+      const progress = versionRecordUpgradeStart(displayHash || 'latest', targetShort, currentHash);
       if (btn) { btn.disabled = true; btn.setAttribute('aria-disabled', 'true'); btn.textContent = 'Upgrading…'; btn.style.opacity = '0.6'; }
       if (window._lastVersionData && window._lastVersionContext) {
         window._lastVersionContext.upgradeProgress = progress;
@@ -26415,6 +26436,8 @@ function burnAreaChart() {
         });
       }).then(function(resp) {
         if (!resp) return;
+        _upgradeInProgress = true;
+        _upgradeTargetHash = displayHash || null;
         showToast('Upgrade started — waiting for rollout to complete', 'success');
         fetchGitVersion();
       }).catch(function(e) {
@@ -31891,14 +31914,14 @@ function burnAreaChart() {
       const dim = st.enabled ? '' : ' rt-dim';
       return `
         <h4 class="rt-h4">Reporter trust</h4>
-        <p class="fs-sm text-muted mb-4">Gate work on <b>who filed the issue</b>, not only on its labels. Issues from trusted reporters are worked under the rules above. Issues from anyone else wait until a maintainer adds one of the triage labels below — and the PR that follows is held for a maintainer at every autonomy level (see the Repos tab). Off by default; existing hives change nothing until you switch it on. <a class="text-accent" href="https://github.com/hivecommons/hive/issues/9665" target="_blank" rel="noopener">#9665 ↗</a></p>
+        <p class="fs-sm text-muted mb-4">Gate work on <b>who filed the issue</b>, not only on its labels. Issues from trusted reporters are worked under the rules above. Issues from anyone else wait until a maintainer adds one of the triage labels below — and the PR that follows is held for a maintainer at every autonomy level (see the Repos tab).</p>
         <div class="config-toggle rt-toggle">
           <div class="config-toggle-switch ${st.enabled ? 'on' : ''}" data-action="toggleReporterTrustEnabled" data-arg-types="t" title="Require maintainer triage for issues from untrusted reporters"></div>
           <span class="config-toggle-label">Require triage for issues from untrusted reporters</span>
         </div>
         <div class="rt-body${dim}">
           <div class="fs-sm mb-2 rt-subhead">Trusted GitHub associations</div>
-          <p class="fs-xs text-muted mb-3">GitHub reports one of these for every issue author. Checked = trusted. The default trusts owners, members and collaborators; <code>CONTRIBUTOR</code> means "had a commit merged once" and is deliberately not trusted.</p>
+          <p class="fs-xs text-muted mb-3">GitHub reports one of these for every issue author. Checked = trusted. <code>CONTRIBUTOR</code>, <code>FIRST_TIME_CONTRIBUTOR</code> and <code>FIRST_TIMER</code> are assigned automatically from commit history (one commit to this repo makes anyone a <code>CONTRIBUTOR</code>), and <code>NONE</code> means no relationship at all. Check any of those and people become trusted without your say. <code>OWNER</code>, <code>MEMBER</code> and <code>COLLABORATOR</code> change only when someone is given org membership or repo access. With the default (those three checked), nobody gains trust just by getting PRs merged. <code>MEMBER</code> includes any member of the owning org, even one with no access to this repo. To trust a specific outside person, add their login under Always-trusted logins below; that trusts them without giving them repo access.</p>
           <div class="rt-assoc-grid">${assocRows}</div>
           <div class="fs-sm mb-2 rt-subhead">Always-trusted logins</div>
           <p class="fs-xs text-muted mb-3">People to trust whatever GitHub says about them — an external maintainer of a dependency, for example.</p>
@@ -34091,15 +34114,25 @@ function burnAreaChart() {
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
-          <div class="config-subgroup" style="margin-top:14px">External review bots (read-only) <span class="config-info">i<span class="config-tooltip">Effective classification.review_bots settings from hive.yaml, falling back to hive-project.yaml. Listed logins grant agents the right to address and resolve those accounts&apos; threads; changing this trust boundary requires a config-file edit. This is separate from the review swarm gate.</span></span></div>
-          <div id="review-bots-settings" style="font-size:0.76rem">
+
+          <div class="config-subgroup">External review bots <span class="config-info">i<span class="config-tooltip">Effective classification.review_bots settings from hive.yaml, falling back to hive-project.yaml. Listed logins grant agents the right to address and resolve those accounts&apos; threads; changing this trust boundary requires a config-file edit. This is separate from the review swarm gate.</span></span></div>
+          <div id="review-bots-settings" class="fs-sm">
             ${!rb ? '<p>Review-bot settings unavailable from this server.</p>' : rb.load_error ? `<p>Unable to load review-bot settings: ${esc(rb.load_error)}</p>` : `
               <p>Status: ${rb.enabled ? 'Enabled' : 'Disabled (no bot logins configured)'}</p>
-              <p>Bot logins: ${rbLogins.length ? rbLogins.map(login => `<code>${esc(login)}</code>`).join(', ') : 'None'}</p>
+              <p>Bot logins (read-only): ${rbLogins.length ? rbLogins.map(login => `<code>${esc(login)}</code>`).join(', ') : 'None'}</p>
+
               <p>Max attempts per thread: ${esc(String(rb.max_attempts_per_thread))}</p>
               <p>Resolve after fix: ${rb.resolve_after_fix ? 'Yes' : 'No — leave open for a human'}</p>
             `}
           </div>
+
+          ${rb && !rb.load_error ? `<div class="config-field mt-3" id="review-bots-min-priority-field">
+            <label>Minimum bot-finding priority <span class="config-info">i<span class="config-tooltip">Which review-bot threads are routed to an agent. With P1, threads whose first comment carries a P0 or P1 badge (e.g. Codex&apos;s ![P1 Badge]) are routed to the agent that opened the PR; P2/P3 threads are left open for a human and are not auto-resolved. P0 is most urgent. Threads in an unknown or badge-less format (Copilot, CodeRabbit) are always routed, so a new bot cannot silently hide findings. All routes every thread. Saved to hive.yaml&apos;s classification.review_bots.min_priority, which overrides hive-project.yaml&apos;s threshold without touching its logins.</span></span></label>
+            <select id="review-bots-min-priority" data-change-action="markDirtyReviewBotsMinPriority" data-arg-types="v">
+              ${['all', 'P0', 'P1', 'P2', 'P3'].map(p => `<option value="${p}"${(rb.min_priority || 'all') === p ? ' selected' : ''}>${p === 'all' ? 'All findings' : p + (p === 'P0' ? ' only' : ' and above')}</option>`).join('')}
+            </select>
+          </div>` : ''}
+
           <div class="config-subgroup" style="margin-top:14px">Effectiveness <span class="config-info">i<span class="config-tooltip">Does reviewing PRs actually shrink the queue? Every eval cycle the hive records each open PR it sees and, when it later leaves the queue, whether it merged or closed. PRs the hive reviewed before their outcome are compared against the ones it did not (the control group) on merge rate and median time to merge. Verdict counts alone cannot answer this; the comparison can.</span></span></div>
           <div class="config-field">
             <button class="hv-btn btn-secondary btn" data-action="loadReviewOutcomes">Load 30-day outcomes</button>
@@ -34861,6 +34894,12 @@ function burnAreaChart() {
     // checked list; if every built-in is checked and nothing custom exists,
     // it is sent empty, which the server treats as "all built-ins" — so a hive
     // that never touched this keeps the default even after a save.
+    // review_bots is a sub-object on PUT /api/config/review; only
+    // min_priority is editable from the dashboard (logins stay config-only).
+    function markDirtyReviewBotsMinPriority(value) {
+      markDirty('review', 'review_bots', { min_priority: value });
+    }
+
     function markDirtyTrustedBots() {
       const list = Array.from(document.querySelectorAll('#am-trusted-bots .am-bot-row'))
         .filter(r => { const sw = r.querySelector('.am-bot-switch'); return sw && sw.classList.contains('on'); })
@@ -35365,12 +35404,13 @@ function burnAreaChart() {
       const input = document.getElementById('cfg-launch-cmd');
       if (!input) return;
       const current = input.value;
-      const CLI_PATHS = { copilot: '/usr/bin/copilot', claude: '/usr/bin/claude', aider: '/usr/bin/aider' };
-      const newBin = CLI_PATHS[cli] || `/usr/bin/${cli}`;
-      const updated = current.replace(/\/usr\/bin\/\S+|agent-launch\.sh\s+--backend\s+\S+/, (match) => {
-        if (match.startsWith('agent-launch.sh')) return `agent-launch.sh --backend ${cli}`;
-        return newBin;
-      });
+      // A direct "/usr/bin/<cli> <flags>" command cannot be retargeted by
+      // swapping the path: the image installs most CLIs under /usr/local/bin
+      // (so "/usr/bin/bob" does not exist, #10509) and the old CLI's flags
+      // are wrong for the new one. Clear it so hive builds the launch command.
+      const updated = /^\s*\/usr\/bin\/\S+/.test(current)
+        ? ''
+        : current.replace(/agent-launch\.sh\s+--backend\s+\S+/, `agent-launch.sh --backend ${cli}`);
       if (updated !== current) {
         input.value = updated;
         markDirty('general', 'launchCmd', updated);
