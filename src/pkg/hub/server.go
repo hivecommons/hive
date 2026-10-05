@@ -1659,7 +1659,6 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("POST /api/github/webhook", s.handleGitHubWebhook)
 	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupRouter)
 	s.mux.HandleFunc("GET /learn", s.serveStatic("static/learn.html"))
-	s.mux.HandleFunc("GET /stories", s.serveStatic("static/stories.html"))
 	s.mux.HandleFunc("GET /get-started", s.serveStatic("static/get-started.html"))
 	s.mux.HandleFunc("GET /contribute", s.handleContributeLanding)
 	s.mux.HandleFunc("GET /contribute/{$}", s.handleContributeLanding)
