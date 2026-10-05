@@ -506,7 +506,7 @@
     body.light-mode {
       box-sizing: border-box;
     }
-    body.light-mode > .gh-rate-alert { margin-left: var(--sp-0); }
+    body.light-mode .gh-rate-alert { margin-left: var(--sp-0); }
     /* Light mode keeps the shared responsive agent grid; beads still wrap. */
     body.light-mode .beads { flex-wrap: wrap; }
 
@@ -2351,7 +2351,7 @@
     .gh-auth-alert a { color: var(--blue); text-decoration: underline; }
     .gh-rate-alert {
       background: color-mix(in srgb, var(--yellow) 14%, var(--panel)); border: 1px solid var(--yellow);
-      border-radius: 8px; padding: 10px 16px; margin-bottom: var(--sp-6);
+      border-radius: 8px; padding: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-6);
       display: none; /* hidden by default, shown via JS */
     }
     .gh-rate-alert.active { display: block; }
@@ -4110,6 +4110,8 @@
   </div>
   <div id="hub-banner" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
+  <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
+  <div class="gh-rate-alert" id="gh-rate-alert"></div>
   </div>
 <div id="toast-container"></div>
 <!-- Hive Chat FAB + Panel -->
@@ -4203,9 +4205,6 @@
     </div>
   </div>
 </div>
-<div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
-  <div class="gh-rate-alert" id="gh-rate-alert"></div>
-
   <!-- Light sidebar (hidden by default) -->
   <div class="oc-sidebar-resize" id="ocSidebarResize"></div>
   <nav id="oc-sidebar" class="oc-sidebar">

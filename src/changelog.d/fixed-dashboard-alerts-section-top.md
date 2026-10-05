@@ -1,0 +1,1 @@
+- Surface dashboard GitHub auth and rate-limit alerts in the pinned top notices area instead of below all dashboard sections.
