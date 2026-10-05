@@ -386,22 +386,22 @@
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
-    .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: hidden; }
-    .oc-version-hive { position: relative; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: hidden; }
+    .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: visible; }
+    .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
-    .oc-version-bee { --oc-version-bee-radius: 17px; position: absolute; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
+    .oc-version-bee { --oc-version-bee-radius: 17px; position: absolute; z-index: 3; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
     .oc-version-bee:nth-child(2) { animation-delay: -0.6s; }
     .oc-version-bee:nth-child(3) { animation-delay: -1.2s; }
     .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
-    .oc-version-progress-copy { min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
+    .oc-version-progress-copy { position: relative; z-index: 1; min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
     .oc-version-progress-title { color: var(--text); font-weight: 700; }
     .oc-version-progress-status { color: var(--muted); margin-top: var(--sp-1); overflow-wrap: anywhere; }
     .oc-version-progress-status a { color: var(--accent); }
     .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
-    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); overflow: hidden; }
-    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; max-width: min(360px, 34vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: hidden; }
+    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); overflow: visible; }
+    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; max-width: min(360px, 34vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade[hidden] { display: none; }
-    .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: hidden; }
+    .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
     .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
     .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: var(--fs-xs); }
