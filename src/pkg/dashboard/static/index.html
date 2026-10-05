@@ -1407,7 +1407,11 @@
     .prt-repo-select { max-width: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .lc-fleet-stat .val.opened { color: var(--blue); }
     .lc-fleet-stat .val.closed { color: var(--red); }
+    .lc-fleet.prt-headline { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .prt-tile-spark { display:block; margin-top: var(--sp-2); min-height: 20px; }
+    .prt-share-tile { position: relative; }
+    .prt-share-tile .prt-role-select { position:absolute; top:var(--sp-3); right:var(--sp-3); max-width:5.8rem; padding:1px 16px 1px 6px; font-size:var(--fs-2xs); }
+    .prt-share-tile .prt-caption { margin-top:var(--sp-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .prt-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--sp-2); margin: var(--sp-3) 0; }
     .prt-metric { background: color-mix(in srgb, var(--bg) 85%, transparent); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3); min-height: 4.5rem; }
     .prt-metric .mval { font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
@@ -1420,8 +1424,8 @@
     .prt-breakdown { color: var(--muted); font-size: var(--fs-xs); }
     .prt-breakdown b { color: var(--text); display:block; margin-bottom: var(--sp-1); }
     .prt-breakdown ol { margin: 0; padding-left: 1.2rem; }
-    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr) minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
-    .prt-matrix, .prt-trend { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    .prt-attribution { display:grid; grid-template-columns:minmax(260px, 1fr); gap:var(--sp-3); margin:var(--sp-3) 0; }
+    .prt-matrix { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
     .prt-matrix table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
     .prt-matrix th, .prt-matrix td { padding:var(--sp-2) var(--sp-2); border-top:1px solid var(--border); text-align:left; vertical-align:middle; }
     .prt-matrix th { color:var(--muted); font-weight:600; border-top:0; }
@@ -1429,19 +1433,15 @@
     .prt-stack .hive { fill:var(--prt-actor-hive); }
     .prt-stack .human { fill:var(--prt-actor-human); }
     .prt-stack .other { fill:var(--prt-actor-other); }
-    .prt-legend .hive { background:var(--prt-actor-hive); }
-    .prt-legend .human { background:var(--prt-actor-human); }
-    .prt-legend .other { background:var(--prt-actor-other); }
     .prt-trend-svg .area { stroke:var(--bg); stroke-width:.6; stroke-linejoin:round; }
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
-    .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
-    .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
-    .prt-legend i { display:inline-block; width:8px; height:8px; border-radius:var(--r-pill); margin-right:var(--sp-1); vertical-align:middle; }
     .prt-caption { color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-2); }
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
+    @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
     .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
@@ -16731,6 +16731,25 @@ function burnAreaChart() {
         wrapperTitle: title,
       })}</span>`;
     }
+    function prtHiveShareSpark(series) {
+      if (!Array.isArray(series) || series.length < 2) return '';
+      const values = series.map((p) => {
+        const hive = Math.max(0, Number(p && p.hive) || 0);
+        const human = Math.max(0, Number(p && p.human) || 0);
+        const other = Math.max(0, Number(p && p.other) || 0);
+        const total = hive + human + other;
+        return total ? Math.round((hive / total) * 100) : 0;
+      });
+      return renderSparkline(null, values, {
+        color: 'var(--prt-actor-hive)',
+        title: prtSparkTitle(values, v => `${Math.round(v)}%`),
+        svgTitle: prtSparkTitle(values, v => `${Math.round(v)}%`),
+        ariaLabel: 'hive share trend',
+        label: 'hive share',
+        id: 'change-throughput:hive-share',
+        wrapperClass: 'sparkline--flush',
+      });
+    }
     function prtBucketMetricSeries(dto) {
       const buckets = Array.isArray(dto.buckets) ? dto.buckets : [];
       const bucketDays = Math.max((Number(dto.bucket_seconds) || 3600) / 86400, 1 / 1440);
@@ -16826,23 +16845,32 @@ function burnAreaChart() {
       };
       return `<svg class="prt-trend-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="100% stacked area trend for hive, human, and other automation actor shares">${['other','human','hive'].map(area).join('')}</svg>`;
     }
-    function prtTrendCaption(dto) {
+    function prtTrendStats(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
       const totals = series.reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), human:a.human+(Number(p.human)||0), other:a.other+(Number(p.other)||0) }), {hive:0,human:0,other:0});
       const total = totals.hive + totals.human + totals.other;
-      if (!total) return 'No attribution data yet — counters start now.';
+      if (!total) return { totals, total, cur: null, prevPct: null, noun: '', shortNoun: '', caption: 'No attribution data yet — counters start now.' };
       const cur = Math.round((totals.hive / total) * 100);
       const half = Math.floor(series.length / 2);
       const prev = series.slice(0, half).reduce((a,p) => ({ hive:a.hive+(Number(p.hive)||0), total:a.total+(Number(p.hive)||0)+(Number(p.human)||0)+(Number(p.other)||0) }), {hive:0,total:0});
       const prevPct = prev.total ? Math.round((prev.hive / prev.total) * 100) : null;
       const noun = prtRole === 'created' ? 'created changes' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
-      return `hive ${cur}% of ${noun} this window${prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}%`}`;
+      const shortNoun = prtRole === 'created' ? 'created' : prtRole === 'reviewed' ? 'reviews' : 'merges/closures';
+      const caption = `hive ${cur}% of ${noun} this window${prevPct == null ? '' : `, ${cur >= prevPct ? 'up' : 'down'} from ${prevPct}%`}`;
+      return { totals, total, cur, prevPct, noun, shortNoun, caption };
     }
-    function prtActorTrend(dto) {
+    function prtTrendCaption(dto) {
+      return prtTrendStats(dto).caption;
+    }
+    function prtHiveHumanTile(dto) {
       const opts = [['created','Created'],['reviewed','Reviewed'],['merged','Merged']].map(([v,l]) => `<option value="${v}"${prtRole===v?' selected':''}>${l}</option>`).join('');
       const series = Array.isArray(dto.series) ? dto.series : [];
-      const legend = [['hive', 'hive', ''], ['human', 'human', ''], ['other', 'other automation', 'non-hive bots (dependabot, renovate, GitHub Actions, …)']].map(([key, label, title]) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="${key}"></i>${label}${prtSeriesAllZero(series, key) ? ' · 0' : ''}</span>`).join('');
-      return `<div class="prt-trend"><div class="prt-trend-head"><strong>Hive vs human trend</strong><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v">${opts}</select></div>${prtTrendSvg(series) || '<div class="prt-caption">No trend series yet.</div>'}<div class="prt-legend">${legend}</div><div class="prt-caption">${escapeHtml(prtTrendCaption(dto))}</div></div>`;
+      const stats = prtTrendStats(dto);
+      const tooltip = stats.total
+        ? `hive ${stats.totals.hive} · human ${stats.totals.human} · other automation ${stats.totals.other} · ${stats.caption}`
+        : `hive · human · other automation · ${stats.caption}`;
+      const sub = stats.total ? `of ${stats.shortNoun}${stats.prevPct == null ? '' : ` · was ${stats.prevPct}%`}` : 'No attribution data yet';
+      return `<div class="lc-fleet-stat prt-share-tile" title="${escapeHtml(tooltip)}"><select class="prt-role-select" data-change-action="setPRThroughputRole" data-arg-types="v" data-stop="1" title="Hive vs human mode">${opts}</select><div class="val merged">${stats.cur == null ? '—' : stats.cur + '%'}</div><div class="lbl">Hive vs human</div><div class="prt-caption">${escapeHtml(sub)}</div><span class="prt-tile-spark">${prtHiveShareSpark(series)}</span></div>`;
     }
     function prtWindowControls() {
       const buttons = PRT_WINDOWS.map(([h, label]) => `<button type="button" class="${prtHours === h ? 'active' : ''}" data-action="setPRThroughputHours" data-arg0="${h}" data-stop="1" title="${h === 0 ? 'All time' : 'Last ' + label}">${label}</button>`).join('');
@@ -16891,7 +16919,8 @@ function burnAreaChart() {
           <div class="lc-fleet-stat" title="Pull/merge requests opened by hive agents in the selected range"><div class="val opened">${opened}</div><div class="lbl">Opened</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'opened', 'var(--blue)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
-        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
+          ${prtHiveHumanTile(dto)}
+        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
     }
 
