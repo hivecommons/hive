@@ -1,1 +1,0 @@
-Added an owner-switched, **read-only** public knowledge MCP endpoint (`POST /mcp/knowledge`, `HIVE_PUBLIC_KNOWLEDGE=1`) so any external agent — Goose, Claude, Copilot — can search, fetch, and export a hive's operational knowledge without credentials. Only operational fact types are served, sources/usage data are stripped, and no write method exists on the surface (#10615).
