@@ -40,7 +40,7 @@ type ReporterAdmitter interface {
 type ReporterTrustNoticeConfig interface {
 	ReporterTrustTrustedAssociationsForNotice() []string
 	ReporterTrustRequiredLabelsForNotice() []string
-	ReporterTrustAwaitingTriageLabel() string
+	ReporterTrustAwaitingLabel() string
 	ReporterTrustCommentEnabled() bool
 }
 

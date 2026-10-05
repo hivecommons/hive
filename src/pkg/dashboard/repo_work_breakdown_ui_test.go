@@ -28,7 +28,7 @@ assert.match(html, /0 actionable<\/span> · <span[^>]*>1 draft/);
 html = formatRepoWorkBreakdown({ actionable: 0, filtered: 1, other: 1 }, 2, 'issues');
 assert.match(html, /1 filtered<\/span> · <span[^>]*>1 other/);
 html = formatRepoWorkBreakdown({ actionable: 0, reporter_triage: 1 }, 1, 'issues');
-assert.match(html, /1 awaiting triage/);
+assert.match(html, /1 needs triage/);
 assert.equal(formatRepoWorkBreakdown({ actionable: 0 }, 0, 'issues'), '');
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
