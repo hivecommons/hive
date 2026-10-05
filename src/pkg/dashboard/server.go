@@ -388,9 +388,10 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands *OverviewBands `json:"overview_bands,omitempty"`
-	Timestamp     string         `json:"timestamp"`
-	TimeZone      string         `json:"timeZone,omitempty"`
+	OverviewBands *OverviewBands        `json:"overview_bands,omitempty"`
+	ActionableNow FrontendActionableNow `json:"actionableNow"`
+	Timestamp     string                `json:"timestamp"`
+	TimeZone      string                `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -743,6 +744,12 @@ type FrontendConfiguredAgent struct {
 	// one thing an operator wants to check before enabling it.
 	Mode      string `json:"mode,omitempty"`
 	ModeEmoji string `json:"modeEmoji,omitempty"`
+}
+
+type FrontendActionableNow struct {
+	Issues int `json:"issues"`
+	PRs    int `json:"prs"`
+	Total  int `json:"total"`
 }
 
 type FrontendGovernor struct {
