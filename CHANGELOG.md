@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-05 (v5.136.0)
+
+### Added
+
+- dashboard: sticky navbar with centered agent cards and UP NEXT motion (#10695)
+
+### Changed
+
+- The collapsed Knowledge row now shows a labeled fact-count history sparkline and current count in its header, with stat tiles available when expanded ([#10692](https://github.com/hivecommons/hive/issues/10692)).
+- Add the pinned GitHub CLI package to the self-hosted CI runner image so `gh`-using workflows can move to the fleet after rollout.
+
+### Fixed
+
+- Keep the Ready-work queue’s end marker after the last row inside the scrollable area, so overflowing queues no longer announce the end before it is reached ([#10681](https://github.com/hivecommons/hive/issues/10681)).
+- hub: choose the newest published per-SHA channel image for spoke upgrades and show pending-image commits when channel tags lag (#10719)
+- Hub decisions now explains sign-in failures and unexpected API responses instead of showing HTML-as-JSON parser errors or treating invalid responses as empty decisions ([#10680](https://github.com/hivecommons/hive/issues/10680)).
+
 ## 2026-10-05 (v5.135.0)
 
 ### Added

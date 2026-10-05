@@ -1,1 +1,0 @@
-- The collapsed Knowledge row now shows a labeled fact-count history sparkline and current count in its header, with stat tiles available when expanded ([#10692](https://github.com/hivecommons/hive/issues/10692)).

@@ -1,1 +1,0 @@
-- Hub decisions now explains sign-in failures and unexpected API responses instead of showing HTML-as-JSON parser errors or treating invalid responses as empty decisions ([#10680](https://github.com/hivecommons/hive/issues/10680)).
