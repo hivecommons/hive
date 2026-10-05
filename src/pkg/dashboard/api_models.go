@@ -433,7 +433,7 @@ func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]stri
 	defer closeHTTPBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+		return nil, litellmModelsHTTPError(req, resp, apiKey)
 	}
 
 	models, err := parseModelsResponse(resp.Body)

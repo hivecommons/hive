@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -253,6 +254,130 @@ func TestGatewaysUpsert_PreservesKeyOnEdit(t *testing.T) {
 	}
 	if gw.DefaultModel != "gpt-4o-mini" {
 		t.Errorf("default_model not updated: %q", gw.DefaultModel)
+	}
+}
+
+func TestGatewayFormAndSavedTestsShareLiteLLMDiagnostics(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		contentType string
+		server      string
+		body        string
+		want        []string
+	}{
+		{
+			name:        "nginx html 403",
+			status:      http.StatusForbidden,
+			contentType: "text/html",
+			server:      "nginx",
+			body:        "<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center></body></html>",
+			want:        []string{"proxy in front of the gateway", `server "nginx"`, "content-type \"text/html\"", "final URL", "no HTTPS_PROXY proxy applies", "NO_PROXY"},
+		},
+		{
+			name:        "awselb html 403",
+			status:      http.StatusForbidden,
+			contentType: "text/html",
+			server:      "awselb/2.0",
+			body:        "<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center></body></html>",
+			want:        []string{"proxy in front of the gateway", `server "awselb/2.0"`, "content-type \"text/html\"", "final URL", "no HTTPS_PROXY proxy applies", "NO_PROXY"},
+		},
+		{
+			name:        "json 401",
+			status:      http.StatusUnauthorized,
+			contentType: "application/json",
+			server:      "uvicorn",
+			body:        `{"error":{"message":"token not found","type":"auth_error"}}`,
+			want:        []string{"gateway rejected the configured key", "HTTP 401", "token not found", "final URL"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/models" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Header().Set("Server", tc.server)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer upstream.Close()
+
+			endpoint := "https://raw.githubusercontent.com"
+			routeImportFetchesToServer(t, upstream)
+			t.Setenv("HIVE_TEST_LITELLM_KEY", "sk-livekeyvalue")
+			origProxyFunc := probeProxyFunc
+			probeProxyFunc = func(*http.Request) (*url.URL, error) { return nil, nil }
+			t.Cleanup(func() { probeProxyFunc = origProxyFunc })
+
+			srv := newFullServer(t)
+			srv.deps.Config.Governor.Gateways = []config.GatewayConfig{{
+				Name:         "litellm",
+				Kind:         config.GatewayKindLiteLLM,
+				Endpoint:     endpoint,
+				DefaultModel: "rits/zai-org/glm-5-3",
+				APIKeyEnv:    "HIVE_TEST_LITELLM_KEY",
+				KeyName:      "mspreitz-cb-1",
+			}}
+
+			discoverBody := `{"name":"litellm","kind":"litellm","endpoint":"` + endpoint + `","api_key":"sk-livekeyvalue","default_model":"rits/zai-org/glm-5-3","key_name":"mspreitz-cb-1"}`
+			discoverReq := httptest.NewRequest(http.MethodPost, "/api/config/governor/gateways/discover", strings.NewReader(discoverBody))
+			discoverReq.Header.Set("Content-Type", "application/json")
+			markOwnerRequest(discoverReq)
+			discoverW := httptest.NewRecorder()
+			srv.handleGovernorGatewaysDiscover(discoverW, discoverReq)
+			if discoverW.Code != http.StatusOK {
+				t.Fatalf("discover code = %d, body %s", discoverW.Code, discoverW.Body.String())
+			}
+			var discoverResp struct {
+				OK         bool   `json:"ok"`
+				Error      string `json:"error"`
+				Diagnostic string `json:"diagnostic"`
+			}
+			if err := json.Unmarshal(discoverW.Body.Bytes(), &discoverResp); err != nil {
+				t.Fatalf("decode discover: %v", err)
+			}
+			if discoverResp.OK || discoverResp.Error == "" {
+				t.Fatalf("discover response = %+v, want failed diagnostic", discoverResp)
+			}
+
+			testReq := httptest.NewRequest(http.MethodPost, "/api/config/governor/gateways/litellm/test", nil)
+			testReq.SetPathValue("name", "litellm")
+			testW := httptest.NewRecorder()
+			srv.handleGovernorGatewaysTest(testW, testReq)
+			if testW.Code != http.StatusOK {
+				t.Fatalf("saved test code = %d, body %s", testW.Code, testW.Body.String())
+			}
+			var testResp struct {
+				Probe struct {
+					OK         bool   `json:"ok"`
+					Error      string `json:"error"`
+					Diagnostic string `json:"diagnostic"`
+				} `json:"probe"`
+			}
+			if err := json.Unmarshal(testW.Body.Bytes(), &testResp); err != nil {
+				t.Fatalf("decode saved test: %v", err)
+			}
+			if testResp.Probe.OK || testResp.Probe.Error == "" {
+				t.Fatalf("saved test response = %+v, want failed diagnostic", testResp.Probe)
+			}
+			if discoverResp.Error != testResp.Probe.Error {
+				t.Fatalf("form and saved errors differ:\nform:  %s\nsaved: %s", discoverResp.Error, testResp.Probe.Error)
+			}
+			if discoverResp.Diagnostic != testResp.Probe.Diagnostic {
+				t.Fatalf("form and saved diagnostics differ:\nform:  %s\nsaved: %s", discoverResp.Diagnostic, testResp.Probe.Diagnostic)
+			}
+			for _, want := range append(tc.want, "Endpoint: "+endpoint, "Default model: rits/zai-org/glm-5-3", "Using key: mspreitz-cb-1", "SHA256: ") {
+				if !strings.Contains(discoverResp.Diagnostic, want) {
+					t.Errorf("diagnostic %q missing %q", discoverResp.Diagnostic, want)
+				}
+			}
+			if strings.Contains(discoverResp.Diagnostic, "sk-livekeyvalue") || strings.Contains(discoverResp.Error, "sk-livekeyvalue") {
+				t.Errorf("diagnostic leaks API key: %q / %q", discoverResp.Diagnostic, discoverResp.Error)
+			}
+		})
 	}
 }
 

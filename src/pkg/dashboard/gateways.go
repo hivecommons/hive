@@ -457,11 +457,13 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	}
 
 	var body struct {
-		Name      string `json:"name"`
-		Endpoint  string `json:"endpoint"`
-		APIKey    string `json:"api_key"`
-		Kind      string `json:"kind"`
-		ProjectID string `json:"project_id"`
+		Name         string `json:"name"`
+		Endpoint     string `json:"endpoint"`
+		APIKey       string `json:"api_key"`
+		Kind         string `json:"kind"`
+		ProjectID    string `json:"project_id"`
+		DefaultModel string `json:"default_model"`
+		KeyName      string `json:"key_name"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -515,13 +517,23 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
+	probeGW := config.GatewayConfig{
+		Name:         strings.TrimSpace(body.Name),
+		Kind:         kind,
+		Endpoint:     endpoint,
+		DefaultModel: strings.TrimSpace(body.DefaultModel),
+		KeyName:      strings.TrimSpace(body.KeyName),
+	}
 	bearer, headers, err := s.gatewayProbeAuth(kind, key, projectID)
 	if err != nil {
 		// A watsonx mint failure means the key is missing or invalid — model
 		// population must NOT happen until a valid key is entered, so this is
 		// an error, never a fallback list (operator requirement: discovery and
 		// population only after a valid watsonx.ai API key).
-		jsonResponse(w, map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), key)})
+		msg := redactSecret(err.Error(), key)
+		probe := map[string]interface{}{"ok": false, "error": msg}
+		probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
+		jsonResponse(w, map[string]interface{}{"ok": false, "error": msg, "diagnostic": probe["diagnostic"], "probe": probe})
 		return
 	}
 	models, err := fetchModelsWithHeaders(endpoint, bearer, headers)
@@ -534,7 +546,10 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 			jsonResponse(w, map[string]interface{}{"ok": true, "models": s.watsonxGraniteFallback(), "fallback": true})
 			return
 		}
-		jsonResponse(w, map[string]interface{}{"ok": false, "error": redactSecret(redactSecret(err.Error(), key), bearer)})
+		msg := redactSecret(redactSecret(err.Error(), key), bearer)
+		probe := map[string]interface{}{"ok": false, "error": msg}
+		probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
+		jsonResponse(w, map[string]interface{}{"ok": false, "error": msg, "diagnostic": probe["diagnostic"], "probe": probe})
 		return
 	}
 	if len(models) == 0 && kind == config.GatewayKindWatsonx {
@@ -580,7 +595,9 @@ func (s *Server) gatewayProbeResult(gw config.GatewayConfig, overrideKey string)
 		if store := s.gatewayHealthStore(); store != nil {
 			store.RecordError(gw.Name, errors.New(msg), time.Now())
 		}
-		return map[string]interface{}{"ok": false, "error": msg}
+		probe := map[string]interface{}{"ok": false, "error": msg}
+		probe["diagnostic"] = gatewayProbeDiagnosticText(gw, probe, probeKey)
+		return probe
 	}
 	n, err := probeModelsWithHeaders(ep, bearer, headers)
 	if err != nil {
@@ -590,12 +607,59 @@ func (s *Server) gatewayProbeResult(gw config.GatewayConfig, overrideKey string)
 		if store := s.gatewayHealthStore(); store != nil {
 			store.RecordError(gw.Name, errors.New(msg), time.Now())
 		}
-		return map[string]interface{}{"ok": false, "error": msg}
+		probe := map[string]interface{}{"ok": false, "error": msg}
+		probe["diagnostic"] = gatewayProbeDiagnosticText(gw, probe, probeKey)
+		return probe
 	}
 	if store := s.gatewayHealthStore(); store != nil {
 		store.Clear(gw.Name)
 	}
-	return map[string]interface{}{"ok": true, "model_count": n}
+	probe := map[string]interface{}{"ok": true, "model_count": n}
+	probe["diagnostic"] = gatewayProbeDiagnosticText(gw, probe, probeKey)
+	return probe
+}
+
+func gatewayProbeDiagnosticText(gw config.GatewayConfig, probe map[string]interface{}, key string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Endpoint: %s\n", strings.TrimSpace(gw.Endpoint))
+	defaultModel := strings.TrimSpace(gw.DefaultModel)
+	if defaultModel == "" {
+		defaultModel = "—"
+	}
+	b.WriteString("Default model: ")
+	b.WriteString(defaultModel)
+	if key == "" {
+		b.WriteString(" · no key")
+	} else {
+		b.WriteString(" · key set")
+		keyName := strings.TrimSpace(gw.KeyName)
+		if keyName == "" {
+			keyName = "(unnamed)"
+		}
+		b.WriteString(" · Using key: ")
+		b.WriteString(keyName)
+		if hash := config.APIKeySHA256(key); hash != "" {
+			b.WriteString(" · SHA256: ")
+			if len(hash) > 12 {
+				b.WriteString(hash[:12])
+			} else {
+				b.WriteString(hash)
+			}
+		}
+	}
+	if ok, _ := probe["ok"].(bool); ok {
+		n, _ := probe["model_count"].(int)
+		fmt.Fprintf(&b, "\nConnection OK: %d model", n)
+		if n != 1 {
+			b.WriteString("s")
+		}
+		b.WriteString(" available")
+		return b.String()
+	}
+	errMsg, _ := probe["error"].(string)
+	b.WriteString("\nConnection failed: ")
+	b.WriteString(errMsg)
+	return b.String()
 }
 
 // registerGatewayEndpoints (re-)registers every resolved gateway's endpoint for

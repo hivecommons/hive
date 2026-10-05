@@ -28698,6 +28698,9 @@ function burnAreaChart() {
     }
 
     function gatewayProbeHTML(probe) {
+      if (probe && probe.diagnostic) {
+        return `<span class="${probe.ok ? 'text-success' : 'text-danger'}">${esc(probe.diagnostic)}</span>`;
+      }
       if (probe && probe.ok) {
         const n = probe.model_count || 0;
         return `<span class="text-success">OK — ${n} model${n === 1 ? '' : 's'} available</span>`;
@@ -28758,10 +28761,7 @@ function burnAreaChart() {
     // gateway was saved.
     function showGatewayFormProbeError(msg) {
       const el = document.getElementById('gw-form-result');
-      if (!el) return;
-      el.style.display = 'block';
-      el.style.color = 'var(--red)';
-      el.textContent = msg;
+      showGatewayProbe(el, { ok: false, error: msg });
     }
 
     function clearGatewayFormProbeError() {
@@ -28997,6 +28997,8 @@ function burnAreaChart() {
             name: nameEl ? nameEl.value.trim() : '',
             endpoint: endpoint,
             api_key: keyEl ? keyEl.value.trim() : '',
+            default_model: gatewayCurrentDefaultModel(),
+            key_name: (document.getElementById('gw-key-name') || {}).value || '',
             // watsonx discovery needs the kind + project id to mint the IAM
             // token and set X-IBM-Project-ID; harmless for other kinds.
             kind: kindEl ? kindEl.value : '',
@@ -29009,7 +29011,11 @@ function burnAreaChart() {
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
         if (!res.ok || !data.ok) {
-          showGatewayFormProbeError(data.error || 'Model discovery failed — check the endpoint and API key.');
+          if (data.probe || data.diagnostic) {
+            showGatewayProbe(document.getElementById('gw-form-result'), data.probe || { ok: false, error: data.error || 'Model discovery failed — check the endpoint and API key.', diagnostic: data.diagnostic });
+          } else {
+            showGatewayFormProbeError(data.error || 'Model discovery failed — check the endpoint and API key.');
+          }
         } else if (!_gatewayFormModels.length) {
           showGatewayFormProbeError('Connected, but the gateway returned no models. Check the key\'s entitlements' + (kindEl && kindEl.value === 'watsonx' ? ' and the project id.' : '.'));
         } else {
