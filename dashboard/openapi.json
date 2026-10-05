@@ -18898,6 +18898,38 @@
       }
     },
 
+    "/api/feedback/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Preview how a feedback report from this browser would be attributed",
+        "description": "Returns the attribution the hive would attach to a feedback report filed right now: the GitHub login of the credential in use, the submitter login/name/source resolved from the hub or token, whether this hive is hub-linked, and whether the submitter still needs to supply an identity. Lets the dashboard show the preview before the report is sent (#10593).",
+        "responses": {
+          "200": {
+            "description": "Feedback attribution preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential_login": { "type": "string" },
+                    "submitter_login": { "type": "string" },
+                    "submitter_name": { "type": "string" },
+                    "submitter_source": { "type": "string" },
+                    "hive_id": { "type": "string" },
+                    "hub_linked": { "type": "boolean" },
+                    "hub_name": { "type": "string" },
+                    "needs_identity": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
     "/api/feedback/mine": {
       "get": {
         "tags": [

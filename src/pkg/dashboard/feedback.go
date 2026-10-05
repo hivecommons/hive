@@ -77,10 +77,21 @@ func sanitizeFeedbackIdentityValue(v string) string {
 	return feedbackRedact(v)
 }
 
-var feedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$`)
+// feedbackGitHubLoginPattern accepts GitHub logins: alphanumerics with single,
+// non-leading, non-trailing hyphens, plus an optional "[bot]" suffix. Go's RE2
+// engine has no lookahead, so "no double hyphen" is expressed by requiring
+// every hyphen to be followed by an alphanumeric; the 39-character cap is
+// enforced separately in githubLoginForMention.
+var feedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:-?[A-Za-z0-9])*(?:\[bot\])?$`)
+
+// gitHubLoginMaxLen is GitHub's documented username length limit.
+const gitHubLoginMaxLen = 39
 
 func githubLoginForMention(login string) string {
 	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if len(strings.TrimSuffix(login, "[bot]")) > gitHubLoginMaxLen {
+		return ""
+	}
 	if feedbackGitHubLoginPattern.MatchString(login) {
 		return login
 	}

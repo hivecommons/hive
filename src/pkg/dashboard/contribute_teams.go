@@ -83,7 +83,7 @@ func defaultTeamCatalog() teamCatalog {
 		Agents: map[string]string{
 			"aider": "Aider", "agy": "Agy", "claude": "Claude", "codex": "Codex",
 			"copilot": "Copilot", "gemini": "Gemini", "goose": "Goose",
-			"kilo": "Kilo", "litellm": "LiteLLM", "muse": "Muse", "omp": "OMP",
+			"kilo": "Kilo", "litellm": "LiteLLM", "muse": "Muse", "omp": "OMP", "openhands": "OpenHands",
 			"opencode": "OpenCode", "pi": "Team Pi",
 		},
 		OS: map[string]string{"darwin": teamMacOS, "linux": teamLinux, "macos": teamMacOS, "windows": teamWindows, "win32": teamWindows},
