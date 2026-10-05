@@ -5561,13 +5561,12 @@
     function reviewQueueRangeControls() {
       return `<span class="overview-kpi-range review-queue-collapsed-range" aria-label="Review Queue history range">${Object.keys(REVIEW_QUEUE_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _reviewQueueWindow ? ' active' : ''}" data-action="setReviewQueueWindow" data-arg0="${escapeHtml(win)}" data-stop="1" aria-pressed="${win === _reviewQueueWindow ? 'true' : 'false'}" title="Show ${escapeHtml(win)} review queue history">${escapeHtml(win)}</button>`).join('')}</span>`;
     }
-    function reviewQueueSparkline(entries, fallbackTotal) {
+    function reviewQueueSparkline(entries) {
       const total = reviewQueueSeries(entries, 'total');
       const high = reviewQueueSeries(entries, 'high');
       const normal = reviewQueueSeries(entries, 'normal');
       const low = reviewQueueSeries(entries, 'low');
-      const fallback = Math.max(0, Number(fallbackTotal) || 0);
-      const values = total.length ? total : [fallback, fallback];
+      const values = total.length ? total : [0, 0];
       const max = Math.max(1, ...values, ...high, ...normal, ...low);
       const latest = values[values.length - 1] || 0;
       const min = Math.min(0, ...values);
@@ -5603,7 +5602,8 @@
         ['low', 'L', low],
       ].map(([key, label, value]) => `<span class="review-queue-chip ${key}" title="${escapeHtml(label)} priority PRs">${escapeHtml(label)} ${fmtSparkVal(value)}</span>`).join('');
       const label = `${fmtSparkVal(shownTotal)} PRs · high ${high}, normal ${normal}, low ${low}, ${deltaText} vs range start`;
-      const inner = `${reviewQueueRangeControls()}<span class="review-queue-collapsed-main"><span class="review-queue-collapsed-total">${fmtSparkVal(shownTotal)}</span>${chips}<span class="review-queue-delta ${deltaCls}" title="Delta vs range start">${deltaText}</span></span>${reviewQueueSparkline(entries, shownTotal)}`;
+      const sparkEntries = entries.length ? entries : [{ t: Date.now(), total: shownTotal, high, normal, low }];
+      const inner = `${reviewQueueRangeControls()}<span class="review-queue-collapsed-main"><span class="review-queue-collapsed-total">${fmtSparkVal(shownTotal)}</span>${chips}<span class="review-queue-delta ${deltaCls}" title="Delta vs range start">${deltaText}</span></span>${reviewQueueSparkline(sparkEntries)}`;
       return `<span class="mini-summary-strip review-queue-collapsed" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="review-queue-section">${inner}</span>`;
     }
     function setReviewQueueWindow(win) {
