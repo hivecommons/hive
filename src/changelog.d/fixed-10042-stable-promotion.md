@@ -1,1 +1,1 @@
-- Require the current candidate build to complete the stable-promotion soak before `stable` advances.
+- Define stable as chasing candidate 24 hours behind it, without requiring a quiet candidate period.

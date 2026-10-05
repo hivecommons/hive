@@ -215,7 +215,7 @@ else
 fi
 
 # Promotion must use a compare-and-set on the stable generation instead of
-# requiring the selected build to still be current candidate.
+# requiring a quiet period where the selected build is still candidate.
 promote_fn=$(sed -n '/^promote() {/,/^}/p' "$promoter")
 if grep -q 'stable generation changed for' <<<"$promote_fn" && grep -q 'recheck_generation >= best_generation' <<<"$promote_fn"; then
   pass "promotion uses a stable-generation compare-and-set before publishing"
@@ -292,9 +292,75 @@ out=$(PATH="$select_build/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo O
   STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"new1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
   "$promoter" promote 2>&1) && rc=0 || rc=$?
 if [[ $rc -eq 0 ]] && grep -q '^decision=promote' <<<"$out" && grep -q 'generation 200 > 100' <<<"$out" && grep -q 'sha256:old' <<<"$out"; then
-  pass "newest soaked superseded build is selected over a newer unsoaked candidate"
+  pass "newest build across the 24h line is selected over a newer unsoaked candidate"
 else
-  bad "promote should select the newest soaked build by generation (rc=${rc}; output: ${out})"
+  bad "promote should select the newest build across the 24h line by generation (rc=${rc}; output: ${out})"
+fi
+
+# A hard-gate failure on the newest build across the 24h line holds that build;
+# the scanner must not skip backward to an older build with passing evidence.
+held_gate="$tmp/held-gate"
+mkdir -p "$held_gate/bin"
+cat > "$held_gate/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  ref=${@: -1}
+  if [[ $* == *'.Manifest.Digest'* ]]; then
+    case "$*" in
+      *:stable*) echo 'sha256:stable' ;;
+      *:fail123*) echo 'sha256:fail' ;;
+      *:old1234*) echo 'sha256:old' ;;
+      *) echo 'sha256:unknown' ;;
+    esac
+    exit 0
+  fi
+  case "$ref" in
+    *:stable) gen=100; rev=stable00 ;;
+    *@sha256:fail|*:fail123) gen=250; rev=fail123 ;;
+    *@sha256:old|*:old1234) gen=200; rev=old1234 ;;
+    *) gen=0; rev=unknown ;;
+  esac
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"%s"}}}\n' "$gen" "$rev"
+  exit 0
+fi
+printf '%q ' "$@" >> "$MOCK_CAPTURE"
+printf '\n' >> "$MOCK_CAPTURE"
+MOCK
+cat > "$held_gate/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+jqexpr=""
+prev=""
+for a in "$@"; do
+  [[ $prev == --jq ]] && jqexpr=$a
+  prev=$a
+done
+if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
+  json='{"workflow_runs":[{"run_number":250,"head_sha":"fail123","updated_at":"2033-05-16T12:00:00Z","status":"completed","conclusion":"success"},{"run_number":200,"head_sha":"old1234","updated_at":"2033-05-16T00:00:00Z","status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == api && $* == *'head_sha='* ]]; then
+  json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then
+  echo 0
+  exit 0
+fi
+echo '[]'
+MOCK
+chmod +x "$held_gate/bin/docker" "$held_gate/bin/gh"
+capture="$held_gate/create"
+out=$(PATH="$held_gate/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"old","image_ref":"ghcr.io/example/hive:old1234","git_hash":"old1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'smoke signal gate is holding build fail123 generation 250' <<<"$out" && [[ ! -s $capture ]]; then
+  pass "hard-gate failure holds the newest build across the 24h line"
+else
+  bad "hard-gate failure must not fall back to an older build (rc=${rc}; output: ${out})"
 fi
 
 # If there is no soaked build newer than stable, the hold reason names the
