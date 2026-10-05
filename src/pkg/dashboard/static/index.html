@@ -3311,7 +3311,22 @@
     .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
+    .agent-navbar-upnext { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: min(480px, 34vw); overflow: hidden; }
+    .agent-navbar-upnext[hidden] { display: none; }
+    .agent-navbar-tile { flex: 0 1 150px; min-width: 0; height: 32px; border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; column-gap: var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; }
+    .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
+    .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
+    .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
+    .agent-navbar-tile .agent-tile-dot { grid-row: 1 / 3; margin-left: var(--sp-2); }
+    .agent-navbar-tile .agent-tile-name { grid-column: 2; }
+    .agent-navbar-tile .agent-tile-next { grid-column: 2 / 4; color: var(--muted); }
+    .agent-navbar-tile .agent-up-next { grid-column: 3; }
+    .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
+    .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .agent-navbar-tile.active .agent-tile-dot { animation: none; } }
     .mini-summary-strip .sparkline { display: inline-flex; margin: 0; }
     .mini-summary-strip .sparkline-line, .mini-spark .sparkline-line { stroke-dasharray: 160; stroke-dashoffset: 160; animation: mini-spark-draw 650ms ease-out forwards; }
     .mini-gauge-track { stroke: var(--line-subtle); }
@@ -4219,6 +4234,7 @@
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
       <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
+      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
@@ -4291,6 +4307,7 @@
       </span>
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       </span>
+      <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order"></span>
     </div>
     <div class="oc-topbar-center">
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
@@ -5729,8 +5746,9 @@
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
-      if (!strip) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      refreshAgentNavbarUpNextCountdowns(now);
+      if (!strip) return;
       const tiles = Array.from(strip.querySelectorAll('.agent-collapsed-tile'));
       tiles.forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
@@ -5760,6 +5778,50 @@
     function ensureAgentsCollapsedCountdownTicker() {
       if (window._agentsCollapsedCountdownInterval) return;
       window._agentsCollapsedCountdownInterval = setInterval(refreshAgentsCollapsedCountdowns, AGENTS_COLLAPSED_COUNTDOWN_TICK_MS);
+    }
+    function agentNavbarHasSchedule(a, nowMs) {
+      return !!a && !agentIsDisabled(a) && (a.busy === 'working' || Number.isFinite(agentCollapsedNextKickMs(a, nowMs)) || a.continuous === true);
+    }
+    function agentNavbarTileHtml(a, nowMs, isUpNext) {
+      const name = (a && (a.displayName || a.name)) || 'agent';
+      const disabled = agentIsDisabled(a);
+      const isDown = a && a.state !== 'running';
+      const active = !!a && !disabled && a.busy === 'working';
+      const auth = agentCollapsedAuthInfo(a || {}, isDown);
+      const nextMs = agentCollapsedNextKickMs(a, nowMs);
+      const countdown = agentCollapsedNextLabel(a, nowMs);
+      const classes = ['agent-navbar-tile', active ? 'active' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', isUpNext ? 'up-next' : ''].filter(Boolean).join(' ');
+      const title = `${name}
+next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
+      const upNext = isUpNext ? '<span class="agent-up-next">up next</span>' : '<span class="agent-up-next" aria-hidden="true"></span>';
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-name">${esc(name)}</span>${upNext}<span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span></button>`;
+    }
+    function renderAgentNavbarUpNext(agents, nowMs) {
+      const wrap = document.getElementById('agent-navbar-upnext');
+      if (!wrap) return;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const list = sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3);
+      wrap.hidden = list.length === 0;
+      wrap.innerHTML = list.length ? list.map((a, i) => agentNavbarTileHtml(a, now, i === 0)).join('') : '';
+      if (list.length) ensureAgentsCollapsedCountdownTicker();
+    }
+    function refreshAgentNavbarUpNextCountdowns(nowMs) {
+      const wrap = document.getElementById('agent-navbar-upnext');
+      if (!wrap || wrap.hidden) return;
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
+        const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const nextMs = rawNext ? Number(rawNext) : NaN;
+        const countdown = tile.getAttribute('data-agent-active') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        const el = tile.querySelector('.agent-tile-countdown');
+        if (el && el.textContent !== countdown) el.textContent = countdown;
+      });
+    }
+    function openAgentsUpNextPanel() {
+      navPeekRestore('agents-section', { instant: true });
+      const expanded = navPeekExpand('agents-section');
+      if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
+      ocAfterNavLayoutSettles(['agents-section'], function() { ocScrollSectionIntoView('agents-section'); });
     }
     function agentsCollapsedTilesHtml(agents, nowMs) {
       const list = sortAgentsForCollapsedTiles(agents, nowMs);
@@ -9798,6 +9860,7 @@
       })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
+      renderAgentNavbarUpNext(agents, Date.now());
       const el = document.getElementById('agents');
       // Preserve custom prompt input values across re-renders
       const savedInputs = {};
@@ -9807,6 +9870,7 @@
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       if (sortedAgents.length === 0) {
+        renderAgentNavbarUpNext([], Date.now());
         setSectionSummary('agents-section', agentsSectionSummary([]));
         setIfChanged(el, emptyStateCard('🤖', 'Add your first agent',
           'Agents are the workers that scan repos, review changes, keep CI healthy, and write docs. Start from a quick template or build one from scratch. ' +
