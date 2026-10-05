@@ -3867,6 +3867,24 @@
     .review-queue-reasons { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); color: var(--muted); font-size: var(--fs-xs); }
     .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
     .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-queue-collapsed { width: min(460px, 44vw); max-width: 460px; gap: var(--sp-3); }
+    .review-queue-collapsed-main { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .review-queue-collapsed-total { color: var(--text); font-weight: 900; font-variant-numeric: tabular-nums; }
+    .review-queue-chip { display: inline-flex; align-items: center; gap: var(--sp-1); padding: var(--sp-0) var(--sp-2); border: 1px solid var(--blue); border-radius: var(--r-pill); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .review-queue-chip.high { border-color: var(--red); }
+    .review-queue-chip.low { border-color: var(--muted); }
+    .review-queue-delta { font-size: var(--fs-2xs); font-weight: 900; font-variant-numeric: tabular-nums; }
+    .review-queue-delta.up { color: var(--red); }
+    .review-queue-delta.down { color: var(--green); }
+    .review-queue-delta.flat { color: var(--muted); }
+    .review-queue-spark { flex: 1 1 120px; min-width: 96px; }
+    .review-queue-spark .sparkline { width: 100%; }
+    .review-queue-spark svg { width: 100%; height: 24px; }
+    .review-queue-priority-line { fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
+    .review-queue-priority-line.high { stroke: var(--red); }
+    .review-queue-priority-line.normal { stroke: var(--blue); }
+    .review-queue-priority-line.low { stroke: var(--muted); }
+    .review-queue-collapsed-range { position: static; flex: 0 0 auto; }
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
@@ -5464,6 +5482,20 @@
     }
     const MINI_SUMMARY_HISTORY_PREFIX = 'hive_visual_summary_history:';
     const MINI_SUMMARY_HISTORY_POINTS = 48;
+    const REVIEW_QUEUE_WINDOW_KEY = 'hive_review_queue_history_window';
+    const REVIEW_QUEUE_MS_PER_HOUR = 3600e3;
+    const REVIEW_QUEUE_HOURS_PER_DAY = 24;
+    const REVIEW_QUEUE_DAYS_PER_WEEK = 7;
+    const REVIEW_QUEUE_WINDOWS = { '24h': REVIEW_QUEUE_HOURS_PER_DAY * REVIEW_QUEUE_MS_PER_HOUR, '7d': REVIEW_QUEUE_DAYS_PER_WEEK * REVIEW_QUEUE_HOURS_PER_DAY * REVIEW_QUEUE_MS_PER_HOUR };
+    const REVIEW_QUEUE_SPARK_W = 128;
+    const REVIEW_QUEUE_SPARK_H = 24;
+    const REVIEW_QUEUE_SPARK_PAD_Y = 2;
+    let _reviewQueueWindow = (() => {
+      try {
+        const saved = localStorage.getItem(REVIEW_QUEUE_WINDOW_KEY);
+        return Object.prototype.hasOwnProperty.call(REVIEW_QUEUE_WINDOWS, saved) ? saved : '24h';
+      } catch { return '24h'; }
+    })();
     function miniHiveKey() {
       return String(((window._lastStatus || {}).hiveId) || 'default').trim() || 'default';
     }
@@ -5558,6 +5590,86 @@
       const title = label || text;
       return `<svg class="mini-text" width="74" height="24" viewBox="0 0 74 24" role="img" aria-label="${escapeHtml(title)}">${miniTitleTag(title)}<text x="72" y="16" text-anchor="end" fill="currentColor" font-size="11" font-weight="800">${escapeHtml(text.slice(0, 10))}</text></svg>`;
     }
+    function reviewQueueHistoryEntries() {
+      const cutoff = Date.now() - (REVIEW_QUEUE_WINDOWS[_reviewQueueWindow] || REVIEW_QUEUE_WINDOWS['24h']);
+      const rows = Array.isArray(window._reviewQueueHistory) ? window._reviewQueueHistory : [];
+      return rows.filter(row => {
+        const t = Number(row && row.t);
+        return Number.isFinite(t) && t >= cutoff;
+      });
+    }
+    function reviewQueueSeries(entries, key) {
+      return (entries || []).map(row => Number(row && row[key]) || 0);
+    }
+    function reviewQueueSparkPoints(values, min, max) {
+      const series = (Array.isArray(values) ? values : []).map(v => Number(v) || 0);
+      const range = (max - min) || max || 1;
+      const plotH = REVIEW_QUEUE_SPARK_H - REVIEW_QUEUE_SPARK_PAD_Y * 2;
+      if (series.length <= 1) {
+        const y = REVIEW_QUEUE_SPARK_PAD_Y + plotH - (((series[0] || 0) - min) / range) * plotH;
+        return `0,${y.toFixed(1)} ${REVIEW_QUEUE_SPARK_W.toFixed(1)},${y.toFixed(1)}`;
+      }
+      return series.map((v, i) => {
+        const x = (i / (series.length - 1)) * REVIEW_QUEUE_SPARK_W;
+        const y = REVIEW_QUEUE_SPARK_PAD_Y + plotH - ((v - min) / range) * plotH;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+    }
+    function reviewQueueRangeControls() {
+      return `<span class="overview-kpi-range review-queue-collapsed-range" aria-label="Review Queue history range">${Object.keys(REVIEW_QUEUE_WINDOWS).map(win => `<button type="button" class="overview-kpi-range-btn${win === _reviewQueueWindow ? ' active' : ''}" data-action="setReviewQueueWindow" data-arg0="${escapeHtml(win)}" data-stop="1" aria-pressed="${win === _reviewQueueWindow ? 'true' : 'false'}" title="Show ${escapeHtml(win)} review queue history">${escapeHtml(win)}</button>`).join('')}</span>`;
+    }
+    function reviewQueueSparkline(entries) {
+      const total = reviewQueueSeries(entries, 'total');
+      const high = reviewQueueSeries(entries, 'high');
+      const normal = reviewQueueSeries(entries, 'normal');
+      const low = reviewQueueSeries(entries, 'low');
+      const values = total.length ? total : [0, 0];
+      const max = Math.max(1, ...values, ...high, ...normal, ...low);
+      const latest = values[values.length - 1] || 0;
+      const min = Math.min(0, ...values);
+      const title = `min ${fmtSparkVal(min)} · max ${fmtSparkVal(max)} · latest ${fmtSparkVal(latest)}`;
+      const after = [
+        ['high', high, 'High priority'],
+        ['normal', normal, 'Normal priority'],
+        ['low', low, 'Low priority'],
+      ].map(([key, series, label]) => series.length ? `<polyline class="review-queue-priority-line ${key}" points="${reviewQueueSparkPoints(series, min, max)}"><title>${escapeHtml(label)}: latest ${fmtSparkVal(series[series.length - 1] || 0)}</title></polyline>` : '').join('');
+      return `<span class="review-queue-spark">${renderSparkline(null, values, {
+        width: REVIEW_QUEUE_SPARK_W, height: REVIEW_QUEUE_SPARK_H, min, max, color: 'color-mix(in srgb, var(--purple) 60%, transparent)',
+        title, ariaLabel: `Review Queue total: ${title}`, label: 'review queue total', id: 'review-queue-collapsed',
+        dot: false, strokeWidth: 1, after, svgClass: 'mini-spark', wrapperClass: 'sparkline--flush', wrapperTitle: title,
+      })}</span>`;
+    }
+    function reviewQueueCollapsedSummary(text) {
+      const entries = reviewQueueHistoryEntries();
+      const latest = entries[entries.length - 1] || {};
+      const total = Number(latest.total);
+      const shownTotal = Number.isFinite(total) ? total : miniFirstNumber(text);
+      const hasPrioritySplit = Number.isFinite(Number(latest.high)) || Number.isFinite(Number(latest.normal)) || Number.isFinite(Number(latest.low));
+      const high = Number(latest.high) || 0;
+      const normal = hasPrioritySplit ? (Number(latest.normal) || 0) : shownTotal;
+      const low = Number(latest.low) || 0;
+      const first = entries[0] || {};
+      const startTotal = Number(first.total);
+      const delta = Number.isFinite(startTotal) ? shownTotal - startTotal : 0;
+      const deltaCls = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+      const deltaText = delta > 0 ? `▲${delta}` : delta < 0 ? `▼${Math.abs(delta)}` : '•0';
+      const chips = [
+        ['high', 'H', high],
+        ['normal', 'N', normal],
+        ['low', 'L', low],
+      ].map(([key, label, value]) => `<span class="review-queue-chip ${key}" title="${escapeHtml(label)} priority PRs">${escapeHtml(label)} ${fmtSparkVal(value)}</span>`).join('');
+      const label = `${fmtSparkVal(shownTotal)} PRs · high ${high}, normal ${normal}, low ${low}, ${deltaText} vs range start`;
+      const sparkEntries = entries.length ? entries : [{ t: Date.now(), total: shownTotal, high, normal, low }];
+      const inner = `${reviewQueueRangeControls()}<span class="review-queue-collapsed-main"><span class="review-queue-collapsed-total">${fmtSparkVal(shownTotal)}</span>${chips}<span class="review-queue-delta ${deltaCls}" title="Delta vs range start">${deltaText}</span></span>${reviewQueueSparkline(sparkEntries)}`;
+      return `<span class="mini-summary-strip review-queue-collapsed" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="review-queue-section">${inner}</span>`;
+    }
+    function setReviewQueueWindow(win) {
+      if (!Object.prototype.hasOwnProperty.call(REVIEW_QUEUE_WINDOWS, win)) return;
+      _reviewQueueWindow = win;
+      try { localStorage.setItem(REVIEW_QUEUE_WINDOW_KEY, win); } catch {}
+      setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
+    }
+    window.setReviewQueueWindow = setReviewQueueWindow;
     function miniAvatarDots(contributors, total, label) {
       const list = Array.isArray(contributors) ? contributors.slice(0, 5) : [];
       const dots = list.map((c, i) => `<circle cx="${8 + i * 12}" cy="12" r="5" fill="${_getAgentColor((c && (c.github_username || c.login || c.name)) || String(i))}"><title>${escapeHtml((c && (c.github_username || c.login || c.name)) || 'contributor')}</title></circle>`).join('');
@@ -5709,7 +5821,7 @@
       } else if (sectionId === 'acmm-reco-section') {
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
       } else if (sectionId === 'review-queue-section') {
-        inner = miniGauge(n0, Math.max(10, n0), 'var(--purple)', text);
+        return reviewQueueCollapsedSummary(text);
       } else if (sectionId === 'inception-section') {
         inner = miniBar([{ label: 'proposals', value: n0, color: 'var(--blue)' }, { label: 'in progress', value: nums[1] || 0, color: 'var(--green)' }], text);
       } else if (sectionId === 'contributors-section') {
@@ -20385,6 +20497,7 @@ function burnAreaChart() {
     var _reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE;
     var _reviewQueueTotal = 0;
     var _reviewQueueHasMore = false;
+    window._reviewQueueHistory = window._reviewQueueHistory || [];
 
     // reviewQueuePriorityMeta maps the API's priority (high|normal|low) to the
     // review-priority/* label family the backend mirrors onto PRs; the badge
@@ -20443,6 +20556,7 @@ function burnAreaChart() {
       _reviewQueueLimit = Number(data && data.limit) || REVIEW_QUEUE_PAGE_SIZE;
       _reviewQueueOffset = Number(data && data.offset) || 0;
       _reviewQueueHasMore = !!(data && data.has_more);
+      window._reviewQueueHistory = capDashboardArray((data && Array.isArray(data.history)) ? data.history : window._reviewQueueHistory, DASHBOARD_SERVER_HISTORY_CAP);
       var countEl = document.getElementById('review-queue-count');
       if (countEl) countEl.textContent = _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '';
       setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
