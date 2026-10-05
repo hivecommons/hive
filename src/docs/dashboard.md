@@ -216,10 +216,21 @@ enumerated PRs after hold/exempt filters, excluding items in the waiting, done,
 draft, or blocked Overview bands. Its subtitle carries the complete partition,
 for example `41 issues + 17 PRs = 13 actionable + 13 held + 10
 blocked/needs-human + 22 outside`; the held and blocked/needs-human tiles use
-the same server-side terms, and outside covers scanner-filtered work such as
-hard-suppress labels other than needs-human, exempt filters, reporter triage, standing meta issues,
-dependency dashboards, drafts, or other filters. Its `actionableNow.issues` and
-`actionableNow.prs` splits always sum to `actionableNow.total`. Operators can
+the same server-side terms. The `outside` term is also server-side and is
+broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
+row naming the count, rule, current setting, and how to change it for this
+hive. The rows cover hard-suppress labels (`needs-direction`,
+`needs-decision`, `needs-spec`; `needs-human` is counted under
+blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
+exempt labels, reporter-trust triage from
+`project.issue_filter.reporter_trust`, require-label filtering from
+`project.issue_filter.require_labels`, standing hive advisory/meta issues,
+bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
+hold-adjacent/other remainder rows. See
+[labels-and-control-signals.md](labels-and-control-signals.md) for the label
+semantics behind hold, exempt, and hard-suppress signals. Its
+`actionableNow.issues` and `actionableNow.prs` splits always sum to
+`actionableNow.total`. Operators can
 view each Issues or PRs panel as a donut,
 pie, horizontal bar, single 100% stacked bar, line/spark trend, or age
 histogram. Every shape is still driven by the same band slices and
