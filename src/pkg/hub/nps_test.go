@@ -559,6 +559,51 @@ func TestNPSAdminSectionPrecedesUsersAndIsSeparate(t *testing.T) {
 	if npsContainerAt > usersBodyAt && npsContainerAt < usersEndAt {
 		t.Fatalf("nps-container must not be inside the Users section (nps=%d usersBody=%d usersEnd=%d)", npsContainerAt, usersBodyAt, usersEndAt)
 	}
+
+	npsTag, npsClass := dashboardElementTagAndClass(t, html, "nps-header")
+	usersTag, usersClass := dashboardElementTagAndClass(t, html, "admin-users-header")
+	if npsTag != usersTag || npsClass != usersClass {
+		t.Fatalf("NPS header must match Users header structure: NPS <%s class=%q>, Users <%s class=%q>", npsTag, npsClass, usersTag, usersClass)
+	}
+
+	_, npsSummaryClass := dashboardElementTagAndClass(t, html, "nps-summary")
+	_, usersSummaryClass := dashboardElementTagAndClass(t, html, "admin-users-count")
+	if npsSummaryClass != usersSummaryClass {
+		t.Fatalf("NPS summary class = %q, Users summary class = %q", npsSummaryClass, usersSummaryClass)
+	}
+}
+
+func dashboardElementTagAndClass(t *testing.T, html, id string) (string, string) {
+	t.Helper()
+	idAt := strings.Index(html, `id="`+id+`"`)
+	if idAt < 0 {
+		t.Fatalf("dashboardHTML is missing element id %q", id)
+	}
+	start := strings.LastIndex(html[:idAt], "<")
+	end := strings.Index(html[idAt:], ">")
+	if start < 0 || end < 0 {
+		t.Fatalf("could not extract opening tag for element id %q", id)
+	}
+	open := html[start : idAt+end+1]
+	tagEnd := strings.IndexAny(open[1:], " \t\n>")
+	if tagEnd < 0 {
+		t.Fatalf("could not extract tag name for element id %q", id)
+	}
+	return open[1 : 1+tagEnd], dashboardAttr(open, "class")
+}
+
+func dashboardAttr(openTag, name string) string {
+	needle := name + `="`
+	start := strings.Index(openTag, needle)
+	if start < 0 {
+		return ""
+	}
+	start += len(needle)
+	end := strings.Index(openTag[start:], `"`)
+	if end < 0 {
+		return ""
+	}
+	return openTag[start : start+end]
 }
 
 // npsHubJSFunc extracts a top-level `function name(` from the hub dashboard.
