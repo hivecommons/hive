@@ -14,7 +14,7 @@ permissions:
 jobs:
   update-open-prs:
     if: github.event_name == 'push' || github.event.issue.state_reason != 'not_planned'
-    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
