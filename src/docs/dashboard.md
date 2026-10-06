@@ -411,6 +411,17 @@ per-PR mergeability or check-run fetch, since a draft is not a merge
 candidate.
 
 
+### Settings → Labels → Reporter trust: clanker-requested
+
+The Reporter trust block also controls the opt-in `clanker_requested` policy, which steers untrusted contributors to the [ClankeR relay](contributor-relay.md#steering-outside-prs-to-the-relay-clanker_requested):
+
+- **Toggle** for `project.issue_filter.reporter_trust.clanker_requested` (off by default).
+- **Label name** (placeholder `clanker-requested`) for `clanker_requested_label`; it must not be blank.
+- **Comment addendum** textarea for `clanker_requested_addendum` (optional, max 1000 bytes).
+- A live **preview** of the comment text, updated as you type.
+
+`GET`/`PUT /api/config/governor` expose and validate `clankerRequested`, `clankerRequestedLabel` and `clankerRequestedAddendum`. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md#clanker-requested-policy-for-outside-prs).
+
 ## Appearance themes
 
 Owners can choose a hive-wide dashboard theme in **Settings → Appearance** or by
