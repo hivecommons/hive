@@ -1,1 +1,0 @@
-- Add an opt-in, fail-closed GitHub `viewerCanUpdateBranch` lookup as groundwork for serialized-lane fork handling; existing merge and branch-update behavior is unchanged (#10890).

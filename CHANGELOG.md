@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.138.0)
+
+### Added
+
+- Add an opt-in, fail-closed GitHub `viewerCanUpdateBranch` lookup as groundwork for serialized-lane fork handling; existing merge and branch-update behavior is unchanged (#10890).
+
+### Fixed
+
+- Dashboard cost-per-PR and cost-per-issue divisors retain their persisted last-good counts when GitHub returns incomplete search results, rather than replacing them with partial or zero totals (#10875).
+
+### Security
+
+- The SaaS provisioning template's `hive-node-health-reader-*` ClusterRole no longer grants `nodes/proxy` to the tenant hive's ServiceAccount. That subresource reaches every kubelet's `/exec`, `/attach` and `/pods` endpoints through the API server, so a per-tenant token could act on any pod in the shared cluster. The spoke's kubelet `stats/summary` disk-usage read was already best-effort; push-reported spokes now show disk capacity without a live usage percentage until a safe source exists. Operators who provisioned tenants on an affected build should re-apply the narrowed ClusterRole (#10902).
+
 ## 2026-10-06 (v5.137.1)
 
 ### Changed
