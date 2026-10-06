@@ -102,6 +102,10 @@ and the entrypoint then copies the runtime config over it. The seed and overlay
 merge run only when the PVC has no runtime config, and the entrypoint then writes
 the merged result to `hive.yaml.runtime` (`entrypoint.sh:989-992`).
 
+Restore **both** `hive.yaml.runtime` and `hive.yaml.dashboard`. Restoring only the
+overlay onto a PVC that still holds an older `hive.yaml.runtime` boots the older
+file. The backup archive carries both (`src/docs/backup-restore.md`).
+
 `hive.yaml.runtime` and the overlay are **near-copies but not interchangeable**. The overlay
 is written secret-free on purpose (`dashboardOverlayBytes` collapses
 `HIVE_GITHUB_TOKEN` back to `${HIVE_GITHUB_TOKEN}` and blanks a
