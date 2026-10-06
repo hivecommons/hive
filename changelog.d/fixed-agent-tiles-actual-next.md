@@ -1,0 +1,1 @@
+- Fix dashboard agent tiles so UP NEXT follows the governor pending-kick queue and due-now idle agents do not render bare now labels.

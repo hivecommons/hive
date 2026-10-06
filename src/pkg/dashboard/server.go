@@ -816,6 +816,7 @@ type FrontendGovernor struct {
 	NextKick   string             `json:"nextKick,omitempty"`
 	NextKickAt string             `json:"nextKickAt,omitempty"`
 	NextKickIn string             `json:"nextKickIn,omitempty"`
+	NextAgents []string           `json:"nextAgents,omitempty"`
 }
 
 type FrontendThresholds struct {

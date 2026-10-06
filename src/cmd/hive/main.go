@@ -6707,6 +6707,8 @@ func runEvalCycle(
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
 	}
 	messages = kickGate.Kept
+	govState.PendingKicks = pendingKickAgentsFromMessages(messages)
+	gov.SetPendingKicks(govState.PendingKicks)
 	if notifyProviderBudget {
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
