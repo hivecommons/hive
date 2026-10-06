@@ -27,7 +27,9 @@ const (
 // PreemptedLabel is the label a displaced holder should watch for.
 func PreemptedLabel(holder string) string { return LabelPreemptedPrefix + holder }
 
-// ClaimComment renders the comment posted when a claim is created or renewed.
+// ClaimComment renders the comment posted when a claim is created. The
+// marker's until= is the expiry at that moment; renewals do not edit it, so
+// the human-readable line states the time-to-live instead of an end time.
 func ClaimComment(c Claim) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s", markerClaim, c.Holder, c.Kind)
@@ -41,8 +43,16 @@ func ClaimComment(c Claim) string {
 		fmt.Fprintf(&b, " hive=%s", c.Hive)
 	}
 	fmt.Fprintf(&b, " until=%s -->\n", c.ExpiresAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "🔒 Claimed by %s (%s%s) until %s UTC. Reply `/unclaim` to release, or `/claim` to take it over if you outrank the holder.",
-		mention(c), c.Kind, hiveSuffix(c), c.ExpiresAt.UTC().Format("2006-01-02 15:04"))
+	// The visible text never prints a clock time: the comment is posted once,
+	// while renewals only move the ledger's expiry (#10926), so a fixed time
+	// would go stale and read as a lapsed claim.
+	fmt.Fprintf(&b, "🔒 Claimed by %s (%s%s).", mention(c), c.Kind, hiveSuffix(c))
+	if ttl := c.ExpiresAt.Sub(c.ClaimedAt); !c.ClaimedAt.IsZero() && ttl > 0 {
+		fmt.Fprintf(&b, " The claim lasts %s without activity and renews while the work continues.", ttl.Round(time.Minute))
+	} else {
+		b.WriteString(" The claim renews while the work continues and lapses after a period without activity.")
+	}
+	b.WriteString(" Reply `/unclaim` to release, or `/claim` to take it over if you outrank the holder.")
 	return b.String()
 }
 
