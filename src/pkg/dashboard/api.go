@@ -318,6 +318,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/repos/pauses", s.handleRepoPauses)
 	s.mux.HandleFunc("GET /api/repos/merge-strategy", s.handleRepoMergeStrategyGet)
 	s.mux.HandleFunc("POST /api/repos/merge-strategy", s.handleRepoMergeStrategySet)
+	s.mux.HandleFunc("GET /api/repos/merge-lane", s.handleRepoMergeLaneGet)
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/hold-permission", s.handleRepoHoldPermission)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.handleRepoItemHold)
 
