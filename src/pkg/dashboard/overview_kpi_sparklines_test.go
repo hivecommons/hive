@@ -19,8 +19,9 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 		Hold: FrontendHold{Total: 1},
 		Repos: []FrontendRepo{{
 			Name:   "hive",
-			Issues: 2, PRs: 1,
+			Issues: 3, PRs: 1,
 			ActionableIssues: []any{github.Issue{CreatedAt: start.Add(-2 * time.Hour), UpdatedAt: start.Add(-1 * time.Hour)}},
+			HeldIssues:       []any{github.HoldItem{Number: 2, Type: "issue", Labels: []string{"hold"}}},
 			OpenPrs:          []any{github.PullRequest{CreatedAt: start.Add(-3 * time.Hour), UpdatedAt: start.Add(-30 * time.Minute), Labels: []string{"needs-human"}}},
 			HeldPrs:          []any{github.PullRequest{Labels: []string{"needs-human"}}},
 		}},
@@ -33,15 +34,9 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 		t.Fatalf("history len = %d, want cap %d", len(got), trendHistoryMaxEntries)
 	}
 	last := got[len(got)-1]
-	if last.OverviewOpenIssues != 2 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 1 || last.OverviewBlockedHuman != 2 {
+	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 {
 		t.Fatalf("overview KPI sample = %+v", last)
 	}
-	lastAt := start.Add(time.Duration(trendHistoryMaxEntries+4) * timeHistoryStep())
-	wantMedianAgeSec := int(lastAt.Sub(start.Add(-1 * time.Hour)).Seconds())
-	if last.OverviewMedianAgeSec != wantMedianAgeSec {
-		t.Fatalf("median age sec = %d, want %d", last.OverviewMedianAgeSec, wantMedianAgeSec)
-	}
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "overview-history.json")
 	data, err := json.Marshal(got)
@@ -94,20 +89,6 @@ func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
 	if strings.Contains(string(data), `"overviewMedianAgeSec"`) {
 		t.Fatalf("marshaled overview history reported unavailable median as zero: %s", data)
 	}
-
-	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	withMedian := &Server{}
-	withMedian.appendTrendHistoryAt(&StatusPayload{Repos: []FrontendRepo{{
-		Name:             "hive",
-		ActionableIssues: []any{github.Issue{UpdatedAt: at}},
-	}}}, at)
-	data, err = json.Marshal(withMedian.OverviewKPIHistory(0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"overviewMedianAgeSec":0`) {
-		t.Fatalf("marshaled real zero median missing: %s", data)
-	}
 }
 
 func timeHistoryStep() time.Duration {
@@ -132,8 +113,10 @@ let _overviewLastRepos = [{name: 'hive', full: 'hivecommons/hive'}];
 global.window = {_lastStatus: {hiveId: 'test'}};
 global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
 let _overviewKPIHistory = [
-  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3, overviewMedianAgeSec: 3600}
+  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3}
 ];
+const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
+const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 function overviewKPILoadLocal(){ return []; }
 function overviewKPIRecordLocal(){}
 function overviewKPIWindowControls(){ return '<span class="overview-kpi-range"></span>'; }
@@ -141,25 +124,31 @@ function overviewItemAgeMinutes(){ return NaN; }
 `)
 	for _, name := range []string{
 		"fmtSparkVal", "sparklineSeriesKey", "sparklineReducedMotion", "sparklineValueSummary", "renderSparkline",
-		"fmtDurationFromSeconds", "overviewMedianAgeSeconds", "overviewMedianAgeLabel", "overviewKPIRepoScope", "overviewKPIHistoryEntries",
+		"overviewKPIRepoScope", "overviewKPIHistoryEntries",
 		"overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewFilterRepos",
-		"overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
+		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
+		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
+		"overviewKPITerm", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
+		"overviewKPIEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
 	source.WriteString(`
-const issueSlices = [{key: 'ready', count: 58, items: []}];
+const issueSlices = [{key: 'ready', count: 19, items: []}];
 const prSlices = [{key: 'ready', count: 12, items: []}, {key: 'blocked', count: 3, items: []}];
 // Match the production renderOverviewCharts path: _overviewLastRepos is the
 // full status payload repo shape (name + full) and renderOverviewKPIs receives
 // the selected objects returned by overviewFilterRepos.
-const liveRepos = [{name: 'hive', full: 'hivecommons/hive', heldIssues: [1,2], heldPrs: [3,4,5,6]}];
+const liveRepos = [{name: 'hive', full: 'hivecommons/hive', issues: 39, prs: 31, actionableIssues: [1,2,3,4,5,6,7], heldIssues: [8,9], openPrs: [10,11], heldPrs: [12,13]}];
 _overviewLastRepos = liveRepos;
-const markup = renderOverviewKPIs(overviewFilterRepos(liveRepos), issueSlices, prSlices, {showKPIs: true, timeBasis: 'updated'});
-assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
-assert.equal((markup.match(/<svg/g) || []).length, 6);
-for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','median-age']) {
+const markup = renderOverviewKPIs(overviewFilterRepos(liveRepos), issueSlices, prSlices, {showKPIs: true});
+assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 5);
+assert.equal((markup.match(/<svg/g) || []).length, 5);
+assert.match(markup, />39<\/span><span class="overview-kpi-label">Total open issues<\/span>/);
+assert.match(markup, />31<\/span><span class="overview-kpi-label">Total open PRs<\/span>/);
+assert.match(markup, />39 issues \+ 31 PRs = /);
+for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human']) {
   assert.match(markup, new RegExp('overview-kpi:' + key));
 }
 `)

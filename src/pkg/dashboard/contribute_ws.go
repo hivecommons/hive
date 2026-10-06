@@ -1078,8 +1078,6 @@ type ContributeWSHub struct {
 	alreadyDoneMarker func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error
 	// issuePRClaimMarker is the #8876 pending-label seam for verified PR claims.
 	issuePRClaimMarker func(context.Context, string, int, ghpkg.IssueClaim) error
-	// prClosingVerifier is the #8876 seam for GitHub closingIssuesReferences.
-	prClosingVerifier func(context.Context, string, int, int) (bool, error)
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task

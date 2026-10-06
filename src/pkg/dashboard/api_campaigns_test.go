@@ -322,6 +322,10 @@ func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
 	}
 }
 
+func TestCampaignRecheckManualForceAndConflict(t *testing.T) {
+	t.Skip("Spek continuous convergence recheck is disabled on v6 pending #10734")
+}
+
 func TestCampaignReleasePreservesSpektacularRunLease(t *testing.T) {
 	for _, stage := range []string{StageSpec, StagePlan, StageImplement} {
 		t.Run(stage, func(t *testing.T) {

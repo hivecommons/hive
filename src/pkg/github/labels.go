@@ -1,18 +1,51 @@
 package github
 
+import "strings"
+
 type issueLabelDefinition struct {
 	color       string
 	description string
 }
 
-const issueNeedsDirectionLabel = "needs-direction"
+const (
+	issueNeedsDirectionLabel = "needs-direction"
+	issueNeedsSpecLabel      = "needs-spec"
+)
+
+// hardSuppressIssueLabels are the escalation labels that park an issue on a
+// person ("Hard suppress until directed" in docs/labels-and-control-signals.md).
+// An issue carrying one never enters the actionable set, so no agent kick or
+// contributor offer can name or claim it. Hold and do-not-merge labels are
+// handled by the hold list and exempt filter respectively.
+var hardSuppressIssueLabels = []string{
+	issueNeedsHumanLabel,
+	issueNeedsDirectionLabel,
+	issueNeedsDecisionLabel,
+	issueNeedsSpecLabel,
+}
+
+func hasHardSuppressIssueLabel(labels []string) bool {
+	return hardSuppressIssueLabel(labels) != ""
+}
+
+func hardSuppressIssueLabel(labels []string) string {
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		for _, suppress := range hardSuppressIssueLabels {
+			if strings.EqualFold(label, suppress) {
+				return suppress
+			}
+		}
+	}
+	return ""
+}
 
 var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 	issueNeedsDirectionLabel: {
 		color:       "d4c5f9",
 		description: "Hive needs a maintainer direction decision before continuing",
 	},
-	"needs-spec": {
+	issueNeedsSpecLabel: {
 		color:       "bfd4f2",
 		description: "Hive needs a specification or acceptance criteria before continuing",
 	},

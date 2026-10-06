@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -153,26 +154,13 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 			h.clearNoWorkVerdict(repo, number)
 		}
 		if alreadyDone {
-			// #8876: a verified merged PR is still pending evidence, not resolved,
-			// unless GitHub itself would close the issue or an operator confirms it.
-			shouldClose := false
-			var closeEvidence ghpkg.PRCloseEvidence
-			if claim.MergedPR && h.closeAlreadyDoneAllowed(repo) {
-				if evidence, ok := h.prCloseEvidence(ctx, repo, claim.PRNumber, number); ok {
-					shouldClose = true
-					closeEvidence = evidence
-				}
-			}
-			if shouldClose {
-				var err error
-				if closeEvidence.ConfiguredLineKeyword && h.server != nil && h.server.deps != nil && h.server.deps.GHClient != nil {
-					err = h.server.deps.GHClient.CloseIssueForConfiguredLinePR(ctx, repo, number, claim.PRNumber, closeEvidence)
-				} else {
-					err = h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, true)
-				}
-				if err != nil {
+			if claim.MergedPR && claim.PRNumber > 0 {
+				if err := h.markAlreadyDoneIssue(ctx, repo, number, claim, reporter, true); err != nil {
+					if errors.Is(err, ghpkg.ErrReporterConfirmationRequired) {
+						return verdictDispositionAlreadyDoneLabeled
+					}
 					h.logger.Warn("[contribute-ws] already-done verdict mark failed",
-						"repo", repo, "number", number, "ref", ref.String(), "close", shouldClose, "error", err.Error())
+						"repo", repo, "number", number, "ref", ref.String(), "close", true, "error", err.Error())
 					return verdictDispositionAlreadyDoneVerified
 				}
 				return verdictDispositionAlreadyDoneClosed
@@ -210,17 +198,6 @@ func alreadyDoneVerdictRefs(repo string, number int, reason, reasonKind string, 
 	return refs, true
 }
 
-func (h *ContributeWSHub) closeAlreadyDoneAllowed(repo string) bool {
-	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
-		return false
-	}
-	cfg := h.server.deps.Config
-	if !cfg.Hub.IsContributeCloseAlreadyDone() {
-		return false
-	}
-	return cfg.EffectiveACMMLevelForRepo(repo) >= config.SelfMergeMinACMMLevel
-}
-
 func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim) error {
 	if h != nil && h.issuePRClaimMarker != nil {
 		return h.issuePRClaimMarker(ctx, repo, number, claim)
@@ -242,33 +219,6 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})
 }
 
-func (h *ContributeWSHub) prCloseEvidence(ctx context.Context, repo string, prNumber, issueNumber int) (ghpkg.PRCloseEvidence, bool) {
-	if prNumber <= 0 || issueNumber <= 0 || h == nil {
-		return ghpkg.PRCloseEvidence{}, false
-	}
-	if h.prClosingVerifier != nil {
-		ok, err := h.prClosingVerifier(ctx, repo, prNumber, issueNumber)
-		if err != nil {
-			if h.logger != nil {
-				h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
-			}
-			return ghpkg.PRCloseEvidence{}, false
-		}
-		return ghpkg.PRCloseEvidence{Closes: ok, GitHubRelation: ok}, ok
-	}
-	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
-		return ghpkg.PRCloseEvidence{}, false
-	}
-	evidence, err := h.server.deps.GHClient.PRCloseEvidence(ctx, repo, prNumber, issueNumber)
-	if err != nil {
-		if h.logger != nil {
-			h.logger.Warn("[contribute-ws] closing relationship check failed", "repo", repo, "pr", prNumber, "issue", issueNumber, "error", err.Error())
-		}
-		return ghpkg.PRCloseEvidence{}, false
-	}
-	return evidence, evidence.Closes
-}
-
 func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {
 	if h != nil && h.alreadyDoneMarker != nil {
 		return h.alreadyDoneMarker(ctx, repo, number, claim, reporter, closeIssue)
@@ -283,7 +233,7 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 	evidence := alreadyDoneEvidenceText(claim)
 	action := fmt.Sprintf("added the `%s` label so this is withheld from contributor offers", label)
 	if closeIssue {
-		action = "closing"
+		action = fmt.Sprintf("added the `%s` label and closing as completed if the issue close gate allows", label)
 	}
 	body := fmt.Sprintf("Hive: already resolved by %s (found by contributor %s); %s.", evidence, strings.TrimSpace(reporter), action)
 	if strings.TrimSpace(reporter) == "" {
@@ -306,8 +256,7 @@ func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string,
 		return nil
 	}
 	return h.server.deps.GHClient.CloseIssue(ctx, repo, number, ghpkg.IssueCloseOptions{
-		OverrideReason:          "verified already-done contributor verdict: " + evidence,
-		SuppressOverrideComment: true,
+		StateReason: ghpkg.IssueStateReasonCompleted,
 	})
 }
 

@@ -965,7 +965,7 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
    instead of stretching the page; the panel scrolls, the page does not. */
-.cc-queue{max-height:560px;overflow-y:auto}
+.cc-queue-scroll{max-height:560px;overflow-y:auto}
 /* The enter animation is OPT-IN via .cc-q-enter (added only to genuinely-new rows),
    NOT baked into .cc-q-item — otherwise every poll re-render replayed cc-popin on
    every row and the whole queue "blinked". Mirrors .clanker-row.cc-enter above. */
@@ -1102,7 +1102,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-menu-btn{line-height:1}
 .cc-q-menu{position:fixed;top:0;left:0;right:auto;bottom:auto;z-index:10002;min-width:190px;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:var(--sp-3);display:none}
 .cc-q-menu.open{display:block}
-/* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue overflow
+/* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue-scroll overflow
    clip; ccBindQueueMenus measures the trigger and flips/clamps inside the viewport
    (and visible queue panel) before paint. */
 .cc-q-menu button.cc-q-act{justify-content:flex-start;width:100%%}
@@ -1585,6 +1585,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <option value="bob" data-install="" data-host-install="curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash" data-model-flag="" data-default-model="" data-env="# Bob (IBM bobshell) — get a key at https://bob.ibm.com (Scope: Inference).\n# Exported locally, never sent to the hive.\nexport BOBSHELL_API_KEY=your-bob-api-key">Bob</option>
 <option value="watsonx" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# IBM watsonx.ai — OpenAI-compatible gateway, bring your own project + key.\n# watsonx auth is an IAM-minted JWT, not a raw bearer key — your local\n# Claude-Code setup or a small local proxy handles the token exchange.\n# Exported locally, never sent to the hive.\nexport HIVE_LITELLM_ENDPOINT=https://us-south.ml.cloud.ibm.com/ml/gateway/v1\nexport HIVE_LITELLM_API_KEY=your-ibm-cloud-api-key\nexport WATSONX_PROJECT_ID=your-watsonx-project-id">watsonx.ai (IBM Granite + your key)</option>
 <option value="agy" data-install="" data-host-install="# Antigravity CLI (Google): https://antigravity.google/product/antigravity-cli\nbrew install --cask antigravity-cli\nagy   # sign in once with your Google account, interactively, then exit" data-model-flag="--model" data-default-model="" data-env="# Optional: agy effort — REQUIRED alongside a model, or agy ignores the model.\n# export AGENT_REASONING_EFFORT=low   # low|medium|high\n# agy has no OS-level sandbox (see the confinement note below): local mode\n# refuses to launch unless you set the escape hatch below, and container mode\n# is the boundary that actually applies.\n# export HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1   # local mode only; opts OUT of the container boundary">Antigravity (agy)</option>
+<option value="openhands" data-install="" data-host-install="uv tool install openhands --python 3.12\n# Optional: run openhands once interactively to persist credentials under ~/.openhands/settings.json" data-model-flag="--model" data-default-model="" data-env="# OpenHands CLI — new/experimental, headless-only.\n# API-key path (preferred for headless):\nexport LLM_API_KEY=your-provider-key\n# Optional OpenAI-compatible base URL:\n# export LLM_BASE_URL=https://your-gateway.example.com/v1\n# Pick any LiteLLM-style model id with the Model field above; Hive maps AGENT_MODEL to LLM_MODEL.\n# OpenHands has no Hive-wired sandbox on this path and the stock contributor image does not ship it.\n# Host mode refuses unless you intentionally opt in:\n# export HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1">OpenHands (new experimental)</option>
 <option value="other" data-install="" data-host-install="# Install your CLI tool" data-model-flag="" data-default-model="">Other (host only)</option>
 </select>
 </span>
@@ -1615,7 +1616,7 @@ select.admin-act{min-width:0;max-width:100%%}
      is a long-lived personal token that is more exposed than a laptop file, with
      the per-task credential boundary tracked in #2537. -->
 <div id="k8s-note" style="display:none;margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #d29922;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
-<strong style="color:var(--text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
+<strong style="color:var(--text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends with staged credentials work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex, watsonx.ai, and Goose</strong>. Other backends will refuse work at pod startup.<br>
 <span style="color:var(--text-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/hivecommons/hive/issues/2537" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2537</a> and is not solved by this path.</span>
 </div>
 <!-- Host-only note. Shown for backends the containerized/Kubernetes paths cannot
@@ -1713,7 +1714,8 @@ var k8sTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/
 // TTY, so anything outside this list refuses work at startup.
 var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1};
 // Backends that can only run on the contributor's own host. "other" has no
-// image by definition, so it stays here. Selecting one flips Mode to Host
+// image by definition; OpenHands needs Python 3.12 and is not in the stock
+// contributor image. Selecting one flips Mode to Host
 // rather than generating commands that cannot work.
 //
 // agy USED TO be in this list too, on the claim that the contributor image
@@ -1733,7 +1735,7 @@ var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:
 // bin/contributor-relay.js); it stays out of K8S_HEADLESS_BACKENDS
 // regardless, because a pod has no way to complete its interactive sign-in
 // even once.
-var HOST_ONLY_BACKENDS=['other'];
+var HOST_ONLY_BACKENDS=['other','openhands'];
 function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 // openrouter/vllm/llm-d/watsonx are UI flavors of the litellm backend: the
 // Justfile only accepts 'litellm' (#6821), so every generated command must
@@ -1784,7 +1786,7 @@ if(mode==='kubernetes'){
 // line — but model/env exports still belong before contribute-setup so the
 // generated ConfigMap picks them up. If the chosen backend has no headless
 // mode, prepend a visible warning comment (the Justfile also warns on stderr).
-var warn=K8S_HEADLESS_BACKENDS[backend]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot, Codex or Goose for Kubernetes.\n';
+var warn=K8S_HEADLESS_BACKENDS[backend]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot, Codex, watsonx.ai or Goose for Kubernetes.\n';
 var k8sPre=envLines+modelLine;
 cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace('ROLEHELP',roleHelp).replace(/CLI/g,backend).replace('just contribute-setup',k8sPre+'just contribute-setup');
 }else if(mode==='host'){
@@ -1843,6 +1845,7 @@ bob:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" he
 watsonx:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M12 7v10M8.5 9.5l7 5M15.5 9.5l-7 5" stroke="#1f70c1" stroke-width="1.4" stroke-linecap="round"/></svg>',
 omp:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="#7c93ff" stroke-width="1.5"/><path d="M8 9h8M10 9v8M14 9v5a2 2 0 0 0 2 2" stroke="#7c93ff" stroke-width="1.6" stroke-linecap="round"/></svg>',
 agy:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5 19 19H5z" fill="none" stroke="#a78bfa" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 20.5v-5" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="10.5" r="1.4" fill="#a78bfa"/></svg>',
+openhands:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4M16.5 4.2l-2 3.4M19.8 7.5l-3.4 2M21 12h-4M19.8 16.5l-3.4-2M16.5 19.8l-2-3.4M12 21v-4M7.5 19.8l2-3.4M4.2 16.5l3.4-2M3 12h4M4.2 7.5l3.4 2M7.5 4.2l2 3.4" stroke="#e6edf3" stroke-width="1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#e6edf3" stroke-width="1.5"/></svg>',
 other:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#8b949e" stroke-width="1.5"/><path d="M8 12h.01M12 12h.01M16 12h.01" stroke="#8b949e" stroke-width="2.2" stroke-linecap="round"/></svg>'
 };
 var CLIENTS={
@@ -1864,6 +1867,7 @@ bob:{name:'Bob',tag:'IBM'},
 watsonx:{name:'watsonx.ai',tag:'IBM'},
 omp:{name:'Oh My Pi',tag:'omp'},
 agy:{name:'Antigravity',tag:'Google (unconfined)'},
+openhands:{name:'OpenHands',tag:'new experimental'},
 other:{name:'Other',tag:'host only'}
 };
 var tilesEl=document.getElementById('client-tiles');
@@ -2365,11 +2369,13 @@ It clears automatically when the period elapses. An operator can shorten or disa
     <button class="hv-btn btn-primary" type="button" id="cc-interests-add-btn">Add</button>
   </div>
 </div>
+<div class="cc-queue-scroll">
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
 <!-- End-of-queue block (#2595): a calm "all caught up" marker + the hive's managed
      rate-limit settings + the viewer's daily quota. Rendered by ccRenderQueueEnd()
      only when the FULL queue is shown (no active filter). Hidden until hydrated. -->
 <div id="cc-q-end" style="display:none"></div>
+</div>
 <!-- Withheld (#6902): the candidates Hive knows about and is NOT offering, with
      the reason the admission ladder recorded when it refused them. Collapsed by
      default and fetched only on first expand (?withheld=1), so the normal ready
@@ -4337,7 +4343,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 // ccPlaceFixedPopover places an already-visible popover/menu using viewport
 // coordinates so it is not clipped by card/queue overflow. It prefers below the
 // trigger, flips above when needed, and clamps inside the viewport plus an optional
-// boundary element (for example the visible .cc-queue panel).
+// boundary element (for example the visible .cc-queue-scroll panel).
 function ccPlaceFixedPopover(anchor,pop,opts){
   opts=opts||{};
   var edge=opts.edge||8,gap=opts.gap||8;
@@ -5611,13 +5617,24 @@ function ccLookupDecisions(user){
   if(!user){el.innerHTML='<div class="ops-empty">Look up a contributor above to see what the hub decided about them.</div>';return;}
   ccDecUser=user;
   el.innerHTML='<div class="ops-empty">Loading hub decisions for '+esc(user)+'&hellip;</div>';
-  fetch('/api/contribute/decisions?username='+encodeURIComponent(user)+'&limit=100')
+  return fetch('/api/contribute/decisions?username='+encodeURIComponent(user)+'&limit=100',{headers:{'Accept':'application/json'}})
     .then(function(r){
+      if(r.status===401)throw new Error('Sign in to view hub decisions, then retry the lookup');
       if(r.status===403){var e=new Error('forbidden');e.gated=true;throw e;}
       if(!r.ok)throw new Error('HTTP '+r.status);
-      return r.json();
+      // Proxies and older deployments can return a login page or HTML fallback
+      // with status 200. Do not expose a JSON parser error or call it no decisions.
+      var contentType=(r.headers.get('Content-Type')||'').split(';')[0].trim().toLowerCase();
+      if(contentType!=='application/json'){
+        throw new Error(r.redirected?'The request was redirected instead of returning decisions. Sign in again if needed, then retry; if this persists, ask the hive operator to check API routing':'The hub decisions API returned an unexpected response. Ask the hive operator to check the deployed version and API routing');
+      }
+      return r.json().catch(function(){throw new Error('The hub decisions API returned invalid JSON. Retry the lookup or contact the hive operator');});
     })
-    .then(function(d){if(ccDecUser!==user)return;ccRenderDecisions(user,d);})
+    .then(function(d){
+      if(ccDecUser!==user)return;
+      if(!d||!Array.isArray(d.decisions))throw new Error('The hub decisions API returned an unexpected response. Ask the hive operator to check the deployed version and API routing');
+      ccRenderDecisions(user,d);
+    })
     .catch(function(err){
       if(ccDecUser!==user)return;
       if(err&&err.gated){
@@ -6255,10 +6272,10 @@ function ccBindQueueMenus(root){
       ccCloseQueueMenus();
       if(!isOpen){
         // Position with viewport coordinates BEFORE it paints so the menu escapes
-        // the scrolling .cc-queue overflow clip and flips/clamps when near the
+        // the scrolling .cc-queue-scroll overflow clip and flips/clamps when near the
         // viewport or visible queue-panel bottom.
         menu.classList.add('open');
-        ccPlaceFixedPopover(btn,menu,{align:'right',gap:6,fallbackWidth:220,fallbackHeight:220,boundary:btn.closest('.cc-queue')});
+        ccPlaceFixedPopover(btn,menu,{align:'right',gap:6,fallbackWidth:220,fallbackHeight:220,boundary:btn.closest('.cc-queue-scroll')});
         btn.setAttribute('aria-expanded','true');
       }
     });
@@ -7393,14 +7410,37 @@ poll();setInterval(poll,3000);
 </div>
 </div>
 <div style="margin-top:40px;padding:var(--sp-6) var(--sp-0);border-top:1px solid var(--line-strong);font-size:var(--fs-sm);color:var(--text-muted);display:flex;align-items:center;gap:var(--sp-4)">
-  <span id="hive-version">loading...</span>
+  <span id="hive-version" role="status">Hive version unavailable</span>
 </div>
 <script>
-fetch('/api/version').then(function(r){return r.json()}).then(function(d){
+function ccLoadVersion(){
   var el=document.getElementById('hive-version');
-  var dot=d.behind?'\u{1F7E1}':'\u{1F7E2}';
-  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
-}).catch(function(){});
+  if(!el)return;
+  var settled=false, controller=new AbortController();
+  el.textContent='Loading Hive version...';
+  function finish(text){
+    if(settled)return;
+    settled=true;
+    clearTimeout(timer);
+    el.textContent=text;
+  }
+  var timer=setTimeout(function(){
+    finish('Hive version unavailable');
+    controller.abort();
+  },10000);
+  // The public contribute page can be viewed without dashboard API access.
+  return Promise.resolve().then(function(){
+    return fetch('/api/version',{signal:controller.signal});
+  }).then(function(r){
+    if(!r.ok)throw new Error('Version request failed');
+    return r.json();
+  }).then(function(d){
+    if(!d||typeof d.version!=='string'||!d.version.trim()||typeof d.short!=='string'||!d.short.trim()||(d.behind!==undefined&&typeof d.behind!=='boolean'))throw new Error('Invalid version response');
+    var dot=d.behind===undefined?'⚪':(d.behind?'🟡':'🟢');
+    finish(dot+' Hive v'+d.version+' ('+d.short+')'+(d.behind===undefined?' · update status unavailable':(d.behind?' · update available':' · up to date')));
+  }).catch(function(){finish('Hive version unavailable');});
+}
+ccLoadVersion();
 </script>
 </body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), "{{HIVE_HUB_PROXIED}}", hubProxiedJS), "{{KNOWLEDGE_STATE_PROTOCOL_VERSION}}", knowledgeStateProtocolVersionJS), "{{DASHBOARD_ASSET_LINKS}}", contributeDashboardAssetLinksHTML), "{{CONTRIBUTOR_THEME_LINK}}", themeHeadHTML), projectName, webstatic.MichromaFontFaceCSS, "", customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 	webstatic.ApplyDocumentScriptSrcElem(w, page.Bytes())

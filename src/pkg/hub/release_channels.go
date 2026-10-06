@@ -26,8 +26,7 @@ import (
 // branches' "<branch>-latest" tags. When CI re-points a channel, the badge
 // follows on the next cache refresh with no hub code change.
 const (
-	// ReleaseChannelStable is the most conservative track: the newest build
-	// that has been promoted as generally safe.
+	// ReleaseChannelStable chases candidate and is always 24 hours behind it.
 	ReleaseChannelStable = "stable"
 
 	// ReleaseChannelCandidate is the pre-promotion track — a build believed

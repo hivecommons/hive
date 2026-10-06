@@ -101,6 +101,11 @@ is re-read on every governor cycle, so a plan Wavefront republishes is picked
 up without a restart. `receipts_dir` is optional; empty keeps receipts in
 memory for the life of the process.
 
+Dashboard owners can configure the same `wavefront` block from **Settings →
+Governor → Work Source → Wavefront (Crustify) migration graph** instead of
+hand-editing `hive.yaml`; the URL source expects a plain unauthenticated JSON
+document, matching the YAML-only configuration.
+
 **Graph document.** A JSON object with a `graph` name, a `revision`, and a
 `nodes` list. Each node has `id`, `title`, an optional `kind`, an optional
 `depends_on` list of node ids, and an optional `status` (`pending` (default),

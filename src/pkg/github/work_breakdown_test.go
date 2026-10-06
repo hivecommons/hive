@@ -44,7 +44,7 @@ func TestEnumerateActionable_WorkBreakdown(t *testing.T) {
 		t.Fatalf("raw totals = %+v, want %+v", got, want)
 	}
 	got := result.WorkBreakdownByRepo[repo]
-	wantIssues := RepoIssueBreakdown{Actionable: 2, Hold: 1, HiveAdvisory: 1, DependencyDashboard: 1, Filtered: 2}
+	wantIssues := RepoIssueBreakdown{Actionable: 2, Hold: 1, HiveAdvisory: 1, DependencyDashboard: 1, Filtered: 2, Exempt: 1}
 	wantPRs := RepoPRBreakdown{Actionable: 1, Hold: 1, Draft: 1, Filtered: 1}
 	if got.Issues != wantIssues {
 		t.Errorf("issue breakdown = %+v, want %+v", got.Issues, wantIssues)

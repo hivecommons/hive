@@ -105,6 +105,30 @@ func (f IssueFilterConfig) ReporterTrustEnabled() bool {
 	return f.ReporterTrust.IsEnabled()
 }
 
+// ReporterTrustTrustedAssociationsForNotice returns the association set to
+// name in user-facing wait comments.
+func (f IssueFilterConfig) ReporterTrustTrustedAssociationsForNotice() []string {
+	return f.ReporterTrust.EffectiveTrustedAssociations()
+}
+
+// ReporterTrustRequiredLabelsForNotice returns the labels that admit an
+// untrusted reporter's issue.
+func (f IssueFilterConfig) ReporterTrustRequiredLabelsForNotice() []string {
+	return f.ReporterTrust.EffectiveUntrustedRequireLabels()
+}
+
+// ReporterTrustAwaitingLabel returns the visible wait label, or "" when
+// that label is disabled.
+func (f IssueFilterConfig) ReporterTrustAwaitingLabel() string {
+	return f.ReporterTrust.EffectiveAwaitingLabel()
+}
+
+// ReporterTrustCommentEnabled reports whether the one-shot wait explanation
+// should be posted.
+func (f IssueFilterConfig) ReporterTrustCommentEnabled() bool {
+	return f.ReporterTrust.CommentOn()
+}
+
 func anyLabelMatches(required, labels []string) bool {
 	for _, l := range labels {
 		for _, req := range required {

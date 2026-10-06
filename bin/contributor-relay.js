@@ -2680,7 +2680,20 @@ function warnOnProtocolDrift(hub, hubVersion) {
 // --model is actively FATAL for it: bob auto-selects its own model and passing
 // one leaves its model config undefined, so every prompt dies with
 // "Cannot read properties of undefined (reading 'maxTokens')" (bobshell 1.0.6).
-const NO_MODEL_FLAG_BACKENDS = ['goose', 'bob'];
+// openhands has no --model flag at all: its model is the LLM_MODEL environment
+// variable, which headlessChildEnv() populates from AGENT_MODEL.
+const NO_MODEL_FLAG_BACKENDS = ['goose', 'bob', 'openhands'];
+
+// headlessChildEnv returns the environment for a headless one-shot child.
+// Backends that take their model from the environment rather than argv get it
+// mapped here from the canonical AGENT_MODEL. An explicit LLM_MODEL already in
+// the environment wins, so an operator can still pin it directly.
+function headlessChildEnv() {
+  if (BACKEND === 'openhands' && MODEL && !process.env.LLM_MODEL) {
+    return { ...process.env, LLM_MODEL: MODEL };
+  }
+  return process.env;
+}
 
 // agy (Google's Antigravity CLI) REQUIRES --effort whenever --model is given:
 // without it agy warns "--model <m> requires --effort (available: low, medium,
@@ -3415,6 +3428,17 @@ const HEADLESS_BACKENDS = {
   // never runs the task — a no-op that would look like a passing run. Verified
   // against 1.0.3: flags must follow `exec`.
   muse: { flag: 'exec', flagsAfterCommand: true },
+  // openhands --headless -t "<prompt>" — the OpenHands CLI's documented
+  // non-interactive entry point ("openhands --headless -t ..."; argparse
+  // rejects --headless without -t/-f with exit 2, so a mis-built argv fails
+  // loudly rather than opening the TUI). Headless mode forces always-approve,
+  // and the perm flags from backends.conf add --override-with-envs so the
+  // LLM_* environment is honoured. Headless is the ONLY launch mode hive
+  // gives it: no interactive-tmux wiring (it stays out of the getCLIState()/
+  // classifyTmuxPane() lists below), like opencode/kilo/muse. OpenHands has
+  // no --model flag — the model is LLM_MODEL in the environment, which
+  // headlessChildEnv() derives from AGENT_MODEL (see NO_MODEL_FLAG_BACKENDS).
+  openhands: { flag: ['--headless', '-t'] },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
@@ -3647,6 +3671,7 @@ function runHeadlessTask(task) {
   headlessChild = spawn(bin, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     cwd: TASK_WORKSPACE_DIR,
+    env: headlessChildEnv(),
   });
   if (headlessChild.stdout) headlessChild.stdout.on('data', chunk => output.append(chunk));
   if (headlessChild.stderr) headlessChild.stderr.on('data', chunk => output.append(chunk));
@@ -8862,6 +8887,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     cleanup,
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
+    headlessChildEnv,
     effectiveReasoningEffort,
     // Model auto-detection from the CLI session transcript (#4117).
     detectRunningModel,

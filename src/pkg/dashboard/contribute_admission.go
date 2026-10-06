@@ -119,7 +119,7 @@ type contributorAdmissionDecision struct {
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
 	// contributorAdmissionReasonIssueClaim: someone has claimed the issue on
-	// the issue itself — a `hive-claim` marker comment or an assignee — and
+	// the issue itself — a `hive:claim` marker comment or an assignee — and
 	// the claim has not expired (hivecommons/hive#8380). It covers the window
 	// before a PR exists that open_pr_claim cannot see. Never returned while
 	// governor.claims.enabled is off.

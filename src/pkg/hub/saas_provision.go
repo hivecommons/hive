@@ -257,11 +257,13 @@ type ClusterConfig struct {
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
 	GitHubAppID int64 `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
-	// PullOnly marks a cluster the hub CANNOT reach: its spokes connect
-	// outbound over the heartbeat and nothing here can kubectl into them.
+	// PullOnly marks a push-reported cluster the hub CANNOT reach: its
+	// spokes connect outbound over the heartbeat and nothing here can kubectl
+	// into them. The yaml/json key remains pull_only for compatibility, but
+	// operator-facing text should describe these clusters as push-reported.
 	//
 	// WHY THIS FIELD EXISTS. Registration used to require a kubeconfig_path,
-	// so a pull-only pool could not be registered AT ALL — the loader dropped
+	// so a push-reported pool could not be registered AT ALL — the loader dropped
 	// the entry ("skipping remote cluster with no kubeconfig_path"). Everything
 	// keyed off the cluster registry then silently misfired for its hives:
 	// appIdentityForHive returned nil, so spokes sat on the placeholder app_id
@@ -416,15 +418,15 @@ func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args 
 //
 // It must never exist. An empty --kubeconfig makes kubectl fall back to its
 // AMBIENT configuration, which inside the hub pod is the hub's OWN cluster — so
-// a command meant for a pull-only pool would quietly execute against the hub's
+// a command meant for a push-reported pool would quietly execute against the hub's
 // cluster and report success for work that never happened there. Naming a path
 // that cannot resolve turns that silent misfire into a loud failure.
-const unreachableKubeconfigSentinel = "/nonexistent/pull-only-cluster-is-not-reachable-from-the-hub"
+const unreachableKubeconfigSentinel = "/nonexistent/push-reported-cluster-is-not-reachable-from-the-hub"
 
 // KubectlReachable reports whether the hub can run kubectl against this cluster.
 //
 // Callers that are about to touch a cluster with kubectl must check this and
-// skip with a clear message: a pull-only cluster's spokes are reached ONLY by
+// skip with a clear message: a push-reported cluster's spokes are reached ONLY by
 // answering their outbound heartbeat.
 func (c *ClusterConfig) KubectlReachable() bool {
 	if c == nil {
@@ -516,7 +518,7 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 		// WHY FATAL RATHER THAN A DEGRADED START. NewHubServer returns no error,
 		// so the only alternatives available here are the two this fix exists to
 		// remove: come up with an empty registry (writes to the hub-reachable cluster silently
-		// off) or come up on the synthesized default (every pull-only hive
+		// off) or come up on the synthesized default (every push-reported hive
 		// silently re-routed to the hub's own cluster). Both present as a
 		// healthy hub. A hub that refuses to start is loud, is caught by the
 		// pod's restart loop and readiness gate, and — critically — is
@@ -559,7 +561,7 @@ type SaaSHive struct {
 	// heartbeat (dashboard_token_hash) and from any successful live secret
 	// read. Spoke-relayed upgrade requests verify their X-Hive-Proxy-Auth proof
 	// against this first, so verification works for hives on clusters the hub
-	// cannot kubectl into (pull-only / unreachable) — the live secret read is
+	// cannot kubectl into (push-reported / unreachable) — the live secret read is
 	// only a fallback. A hash, never the raw token: the hub must be able to
 	// VERIFY the spoke's credential without holding a copy it could leak.
 	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
@@ -1934,7 +1936,7 @@ func (s *HubServer) makeVanityHostServable(hiveID, vanityHost string, cluster *C
 		// caller's "vanity host is not served" reporting truthful instead of
 		// letting kubectl aim at the hub's own cluster and report a missing
 		// ingress for a namespace that was never there.
-		return fmt.Errorf("cluster %s is pull-only: the hub cannot add %s to the spoke's ingress", cluster.ID, vanityHost)
+		return fmt.Errorf("cluster %s is push-reported: the hub cannot add %s to the spoke's ingress", cluster.ID, vanityHost)
 	}
 	if s.vanityHostServable != nil {
 		return s.vanityHostServable(hiveID, vanityHost, cluster)
@@ -2483,7 +2485,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	// its hash can be recorded on the hive record below once the manifest is
 	// applied: that stored record is what lets the hub verify spoke-relayed
 	// upgrade proofs WITHOUT a live secret read, which is impossible on
-	// pull-only clusters. See SaaSHive.DashboardTokenHash.
+	// push-reported clusters. See SaaSHive.DashboardTokenHash.
 	dashboardToken := func() string {
 		b := make([]byte, dashboardTokenBytes)
 		if _, err := cryptoRand.Read(b); err != nil {
@@ -2780,8 +2782,9 @@ func HashDashboardToken(token string) string { return spoke.HashDashboardToken(t
 
 // deprovisionHive performs best-effort cleanup of all resources associated
 // with a hosted hive: K8s namespace (cascading to deployment, service, ingress,
-// configmap, secret, PVC), cluster-scoped PV, OCI NFS export, OCI file system,
-// and the on-disk SaaS hive record. It also decrements the owner's quota.
+// configmap, secret, PVC), cluster-scoped node-health RBAC, cluster-scoped PV,
+// OCI NFS export, OCI file system, and the on-disk SaaS hive record. It also
+// decrements the owner's quota.
 // Order matters: namespace before PV, export before file system.
 // Errors are logged but do not stop the remaining cleanup steps.
 func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
@@ -2796,7 +2799,16 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		logger.Warn("deprovision: namespace delete failed", "namespace", ns, "output", string(out), "error", err)
 	}
 
-	// Step 2: NFS storage requires extra cleanup — PV is cluster-scoped and
+	// Step 2: Delete cluster-scoped node-health RBAC; namespace deletion cannot
+	// cascade it.
+	nodeHealthReaderName := "hive-node-health-reader-" + ns
+	logger.Info("deprovision: deleting node-health RBAC", "name", nodeHealthReaderName)
+	cmd = kubectlForCluster(cluster, "delete", "clusterrole,clusterrolebinding", nodeHealthReaderName, "--ignore-not-found")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.Warn("deprovision: node-health RBAC delete failed", "name", nodeHealthReaderName, "output", string(out), "error", err)
+	}
+
+	// Step 3: NFS storage requires extra cleanup — PV is cluster-scoped and
 	// OCI FSS resources live outside K8s. Dynamic storage (CephFS) cascades
 	// with the namespace delete, so no extra steps needed.
 	if cluster.StorageType == storageTypeNFS || cluster.StorageType == "" {
@@ -2825,7 +2837,7 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		}
 	}
 
-	// Step 3: For OpenShift with SCC, remove the SCC binding. The ServiceAccount
+	// Step 4: For OpenShift with SCC, remove the SCC binding. The ServiceAccount
 	// is already gone with the namespace, but the cluster-scoped SCC binding may linger.
 	if cluster.RequiresSCC {
 		sccName := cluster.SCCName
@@ -2841,7 +2853,7 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		}
 	}
 
-	// Step 4: Remove the on-disk SaaS hive record.
+	// Step 5: Remove the on-disk SaaS hive record.
 	hiveDir := filepath.Join(saasHivesDir, hiveID)
 	if err := os.RemoveAll(hiveDir); err != nil {
 		logger.Warn("deprovision: failed to remove hive directory", "path", hiveDir, "error", err)
@@ -3049,7 +3061,7 @@ subjects:
 # domain, and a guaranteed 503 anywhere else, because that wildcard sends the
 # name to the HUB's router which has no backend for it.
 #
-# The spoke is the only party that CAN read this on a pull-only cluster, where
+# The spoke is the only party that CAN read this on a push-reported cluster, where
 # the hub has no kubectl path by design. Strictly read-only and namespace-scoped:
 # list/get, no write verbs, so a compromised spoke learns only its own hostname
 # — which it already advertises — and can neither create nor retarget routing.
@@ -3078,6 +3090,46 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: hive-route-reader
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
+# hive-node-health-reader lets a push-reported spoke include useful cluster
+# capacity in its outbound heartbeat when the hub cannot kubectl into the
+# cluster. Read-only and cluster-scoped because Kubernetes Nodes and
+# metrics.k8s.io NodeMetrics are cluster-scoped, and the per-node hive count
+# requires listing running pods across hive-hosted-* namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-node-health-reader-{{.Namespace}}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-node-health-reader-{{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-node-health-reader-{{.Namespace}}
 subjects:
 - kind: ServiceAccount
 {{- if .RequiresSCC}}

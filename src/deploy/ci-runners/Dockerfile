@@ -48,6 +48,9 @@
 ARG RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04
 FROM ${RUNNER_BASE_IMAGE}
 
+ARG GITHUB_CLI_VERSION=2.102.0
+ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+
 # The base image runs as uid 1001 (`runner`), which does not own /etc/apt.
 USER root
 
@@ -86,10 +89,13 @@ RUN set -eux; \
 #
 #   gcc, libc6-dev  — cgo, required by every `go test -race` shard
 #   tmux            — pkg/agent's hermetic terminal tests
+#   gh              — issue/PR automation lanes that use the GitHub CLI
 #
-# These are precisely the three packages ci-install-tool.sh is asked to install
-# across .github/workflows/*, so this list is what makes every one of those
-# call sites take the no-op path.
+# The Ubuntu packages are precisely what ci-install-tool.sh is asked to install
+# across .github/workflows/*, so this list is what makes every one of those call
+# sites take the no-op path. GitHub CLI comes from the official apt repository:
+# the package version is pinned by ARG and the repository keyring is fetched as a
+# binary keyring, SHA256-checked, and referenced with Signed-By.
 #
 # Verification runs in the build, not just in the cluster: if a future base
 # image drops one of these or the mirror goes stale, the build fails here
@@ -97,14 +103,28 @@ RUN set -eux; \
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
       gcc \
       libc6-dev \
       tmux; \
+    install -d -m 0755 /usr/share/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    echo "${GITHUB_CLI_KEYRING_SHA256}  /usr/share/keyrings/githubcli-archive-keyring.gpg" | sha256sum -c -; \
+    chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      "gh=${GITHUB_CLI_VERSION}"; \
     rm -rf /var/lib/apt/lists/*; \
     gcc --version; \
     tmux -V; \
+    gh --version; \
     command -v gcc; \
-    command -v tmux
+    command -v tmux; \
+    command -v gh
 
 # Back to the unprivileged runner user the base image expects. ARC's entrypoint
 # and the runner binary both assume uid 1001; leaving this as root would change

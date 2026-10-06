@@ -488,7 +488,7 @@ type Issue struct {
 	// but do not by themselves remove the issue from the actionable set.
 	LinkedPRs []IssueLinkedPR `json:"linked_prs,omitempty"`
 	// ClaimedBy / ClaimExpiresAt / ClaimSource carry a LIVE issue claim
-	// (hivecommons/hive#8380) read at enumeration time: a `hive-claim` marker
+	// (hivecommons/hive#8380) read at enumeration time: a `hive:claim` marker
 	// comment, or an assignee. All three are set together and only while
 	// governor.claims.enabled is on, so a hive with claims off emits an
 	// envelope byte-for-byte identical to before. ClaimSource is
@@ -1012,10 +1012,11 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// hand an agent work on it (#6203). Enumeration is the choke point every
 	// one of those paths runs through.
 	repos := c.activeRepos()
+	reporterTrustWaitBudget := newReporterTrustWaitBudget()
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
-		issues, held, issueTotal, issueBreakdown, err := c.fetchIssues(ctx, repo, now)
+		issues, held, issueTotal, issueBreakdown, err := c.fetchIssues(ctx, repo, now, reporterTrustWaitBudget)
 		if err != nil {
 			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
 			failedRepos++
@@ -1099,7 +1100,7 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 	return c.org, repo
 }
 
-func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
+func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
 
@@ -1169,8 +1170,14 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			continue
 		}
 
-		if c.isExempt(labels) || hasIssueNeedsHumanLabel(labels) {
+		if c.isExempt(labels) {
 			breakdown.Filtered++
+			breakdown.Exempt++
+			continue
+		}
+		if suppress := hardSuppressIssueLabel(labels); suppress != "" {
+			breakdown.Filtered++
+			breakdown.addHardSuppress(suppress)
 			continue
 		}
 
@@ -1193,9 +1200,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		// judged here.
 		if ra, ok := issueFilter.(ReporterAdmitter); ok && ra.ReporterTrustEnabled() && c.isHumanAuthor(issue.GetUser()) {
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
+				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
 				continue
 			}
+			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
 		}
 
 		if !issueFilter.Admits(labels) {
@@ -3148,6 +3157,11 @@ type RepoIssueBreakdown struct {
 	HiveAdvisory        int `json:"hive_advisory"`
 	DependencyDashboard int `json:"dependency_dashboard"`
 	Filtered            int `json:"filtered"`
+	NeedsHuman          int `json:"needs_human,omitempty"`
+	NeedsDirection      int `json:"needs_direction,omitempty"`
+	NeedsDecision       int `json:"needs_decision,omitempty"`
+	NeedsSpec           int `json:"needs_spec,omitempty"`
+	Exempt              int `json:"exempt,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter
@@ -3158,6 +3172,19 @@ type RepoIssueBreakdown struct {
 
 func (b RepoIssueBreakdown) Total() int {
 	return b.Actionable + b.Hold + b.HiveAdvisory + b.DependencyDashboard + b.Filtered + b.ReporterTriage + b.Other
+}
+
+func (b *RepoIssueBreakdown) addHardSuppress(label string) {
+	switch label {
+	case issueNeedsHumanLabel:
+		b.NeedsHuman++
+	case issueNeedsDirectionLabel:
+		b.NeedsDirection++
+	case issueNeedsDecisionLabel:
+		b.NeedsDecision++
+	case issueNeedsSpecLabel:
+		b.NeedsSpec++
+	}
 }
 
 type RepoPRBreakdown struct {

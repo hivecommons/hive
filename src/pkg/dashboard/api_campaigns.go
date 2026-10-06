@@ -39,6 +39,45 @@ type Campaign struct {
 	LeaseOwner     string             `json:"lease_owner,omitempty"`
 	RevisionOf     string             `json:"revision_of,omitempty"`
 	Revision       int                `json:"revision,omitempty"`
+	Recheck        *CampaignRecheck   `json:"recheck,omitempty"`
+	Drift          *CampaignDrift     `json:"drift,omitempty"`
+}
+
+type CampaignRecheck struct {
+	Enabled        bool                    `json:"enabled"`
+	Interval       string                  `json:"interval,omitempty"`
+	LastAt         string                  `json:"last_at,omitempty"`
+	NextAt         string                  `json:"next_at,omitempty"`
+	InFlight       bool                    `json:"in_flight"`
+	LastDeltaCount int                     `json:"last_delta_count,omitempty"`
+	ExternalCount  int                     `json:"external_count,omitempty"`
+	SourcesFailed  []CampaignSourceFailure `json:"sources_failed,omitempty"`
+}
+
+type CampaignDrift struct {
+	CodebaseChanged bool                       `json:"codebase_changed"`
+	PriorHeadSHA    string                     `json:"prior_head_sha,omitempty"`
+	CurrentHeadSHA  string                     `json:"current_head_sha,omitempty"`
+	PriorRevision   string                     `json:"prior_revision,omitempty"`
+	DeltaCount      int                        `json:"delta_count"`
+	RecheckReason   string                     `json:"recheck_reason,omitempty"`
+	External        []CampaignExternalEvidence `json:"external,omitempty"`
+	ExternalCount   int                        `json:"external_count,omitempty"`
+	SourcesFailed   []CampaignSourceFailure    `json:"sources_failed,omitempty"`
+}
+
+type CampaignExternalEvidence struct {
+	Source      string `json:"source"`
+	Kind        string `json:"kind"`
+	Title       string `json:"title"`
+	URL         string `json:"url,omitempty"`
+	PublishedAt string `json:"published_at,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+}
+
+type CampaignSourceFailure struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type CampaignArtifact struct {
@@ -322,6 +361,8 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 				// revision and the independently releasable revise lease.
 				campaign.Revision = revision.Revision
 				campaign.RevisionOf = revision.RevisionOf
+				campaign.Recheck = revision.Recheck
+				campaign.Drift = revision.Drift
 				if revision.Revision > 0 {
 					campaign.LeaseOwner = revision.LeaseOwner
 				}
@@ -329,6 +370,7 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 			byID[campaign.ID] = campaign
 		}
 	}
+	s.decorateCampaignRechecks(byID)
 	out := make([]Campaign, 0, len(byID))
 	for _, campaign := range byID {
 		out = append(out, campaign)
@@ -366,6 +408,9 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		}
 	} else if firstRunNonEmpty(archive.Type, "inception") == "spektacular" {
 		stage = StagePlan
+		if archive.Drift != nil {
+			stage = StageSpec
+		}
 		step = "revision"
 		runKey = strings.TrimSpace(archive.Source)
 		if runKey != "" {
@@ -380,12 +425,18 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 	for _, file := range archive.WikiFiles {
 		artifacts = append(artifacts, CampaignArtifact{Kind: "fact", Label: file})
 	}
-	return Campaign{
+	campaign := Campaign{
 		ID: archive.ID, Title: title, Source: firstRunNonEmpty(archive.Source, "inception"), Repos: repos, CurrentStage: stage, CurrentStep: step,
 		Artifacts: artifacts, LinkedIssues: linkedIssues, Contributors: contributors, LastActivity: formatRunTime(last),
 		Status: status, Engine: firstRunNonEmpty(archive.Engine, "Spec Kit"), Type: firstRunNonEmpty(archive.Type, "inception"),
 		RunKey: runKey, RunURL: runURL, LeaseOwner: leaseOwner, RevisionOf: archive.RevisionOf, Revision: archive.Revision,
+		Recheck: campaignRecheckFromArchive(archive, false), Drift: campaignDriftFromArchive(archive),
 	}
+	if campaign.Recheck != nil && campaign.Drift != nil {
+		campaign.Recheck.ExternalCount = campaign.Drift.ExternalCount
+		campaign.Recheck.SourcesFailed = campaign.Drift.SourcesFailed
+	}
+	return campaign
 }
 
 func campaignFromRun(run Run) Campaign {

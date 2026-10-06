@@ -71,6 +71,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/feedback/nps/status", s.handleNPSStatus)
 	s.mux.HandleFunc("POST /api/feedback/nps", s.handleNPSSubmit)
 	s.mux.HandleFunc("POST /api/feedback/nps/issue", s.handleNPSIssue)
+	s.mux.HandleFunc("GET /api/feedback/status", s.handleFeedbackStatus)
 	s.mux.HandleFunc("POST /api/feedback/report", s.handleFeedbackReport)
 	s.mux.HandleFunc("GET /api/feedback/mine", s.handleFeedbackMine)
 	s.mux.HandleFunc("GET /api/snapshot/frame-ancestors", s.handleSnapshotFrameAncestors)
@@ -99,6 +100,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/release", s.handleCampaignRelease)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/revise", s.handleCampaignRevise)
+	s.mux.HandleFunc("POST /api/campaigns/{id}/recheck", s.handleCampaignRecheck)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam", s.handleCampaignJamGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsGet)
@@ -331,6 +333,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)
 	s.mux.HandleFunc("GET /api/knowledge/export", s.handleKnowledgeExport)
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)
+	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only —
+	// the mux answers other verbs with 405, and there is no SSE stream.
+	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath
+	s.mux.HandleFunc("GET /api/knowledge/public", s.handlePublicKnowledgeGet)
+	s.mux.HandleFunc("PUT /api/knowledge/public", s.handlePublicKnowledgePut)
 	s.mux.HandleFunc("GET /api/knowledge/health", s.handleKnowledgeHealth)
 	s.mux.HandleFunc("GET /api/knowledge/stats", s.handleKnowledgeStats)
 	s.mux.HandleFunc("GET /api/knowledge/graph", s.handleKnowledgeGraph)

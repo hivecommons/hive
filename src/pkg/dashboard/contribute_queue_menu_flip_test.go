@@ -6,7 +6,7 @@ import (
 )
 
 // TestContributeQueueMenuUsesFixedViewportPlacement guards the fix for the
-// ready-work queue's per-row "⋯" menu being clipped by the .cc-queue scroll
+// ready-work queue's per-row "⋯" menu being clipped by the .cc-queue-scroll scroll
 // container (overflow-y:auto) when a row near the BOTTOM opens its menu — the
 // operator reported the move/hold/move-to menu was "behind the scroll area". The
 // fix: fixed-position viewport placement shared with the custom-CSS popover, using
@@ -21,7 +21,7 @@ func TestContributeQueueMenuUsesFixedViewportPlacement(t *testing.T) {
 		"anchor.getBoundingClientRect()",
 		// The open handler clamps/flips against the visible scrolling queue panel.
 		"ccPlaceFixedPopover(btn,menu,{align:'right',gap:6",
-		"boundary:btn.closest('.cc-queue')",
+		"boundary:btn.closest('.cc-queue-scroll')",
 		// Scroll/resize invalidates viewport positioning and closes the open menu.
 		"window.addEventListener('resize',function(){ccCloseQueueMenus();});",
 		"window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);",

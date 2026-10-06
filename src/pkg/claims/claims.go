@@ -361,6 +361,9 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 	if res.Outcome.Changed() || len(expired) > 0 {
 		saveErr = l.saveLocked()
 	}
+	if res.Outcome.Changed() {
+		expired = dropExpiredKey(expired, res.Claim.Key())
+	}
 	hooks := l.hooks
 	l.mu.Unlock()
 
@@ -386,6 +389,19 @@ func sameHolder(c Claim, req Request) bool {
 		return c.Session == req.Session
 	}
 	return true
+}
+
+func dropExpiredKey(expired []Claim, key string) []Claim {
+	if len(expired) == 0 || key == "" {
+		return expired
+	}
+	out := expired[:0]
+	for _, c := range expired {
+		if c.Key() != key {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Release drops the claim on an issue. by is the identity asking; a claim is

@@ -20,12 +20,14 @@
 //
 // # Marker shape
 //
-//	<!-- hive-claim: <identity> <started RFC3339> <expires RFC3339> -->
+//	<!-- hive:claim who=<identity> kind=contributor at=<started RFC3339> until=<expires RFC3339> -->
 //
 // followed by a human line. The marker is an HTML comment so it renders as
-// nothing on GitHub; the human line is what a reader sees. Both timestamps are
-// RFC3339 in UTC. The identity is a GitHub login or a hive agent identity —
-// free text without whitespace.
+// nothing on GitHub; the human line is what a reader sees. The parser also
+// accepts the legacy `<!-- hive-claim: <identity> <started> <expires> -->`
+// comments already present on issues. Timestamps are RFC3339 in UTC. The
+// identity is a GitHub login or a hive agent identity — free text without
+// whitespace.
 //
 // This package is deliberately stdlib-only and a leaf in the import graph so
 // pkg/config, pkg/github and pkg/dashboard can all share one parser.
@@ -38,9 +40,13 @@ import (
 )
 
 const (
-	// MarkerPrefix opens the machine-readable marker. Everything between it
-	// and MarkerSuffix is the claim record.
-	MarkerPrefix = "<!-- hive-claim:"
+	// MarkerPrefix opens the canonical machine-readable marker. Everything
+	// between it and MarkerSuffix is the claim record.
+	MarkerPrefix = "<!-- hive:claim"
+	// LegacyMarkerPrefix opens the older positional marker. It remains readable
+	// so existing issue comments continue to release on expiry instead of being
+	// forgotten by new binaries.
+	LegacyMarkerPrefix = "<!-- hive-claim:"
 	// MarkerSuffix closes the marker.
 	MarkerSuffix = "-->"
 	// DefaultTTL is how long a claim stands when the claimant set no explicit
@@ -48,7 +54,7 @@ const (
 	// hours covers a large feature's pre-PR window without letting an
 	// abandoned claim block the issue for a working day.
 	DefaultTTL = 4 * time.Hour
-	// markerFields is the number of whitespace-separated tokens a marker
+	// markerFields is the number of whitespace-separated tokens a legacy marker
 	// record carries: identity, started, expires.
 	markerFields = 3
 
@@ -85,7 +91,14 @@ func (c Claim) Live(now time.Time) bool {
 
 // Marker renders the machine-readable comment marker for a claim.
 func Marker(identity string, started, expires time.Time) string {
-	return fmt.Sprintf("%s %s %s %s %s", MarkerPrefix, identity,
+	return fmt.Sprintf("%s who=%s kind=contributor at=%s until=%s %s", MarkerPrefix, identity,
+		started.UTC().Format(time.RFC3339), expires.UTC().Format(time.RFC3339), MarkerSuffix)
+}
+
+// LegacyMarker renders the older positional marker. It is used only by tests to
+// prove old issue comments remain readable; new writers must use Marker.
+func LegacyMarker(identity string, started, expires time.Time) string {
+	return fmt.Sprintf("%s %s %s %s %s", LegacyMarkerPrefix, identity,
 		started.UTC().Format(time.RFC3339), expires.UTC().Format(time.RFC3339), MarkerSuffix)
 }
 
@@ -99,15 +112,61 @@ func CommentBody(identity string, started, expires time.Time) string {
 }
 
 // ParseMarker finds the FIRST claim marker in a comment body and decodes it.
-// It returns false for a body with no marker, a marker with the wrong number
-// of fields, or timestamps that do not parse — a malformed marker is not a
-// claim, and must never withhold an issue.
+// It accepts the canonical key/value marker and the legacy positional marker.
+// It returns false for a body with no marker, a marker with missing required
+// fields, or timestamps that do not parse — a malformed marker is not a claim,
+// and must never withhold an issue.
 func ParseMarker(body string) (Claim, bool) {
+	if claim, ok := parseKeyValueMarker(body); ok {
+		return claim, true
+	}
+	return parseLegacyMarker(body)
+}
+
+func parseKeyValueMarker(body string) (Claim, bool) {
 	start := strings.Index(body, MarkerPrefix)
 	if start < 0 {
 		return Claim{}, false
 	}
 	rest := body[start+len(MarkerPrefix):]
+	end := strings.Index(rest, MarkerSuffix)
+	if end < 0 {
+		return Claim{}, false
+	}
+	fields := strings.Fields(rest[:end])
+	vals := make(map[string]string, len(fields))
+	for _, field := range fields {
+		key, val, ok := strings.Cut(field, "=")
+		if !ok || key == "" || val == "" {
+			return Claim{}, false
+		}
+		vals[key] = val
+	}
+	identity := vals["who"]
+	until := vals["until"]
+	if identity == "" || until == "" {
+		return Claim{}, false
+	}
+	expires, err := time.Parse(time.RFC3339, until)
+	if err != nil {
+		return Claim{}, false
+	}
+	var started time.Time
+	if raw := vals["at"]; raw != "" {
+		started, err = time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return Claim{}, false
+		}
+	}
+	return Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker}, true
+}
+
+func parseLegacyMarker(body string) (Claim, bool) {
+	start := strings.Index(body, LegacyMarkerPrefix)
+	if start < 0 {
+		return Claim{}, false
+	}
+	rest := body[start+len(LegacyMarkerPrefix):]
 	end := strings.Index(rest, MarkerSuffix)
 	if end < 0 {
 		return Claim{}, false
@@ -124,12 +183,7 @@ func ParseMarker(body string) (Claim, bool) {
 	if err != nil {
 		return Claim{}, false
 	}
-	return Claim{
-		Identity:  fields[0],
-		StartedAt: started,
-		ExpiresAt: expires,
-		Source:    SourceMarker,
-	}, true
+	return Claim{Identity: fields[0], StartedAt: started, ExpiresAt: expires, Source: SourceMarker}, true
 }
 
 // ClampToTTL returns claim with its expiry capped at StartedAt + ttl.
@@ -158,12 +212,19 @@ func Latest(bodies []string, ttl time.Duration) (Claim, bool) {
 			continue
 		}
 		claim = ClampToTTL(claim, ttl)
-		if !found || claim.StartedAt.After(best.StartedAt) {
+		if !found || claimOrderTime(claim).After(claimOrderTime(best)) {
 			best = claim
 			found = true
 		}
 	}
 	return best, found
+}
+
+func claimOrderTime(claim Claim) time.Time {
+	if !claim.StartedAt.IsZero() {
+		return claim.StartedAt
+	}
+	return claim.ExpiresAt
 }
 
 // FromAssignees infers a claim from an issue's assignees when no marker

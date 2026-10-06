@@ -39,8 +39,8 @@ expect_decision() {
 }
 
 expect_decision promote "all five policy conditions promote"
-CANDIDATE_AGE_SECONDS=3600 expect_decision hold "young current candidate holds even when an older superseded build soaked" "candidate age"
-CANDIDATE_AGE_SECONDS=90000 CURRENT_CANDIDATE=false expect_decision hold "superseded candidate failure holds after candidate soak" "superseded"
+CANDIDATE_AGE_SECONDS=3600 expect_decision hold "young build holds until its own soak completes" "build age"
+CANDIDATE_AGE_SECONDS=90000 CURRENT_CANDIDATE=false expect_decision promote "superseded but soaked build remains promotable"
 GREEN_EVIDENCE=false expect_decision hold "green evidence failure holds" "evidence"
 BLOCKER_COUNT=1 expect_decision hold "open release blocker failure holds" "release blocker"
 SMOKE_EVIDENCE= expect_decision hold "missing operator smoke signal holds" "smoke signal"
@@ -214,98 +214,13 @@ else
   pass "workflow_ran_on matches on head_sha alone so failures stay visible"
 fi
 
-# Promotion must be all-or-nothing across images. Run 34360559434 re-checked
-# and published one image at a time, so when hive-hub:candidate changed
-# mid-loop, hive and hive-contributor were already retagged: stable ended up a
-# mixed generation. Every digest must be re-verified before any publish, and
-# that re-verify loop is a separate pass over every image, not interleaved
-# with publishing.
+# Promotion must use a compare-and-set on the stable generation instead of
+# requiring a quiet period where the selected build is still candidate.
 promote_fn=$(sed -n '/^promote() {/,/^}/p' "$promoter")
-reverify_block=$(sed -n '/candidate that is$/,/^  fi$/p' <<<"$promote_fn")
-publish_block=$(sed -n '/already confirmed every image/,/^  fi$/p' <<<"$promote_fn")
-if [[ -z $reverify_block || -z $publish_block ]]; then
-  bad "promote() no longer has distinct re-verify and publish blocks"
-elif grep -q 'publish_stable' <<<"$reverify_block"; then
-  bad "promotion publishes inside the verification loop: a mid-loop candidate change leaves stable partially promoted"
-elif ! grep -q 'publish_stable' <<<"$publish_block"; then
-  bad "promotion block no longer publishes at all"
+if grep -q 'stable generation changed for' <<<"$promote_fn" && grep -q 'recheck_generation >= best_generation' <<<"$promote_fn"; then
+  pass "promotion uses a stable-generation compare-and-set before publishing"
 else
-  pass "promotion verifies every candidate digest before publishing any image"
-fi
-
-# A candidate superseded between the initial read and the tag move must hold
-# (like the in-flight-candidate race below), not fail the whole workflow run
-# with exit 1 — a failed run pages someone about a benign, expected race.
-superseded="$tmp/superseded"
-mkdir -p "$superseded/bin"
-cat > "$superseded/bin/docker" <<'MOCK'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
-  if [[ $* == *'.Manifest.Digest'* ]]; then
-    if [[ $* == *':stable'* ]]; then
-      echo 'sha256:stable'
-    else
-      # Simulate a docker.yml run landing mid-promotion: the candidate digest
-      # changes between the initial read (first call) and the re-verify
-      # right before the tag move (second call).
-      count_file="$MOCK_CALL_COUNT_FILE"
-      n=$(($(cat "$count_file" 2>/dev/null || echo 0) + 1))
-      echo "$n" > "$count_file"
-      if [[ $n -le 1 ]]; then echo 'sha256:candidate'; else echo 'sha256:newer-candidate'; fi
-    fi
-    exit 0
-  fi
-  ref=${@: -1}
-  if [[ $ref == *':stable'* ]]; then gen=100; else gen=200; fi
-  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"abcdef"}}}\n' "$gen"
-  exit 0
-fi
-echo "unexpected docker invocation: $*" >&2
-exit 1
-MOCK
-cat > "$superseded/bin/gh" <<'MOCK'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ $1 == run && $2 == list ]]; then
-  echo '[{"number":200,"createdAt":"2026-09-10T00:00:00Z","status":"completed","conclusion":"success"},{"number":100,"createdAt":"2026-09-01T00:00:00Z","status":"completed","conclusion":"success"}]' \
-    | jq -r "${@: -1}"
-  exit 0
-fi
-if [[ $1 == issue && $2 == list ]]; then
-  echo 0
-  exit 0
-fi
-if [[ $1 == api ]]; then
-  if [[ $* == *'head_sha='* ]]; then
-    json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
-  else
-    json='{"workflow_runs":[]}'
-  fi
-  jqexpr=""
-  prev=""
-  for a in "$@"; do
-    [[ $prev == --jq ]] && jqexpr=$a
-    prev=$a
-  done
-  if [[ -n $jqexpr ]]; then
-    jq -r "$jqexpr" <<<"$json"
-  else
-    echo "$json"
-  fi
-  exit 0
-fi
-echo '[]'
-MOCK
-chmod +x "$superseded/bin/docker" "$superseded/bin/gh"
-out=$(PATH="$superseded/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true \
-  MOCK_CALL_COUNT_FILE="$superseded/calls" NOW_EPOCH=2000000000 \
-  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"abcdef","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
-  "$promoter" promote 2>&1) && rc=0 || rc=$?
-if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'superseded by' <<<"$out" && grep -q 'before the tag move' <<<"$out"; then
-  pass "a candidate superseded before the tag move holds instead of failing the run"
-else
-  bad "a candidate superseded before the tag move must hold, not exit 1 (rc=${rc}; output: ${out})"
+  bad "promotion must re-read stable generation and hold if it changed before publishing"
 fi
 
 if sed -n '/^workflow_success()/,/^}/p' "$promoter" | grep -q 'failure) return 1'; then
@@ -314,101 +229,178 @@ else
   bad "ancestor walk must stop at a failure"
 fi
 
-# The candidate digest is pushed part-way through its docker.yml run, so a
-# scheduled promotion can observe a candidate whose run is still in progress.
-# workflow_run_created_at then finds no completed run for that generation and
-# the gate used to die under set -e with exit 1 and no output at all (observed
-# 2026-09-10, run 34488998982). It must instead report an explicit hold.
-inflight="$tmp/inflight"
-mkdir -p "$inflight/bin"
-cat > "$inflight/bin/docker" <<'MOCK'
+# The scanner considers successful docker.yml builds newest to oldest and
+# chooses the newest build whose own completion time has soaked, even when a
+# newer build has already superseded it on candidate.
+select_build="$tmp/select-build"
+mkdir -p "$select_build/bin"
+cat > "$select_build/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-# imagetools inspect REF --format '{{.Manifest.Digest}}'  -> a digest
-# imagetools inspect --format '{{json (index .Image ...)}}' REF -> platform config
 if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  ref=${@: -1}
   if [[ $* == *'.Manifest.Digest'* ]]; then
-    if [[ $* == *':stable'* ]]; then echo 'sha256:stable'; else echo 'sha256:candidate'; fi
+    case "$*" in
+      *:stable*) echo 'sha256:stable' ;;
+      *:new1234*) echo 'sha256:new' ;;
+      *:old1234*) echo 'sha256:old' ;;
+      *:candidate*) echo 'sha256:new' ;;
+      *) echo 'sha256:unknown' ;;
+    esac
     exit 0
   fi
-  ref=${@: -1}
-  if [[ $ref == *':stable'* ]]; then gen=100; else gen=200; fi
-  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"abcdef"}}}\n' "$gen"
+  case "$ref" in
+    *:stable) gen=100; rev=stable00 ;;
+    *@sha256:new|*:new1234|*:candidate) gen=300; rev=new1234 ;;
+    *@sha256:old|*:old1234) gen=200; rev=old1234 ;;
+    *) gen=0; rev=unknown ;;
+  esac
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"%s"}}}\n' "$gen" "$rev"
   exit 0
 fi
-echo "unexpected docker invocation: $*" >&2
-exit 1
+printf '%q ' "$@" >> "$MOCK_CAPTURE"
+printf '\n' >> "$MOCK_CAPTURE"
 MOCK
-cat > "$inflight/bin/gh" <<'MOCK'
+cat > "$select_build/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-# gh run list ... : the candidate's run (200) exists but is still in progress,
-# so the completed-only filter the promoter applies yields nothing for it.
-if [[ $1 == run && $2 == list ]]; then
-  echo '[{"number":200,"createdAt":"2026-09-10T14:31:50Z","status":"in_progress","conclusion":null},{"number":199,"createdAt":"2026-09-10T14:24:38Z","status":"completed","conclusion":"success"}]' \
-    | jq -r "${@: -1}"
+jqexpr=""
+prev=""
+for a in "$@"; do
+  [[ $prev == --jq ]] && jqexpr=$a
+  prev=$a
+done
+if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
+  json='{"workflow_runs":[{"run_number":300,"head_sha":"new1234","updated_at":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"},{"run_number":200,"head_sha":"old1234","updated_at":"2033-05-16T00:00:00Z","status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
   exit 0
 fi
-echo '[]'
-MOCK
-chmod +x "$inflight/bin/docker" "$inflight/bin/gh"
-out=$(PATH="$inflight/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true STABLE_PROMOTION_STATE_JSON='{"auto_promote":true}' \
-  "$promoter" promote 2>&1) && rc=0 || rc=$?
-if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'has not completed yet' <<<"$out"; then
-  pass "an in-flight candidate run yields an explicit hold instead of a silent exit 1"
-else
-  bad "an in-flight candidate run must hold with a reason (rc=${rc}; output: ${out})"
-fi
-
-# The soak clock starts when the candidate's docker.yml run FINISHED, not when
-# it was queued: a multi-arch build takes tens of minutes, and measuring from
-# the run's createdAt credits the candidate with time before its digest existed
-# (#10042). Run 200 below was queued two days ago but completed 33 minutes ago,
-# so it is still short of the window.
-queued_early="$tmp/queued-early"
-mkdir -p "$queued_early/bin"
-cp "$inflight/bin/docker" "$queued_early/bin/docker"
-cat > "$queued_early/bin/gh" <<'MOCK'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ $1 == run && $2 == list ]]; then
-  echo '[{"number":200,"createdAt":"2033-05-16T00:00:00Z","updatedAt":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"}]' \
-    | jq -r "${@: -1}"
+if [[ $1 == api && $* == *'head_sha='* ]]; then
+  json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
   exit 0
 fi
 if [[ $1 == issue && $2 == list ]]; then
   echo 0
   exit 0
 fi
-if [[ $1 == api ]]; then
-  if [[ $* == *'head_sha='* ]]; then
-    json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
-  else
-    json='{"workflow_runs":[]}'
+echo '[]'
+MOCK
+cat > "$select_build/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+exit 22
+MOCK
+chmod +x "$select_build/bin/docker" "$select_build/bin/gh" "$select_build/bin/curl"
+capture="$select_build/create"
+out=$(PATH="$select_build/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"new1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=promote' <<<"$out" && grep -q 'generation 200 > 100' <<<"$out" && grep -q 'sha256:old' <<<"$out"; then
+  pass "newest build across the 24h line is selected over a newer unsoaked candidate"
+else
+  bad "promote should select the newest build across the 24h line by generation (rc=${rc}; output: ${out})"
+fi
+
+# A hard-gate failure on the newest build across the 24h line holds that build;
+# the scanner must not skip backward to an older build with passing evidence.
+held_gate="$tmp/held-gate"
+mkdir -p "$held_gate/bin"
+cat > "$held_gate/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  ref=${@: -1}
+  if [[ $* == *'.Manifest.Digest'* ]]; then
+    case "$*" in
+      *:stable*) echo 'sha256:stable' ;;
+      *:fail123*) echo 'sha256:fail' ;;
+      *:old1234*) echo 'sha256:old' ;;
+      *) echo 'sha256:unknown' ;;
+    esac
+    exit 0
   fi
-  jqexpr=""
-  prev=""
-  for a in "$@"; do
-    [[ $prev == --jq ]] && jqexpr=$a
-    prev=$a
-  done
-  if [[ -n $jqexpr ]]; then
-    jq -r "$jqexpr" <<<"$json"
-  else
-    echo "$json"
-  fi
+  case "$ref" in
+    *:stable) gen=100; rev=stable00 ;;
+    *@sha256:fail|*:fail123) gen=250; rev=fail123 ;;
+    *@sha256:old|*:old1234) gen=200; rev=old1234 ;;
+    *) gen=0; rev=unknown ;;
+  esac
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"%s"}}}\n' "$gen" "$rev"
+  exit 0
+fi
+printf '%q ' "$@" >> "$MOCK_CAPTURE"
+printf '\n' >> "$MOCK_CAPTURE"
+MOCK
+cat > "$held_gate/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+jqexpr=""
+prev=""
+for a in "$@"; do
+  [[ $prev == --jq ]] && jqexpr=$a
+  prev=$a
+done
+if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
+  json='{"workflow_runs":[{"run_number":250,"head_sha":"fail123","updated_at":"2033-05-16T12:00:00Z","status":"completed","conclusion":"success"},{"run_number":200,"head_sha":"old1234","updated_at":"2033-05-16T00:00:00Z","status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == api && $* == *'head_sha='* ]]; then
+  json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then
+  echo 0
   exit 0
 fi
 echo '[]'
 MOCK
-chmod +x "$queued_early/bin/gh"
-out=$(PATH="$queued_early/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
-  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:candidate","git_hash":"abcdef","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+cat > "$held_gate/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+exit 22
+MOCK
+chmod +x "$held_gate/bin/docker" "$held_gate/bin/gh" "$held_gate/bin/curl"
+capture="$held_gate/create"
+out=$(PATH="$held_gate/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"old","image_ref":"ghcr.io/example/hive:old1234","git_hash":"old1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
   "$promoter" promote 2>&1) && rc=0 || rc=$?
-if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'candidate age' <<<"$out"; then
-  pass "soak is measured from the publishing run's completion, not when it was queued"
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'smoke signal gate is holding build fail123 generation 250' <<<"$out" && [[ ! -s $capture ]]; then
+  pass "hard-gate failure holds the newest build across the 24h line"
 else
-  bad "a build queued before the window but completed inside it must hold (rc=${rc}; output: ${out})"
+  bad "hard-gate failure must not fall back to an older build (rc=${rc}; output: ${out})"
+fi
+
+# If there is no soaked build newer than stable, the hold reason names the next
+# future eligible_at across the unsoaked builds.
+no_eligible="$tmp/no-eligible"
+mkdir -p "$no_eligible/bin"
+cp "$select_build/bin/docker" "$no_eligible/bin/docker"
+cp "$select_build/bin/curl" "$no_eligible/bin/curl"
+cat > "$no_eligible/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+jqexpr=""
+prev=""
+for a in "$@"; do
+  [[ $prev == --jq ]] && jqexpr=$a
+  prev=$a
+done
+if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
+  json='{"workflow_runs":[{"run_number":300,"head_sha":"new1234","updated_at":"2033-05-18T03:00:00Z","status":"completed","conclusion":"success"},{"run_number":200,"head_sha":"old1234","updated_at":"2033-05-18T01:00:00Z","status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then echo 0; exit 0; fi
+echo '[]'
+MOCK
+chmod +x "$no_eligible/bin/gh" "$no_eligible/bin/curl"
+out=$(PATH="$no_eligible/bin:$PATH" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true}' "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=hold' <<<"$out" && grep -q 'next unsoaked build old1234 generation 200' <<<"$out" && grep -q 'eligible_at 2033-05-19T01:00:00Z' <<<"$out"; then
+  pass "no eligible build holds with a reason naming the next eligible_at"
+else
+  bad "no eligible build must hold with the next eligible_at (rc=${rc}; output: ${out})"
 fi
 
 echo

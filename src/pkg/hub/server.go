@@ -1207,7 +1207,7 @@ type HubServer struct {
 	perHiveEnvSkippedByStatus int
 	// perHiveEnvUnreachable / perHiveEnvUnreachableClusters record the LAST
 	// sweep's hives that were admitted by status but could not be READ at all —
-	// pull-only cluster, no registry entry, or inside the unreachable-cluster
+	// push-reported cluster, no registry entry, or inside the unreachable-cluster
 	// breaker window. Without these the sweep's skip paths left no trace, so an
 	// unreachable spoke was indistinguishable from one that does not exist and
 	// the surface reported a partially-observed fleet as converged. Guarded by
@@ -2661,6 +2661,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"hive_id", payload.HiveID,
 			"cluster_id", entry.ClusterID,
 			"nodes", len(payload.ClusterHealth.Nodes),
+			"node_health_error", payload.ClusterHealth.NodeHealthError,
 		)
 	}
 

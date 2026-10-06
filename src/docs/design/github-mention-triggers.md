@@ -99,7 +99,7 @@ the same PR — never as a config key first.
 
 The Linear path is webhook-only because Linear pushes and demands a 5-second
 answer. GitHub is different in a way that matters for this fleet: most spokes
-run on pull-only clusters the hub cannot write to (see
+run on push-reported clusters the hub cannot write to (see
 [wrapped master delivery](master-delivery-wrapped.md)), and such a spoke has no
 public URL for GitHub to deliver to either. A webhook-only design would work
 on the hosted hub and nowhere else.
@@ -332,7 +332,7 @@ agents:
    mention-kicked agent without `Converse` cannot answer.
 3. **Webhook accelerator.** The hub's verifier gains the three event types and
    a spoke-side mount; deliveries advance the poller's watermark. Hub-to-spoke
-   relay for pull-only clusters is a later question that the master-delivery
+   relay for push-reported clusters is a later question that the master-delivery
    design already frames.
 
 ## Non-goals

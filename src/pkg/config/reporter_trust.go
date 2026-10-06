@@ -44,6 +44,13 @@ type ReporterTrustConfig struct {
 	// DefaultUntrustedRequireLabels. Exact, case-insensitive match, for the
 	// same over-admission reason IssueFilterConfig gives.
 	UntrustedRequireLabels []string `yaml:"untrusted_require_labels,omitempty" json:"untrusted_require_labels,omitempty"`
+	// AwaitingLabel is applied to human-filed issues held out by this gate, so
+	// the wait is visible in the tracker and dashboard. Empty disables the
+	// label; unset uses DefaultReporterTrustAwaitingLabel.
+	AwaitingLabel *string `yaml:"awaiting_label,omitempty" json:"awaiting_label,omitempty"`
+	// Comment controls the one-shot explanation comment on held-out issues.
+	// nil defaults on.
+	Comment *bool `yaml:"comment,omitempty" json:"comment,omitempty"`
 }
 
 // GitHub's author_association vocabulary, as the REST API spells it.
@@ -83,6 +90,10 @@ var DefaultTrustedAssociations = []string{
 // issue must carry when the operator has not named their own.
 var DefaultUntrustedRequireLabels = []string{"triage/accepted"}
 
+// DefaultReporterTrustAwaitingLabel marks issues waiting for a maintainer to
+// admit an untrusted reporter's request into the automated queue.
+const DefaultReporterTrustAwaitingLabel = "needs-triage"
+
 // IsEnabled reports whether the reporter gate is on.
 func (r ReporterTrustConfig) IsEnabled() bool {
 	return r.Enabled != nil && *r.Enabled
@@ -103,6 +114,21 @@ func (r ReporterTrustConfig) EffectiveUntrustedRequireLabels() []string {
 		return append([]string(nil), DefaultUntrustedRequireLabels...)
 	}
 	return append([]string(nil), r.UntrustedRequireLabels...)
+}
+
+// EffectiveAwaitingLabel returns the configured waiting label, the default, or
+// "" when the label has been explicitly disabled.
+func (r ReporterTrustConfig) EffectiveAwaitingLabel() string {
+	if r.AwaitingLabel != nil {
+		return strings.TrimSpace(*r.AwaitingLabel)
+	}
+	return DefaultReporterTrustAwaitingLabel
+}
+
+// CommentOn reports whether Hive should post the one-shot reporter-trust wait
+// explanation. The default is on.
+func (r ReporterTrustConfig) CommentOn() bool {
+	return r.Comment == nil || *r.Comment
 }
 
 // Trusted reports whether a reporter is trusted: by explicit login first, then
@@ -139,12 +165,15 @@ func (r ReporterTrustConfig) Equal(o ReporterTrustConfig) bool {
 	}
 	return equalStringSlices(r.TrustedAssociations, o.TrustedAssociations) &&
 		equalStringSlices(r.TrustedLogins, o.TrustedLogins) &&
-		equalStringSlices(r.UntrustedRequireLabels, o.UntrustedRequireLabels)
+		equalStringSlices(r.UntrustedRequireLabels, o.UntrustedRequireLabels) &&
+		stringPtrEqual(r.AwaitingLabel, o.AwaitingLabel) &&
+		boolPtrEqual(r.Comment, o.Comment)
 }
 
 // IsZero reports whether the block is entirely absent.
 func (r ReporterTrustConfig) IsZero() bool {
-	return r.Enabled == nil && len(r.TrustedAssociations) == 0 && len(r.TrustedLogins) == 0 && len(r.UntrustedRequireLabels) == 0
+	return r.Enabled == nil && len(r.TrustedAssociations) == 0 && len(r.TrustedLogins) == 0 && len(r.UntrustedRequireLabels) == 0 &&
+		r.AwaitingLabel == nil && r.Comment == nil
 }
 
 // ValidateReporterTrust rejects association names GitHub never reports, so a
@@ -169,6 +198,26 @@ func ValidateReporterTrust(r ReporterTrustConfig) error {
 		}
 	}
 	return nil
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil {
+		return true
+	}
+	return *a == *b
+}
+
+func boolPtrEqual(a, b *bool) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == nil {
+		return true
+	}
+	return *a == *b
 }
 
 func equalStringSlices(a, b []string) bool {

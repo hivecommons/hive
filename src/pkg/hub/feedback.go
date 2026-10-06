@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 const (
@@ -39,6 +41,7 @@ const (
 )
 
 var feedbackGitHubAPIBase = "https://api.github.com"
+var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -77,17 +80,26 @@ type feedbackDiagnostics struct {
 	WindowSize          string                    `json:"window_size,omitempty"`
 	Page                string                    `json:"page,omitempty"`
 }
+type feedbackSubmitterIdentity struct {
+	Name        string `json:"name,omitempty"`
+	GitHubLogin string `json:"github_login,omitempty"`
+	Source      string `json:"source,omitempty"`
+}
 type feedbackReportRequest struct {
-	Title              string                  `json:"title"`
-	Description        string                  `json:"description"`
-	RequestType        string                  `json:"request_type"`
-	TargetRepo         string                  `json:"target_repo"`
-	HiveID             string                  `json:"hive_id,omitempty"`
-	Screenshots        []string                `json:"screenshots,omitempty"`
-	IncludeDiagnostics bool                    `json:"include_diagnostics"`
-	Diagnostics        *feedbackDiagnostics    `json:"diagnostics,omitempty"`
-	ConsoleErrors      []feedbackConsoleError  `json:"console_errors,omitempty"`
-	FailedAPICalls     []feedbackFailedAPICall `json:"failed_api_calls,omitempty"`
+	Title              string                    `json:"title"`
+	Description        string                    `json:"description"`
+	RequestType        string                    `json:"request_type"`
+	TargetRepo         string                    `json:"target_repo"`
+	HiveID             string                    `json:"hive_id,omitempty"`
+	CredentialLogin    string                    `json:"credential_login,omitempty"`
+	HubName            string                    `json:"hub_name,omitempty"`
+	Submitter          feedbackSubmitterIdentity `json:"submitter,omitempty"`
+	OpenedByHive       bool                      `json:"opened_by_hive,omitempty"`
+	Screenshots        []string                  `json:"screenshots,omitempty"`
+	IncludeDiagnostics bool                      `json:"include_diagnostics"`
+	Diagnostics        *feedbackDiagnostics      `json:"diagnostics,omitempty"`
+	ConsoleErrors      []feedbackConsoleError    `json:"console_errors,omitempty"`
+	FailedAPICalls     []feedbackFailedAPICall   `json:"failed_api_calls,omitempty"`
 }
 type feedbackReportResponse struct {
 	OK          bool   `json:"ok"`
@@ -216,6 +228,7 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	req.CredentialLogin = hubGitHubLoginForMention(lookupHubFeedbackTokenLogin(token))
 	result, warning, err := createHubFeedbackIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
@@ -318,6 +331,10 @@ func mustHubFeedbackJSON(v any) string { b, _ := json.Marshal(v); return string(
 func sanitizeHubFeedbackRequest(req *feedbackReportRequest) {
 	req.Title = truncateRunes(hubFeedbackRedact(req.Title), 200)
 	req.Description = truncateRunes(hubFeedbackRedact(req.Description), 5000)
+	req.OpenedByHive = true
+	req.CredentialLogin = hubGitHubLoginForMention(req.CredentialLogin)
+	req.HubName = truncateRunes(sanitizeHubFeedbackIdentityValue(req.HubName), 160)
+	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	if len(req.ConsoleErrors) > 20 {
 		req.ConsoleErrors = req.ConsoleErrors[len(req.ConsoleErrors)-20:]
 	}
@@ -337,6 +354,45 @@ func sanitizeHubFeedbackRequest(req *feedbackReportRequest) {
 	if req.Diagnostics != nil {
 		sanitizeHubFeedbackDiagnostics(req.Diagnostics)
 	}
+}
+func sanitizeHubFeedbackSubmitter(s *feedbackSubmitterIdentity) {
+	s.Name = truncateRunes(sanitizeHubFeedbackIdentityValue(s.Name), 120)
+	s.GitHubLogin = hubGitHubLoginForMention(s.GitHubLogin)
+	s.Source = truncateRunes(sanitizeHubFeedbackIdentityValue(s.Source), 80)
+	if s.Name == "" {
+		s.Name = "an unidentified dashboard user"
+		s.Source = "unidentified dashboard user"
+	}
+}
+func sanitizeHubFeedbackIdentityValue(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, v)
+	return hubFeedbackRedact(v)
+}
+
+// hubFeedbackGitHubLoginPattern mirrors dashboard.feedbackGitHubLoginPattern:
+// GitHub logins with single, non-leading, non-trailing hyphens and an optional
+// "[bot]" suffix. RE2 has no lookahead, so the length cap lives in
+// hubGitHubLoginForMention.
+var hubFeedbackGitHubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:-?[A-Za-z0-9])*(?:\[bot\])?$`)
+
+// hubGitHubLoginMaxLen is GitHub's documented username length limit.
+const hubGitHubLoginMaxLen = 39
+
+func hubGitHubLoginForMention(login string) string {
+	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if len(strings.TrimSuffix(login, "[bot]")) > hubGitHubLoginMaxLen {
+		return ""
+	}
+	if hubFeedbackGitHubLoginPattern.MatchString(login) {
+		return login
+	}
+	return ""
 }
 func sanitizeHubFeedbackDiagnostics(d *feedbackDiagnostics) {
 	d.HiveID = truncateRunes(hubFeedbackRedact(d.HiveID), 120)
@@ -477,7 +533,10 @@ func createHubFeedbackIssue(ctx context.Context, client *http.Client, token stri
 	return res, warning, nil
 }
 func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
+	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	var b strings.Builder
+	b.WriteString(hubFeedbackOpenedByLine(req))
+	b.WriteString("\n\n")
 	b.WriteString(req.Description)
 	b.WriteString("\n\n---\nSubmitted from the Hive spoke dashboard feedback form.\n")
 	if req.TargetRepo == feedbackTargetDocs {
@@ -485,11 +544,12 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	} else {
 		b.WriteString("Target: Hive\n")
 	}
-	if req.Diagnostics != nil {
-		b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
-		writeHubFeedbackDiagnostics(&b, req.Diagnostics)
-		b.WriteString("\n</details>\n")
+	if hubFeedbackSubmitterVerified(req.Submitter) {
+		b.WriteString(fmt.Sprintf("/cc @%s\n", req.Submitter.GitHubLogin))
 	}
+	b.WriteString("\n<details>\n<summary>Diagnostics</summary>\n\n")
+	writeHubFeedbackDiagnostics(&b, req.Diagnostics, req.Submitter)
+	b.WriteString("\n</details>\n")
 	if len(req.ConsoleErrors) > 0 {
 		b.WriteString(fmt.Sprintf("\n<details>\n<summary>Browser Console Errors (%d captured)</summary>\n\n", len(req.ConsoleErrors)))
 		for _, e := range req.ConsoleErrors {
@@ -509,9 +569,81 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 	}
 	return truncateRunes(b.String(), 60000)
 }
-func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics) {
+
+func hubFeedbackOpenedByLine(req feedbackReportRequest) string {
+	credential := hubFeedbackCredentialBodyText(req.CredentialLogin)
+	submitter := hubFeedbackSubmitterBodyText(req.Submitter)
+	hiveID := strings.TrimSpace(req.HiveID)
+	if hiveID == "" && req.Diagnostics != nil {
+		hiveID = strings.TrimSpace(req.Diagnostics.HiveID)
+	}
+	if hiveID == "" {
+		hiveID = "unknown"
+	}
+	hub := strings.TrimSpace(req.HubName)
+	if hub == "" {
+		hub = "hub"
+	}
+	line := "Opened by " + credential
+	if !hubFeedbackSameActor(req.CredentialLogin, req.Submitter.GitHubLogin) {
+		line += " on behalf of " + submitter
+	}
+	line += " from hive " + hiveID + " (" + hub + ")"
+	return line
+}
+
+func hubFeedbackCredentialBodyText(login string) string {
+	login = hubGitHubLoginForMention(login)
+	if login == "" {
+		return "the hive"
+	}
+	return "@" + login
+}
+
+func hubFeedbackSameActor(credentialLogin, submitterLogin string) bool {
+	credentialLogin = hubGitHubLoginForMention(credentialLogin)
+	submitterLogin = hubGitHubLoginForMention(submitterLogin)
+	return credentialLogin != "" && strings.EqualFold(credentialLogin, submitterLogin)
+}
+
+// hubFeedbackSourceEntered mirrors dashboard.feedbackSourceEntered: a login
+// the user typed into the spoke's form, which nothing has verified.
+const hubFeedbackSourceEntered = "entered GitHub username"
+
+func hubFeedbackSubmitterVerified(s feedbackSubmitterIdentity) bool {
+	return s.GitHubLogin != "" && s.Source != hubFeedbackSourceEntered
+}
+
+// hubFeedbackSubmitterBodyText mirrors dashboard.feedbackSubmitterBodyText:
+// only a verified login is @-mentioned, because the hub opens the issue with
+// its own credential and must not notify or misattribute to an arbitrary
+// account on the strength of a self-reported handle.
+func hubFeedbackSubmitterBodyText(s feedbackSubmitterIdentity) string {
+	if hubFeedbackSubmitterVerified(s) {
+		return "@" + s.GitHubLogin
+	}
+	if s.GitHubLogin != "" {
+		return "`" + s.GitHubLogin + "` (self-reported GitHub username, unverified)"
+	}
+	return s.Name
+}
+
+func hubFeedbackSubmitterDiagnosticsText(s feedbackSubmitterIdentity) string {
+	name := hubFeedbackSubmitterBodyText(s)
+	if s.Source != "" && s.Source != s.Name {
+		return fmt.Sprintf("%s (%s)", name, s.Source)
+	}
+	return name
+}
+
+func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, submitter feedbackSubmitterIdentity) {
 	b.WriteString("| Field | Value |\n|---|---|\n")
-	rows := [][2]string{{"Version", d.Version}, {"Commit", d.Commit}, {"Channel", d.Channel}, {"ACMM Level", d.ACMMLevel}, {"Hive ID", d.HiveID}, {"Hosted", fmt.Sprintf("%t", d.Hosted)}, {"Hub linked", fmt.Sprintf("%t", d.HubLinked)}, {"Agent count", fmt.Sprintf("%d", d.AgentCount)}, {"Browser UA", d.BrowserUA}, {"Browser platform", d.BrowserPlatform}, {"Browser language", d.BrowserLanguage}, {"Screen", d.ScreenSize}, {"Window", d.WindowSize}, {"Page", d.Page}}
+	submitterText := hubFeedbackSubmitterDiagnosticsText(submitter)
+	if d == nil {
+		b.WriteString(fmt.Sprintf("| Submitted by | %s |\n", strings.ReplaceAll(submitterText, "|", "\\|")))
+		return
+	}
+	rows := [][2]string{{"Submitted by", submitterText}, {"Version", d.Version}, {"Commit", d.Commit}, {"Channel", d.Channel}, {"ACMM Level", d.ACMMLevel}, {"Hive ID", d.HiveID}, {"Hosted", fmt.Sprintf("%t", d.Hosted)}, {"Hub linked", fmt.Sprintf("%t", d.HubLinked)}, {"Agent count", fmt.Sprintf("%d", d.AgentCount)}, {"Browser UA", d.BrowserUA}, {"Browser platform", d.BrowserPlatform}, {"Browser language", d.BrowserLanguage}, {"Screen", d.ScreenSize}, {"Window", d.WindowSize}, {"Page", d.Page}}
 	for _, r := range rows {
 		if r[1] != "" {
 			b.WriteString(fmt.Sprintf("| %s | %s |\n", r[0], strings.ReplaceAll(r[1], "|", "\\|")))

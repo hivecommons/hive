@@ -86,6 +86,9 @@ pinned:
   # v4 is feature-frozen and not being imported as the initial Hive Commons
   # CNCF FOSSA project.
   fossa.yml: [-v4]
+  # GitHub Actions Workflow triage compiles only on the active v5 line; older
+  # release lines do not carry the gh-aw automation surface.
+  gh-aw-compile.yml: [-v4]
   go-security-analysis.yml: [v5, v6]
   # Unit gate for the reusable hive action's app-handle helper (#9707). The
   # action and its smoke wiring live only on the v6 development line, so the

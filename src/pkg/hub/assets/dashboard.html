@@ -174,6 +174,10 @@
     .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
     .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
     .alert-panel-more { margin-top: var(--sp-4); font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: var(--sp-0); }
+    .cluster-health-message { margin: var(--sp-4) var(--sp-0); padding: 6px 10px; border-radius: var(--r); font-size: var(--fs-sm); }
+    .cluster-health-message.error { color: var(--red); background: var(--surface); border: 1px solid var(--red); }
+    .cluster-health-message.info { color: var(--muted); background: var(--surface); border: 1px solid var(--border); }
+    .cluster-health-message.warn { color: var(--amber); background: var(--surface); border: 1px solid var(--amber); }
 
     /* ── Hive search + facets ──
        The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
@@ -478,10 +482,14 @@
       .hive-modal { padding: 14px; }
       h1 { font-size: 1.2rem; }
     }
+    .admin-collapsible-section { margin-top: 48px; }
+    .admin-collapsible-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-6); }
+    .admin-collapsible-title { font-size: 1.3rem; color: var(--hub-dashboard-accent); margin: var(--sp-0); cursor: pointer; user-select: none; display: flex; align-items: center; gap: var(--sp-4); }
+    .admin-collapsible-toggle { font-size: 0.7rem; }
+    .admin-collapsible-summary { font-size: var(--fs-sm); color: var(--muted); font-weight: 400; }
     /* NPS feedback card (#9610). Admin-only; every value is set with
        textContent, so this block only lays out plain text nodes. Tokens only,
        per the style ratchet. */
-    .nps-admin-title { font-size: var(--fs-md); color: var(--hub-dashboard-accent); font-weight: 600; margin-bottom: var(--sp-4); }
     .nps-admin-summary { font-size: var(--fs-sm); color: var(--text); margin-bottom: var(--sp-2); }
     .nps-admin-sub { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-4) 0 var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
     .nps-admin-row { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-2); font-size: var(--fs-xs); }
@@ -628,13 +636,30 @@
       <div id="public-hives-container"></div>
     </div>
 
-    <div id="admin-section" style="display:none;margin-top:48px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-6)">
-        <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
-            onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}"
-            style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0);cursor:pointer;user-select:none;display:flex;align-items:center;gap:var(--sp-4)">
-          <span id="admin-users-toggle" aria-hidden="true" style="font-size:0.7rem">&#9656;</span><span>Hub Admin &mdash; Users</span>
-          <span id="admin-users-count" style="font-size:var(--fs-sm);color:var(--muted);font-weight:400"></span>
+    <div id="nps-section" class="admin-collapsible-section" hidden>
+      <div class="admin-collapsible-head">
+        <h2 id="nps-header" class="admin-collapsible-title" role="button" tabindex="0" aria-expanded="false" aria-controls="nps-body"
+            onclick="toggleAdminNPSSection()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminNPSSection();}">
+          <span id="nps-toggle" class="admin-collapsible-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; NPS feedback</span>
+          <span id="nps-summary" class="admin-collapsible-summary"></span>
+        </h2>
+      </div>
+      <div id="nps-body" hidden>
+        <!-- NPS feedback from every hive's dashboard (#9610). Double gated:
+             this section is hidden until the admin check passes, and
+             /api/admin/nps is behind requireAdmin. Free text is rendered with
+             textContent only, never as markup. Empty/disabled fleets still show
+             the existing no-responses state instead of hiding the section. -->
+        <div id="nps-container"></div>
+      </div>
+    </div>
+
+    <div id="admin-section" class="admin-collapsible-section" style="display:none">
+      <div class="admin-collapsible-head">
+        <h2 id="admin-users-header" class="admin-collapsible-title" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
+            onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}">
+          <span id="admin-users-toggle" class="admin-collapsible-toggle" aria-hidden="true">&#9656;</span><span>Hub Admin &mdash; Users</span>
+          <span id="admin-users-count" class="admin-collapsible-summary"></span>
         </h2>
         <input type="text" id="user-search" placeholder="Search users..." oninput="filterUsers()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
       </div>
@@ -662,11 +687,6 @@
              Rendered as a plain ranked bar list; no map, no charting library,
              no external asset (the hub forbids external CDNs/images). -->
         <div class="mt-7" id="user-countries-container"></div>
-        <!-- NPS feedback from every hive's dashboard (#9610). Same double
-             gating as the country rollup: inside the admin section, and fed
-             by /api/admin/nps, which is behind requireAdmin. Free text is
-             rendered with textContent only, never as markup. -->
-        <div class="mt-7" id="nps-container"></div>
       </div>
     </div>
 
@@ -6991,11 +7011,54 @@
              hiveIsUpgradingNow), so a spinning row is always matched by the
              "Upgrading" facet and vice versa. */
           var isUpgrading = hiveIsUpgradingNow(h, branchName, branchLatest);
+          /* The count is relative to the row's reachable target
+             (commitsBehindTarget / behindTargetRef), never bare branch HEAD:
+             a :stable spoke shows how far it lags STABLE. The branch-tip
+             distance (commitsBehindStableV4) rides in the tooltip so the
+             operator still sees how stale the channel itself is. Older hubs
+             send only the branch-tip fields; fall back to them. */
+          var behindRef = h.behindTargetRef || (STABLE_BRANCH_LABEL + ' tip');
+          var behindSHA = h.behindTargetSHA || _stableV4SHA || '';
+          var behindCount = (h.commitsBehindTarget !== undefined && h.commitsBehindTarget !== null)
+            ? h.commitsBehindTarget
+            : (h.behindTargetRef ? null : h.commitsBehindStableV4);
+          var behindKnown = behindCount !== undefined && behindCount !== null;
+          var branchTipSHA = _latestSHAs[branchName] || _latestSHA || '';
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
-          var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
+          var pendingImageCommits = Number(h.behindTargetPendingImageCommits || 0);
+          var pendingImageNote = pendingImageCommits > 0
+            ? ' (+' + pendingImageCommits + (pendingImageCommits === 1 ? ' commit' : ' commits') + ' awaiting image)'
+            : '';
+          var floatingLagNote = (h.behindTargetFloatingSHA && behindSHA && !sameShaJS(h.behindTargetFloatingSHA, behindSHA))
+            ? ' (channel tag still points at ' + h.behindTargetFloatingSHA + '; using newer immutable image ' + behindSHA + ')'
+            : '';
+          var verificationNote = h.behindTargetVerificationUnavailable
+            ? ' (image verification unavailable; using the channel tag target)'
+            : '';
+          var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the newest verified image)' : '';
+          var channelTipBehindCount = pendingImageCommits || ((h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null)
+            ? h.commitsBehindStableV4
+            : null);
+          /* A release-channel hive can be CURRENT to the latest published
+             channel image while the branch that feeds that channel has moved
+             on and its image has not been published/retagged yet. That is not
+             "upgrade available" (the reachable image is still the one already
+             running), but a green ✓ made it look fully current. Surface the
+             waiting-for-image state explicitly; when behindTargetSHA later
+             advances, isCurrent becomes false and the normal Upgrade
+             available/Upgrade now affordance appears. */
+          var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':' &&
+            behindSHA && branchTipSHA && !sameShaJS(behindSHA, branchTipSHA));
+          var imagePendingStatus = _latestImageStatus[branchName] || 'pending';
+          var imagePendingCount = channelTipBehindCount !== null ? (String(channelTipBehindCount) + ' commits') : 'newer commits';
+          var imagePendingTitle = h.behindTargetRef + ' image is published at ' + behindSHA +
+            ', which this hive is running; ' + branchName + ' tip ' + branchTipSHA +
+            ' is ' + imagePendingCount + ' ahead and its image status is ' + imagePendingStatus +
+            '. Upgrade will appear after a newer immutable image is published.' + verificationNote;
           var status = latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
-            : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
+            : channelImagePending ? '<span style="color:var(--yellow);margin-left:3px" title="' + escAttr(imagePendingTitle) + '">⏳</span>'
+            : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="' + escAttr('Current: running commit matches ' + behindRef + ' ' + (branchLatest || '')) + '">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="' + escAttr('Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')') + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
             var switchStale = isSwitching && _switchStartedAt[h.id] && (Date.now() - _switchStartedAt[h.id] > SWITCH_STALE_MS);
@@ -7025,8 +7088,8 @@
                branch/channel label — so "queued for what?" never needs a
                second click to answer. */
             var queuedTitle = queuedDaily
-              ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint
-              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint;
+              ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint + pendingImageNote + floatingLagNote + verificationNote
+              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
             /* REFUSED, not queued. autoUpgradeBlocked is the hub's own evaluated
                decision (upgradeCollectible false), sent by the fleet API rather
                than re-derived here — the badge must never claim an upgrade is
@@ -7040,7 +7103,7 @@
               queuedLabel = 'Auto-upgrade blocked';
               queuedTitle = 'The hub will not arm an auto-upgrade for this hive: ' +
                 (h.autoUpgradeBlockedReason || 'it cannot collect the upgrade instruction') +
-                '. It will not resolve on its own.' + buildingHint;
+                '. It will not resolve on its own.' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
             }
             /* escAttr, not esc, for the title: esc() leaves quotes intact and a
                branch name or commit subject carrying one would break out of the
@@ -7049,7 +7112,7 @@
               '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
               ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
               ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
-              ' title="' + escAttr('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
+              ' title="' + escAttr('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint + pendingImageNote + floatingLagNote + verificationNote) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
             /* Manual path (auto-upgrade OFF): a real primary-ish button, not
                text-with-an-underline. The bare word "Upgrade" read as a label,
@@ -7061,7 +7124,7 @@
               ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
               ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
               ' onmouseover="this.style.background=\'' + UPGRADE_BTN_HOVER_BG + '\'" onmouseout="this.style.background=\'' + UPGRADE_BTN_BG + '\'"' +
-              ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
+              ' title="' + escAttr('Current: ' + sha + ' → Latest verified image: ' + branchLatest + buildingHint + pendingImageNote + floatingLagNote + verificationNote) + '" style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted) {
             /* Non-owners get the STATE with no action: they cannot trigger the
                upgrade, so a button would be a lie, but saying nothing made a
@@ -7125,29 +7188,26 @@
           /* The drift dot rides on the SHA line, right of the current/behind
              glyph: "what commit is this hive on, and does it match the fleet" is
              one thought. It sets no extra line, so a drifting hive is no taller. */
-          /* The count is relative to the row's reachable target
-             (commitsBehindTarget / behindTargetRef), never bare branch HEAD:
-             a :stable spoke shows how far it lags STABLE. The branch-tip
-             distance (commitsBehindStableV4) rides in the tooltip so the
-             operator still sees how stale the channel itself is. Older hubs
-             send only the branch-tip fields; fall back to them. */
-          var behindRef = h.behindTargetRef || (STABLE_BRANCH_LABEL + ' tip');
-          var behindSHA = h.behindTargetSHA || _stableV4SHA || '';
-          var behindCount = (h.commitsBehindTarget !== undefined && h.commitsBehindTarget !== null)
-            ? h.commitsBehindTarget
-            : (h.behindTargetRef ? null : h.commitsBehindStableV4);
-          var behindKnown = behindCount !== undefined && behindCount !== null;
           var tipNote = '';
           if (h.behindTargetRef && h.behindTargetRef !== STABLE_BRANCH_LABEL + ' tip' &&
               h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null && h.commitsBehindStableV4 > 0) {
             tipNote = '; ' + h.commitsBehindStableV4 + ' behind ' + STABLE_BRANCH_LABEL + ' tip ' + (_stableV4SHA || '') +
               ' — reachable only once ' + h.behindTargetRef + ' is promoted';
           }
+          var behindBadgeWarnStyle = 'display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap';
+          var behindBadgeUnknownStyle = 'display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(210,153,34,0.10);color:var(--yellow);border:1px solid rgba(210,153,34,0.25);white-space:nowrap';
+          var behindBadgeHTML = function(style, title, label) {
+            return ' <span style="' + style + '" title="' + escAttr(title) + '">' + esc(label) + '</span>';
+          };
           var behindBadge = '';
-          if (behindKnown && behindCount > 0) {
-            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap" title="' + escAttr(behindCount + ' commits behind ' + behindRef + ' ' + behindSHA + tipNote) + '">' + esc(behindCount) + ' behind</span>';
+          if (channelImagePending) {
+            var imagePendingLabel = (channelTipBehindCount !== null ? channelTipBehindCount + ' behind · ' : '') +
+              (imagePendingStatus === 'building' ? 'building' : 'image pending');
+            behindBadge = behindBadgeHTML(behindBadgeWarnStyle, imagePendingTitle, imagePendingLabel);
+          } else if (behindKnown && behindCount > 0) {
+            behindBadge = behindBadgeHTML(behindBadgeWarnStyle, 'Badge measures running commit against ' + behindRef + ' ' + behindSHA + ': ' + behindCount + ' commits behind' + tipNote, behindCount + ' behind');
           } else if (!behindKnown && behindSHA && sha && !sameShaJS(sha, behindSHA)) {
-            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(210,153,34,0.10);color:var(--yellow);border:1px solid rgba(210,153,34,0.25);white-space:nowrap" title="' + escAttr('Could not compare this commit with ' + behindRef + ' ' + behindSHA) + '">? behind</span>';
+            behindBadge = behindBadgeHTML(behindBadgeUnknownStyle, 'Could not compare this commit with ' + behindRef + ' ' + behindSHA + '; badge measures the running commit against the latest reachable image', '? behind');
           }
           var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + behindBadge + (driftDot ? ' ' + driftDot : '');
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
@@ -7161,7 +7221,7 @@
            folding Drift into Version never hides a signal. */
         } else { versionCell = '<span class="text-muted">—</span>' + (driftDot ? ' ' + driftDot : ''); }
         var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))
-          ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:var(--fs-2xs);display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
+          ? '<span title="' + escAttr(h.pendingRequestCount + (h.pendingRequestCount === 1 ? ' pending access request' : ' pending access requests')) + '" style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:var(--fs-2xs);display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
           : '';
         var pendingPill = '';
         if (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write'))) {
@@ -7639,8 +7699,12 @@
       var st = _stablePromotion || {auto_promote: true, soak_hours: 24};
       var on = st.auto_promote !== false;
       var base = on
-        ? 'auto-promotion: on — stable catches up to candidate after ' + (st.soak_hours || 24) + 'h soak'
+        ? 'auto-promotion: on — stable chases candidate and is always ' + (st.soak_hours || 24) + 'h behind it; no quiet period required'
         : 'auto-promotion: paused by ' + (st.paused_by || 'operator') + (st.paused_at ? ' ' + stablePromotionAge(st.paused_at) : '');
+      if (on && st.eligible_build) {
+        var eb = st.eligible_build || {};
+        base += ' — next build across the 24h line: ' + (eb.sha || '?') + (eb.generation ? ' generation ' + eb.generation : '') + (st.eligible_at ? ' at ' + st.eligible_at : '');
+      }
       if (!on && ct && ct.behind) base = '↓' + ct.behind + ' behind — ' + base;
       var title = base;
       if (st.maintained_hives && st.maintained_hives.length) {
@@ -9197,6 +9261,8 @@
             if (cs.total_disk_percent != null) {
               var cDiskColor = healthBarColor(cs.total_disk_percent, CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT);
               cDiskSegment = '<span style="color:' + cDiskColor + '">' + cs.total_disk_percent + '% disk</span> · ';
+            } else if (cs.total_disk_gb != null) {
+              cDiskSegment = '<span class="text-muted" title="Disk capacity reported; live disk usage unavailable">—% of ' + cs.total_disk_gb + ' GiB disk</span> · ';
             } else {
               cDiskSegment = '<span class="text-muted" title="No node in this cluster reported live disk usage">— disk</span> · ';
             }
@@ -9267,7 +9333,14 @@
               wildcardLine = ' · <span class="text-danger" title="' + esc(wtTitle) + '">' +
                 esc(wtLabel) + '</span>';
             }
-            var errorLine = c.error ? '<div style="margin:var(--sp-4) var(--sp-0);padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r);font-size:var(--fs-sm);color:var(--red)">' + esc(c.error) + '</div>' : '';
+            var statusLine = '';
+            if (c.error) {
+              statusLine = '<div class="cluster-health-message error">' + esc(c.error) + '</div>';
+            } else if ((c.status === 'awaiting_heartbeat' || c.status === 'missing_heartbeat_health') && c.note) {
+              statusLine = '<div class="cluster-health-message info">' + esc(c.note) + '</div>';
+            } else if ((c.status === 'stale_heartbeat' || c.data_stale) && c.note) {
+              statusLine = '<div class="cluster-health-message warn">' + esc(c.note) + '</div>';
+            }
             var headerHtml = '<div style="display:flex;align-items:center;gap:var(--sp-4);margin:var(--sp-6) var(--sp-0) var(--sp-4)">' +
               clusterBadge(c.id, c.name) +
               '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + esc(cLabel) + '</span>' +
@@ -9281,7 +9354,7 @@
             var nodesHtml = (c.nodes || []).length > 0
               ? '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-5)">' + (c.nodes || []).map(renderNodeCard).join('') + '</div>'
               : '';
-            return headerHtml + errorLine + nodesHtml;
+            return headerHtml + statusLine + nodesHtml;
           }).join('');
         } else {
           // Fallback: flat node list (single cluster / backward compat).
@@ -9774,6 +9847,39 @@
       } catch(e) { hiveToast('Cannot remove admin', 'error'); }
     }
 
+    /* --- Collapsible "Hub Admin — NPS feedback" section ---
+       Kept as its own admin-only section immediately above Users. It follows
+       the same persisted-collapse convention as Users: collapsed by default,
+       and only an explicit localStorage 'false' expands it. */
+    var ADMIN_NPS_COLLAPSED_KEY = 'hive-admin-nps-collapsed';
+    var _adminNPSCollapsed = localStorage.getItem(ADMIN_NPS_COLLAPSED_KEY) !== 'false';
+
+    function applyAdminNPSCollapsed() {
+      var body = document.getElementById('nps-body');
+      var toggle = document.getElementById('nps-toggle');
+      var header = document.getElementById('nps-header');
+      if (body) body.hidden = _adminNPSCollapsed;
+      if (toggle) toggle.innerHTML = _adminNPSCollapsed ? '&#9656;' : '&#9662;';
+      if (header) header.setAttribute('aria-expanded', _adminNPSCollapsed ? 'false' : 'true');
+    }
+
+    function persistAdminNPSCollapsed() {
+      try {
+        localStorage.setItem(ADMIN_NPS_COLLAPSED_KEY, _adminNPSCollapsed ? 'true' : 'false');
+      } catch(e) {}
+    }
+
+    function toggleAdminNPSSection() {
+      _adminNPSCollapsed = !_adminNPSCollapsed;
+      persistAdminNPSCollapsed();
+      applyAdminNPSCollapsed();
+    }
+
+    function updateAdminNPSSummary(text) {
+      var el = document.getElementById('nps-summary');
+      if (el) el.textContent = text || '';
+    }
+
     /* --- Collapsible "Hub Admin — Users" section ---
        The roster runs to ~90 records, so an expanded users table pushes the
        Hub Banner and Cluster Health sections far below the fold. An operator
@@ -9896,16 +10002,18 @@
       try {
         var resp = await fetch('/api/saas/admin/users');
         if (resp.status === 403) {
-          if (!_adminLoaded) { document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; document.getElementById('btn-send-banner-top').style.display = 'none'; }
+          if (!_adminLoaded) { document.getElementById('nps-section').hidden = true; document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; document.getElementById('btn-send-banner-top').style.display = 'none'; }
           return;
         }
         _adminLoaded = true;
+        document.getElementById('nps-section').hidden = false;
         document.getElementById('admin-section').style.display = '';
         var navFleet = document.getElementById('nav-fleet');
         if (navFleet) navFleet.style.display = '';
         /* The section is display:none until the admin check passes, so this is
            the first point at which the persisted collapse state can be pushed
            onto real DOM. Idempotent, so running it on every poll is fine. */
+        applyAdminNPSCollapsed();
         applyAdminUsersCollapsed();
         document.getElementById('hub-banner-section').style.display = '';
         document.getElementById('btn-send-banner-top').style.display = '';
@@ -9922,7 +10030,7 @@
         /* NPS card (#9610): same admin poll, same not-awaited rule. */
         loadAdminNPS();
       } catch(e) {
-        if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
+        if (!_adminLoaded) { document.getElementById('nps-section').hidden = true; document.getElementById('admin-section').style.display = 'none'; }
       } finally {
         _adminLoading = false;
       }
@@ -10117,18 +10225,23 @@
         ' \u00b7 avg ' + (Number(t && t.average_score) || 0);
     }
 
+    function npsHeadlineText(data) {
+      var scoreMax = Number(data && data.score_max) || 0;
+      return npsTallyText(data) + ' / ' + scoreMax;
+    }
+
     function renderAdminNPS(data) {
       var el = document.getElementById('nps-container');
       if (!el) return;
       while (el.firstChild) el.removeChild(el.firstChild);
-      el.appendChild(npsEl('div', 'nps-admin-title', 'NPS feedback'));
       var total = Number(data && data.total) || 0;
+      var scoreMax = Number(data && data.score_max) || 0;
+      updateAdminNPSSummary(npsHeadlineText(data));
       if (total <= 0) {
         el.appendChild(npsEl('div', 'fs-sm text-muted', 'No NPS responses yet.'));
         return;
       }
-      var scoreMax = Number(data.score_max) || 0;
-      el.appendChild(npsEl('div', 'nps-admin-summary', npsTallyText(data) + ' / ' + scoreMax));
+      el.appendChild(npsEl('div', 'nps-admin-summary', npsHeadlineText(data)));
       el.appendChild(npsEl('div', 'nps-admin-summary',
         'Promoters ' + (Number(data.promoters) || 0) + ' (' + (Number(data.promoter_pct) || 0) + '%) \u00b7 ' +
         'Passives ' + (Number(data.passives) || 0) + ' (' + (Number(data.passive_pct) || 0) + '%) \u00b7 ' +

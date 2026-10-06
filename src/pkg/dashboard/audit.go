@@ -23,16 +23,108 @@ import (
 var auditLogPath = "/data/audit.jsonl"
 
 const (
-	auditMaxSizeMB  = 5
-	auditMaxBackups = 3
-	auditMaxAgeDays = 90
-	auditMaxEntries = 200
-	auditRingCap    = 500
+	auditMaxSizeMB    = 5
+	auditMaxBackups   = 3
+	auditMaxAgeDays   = 90
+	auditMaxEntries   = 200
+	auditRingCap      = 500
+	auditSummaryHours = 24
 	// auditMaxTrackedActionUsers bounds the per-user last-action map so a
 	// pathological stream of unique usernames cannot grow it without bound.
 	// A real hive has a handful of users; this is purely defensive.
 	auditMaxTrackedActionUsers = 500
 )
+
+// auditSensitiveActions is derived from the audit action vocabulary emitted by
+// pkg/dashboard/api_*.go (config_* and approval decisions),
+// pkg/dashboard/{api_auth,copilot_auth,claude_auth,backup_key,gateways}.go
+// (auth/key/gateway changes), pkg/agentaudit/agentaudit.go (agent, token and
+// lease actions), pkg/github/write_surface*.go (write refusals and signed
+// commit reauthorship), and pkg/convergence/publish/publisher.go (publication
+// refusals). Keep it explicit so the collapsed Audit Log risk chip changes
+// only when a real audit action name is added or reclassified.
+var auditSensitiveActions = map[string]bool{
+	"agent_added":                           true,
+	"agent_backend_changed":                 true,
+	"agent_model_changed":                   true,
+	"agent_removed":                         true,
+	"agent_write_refused":                   true,
+	"approval-bulk":                         true,
+	"approval-resolve":                      true,
+	"claude_auth_complete":                  true,
+	"claude_auth_logout":                    true,
+	"claude_auth_start":                     true,
+	"claude_token_missing":                  true,
+	"config_agent_cadences":                 true,
+	"config_agent_channels":                 true,
+	"config_agent_connections":              true,
+	"config_agent_general":                  true,
+	"config_agent_hooks":                    true,
+	"config_agent_models":                   true,
+	"config_agent_pipeline":                 true,
+	"config_agent_prompt":                   true,
+	"config_agent_restrictions":             true,
+	"config_agent_stats":                    true,
+	"config_agent_tools":                    true,
+	"config_auto_merge":                     true,
+	"config_convergence":                    true,
+	"config_escalation":                     true,
+	"config_github":                         true,
+	"config_governor_advisory":              true,
+	"config_governor_attribution":           true,
+	"config_governor_backup_key":            true,
+	"config_governor_bob_key":               true,
+	"config_governor_budget":                true,
+	"config_governor_cadence_scope":         true,
+	"config_governor_features":              true,
+	"config_governor_gateway_delete":        true,
+	"config_governor_gateway_upsert":        true,
+	"config_governor_general_advanced":      true,
+	"config_governor_health":                true,
+	"config_governor_hub":                   true,
+	"config_governor_inference_auth":        true,
+	"config_governor_labels":                true,
+	"config_governor_litellm":               true,
+	"config_governor_logging":               true,
+	"config_governor_notifications":         true,
+	"config_governor_project_observability": true,
+	"config_governor_question_autoclose":    true,
+	"config_governor_replan":                true,
+	"config_governor_repos":                 true,
+	"config_governor_security":              true,
+	"config_governor_sensing":               true,
+	"config_governor_threshold_scaling":     true,
+	"config_governor_thresholds":            true,
+	"config_governor_trajectory":            true,
+	"config_governor_watchdog":              true,
+	"config_governor_work_source":           true,
+	"config_review":                         true,
+	"config_write_surface":                  true,
+	"copilot_auth_logout":                   true,
+	"copilot_auth_start":                    true,
+	"copilot_token_missing":                 true,
+	"design_approved":                       true,
+	"finding_publication_refused":           true,
+	"gh_auth_logout":                        true,
+	"gh_auth_start":                         true,
+	"ioscan_fail_closed":                    true,
+	"lease_stage_refused":                   true,
+	"lease_stage_reset":                     true,
+	"login_denied":                          true,
+	"model_discovery_failed":                true,
+	"plan_approve":                          true,
+	"plan_reject":                           true,
+	"run_stage_reset":                       true,
+	"signed_commit_reauthored":              true,
+	"tool_approval":                         true,
+}
+
+type auditSummary struct {
+	Histogram    []int       `json:"histogram"`
+	Sensitive24h int         `json:"sensitive_24h"`
+	Today        int         `json:"today"`
+	Last         *AuditEntry `json:"last"`
+}
 
 // auditPseudoUsers are the audit User values that do NOT represent a real
 // person acting in the dashboard: background/system writers ("system"),
@@ -397,6 +489,46 @@ func (a *AuditLog) Recent(n int) []AuditEntry {
 	return result
 }
 
+func auditLogSummary(entries []AuditEntry, now time.Time) auditSummary {
+	now = now.UTC()
+	currentHour := now.Truncate(time.Hour)
+	histogramStart := currentHour.Add(-(auditSummaryHours - 1) * time.Hour)
+	histogramEnd := currentHour.Add(time.Hour)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	sensitiveStart := now.Add(-auditSummaryHours * time.Hour)
+	summary := auditSummary{
+		Histogram: make([]int, auditSummaryHours),
+	}
+	var latest time.Time
+	for i := range entries {
+		entry := entries[i]
+		ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+		if err != nil {
+			continue
+		}
+		ts = ts.UTC()
+		if summary.Last == nil || ts.After(latest) {
+			last := entry
+			summary.Last = &last
+			latest = ts
+		}
+		if !ts.Before(todayStart) && !ts.After(now) {
+			summary.Today++
+		}
+		if !ts.Before(sensitiveStart) && !ts.After(now) && auditSensitiveActions[entry.Action] {
+			summary.Sensitive24h++
+		}
+		if ts.Before(histogramStart) || !ts.Before(histogramEnd) {
+			continue
+		}
+		bucket := int(ts.Truncate(time.Hour).Sub(histogramStart) / time.Hour)
+		if bucket >= 0 && bucket < len(summary.Histogram) {
+			summary.Histogram[bucket]++
+		}
+	}
+	return summary
+}
+
 func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
@@ -404,6 +536,7 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := s.audit.Recent(auditMaxEntries)
+	summaryEntries := s.audit.Recent(0)
 	// Cosmetic: attach display names for opaque OIDC actor keys. Recent()
 	// returns copies, so the ring itself is never mutated.
 	for i := range entries {
@@ -411,7 +544,19 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 			entries[i].UserName = dn
 		}
 	}
-	jsonResponse(w, map[string]any{"entries": entries})
+	for i := range summaryEntries {
+		if dn := s.authorizedDisplayName(summaryEntries[i].User); dn != "" && dn != summaryEntries[i].User {
+			summaryEntries[i].UserName = dn
+		}
+	}
+	summary := auditLogSummary(summaryEntries, time.Now())
+	jsonResponse(w, map[string]any{
+		"entries":       entries,
+		"histogram":     summary.Histogram,
+		"sensitive_24h": summary.Sensitive24h,
+		"today":         summary.Today,
+		"last":          summary.Last,
+	})
 }
 
 // requestUser resolves the acting user behind an authenticated dashboard

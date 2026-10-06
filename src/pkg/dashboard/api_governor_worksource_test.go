@@ -61,6 +61,13 @@ type workSourceAPIResponse struct {
 		Repo               string   `json:"repo"`
 		HoldLabels         []string `json:"hold_labels"`
 	} `json:"jira"`
+	Wavefront struct {
+		Enabled     bool   `json:"enabled"`
+		Path        string `json:"path"`
+		URL         string `json:"url"`
+		Repo        string `json:"repo"`
+		ReceiptsDir string `json:"receipts_dir"`
+	} `json:"wavefront"`
 }
 
 func getWorkSourceSettings(t *testing.T, s *Server) workSourceAPIResponse {
@@ -491,6 +498,91 @@ func TestGovWorkSource_GitHubProjectsRoundTrip(t *testing.T) {
 	}
 	if len(g.States) != 2 {
 		t.Errorf("States = %v", g.States)
+	}
+}
+
+// TestGovWorkSource_WavefrontRoundTrip covers the additive Wavefront/Crustify
+// source block. It is saved with the same work-source endpoint as the
+// provider-specific settings, but it does not replace the main work-source
+// type: Wavefront appends ready run-stage nodes.
+func TestGovWorkSource_WavefrontRoundTrip(t *testing.T) {
+	s := govServer(t)
+	rec := doPut(s, "/api/config/governor/work-source", map[string]any{
+		"type": "github",
+		"wavefront": map[string]any{
+			"enabled":      true,
+			"path":         " /data/wavefront/graph.json ",
+			"repo":         " acme/crust ",
+			"receipts_dir": " /data/wavefront/receipts ",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put wavefront work-source: %d — %s", rec.Code, rec.Body.String())
+	}
+	got := getWorkSourceSettings(t, s)
+	if got.Type != "github" || !got.Wavefront.Enabled || got.Wavefront.Path != "/data/wavefront/graph.json" ||
+		got.Wavefront.URL != "" || got.Wavefront.Repo != "acme/crust" ||
+		got.Wavefront.ReceiptsDir != "/data/wavefront/receipts" {
+		t.Fatalf("wavefront settings = %+v", got.Wavefront)
+	}
+
+	rec = doPut(s, "/api/config/governor/work-source", map[string]any{
+		"wavefront": map[string]any{
+			"path": "",
+			"url":  "https://wavefront.example/graph.json",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("switch wavefront to url: %d — %s", rec.Code, rec.Body.String())
+	}
+	got = getWorkSourceSettings(t, s)
+	if got.Wavefront.Path != "" || got.Wavefront.URL != "https://wavefront.example/graph.json" ||
+		got.Wavefront.Repo != "acme/crust" {
+		t.Fatalf("wavefront url settings = %+v", got.Wavefront)
+	}
+}
+
+func TestGovWorkSource_WavefrontValidation(t *testing.T) {
+	s := govServer(t)
+	cases := []struct {
+		name string
+		wf   map[string]any
+		want string
+	}{
+		{
+			name: "needs location",
+			wf:   map[string]any{"enabled": true, "repo": "acme/crust"},
+			want: "exactly one",
+		},
+		{
+			name: "path url exclusive",
+			wf:   map[string]any{"enabled": true, "path": "/data/graph.json", "url": "https://wavefront.example/graph.json", "repo": "acme/crust"},
+			want: "mutually exclusive",
+		},
+		{
+			name: "url scheme",
+			wf:   map[string]any{"enabled": true, "url": "ftp://wavefront.example/graph.json", "repo": "acme/crust"},
+			want: "http:// or https://",
+		},
+		{
+			name: "repo owner name",
+			wf:   map[string]any{"enabled": true, "path": "/data/graph.json", "repo": "crust"},
+			want: "owner/name",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doPut(s, "/api/config/governor/work-source", map[string]any{"wavefront": tc.wf})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code = %d, want 400 — %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("body %q does not mention %q", rec.Body.String(), tc.want)
+			}
+		})
+	}
+	if got := getWorkSourceSettings(t, s); got.Wavefront.Enabled || got.Wavefront.Repo != "" {
+		t.Fatalf("rejected wavefront PUT mutated config: %+v", got.Wavefront)
 	}
 }
 

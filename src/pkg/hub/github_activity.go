@@ -332,7 +332,7 @@ func (f *GitHubActivityFeed) listIssues(ctx context.Context, repo string) (map[i
 				UpdatedAt:   issue.UpdatedAt,
 				Labels:      labels,
 				Assignees:   assignees,
-				ClaimMarker: strings.Contains(issue.Body, "<!-- hive-claim -->"),
+				ClaimMarker: strings.Contains(issue.Body, "<!-- hive:claim") || strings.Contains(issue.Body, "<!-- hive-claim"),
 			}
 		}
 		if len(issues) < 100 {

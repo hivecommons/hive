@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -72,6 +73,10 @@ func resolveHubTarget(hub config.HubConfig, envHubURL, envClusterID string) hubT
 // hub must be enabled AND reachable by URL.
 func (t hubTarget) heartbeatsToHub() bool {
 	return t.enabled && t.url != ""
+}
+
+func shouldCollectHeartbeatClusterHealth(clusterID string) bool {
+	return strings.TrimSpace(clusterID) != ""
 }
 
 // maxACMMLevel is the highest ACMM maturity pack a hive can apply.

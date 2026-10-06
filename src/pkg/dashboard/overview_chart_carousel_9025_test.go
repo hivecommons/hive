@@ -47,9 +47,17 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 	for _, want := range []string{
 		"data-action=\"toggleOverviewChartSettings\"",
 		"id=\"overview-chart-settings\"",
+		"id=\"overview-chart-settings-overlay\"",
+		"class=\"config-modal overview-settings-modal\" id=\"overview-chart-settings\" role=\"dialog\" aria-modal=\"true\"",
+		"aria-labelledby=\"overview-chart-settings-title\"",
+		"data-action=\"closeOverviewChartSettings\"",
 		"id=\"overview-repo-filter\"",
 		"OVERVIEW_REPOS_KEY = 'hive.overview.repos'",
 		"function toggleOverviewChartSettings()",
+		"function openOverviewChartSettings()",
+		"openOverviewChartSettings();",
+		"function closeOverviewChartSettings()",
+		"add(document.getElementById('overview-chart-settings-overlay'), closeOverviewChartSettings, 10000)",
 		"data-change-action=\"setOverviewChartRotation\"",
 		"data-change-action=\"setOverviewCarouselInterval\"",
 		"data-change-action=\"setOverviewChartType\"",
@@ -70,9 +78,11 @@ func TestOverviewCarouselControlsAndTransitions9025(t *testing.T) {
 		"OVERVIEW_CAROUSEL_MIN_MS = 5000",
 		"OVERVIEW_CAROUSEL_MAX_MS = 300000",
 		"OVERVIEW_CAROUSEL_DEFAULT_MS = 30000",
-		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 500, normal: 1000, slow: 1800 }",
+		"OVERVIEW_TRANSITION_DURATION_MS = { fast: 1000, normal: 2000, slow: 3600 }",
 		"function overviewTransitionDurationMs(state)",
 		"function overviewCarouselDwellMs(state)",
+		"function installOverviewTransitionDurationVars()",
+		"rootStyle.setProperty('--overview-transition-' + duration, overviewTransitionDurationMs({ duration }) + 'ms')",
 		"}, overviewCarouselDwellMs(state)));",
 		"transition: 'fade', duration: 'normal'",
 		"carousel: false",
@@ -165,9 +175,9 @@ const OVERVIEW_TRANSITION_DURATION_MS = { fast: ` + durations[1] + `, normal: ` 
 const OVERVIEW_CAROUSEL_DEFAULT_MS = 30000;
 ` + jsFunc(t, html, "overviewTransitionDurationMs") + `
 ` + jsFunc(t, html, "overviewCarouselDwellMs") + `
-assert.equal(overviewTransitionDurationMs({ duration: 'fast' }), 500);
-assert.equal(overviewTransitionDurationMs({ duration: 'normal' }), 1000);
-assert.equal(overviewTransitionDurationMs({ duration: 'slow' }), 1800);
+assert.equal(overviewTransitionDurationMs({ duration: 'fast' }), 1000);
+assert.equal(overviewTransitionDurationMs({ duration: 'normal' }), 2000);
+assert.equal(overviewTransitionDurationMs({ duration: 'slow' }), 3600);
 assert.ok(overviewCarouselDwellMs({ intervalMs: 500, duration: 'slow' }) >= overviewTransitionDurationMs({ duration: 'slow' }));
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

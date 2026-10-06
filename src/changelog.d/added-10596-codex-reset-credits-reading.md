@@ -1,0 +1,1 @@
+- The Codex prober now reads `rateLimitResetCredits.availableCount` from `account/rateLimits/read` (read-only) and publishes it as `reset_credits_available` in `<poolKey>.reading.json`; a null, missing, or malformed value is omitted so unknown stays distinct from 0.

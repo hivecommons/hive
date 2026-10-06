@@ -36,6 +36,8 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 	resetChannelRevisionCache(t)
 	origRev := ghcrTagRevision
 	ghcrTagRevision = func(string, string, *slog.Logger) string { return "" }
+	origGen := ghcrTagGeneration
+	ghcrTagGeneration = func(string, string, *slog.Logger) int { return 0 }
 	origMsg := channelCommitMessage
 	channelCommitMessage = func(string, *slog.Logger) string { return "" }
 	// Distance resolution is a THIRD network read that resolveChannelTargets
@@ -58,6 +60,7 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 	t.Cleanup(func() {
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
+		ghcrTagGeneration = origGen
 		channelCommitMessage = origMsg
 		fetchCommitCompareCounts = origDist
 		fetchCommitDate = origDate

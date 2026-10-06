@@ -15,9 +15,18 @@ type KnowledgeConfig struct {
 	Vaults          []VaultConfig         `yaml:"vaults"`
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
+	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`
 	Primer          KnowledgePrimer       `yaml:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
+}
+
+// PublicKnowledgeConfig is the dashboard-persisted owner override for the
+// anonymous read-only MCP endpoint. Enabled is a pointer so an absent setting
+// can keep honoring the legacy HIVE_PUBLIC_KNOWLEDGE environment switch.
+type PublicKnowledgeConfig struct {
+	Enabled *bool    `yaml:"enabled,omitempty"`
+	Tags    []string `yaml:"tags,omitempty"`
 }
 
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.

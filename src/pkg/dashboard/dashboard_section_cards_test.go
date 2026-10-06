@@ -58,12 +58,22 @@ func TestDashboardSectionEmojisMatchSidebar(t *testing.T) {
 	}
 }
 
+func TestDashboardSectionTitlesMatchSidebarLabels(t *testing.T) {
+	html := indexHTML(t)
+	config := jsConstObject(t, html, "const DASHBOARD_SECTION_CARD_CONFIG")
+	for sectionID, label := range sidebarSectionLabels(html) {
+		entry := dashboardSectionConfigEntry(t, config, sectionID)
+		title := dashboardSectionTitleLabel(dashboardSectionConfigTitle(t, entry))
+		if !strings.EqualFold(title, label) {
+			t.Fatalf("section %q title %q does not match sidebar label %q", sectionID, title, label)
+		}
+	}
+}
+
 func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`data-action="toggleOverviewChartSettings" data-stop="1"`,
-		`id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1"`,
-		`id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1"`,
 		`data-action="openACMMDialog" data-stop="1"`,
 		`id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1"`,
 		`data-action="openNousConfig" data-stop="1"`,
@@ -72,6 +82,15 @@ func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("header action is missing data-stop propagation guard: %s", want)
+		}
+	}
+	for _, want := range []string{
+		`id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1"`,
+		`id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1"`,
+		`id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("Projects toolbar action is missing data-stop propagation guard: %s", want)
 		}
 	}
 
@@ -86,6 +105,10 @@ func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 			t.Fatalf("shared header action/badge normalization is missing %q", want)
 		}
 	}
+	if !strings.Contains(html, ".dash-card.collapsed .dash-card-actions { display: none; }") {
+		t.Fatal("collapsed dashboard cards must hide expanded-content header action buttons")
+	}
+
 	ensureBody := jsFunctionBody(t, html, "function ensureSectionCard(sectionId)")
 	if !strings.Contains(ensureBody, `el.setAttribute('data-stop', '1')`) {
 		t.Fatal("runtime-migrated header links/buttons are not forced to stop propagation")
@@ -318,6 +341,25 @@ func sidebarSectionEmojis(html string) map[string]string {
 		out[m[1]] = m[2]
 	}
 	return out
+}
+
+func sidebarSectionLabels(html string) map[string]string {
+	re := regexp.MustCompile(`data-section="([^"]+)"[^>]*>\s*<span class="oc-nav-emoji">[^<]+</span><span class="oc-nav-text">([^<]+)</span>`)
+	out := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(html, -1) {
+		out[m[1]] = strings.TrimSpace(m[2])
+	}
+	return out
+}
+
+func dashboardSectionTitleLabel(title string) string {
+	title = strings.TrimSpace(title)
+	for i, r := range title {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return strings.TrimSpace(title[i:])
+		}
+	}
+	return ""
 }
 
 func startsWithEmoji(s string) bool {

@@ -24,7 +24,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
 		"versionUpgradeProgressStatus", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
-		"versionNavbarUpgradeHTML", "renderVersionMenu", "renderVersionChip", "fetchGitVersion",
+		"versionNavbarUpgradeHTML", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
@@ -41,7 +41,8 @@ const elements = {
   'git-version': {},
   'oc-git-version': {},
   'oc-version-chip': { setAttribute() {}, focus() {} },
-  'oc-version-menu': { hidden: true }
+  'oc-version-menu': { hidden: true },
+  'oc-navbar-upgrade': { hidden: true, setAttribute() {} }
 };
 const document = { getElementById: id => elements[id] || null };
 const window = {};
@@ -62,16 +63,19 @@ async function render(overrides = {}) {
   elements['git-version'].innerHTML = 'stale';
   elements['oc-version-chip'].innerHTML = '';
   elements['oc-version-menu'].innerHTML = '';
+  elements['oc-navbar-upgrade'].innerHTML = '';
+  elements['oc-navbar-upgrade'].hidden = true;
   const before = calls;
   await fetchGitVersion();
   assert.equal(calls, before + 1);
   assert.equal(elements['git-version'].innerHTML, '', 'legacy heading version strip should stay empty');
   const chip = elements['oc-version-chip'].innerHTML;
   const menu = elements['oc-version-menu'].innerHTML;
+  const navbar = elements['oc-navbar-upgrade'].innerHTML;
   assert.ok(menu.includes('/commit/a1b2c3d0123456789'));
   assert.ok(menu.includes('a1b2c3d0123456789'));
-  assert.ok(chip.includes('a1b2c3d'));
-  return { chip, menu, legacy: window._lastVersionHTML || '' };
+  if (!chip.includes('oc-version-navbar-upgrade')) assert.ok(chip.includes('a1b2c3d'));
+  return { chip, menu, navbar, navbarHidden: elements['oc-navbar-upgrade'].hidden, legacy: window._lastVersionHTML || '' };
 }
 (async () => {
   for (const channel of ['stable', 'candidate', 'edge']) {
@@ -120,7 +124,15 @@ async function render(overrides = {}) {
   assert.ok(out.legacy.includes('Queued for auto-upgrade'));
   // #6904: the passive badge no longer hides the owner's manual escape hatch.
   assert.ok(out.menu.includes('spoke-upgrade-btn'));
-  assert.ok(out.menu.includes('Upgrade now'));
+  assert.ok(out.menu.includes('Upgrade now') || out.menu.includes('Upgrade to b2c3d4e'));
+  if (out.menu.includes('Upgrade to b2c3d4e')) assert.ok(out.menu.includes('data-action="gh27"'));
+  localStorage.setItem(VERSION_UPGRADE_STORAGE_KEY, JSON.stringify({ target: 'b2c3d4e', targetShort: 'b2c3d4e', startedFrom: 'a1b2c3d0123456789', startedAt: versionNowMs() - 120000 }));
+  out = await render({ latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
+  assert.equal(out.navbarHidden, false);
+  assert.ok(out.navbar.includes('oc-version-navbar-upgrade'));
+  assert.ok(out.navbar.includes('Upgrading'));
+  assert.ok(out.navbar.includes('b2c3d4e'));
+  versionClearUpgradeProgress();
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
   assert.ok(out.menu.includes('manual update required'));
   // The button stays on screen but disabled, carrying the reason as its title.

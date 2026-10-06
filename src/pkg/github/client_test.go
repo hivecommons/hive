@@ -148,6 +148,49 @@ func buildMux(t *testing.T, org, repo string, issues []wireIssue, prs []wirePR) 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(mustMarshal(t, issues))
 	})
+	for _, issue := range issues {
+		number := issue.Number
+		mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/comments", org, repo, number), func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				w.Write([]byte(`[]`))
+			case http.MethodPost:
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"html_url":"https://example.test/comment"}`))
+			default:
+				http.NotFound(w, r)
+			}
+		})
+		mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/labels", org, repo, number), func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`[]`))
+		})
+		mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/labels/", org, repo, number), func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		})
+	}
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"name":"created"}`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels/", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"not found"}`))
+	})
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/pulls", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(mustMarshal(t, prs))

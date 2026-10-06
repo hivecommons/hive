@@ -164,7 +164,7 @@ A fuller technical walkthrough (process model, the governor loop, the guardrail
 layers, the beads ledger, and an end-to-end "issue → merged PR" trace) lives in
 the project's [reference architecture](architecture.md). The autonomy framework
 (ACMM) is described in more depth in the paper
-[*An AI-native Capability Maturity Model*](https://arxiv.org/abs/2604.09388).
+[*The AI Codebase Maturity Model*](https://arxiv.org/abs/2604.09388).
 
 ## Guiding principles
 

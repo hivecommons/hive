@@ -1,0 +1,1 @@
+- Capped dashboard histories, deduplicated recurring pollers, and cancelled stale sparkline/KPI animations to prevent long-lived tab memory growth (#10557)

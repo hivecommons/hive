@@ -28,11 +28,11 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
 
-The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **System Diagnostics → Platform**, keeping the information available without consuming a top-level card. System Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
+The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
 
 ## Topbar and sidebar status
 
-The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Evaluation section; changing levels remains in the existing ACMM dialog/sidebar controls.
+The light dashboard topbar keeps high-signal operational state only: project name, fleet controls, health, auth, and a compact ACMM autonomy chip such as `L5 · Semi-Autonomous`. The chip is display-only and navigates to the ACMM Eval section; changing levels remains in the existing ACMM dialog/sidebar controls.
 
 Build/version details live in the bottom-left sidebar chip. The collapsed chip shows the short SHA, release channel, and an orange `↑` marker only when an upgrade is available. Open the chip for the full commit link, channel/tracking state, compare/release-notes links, last upgrade status when reported, copy-version, and the manual upgrade action. On small screens the sidebar is reachable through the hamburger drawer, so the version menu remains available without returning the long version strip to the topbar.
 
@@ -61,6 +61,14 @@ posture, and cadence controls for the hive. Its collapsible **PRs by model** nes
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
 collapsed summary shows the current top-ranked model plus model count.
+
+The Governor **actionable issues** and **actionable PRs** tiles use the shared
+server-side actionable partition described in [Repository card legend, issue
+bands, and PR bands](#repository-card-legend-issue-bands-and-pr-bands). Their
+subtitles show the per-kind reconciliation from total open work to the
+actionable split, and those two results always add back to the Overview
+**Actionable now** total.
+
 The cadence table starts each agent row with the same `1`/`0` Agent power
 rocker used in the agent settings panel, so owners can enable or disable an
 agent from the table; disabled rows are dimmed, and read-only viewers see the
@@ -80,11 +88,11 @@ sort controls; the selected column and direction are saved in browser
 default row order is effectiveness rank; operators can toggle back to raw PR
 count without changing the selected window.
 
-## Change Throughput
+## Throughput
 
-The Change Throughput panel appears as a nested Hive Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
+The Throughput panel appears as a nested Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
 
-The **Change Throughput** section (`pr-throughput-section`) summarizes
+The **Throughput** section (`pr-throughput-section`) summarizes
 pull/merge requests and issues across tracked forges. It reads
 `GET /api/pr-throughput` for selectable windows and repository filters, keeps
 the historical `/api/pr-throughput` path and `pr-throughput-*` element IDs for
@@ -113,6 +121,14 @@ agent-created issues, agent comments/claims as triage/review signals, and
 agent issue-close events. Historical human issue creation/review/closure is not
 backfilled; the actor matrix and trend chart start accumulating as new audited
 or observed events arrive.
+
+The **Hive vs human** tile and expanded trend use the same selected actor role
+as the dropdown. The large percent is hive-attributed events divided by
+hive + human + other-automation events in the selected window, excluding
+unknown actors. For **Merged**, the share covers PR merges plus issue closes;
+for **Closed**, it covers PRs closed without merging plus issue closes. The
+previous percent compares against the immediately preceding window of the same
+length (for example, previous 24 hours for the 24h window).
 
 ## Project Inception and Knowledge
 
@@ -183,13 +199,39 @@ rule.
 
 ## Repository card legend, issue bands, and PR bands
 
-The collapsible **Overview** section above Repositories summarizes the same
+The collapsible **Overview** section above Projects summarizes the same
 client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
-shows open issues, open PRs, actionable now, held, blocked/needs-human, and the
-median actionable age. Operators can view each Issues or PRs panel as a donut,
+shows total open issues, total open PRs, actionable now, held, and
+blocked/needs-human. This is the same partition used by the Governor
+actionable issue/PR subtitles. **Total open issues** and **Total open PRs** are
+forge totals for the selected configured repositories from the existing scanner tick:
+open GitHub issues exclude pull requests, while open GitHub pull requests
+include drafts. Their subtitles stay empty so the reconciliation is not split
+across tiles. **Actionable now** is the shared server-side count used by the
+Overview KPI and the Governor collapsed split: open enumerated issues plus open
+enumerated PRs after hold/exempt filters, excluding items in the waiting, done,
+draft, or blocked Overview bands. Its subtitle carries the complete partition,
+for example `41 issues + 17 PRs = 13 actionable + 13 held + 10
+blocked/needs-human + 22 outside`; the held and blocked/needs-human tiles use
+the same server-side terms. The `outside` term is also server-side and is
+broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
+row naming the count, rule, current setting, and how to change it for this
+hive. The rows cover hard-suppress labels (`needs-direction`,
+`needs-decision`, `needs-spec`; `needs-human` is counted under
+blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
+exempt labels, reporter-trust triage from
+`project.issue_filter.reporter_trust`, require-label filtering from
+`project.issue_filter.require_labels`, standing hive advisory/meta issues,
+bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
+hold-adjacent/other remainder rows. See
+[labels-and-control-signals.md](labels-and-control-signals.md) for the label
+semantics behind hold, exempt, and hard-suppress signals. Its
+`actionableNow.issues` and `actionableNow.prs` splits always sum to
+`actionableNow.total`. Operators can
+view each Issues or PRs panel as a donut,
 pie, horizontal bar, single 100% stacked bar, line/spark trend, or age
 histogram. Every shape is still driven by the same band slices and
 server-provided classifications. Hovering a chart element, an Overview legend
@@ -211,17 +253,17 @@ pages include their API token in the download link's query string.
 The Overview header's ⚙️ popover stores browser-local chart preferences under
 `hive-overview-charts`: which chart types are in rotation, whether the carousel
 is enabled, the 5-second to 5-minute interval, transition style, duration, donut
-label mode, KPI visibility, export format, default age basis, and the bounded
+label mode, KPI visibility, export format, and the bounded
 client-side line/spark history. The repo multi-select is stored separately under
 `hive.overview.repos`, with All/None shortcuts and an Org shortcut when the
 hive spans multiple GitHub organizations. The default remains donut-only with
 the carousel off, a 30-second interval, fade transition, normal duration, KPI
-strip on, CSV exports, updated-time age basis, and all repos selected.
+strip on, CSV exports, and all repos selected.
 Manual arrows and dot indicators are available even when timed rotation is off;
 timed rotation pauses while the panel is hovered or the tab is hidden, and
 reduced-motion users get instant swaps.
 
-The **Repositories** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
+The **Projects** section uses a consistent card header grid: reorder grip, truncated repository name, status badges, labelled auto-merge switch, spacer, and actions. It also includes a compact, collapsible pill legend. It is
 stored per browser in `localStorage` and uses the same pill classes as the cards,
 so theme changes update the legend automatically. The legend lists the issue
 and PR bands (rendered from the shared band table, each with its rule as a
@@ -240,7 +282,9 @@ in exactly one band, while non-winning states remain as badges on the pill:
 1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
    nothing claimed it, and no human gate applies. This does not by itself mean
    agents will pick it up.
-2. **Claimed** (`claimed`) — assignee set, `claimed`, or `hive/claimed-by-*`.
+2. **Claimed** (`claimed`) — a claim is a comment; the `claimed` label is a
+   mirror Hive keeps in sync. The display band also recognises assignees and
+   `hive/claimed-by-*`.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
    human assignee (the snapshot's `human_acknowledged`; a human *comment* only

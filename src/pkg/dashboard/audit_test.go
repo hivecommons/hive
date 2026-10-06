@@ -224,6 +224,41 @@ func TestHandleAuditLogAllowsReadWriteRole(t *testing.T) {
 	}
 }
 
+func TestAuditLogSummaryHistogramSensitiveTodayAndLast(t *testing.T) {
+	now := time.Date(2026, 10, 5, 15, 31, 0, 0, time.UTC)
+	entries := []AuditEntry{
+		{Timestamp: now.Add(-25 * time.Hour).Format(time.RFC3339), User: "old", Action: "config_github"},
+		{Timestamp: now.Add(-23 * time.Hour).Format(time.RFC3339), User: "alice", Action: "repos_rescan"},
+		{Timestamp: now.Add(-2 * time.Hour).Format(time.RFC3339), User: "bob", Action: "config_governor_backup_key"},
+		{Timestamp: now.Add(-30 * time.Minute).Format(time.RFC3339), User: "carol", Action: "login_denied"},
+		{Timestamp: now.Add(-10 * time.Minute).Format(time.RFC3339), User: "dana", Action: "agent_kicked"},
+	}
+
+	summary := auditLogSummary(entries, now)
+
+	if len(summary.Histogram) != auditSummaryHours {
+		t.Fatalf("histogram length = %d, want %d", len(summary.Histogram), auditSummaryHours)
+	}
+	if got := summary.Histogram[0]; got != 1 {
+		t.Fatalf("oldest hourly bucket = %d, want 1", got)
+	}
+	if got := summary.Histogram[auditSummaryHours-3]; got != 1 {
+		t.Fatalf("two-hour bucket = %d, want 1", got)
+	}
+	if got := summary.Histogram[auditSummaryHours-1]; got != 2 {
+		t.Fatalf("current hourly bucket = %d, want 2", got)
+	}
+	if summary.Sensitive24h != 2 {
+		t.Fatalf("Sensitive24h = %d, want 2", summary.Sensitive24h)
+	}
+	if summary.Today != 3 {
+		t.Fatalf("Today = %d, want 3", summary.Today)
+	}
+	if summary.Last == nil || summary.Last.User != "dana" || summary.Last.Action != "agent_kicked" {
+		t.Fatalf("Last = %#v, want newest audit entry", summary.Last)
+	}
+}
+
 func TestHandleAuditLogAllowsOwnerRole(t *testing.T) {
 	server := &Server{audit: &AuditLog{}}
 	server.audit.Log("alice", "config.save", "file=hive.yaml", "scanner")

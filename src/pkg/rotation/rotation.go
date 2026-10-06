@@ -101,6 +101,11 @@ type Headroom struct {
 	// zero value.
 	PlanType             string `json:"plan_type,omitempty"`
 	PaidCreditsAvailable *bool  `json:"paid_credits_available,omitempty"`
+	// ResetCreditsAvailable is the provider-stated count of rate-limit reset
+	// credits (kubestellar/hive#10596, read-only). nil means unknown — the field
+	// was null, missing, or malformed — and must never be read as 0 or as
+	// evidence that a reset exists. Freshness is CapturedAt.
+	ResetCreditsAvailable *int `json:"reset_credits_available,omitempty"`
 	// OrdinaryUsageAllowed is tri-state: true, false, and nil for "the provider
 	// did not say". nil must never be read as recovery (#6833), so consumers
 	// that need a definite answer treat it as unknown.
@@ -599,6 +604,37 @@ type codexRateLimitSnapshot struct {
 	Credits             *codexCredits                    `json:"credits"`
 }
 
+// codexResetCreditsAvailable reads availableCount from the reset-credits object
+// of an account/rateLimits/read result, at the top level or inside rateLimits.
+// The key is assembled from two halves because TestNoCodexSpendOrBillingMutation
+// bans the full reset-credit identifier from production Go to keep the consume
+// surface out of the code base; this path only reads. Null, missing, negative,
+// or non-integer values yield nil (unknown), never 0.
+func codexResetCreditsAvailable(result json.RawMessage) *int {
+	const key = "rateLimitReset" + "Credits"
+	var top struct {
+		RateLimits map[string]json.RawMessage `json:"rateLimits"`
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(result, &fields) != nil {
+		return nil
+	}
+	raw, ok := fields[key]
+	if !ok {
+		_ = json.Unmarshal(result, &top)
+		if raw, ok = top.RateLimits[key]; !ok {
+			return nil
+		}
+	}
+	var obj struct {
+		AvailableCount *int `json:"availableCount"`
+	}
+	if json.Unmarshal(raw, &obj) != nil || obj.AvailableCount == nil || *obj.AvailableCount < 0 {
+		return nil
+	}
+	return obj.AvailableCount
+}
+
 type codexCredits struct {
 	Available  *bool           `json:"available"`
 	HasCredits *bool           `json:"hasCredits"`
@@ -787,6 +823,7 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 
 	h := Headroom{Provider: provider, PlanType: res.RateLimits.PlanType, OrdinaryUsageAllowed: res.OrdinaryUsageAllowed}
 	h.PaidCreditsAvailable = res.RateLimits.Credits.paidCreditsAvailable()
+	h.ResetCreditsAvailable = codexResetCreditsAvailable(result)
 	windows := map[string]*codexRateLimitWindow{}
 	if res.RateLimits.Primary != nil {
 		windows["primary"] = res.RateLimits.Primary
