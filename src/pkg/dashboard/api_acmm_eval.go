@@ -76,6 +76,9 @@ type RepoEvaluation struct {
 	CriteriaPassed  int               `json:"criteria_passed"`
 	Levels          []ACMMLevelScore  `json:"levels"`
 	CriteriaResults []CriterionResult `json:"criteria_results"`
+	// MergeStrategy is the repo's effective merge strategy, so the merge-queue
+	// row can offer an owner the serialized merge lane only when it is off.
+	MergeStrategy string `json:"merge_strategy,omitempty"`
 }
 
 // ACMMLevelScore summarizes pass/fail for a single ACMM level.
@@ -135,6 +138,11 @@ type CriterionResult struct {
 	// Unlike waivers, this is not repository-authored and can advance a level.
 	SatisfiedBy     string `json:"satisfied_by,omitempty"`
 	SatisfiedReason string `json:"satisfied_reason,omitempty"`
+	// FileOnly is true when a criterion that Hive can verify (today only
+	// acmm:merge-queue) passed solely because a marker file exists. It still
+	// counts toward the level; the dashboard labels it "file only, not
+	// verified".
+	FileOnly bool `json:"file_only,omitempty"`
 }
 
 // ACMMIssueRequest is the payload for creating an ACMM gap issue.
@@ -266,7 +274,18 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), acmmEvalTimeout)
+	defer cancel()
+
 	title, body := acmmIssueContent(criterion)
+	// A personal-account repo cannot turn on GitHub's merge queue, so its
+	// merge-queue ticket explains the serialized merge lane instead. Only this
+	// criterion pays for the owner lookup; organization repos keep today's
+	// ticket, as does any repo whose owner type cannot be read.
+	personalMergeQueue := criterion.ID == acmmMergeQueueID && s.acmmRepoOwnedByUser(ctx, owner, req.Repo)
+	if personalMergeQueue {
+		title, body = acmmMergeQueuePersonalIssueContent(criterion, req.Repo)
+	}
 
 	// Invocation-attribution trail: this issue is created by the hive on an
 	// operator's dashboard action — stamp the (config-gated) visible trailer
@@ -276,9 +295,6 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Config.Governor.AttributionTrailerEnabled() {
 		body = github.AppendTrailer(body, meta)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), acmmEvalTimeout)
-	defer cancel()
 
 	if s.acmmIssueDestination(tracker) == acmmIssueDestinationLinear {
 		s.createACMMLinearIssue(ctx, w, r, req.Repo, title, body, meta)
@@ -306,8 +322,10 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 		Title: gh.Ptr(title),
 		Body:  gh.Ptr(body),
 	}
+	var labels []string
 	if labelExists {
-		issueReq.Labels = &[]string{acmmIssueLabelName, "ai-fix-requested"}
+		labels = acmmIssueLabels(personalMergeQueue)
+		issueReq.Labels = &labels
 	}
 
 	issue, _, err := ghClient.Issues.Create(ctx, owner, req.Repo, issueReq)
@@ -328,6 +346,7 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 		"tracker":      acmmIssueDestinationGitHub,
 		"issue_number": issue.GetNumber(),
 		"issue_url":    issue.GetHTMLURL(),
+		"labels":       labels,
 	})
 }
 
@@ -533,6 +552,9 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	aggDetected := make(map[string]bool)
 	aggWaiver := make(map[string]CriterionResult)
 	aggHiveCredit := make(map[string]CriterionResult)
+	// aggFileOnly: passed somewhere only on a marker file Hive could not
+	// verify. Weaker than Hive credit, stronger than a waiver (it scores).
+	aggFileOnly := make(map[string]bool)
 	activitySnap, activityReady := collect.ActivitySnapshot{}, false
 	if s.deps != nil && s.deps.Activity != nil {
 		activitySnap, activityReady = s.deps.Activity.Snapshot()
@@ -559,7 +581,10 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 			// A waiver is only consulted when detection failed, so a repo
 			// that later adds the real file stops depending on it silently
 			// and the declaration becomes a no-op rather than a lie.
-			if !passed {
+			if c.ID == acmmMergeQueueID {
+				s.applyMergeQueueCredit(ctx, ghClient, owner, repo, &res)
+			}
+			if !res.Passed {
 				if w, ok := waivers[c.ID]; ok {
 					res.Passed = true
 					res.Waived = true
@@ -586,6 +611,8 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 					if _, seen := aggHiveCredit[c.ID]; !seen {
 						aggHiveCredit[c.ID] = res
 					}
+				} else if res.FileOnly {
+					aggFileOnly[c.ID] = true
 				} else {
 					aggDetected[c.ID] = true
 				}
@@ -603,6 +630,7 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 			CriteriaPassed:  scored.CriteriaPassed,
 			Levels:          scored.Levels,
 			CriteriaResults: scored.CriteriaResults,
+			MergeStrategy:   s.deps.Config.RepoMergeStrategy(repo),
 		})
 	}
 
@@ -625,6 +653,8 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 				row.SatisfiedBy = h.SatisfiedBy
 				row.SatisfiedReason = h.SatisfiedReason
 				row.Repo = h.Repo
+			} else if aggFileOnly[c.ID] {
+				row.FileOnly = true
 			} else if w, ok := aggWaiver[c.ID]; ok {
 				row.Waived = true
 				row.WaiverSatisfiedBy = w.WaiverSatisfiedBy

@@ -75,6 +75,7 @@ func TestInvalidMergeStrategyFailsValidationAndStopsAutoMerge(t *testing.T) {
 	cfg.GitHub.Token = "x"
 	cfg.Agents = map[string]AgentConfig{"scanner": {}}
 	cfg.ACMMLevel = &level
+	cfg.Agents = map[string]AgentConfig{"scanner": {Backend: "claude"}}
 	cfg.Project.RepoPolicies = []RepoPolicy{{Repo: "console", MergeStrategy: "hive-serialised"}}
 
 	err := cfg.Validate()
