@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.137.1)
+
+### Changed
+
+- CI: add `workflow_run` backstops with bounded de-duplication to `coverage-hourly.yml` and `promote-stable.yml` so neither depends solely on starved cron delivery (#10877).
+
+### Fixed
+
+- Contributor quota: with `AGENT_MODEL` set, the built-in Codex quota publisher now reads only the rate-limit buckets that apply to the selected model — shared account buckets (no `normalModelSlug`) plus buckets scoped to that model — so another model's exhausted quota no longer holds work or triggers a banked-reset redemption. Buckets with missing scope are treated as shared, `ordinaryUsageAllowed` refusals still apply, and an unset `AGENT_MODEL` keeps reading every bucket ([#10865](https://github.com/hivecommons/hive/issues/10865)).
+- dashboard: refresh GitHub rate-limit after reset and colour on remaining (#10880)
+- Fix dashboard agent tiles so UP NEXT follows the governor pending-kick queue and due-now idle agents do not render bare now labels.
+- Fixed the dashboard navbar so upgrade-progress pills cannot overlap or squeeze the centered running-agent strip.
+- Keep v5 tagged releases moving under high merge cadence by making release-gate checks instant, holding hive automerges during the short post-publish release window, and re-arming docker backstops after stale release attempts.
+- Slow and stabilize the dashboard upgrade bee orbit while preserving the animated wrapper across status text refreshes.
+
 ## 2026-10-06 (v5.137.0)
 
 ### Added

@@ -1,1 +1,0 @@
-- CI: add `workflow_run` backstops with bounded de-duplication to `coverage-hourly.yml` and `promote-stable.yml` so neither depends solely on starved cron delivery (#10877).
