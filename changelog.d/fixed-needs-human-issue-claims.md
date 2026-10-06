@@ -1,0 +1,1 @@
+- Refuse automated claims on `needs-human` or held issues and release existing automated claims on the next cleanup tick, without disturbing human claims ([#10526](https://github.com/hivecommons/hive/issues/10526)).

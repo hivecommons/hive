@@ -56,6 +56,24 @@ func buildClaimsLedger(cfg *config.Config, logger *slog.Logger) *claims.Ledger {
 	return ledger
 }
 
+// installClaimAdmissionCheck gates every automated ledger producer on current
+// labels, including renewals and forced takeovers. Resolve the client per call
+// because App setup can finish after boot.
+func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, client func() *github.Client) {
+	if ledger == nil || client == nil {
+		return
+	}
+	ledger.SetAdmissionCheck(func(req claims.Request) (string, error) {
+		ctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
+		defer cancel()
+		gh := client()
+		if gh == nil {
+			return "", github.ErrNoGitHubClient
+		}
+		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+	})
+}
+
 // githubClaimHooks returns the hooks that mirror ledger transitions onto the
 // GitHub issue. Every call is best-effort: a failed comment or label never
 // affects the ledger, which is authoritative for the hub's own decisions.

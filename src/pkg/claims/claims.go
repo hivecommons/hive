@@ -237,6 +237,8 @@ type Result struct {
 	// Previous is the displaced (taken_over) or blocking (held/refused)
 	// holder's claim, when there was one.
 	Previous *Claim
+	// Reason explains an admission refusal, which has no blocking holder.
+	Reason string
 }
 
 // Hooks are the hub-side side effects, all optional. They run after the
@@ -346,6 +348,7 @@ type Ledger struct {
 	hooks  Hooks
 	now    func() time.Time
 	hive   string
+	admit  func(Request) (string, error)
 }
 
 // ErrInvalid is returned for requests missing a repo, issue, holder or kind.
@@ -388,6 +391,15 @@ func (l *Ledger) SetHooks(h Hooks) {
 	l.mu.Unlock()
 }
 
+// SetAdmissionCheck installs a non-human claim gate. An empty reason admits
+// the request; an error leaves the ledger unchanged. The check runs outside
+// the ledger lock so a forge lookup never blocks other ledger operations.
+func (l *Ledger) SetAdmissionCheck(check func(Request) (string, error)) {
+	l.mu.Lock()
+	l.admit = check
+	l.mu.Unlock()
+}
+
 // SetNow overrides the clock. Intended for tests.
 func (l *Ledger) SetNow(fn func() time.Time) {
 	l.mu.Lock()
@@ -402,6 +414,18 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 	req.Holder = strings.TrimSpace(req.Holder)
 	if l == nil || req.Repo == "" || req.Issue <= 0 || req.Holder == "" || !req.Kind.Valid() {
 		return Result{}, ErrInvalid
+	}
+	l.mu.Lock()
+	check := l.admit
+	l.mu.Unlock()
+	if check != nil && req.Kind != KindHuman {
+		reason, err := check(req)
+		if err != nil {
+			return Result{}, err
+		}
+		if reason != "" {
+			return Result{Outcome: OutcomeRefused, Reason: reason}, nil
+		}
 	}
 	l.mu.Lock()
 	now := l.now()
@@ -549,6 +573,46 @@ func (l *Ledger) ForceRelease(repo string, issue int, reason string) (Claim, boo
 		hooks.OnReleased(c, reason)
 	}
 	return c, ok
+}
+
+// ReleaseBlocked rechecks non-human claims against the admission gate. Failed
+// lookups preserve claims. A concurrent renewal or takeover also preserves the
+// new claim: only the exact snapshot checked outside the lock may be removed.
+func (l *Ledger) ReleaseBlocked() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	check := l.admit
+	l.mu.Unlock()
+	if check == nil {
+		return 0
+	}
+	n := 0
+	for _, c := range l.List() {
+		if c.Kind == KindHuman {
+			continue
+		}
+		reason, err := check(Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID, Kind: c.Kind})
+		if err != nil || reason == "" {
+			continue
+		}
+		l.mu.Lock()
+		current, ok := l.claims[c.Key()]
+		if !ok || current != c {
+			l.mu.Unlock()
+			continue
+		}
+		delete(l.claims, c.Key())
+		_ = l.saveLocked()
+		hooks := l.hooks
+		l.mu.Unlock()
+		n++
+		if hooks.OnReleased != nil {
+			hooks.OnReleased(c, reason)
+		}
+	}
+	return n
 }
 
 // ReleaseByHolderID drops every claim whose HolderID matches — used when a
