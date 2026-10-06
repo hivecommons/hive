@@ -213,11 +213,16 @@ async function render(overrides = {}) {
   assert.ok(out.navbar.includes('Upgrading'));
   assert.ok(out.navbar.includes('b2c3d4e'));
   const originalCreateElement = document.createElement;
-  function fakeProgressNode(key, hive) {
+  function fakeProgressNode(key, hive, title, status, parentNode = null) {
     const node = {
-      hive,
+      hive, title, status, parentNode,
       getAttribute(name) { return name === 'data-upgrade-key' ? key : null; },
-      querySelector(selector) { return selector === '.oc-version-hive' ? this.hive : null; }
+      querySelector(selector) {
+        if (selector === '.oc-version-hive') return this.hive;
+        if (selector === '[data-upgrade-title]') return this.title;
+        if (selector === '[data-upgrade-status]') return this.status;
+        return null;
+      }
     };
     if (hive) hive.replaceWith = replacement => { node.hive = replacement; };
     return node;
@@ -225,7 +230,9 @@ async function render(overrides = {}) {
   function fakeTemplateFromHTML(html) {
     const key = (String(html).match(/data-upgrade-key="([^"]+)"/) || [])[1] || '';
     const nextHive = { id: 'next-hive' };
-    const progress = fakeProgressNode(key, nextHive);
+    const nextTitle = { innerHTML: (String(html).match(/data-upgrade-title="1">([^<]*)/) || [,''])[1] };
+    const nextStatus = { innerHTML: (String(html).match(/data-upgrade-status="1">([^<]*)/) || [,''])[1] };
+    const progress = fakeProgressNode(key, nextHive, nextTitle, nextStatus);
     return { childNodes: [progress], querySelector(selector) { return selector === '[data-upgrade-key]' ? progress : null; } };
   }
   document.createElement = tag => {
@@ -236,16 +243,24 @@ async function render(overrides = {}) {
   };
   const stableProgress = { target: 'b2c3d4e', targetShort: 'b2c3d4e', startedAt: 12345 };
   const stableKey = versionUpgradeKey(stableProgress);
-  const currentHive = { id: 'current-hive', animationStarts: 1 };
+  const animations = [{ animationName: 'ocBeeOrbit' }];
+  const currentHive = { id: 'current-hive', animationStarts: 1, getAnimations() { return animations; } };
+  const currentTitle = { innerHTML: 'old title' };
+  const currentStatus = { innerHTML: 'old status' };
   const host = {
-    assigned: [],
-    querySelector(selector) { return selector === '[data-upgrade-key]' ? fakeProgressNode(stableKey, currentHive) : null; },
-    replaceChildren(...nodes) { this.assigned = nodes; }
+    replaced: 0,
+    querySelector(selector) { return selector === '[data-upgrade-key]' ? currentProgress : null; },
+    replaceChildren() { this.replaced++; }
   };
+  const currentProgress = fakeProgressNode(stableKey, currentHive, currentTitle, currentStatus, host);
   for (let i = 0; i < 4; i++) {
     assert.equal(versionSetHTMLPreservingUpgradeBee(host, versionNavbarUpgradeHTML({ ...stableProgress, targetShort: 'b2c3d4e' }, {}), stableKey), true);
-    assert.equal(host.assigned[0].querySelector('.oc-version-hive'), currentHive, 'same upgrade refresh must keep the existing bee container so CSS keyframes do not restart');
+    assert.equal(currentProgress.querySelector('.oc-version-hive'), currentHive, 'same upgrade refresh must keep the existing bee container so CSS keyframes do not restart');
+    assert.equal(host.replaced, 0, 'topbar/sidebar upgrade refresh should patch text in place instead of replacing the upgrade subtree');
     assert.equal(currentHive.animationStarts, 1, 'same upgrade refresh must not produce a fresh animationstart');
+    assert.equal(currentHive.getAnimations(), animations, 'same upgrade refresh must keep the same animation objects');
+    assert.ok(currentTitle.innerHTML.includes('Upgrading'));
+    assert.ok(currentStatus.innerHTML.includes('b2c3d4e'));
   }
   document.createElement = originalCreateElement;
   versionClearUpgradeProgress();
