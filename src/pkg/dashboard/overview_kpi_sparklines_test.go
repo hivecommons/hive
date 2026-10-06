@@ -128,7 +128,7 @@ function overviewItemAgeMinutes(){ return NaN; }
 		"overviewRepoName", "overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames", "overviewFilterRepos",
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
 		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
-		"overviewKPITerm", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
+		"overviewKPITerm", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionSummaryLine", "overviewPartitionGloss", "overviewPartitionPreferredDocs", "overviewPartitionPreferredSettings", "overviewPartitionRowHTML", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
 		"overviewEquationTermCount", "overviewOutsideBreakdownText", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
 		"overviewKPIEquation", "overviewKPIKindEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample", "renderOverviewKPIs",
 	} {

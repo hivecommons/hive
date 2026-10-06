@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -93,7 +94,51 @@ func artifactTrailerPromptInstruction(issueRef string) string {
 	if issueRef == "" {
 		return ""
 	}
-	return " For every commit you create for this implementation stage, include these informational trailers in the commit message: 'Hive-Run: " + issueRef + "', 'Hive-Plan: <plan section or plan name>', and 'Hive-Spec: <spec name>#<clause id>'. Use the plan and Spektacular spec/clause identifiers supplied by the task when available; if one is not available, still include the trailer with the best known identifier."
+	return contributorPRClosingInstruction(issueRef) + " For every commit you create for this implementation stage, include these informational trailers in the commit message: 'Hive-Run: " + issueRef + "', 'Hive-Plan: <plan section or plan name>', and 'Hive-Spec: <spec name>#<clause id>'. Use the plan and Spektacular spec/clause identifiers supplied by the task when available; if one is not available, still include the trailer with the best known identifier."
+}
+
+func contributorPRClosingInstruction(issueRef string) string {
+	short := shortIssueRef(issueRef)
+	if short == "" {
+		return ""
+	}
+	return " When the PR targets the repository's default branch, include a GitHub closing keyword for this task's issue in the PR body: 'Closes " + short + "' (or 'Fixes " + short + "' for a bug). Do not leave only 'Refs " + short + "' or a bare " + short + ": GitHub will not close the issue on merge. Use 'Refs " + short + "' only when the PR is deliberately partial or the issue must stay open, and say what remains on that same line."
+}
+
+func shortIssueRef(issueRef string) string {
+	issueRef = strings.TrimSpace(issueRef)
+	if issueRef == "" {
+		return ""
+	}
+	if i := strings.LastIndex(issueRef, "#"); i >= 0 && i+1 < len(issueRef) {
+		return "#" + strings.TrimSpace(issueRef[i+1:])
+	}
+	return issueRef
+}
+
+func ensureIssueClosingLine(body string, issueNumber int, defaultBranchTarget bool) string {
+	if issueNumber <= 0 || !defaultBranchTarget {
+		return body
+	}
+	issue := "#" + strconv.Itoa(issueNumber)
+	if containsIssueClosingKeyword(body, issue) {
+		return body
+	}
+	trimmed := strings.TrimRight(body, " \t\r\n")
+	line := "Closes " + issue
+	if trimmed == "" {
+		return line
+	}
+	return trimmed + "\n\n" + line
+}
+
+func containsIssueClosingKeyword(body, issue string) bool {
+	n := strings.TrimPrefix(strings.TrimSpace(issue), "#")
+	if n == "" {
+		return false
+	}
+	re := regexp.MustCompile(`(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[^\n#]*(?:[\w.-]+/[\w.-]+)?#` + regexp.QuoteMeta(n) + `\b`)
+	return re.MatchString(body)
 }
 
 // writingGuideSection renders this hub's own project.writing_guide for the

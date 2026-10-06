@@ -358,6 +358,8 @@ jobs:
     env:
       VERSION: ${{ needs.decide.outputs.version }}
       SHA: ${{ needs.decide.outputs.sha }}
+      RELEASE_MERGE_WAIT_SECONDS: ${{ vars.RELEASE_MERGE_WAIT_SECONDS || '1800' }}
+      RELEASE_MERGE_POLL_SECONDS: ${{ vars.RELEASE_MERGE_POLL_SECONDS || '30' }}
       # Dual-publish (see the DUAL-PUBLISH note in this file's header): the
       # NATIVE org is wherever this repo lives — the only org GITHUB_TOKEN
       # can write packages to — and the CROSS org is the other side of the
@@ -640,8 +642,8 @@ jobs:
           the CHANGELOG.md Unreleased section into a dated v${VERSION} entry.
           See src/docs/releases.md."
 
-      # v5 branch protection requires the "gate" status check (the only
-      # required context — see docker.yml) on the exact SHA being pushed.
+      # v5 branch protection requires the release PR's required contexts on
+      # the exact SHA being merged; docker.yml supplies the `gate` check.
       # `gate` only ever attaches to a commit via docker.yml's own `push` /
       # `pull_request` / `workflow_dispatch` triggers, so a commit created
       # here in-workflow and pushed straight to v5 has no check on it yet and
@@ -908,7 +910,8 @@ jobs:
           #     mergeStateStatus             BLOCKED   <- caused by tide
           #
           # `tide` is NOT a required status context on v5 (protection lists
-          # `gate` and nothing else), but a pending commit status still drags
+          # `gate` only before v5's required context list expanded), but a
+          # pending commit status still drags
           # the aggregate to BLOCKED, and Tide holds that status pending
           # indefinitely for a PR it is never going to act on. So the retry
           # loop waited out its whole window for a state that could not change
@@ -944,9 +947,114 @@ jobs:
           #   object either.
           #
           #   anything else: hard-fail.
-          # RELEASE_PUSH_GH006_WINDOW is a test seam (test-release-push-retry.sh
-          # drives the exhaustion path with 0); production always uses 120s.
-          deadline=$((SECONDS + ${RELEASE_PUSH_GH006_WINDOW:-120}))
+          # RELEASE_MERGE_WAIT_SECONDS is a production knob (default 30m);
+          # RELEASE_PUSH_GH006_WINDOW remains as a legacy test seam for
+          # test-release-push-retry.sh's exhaustion path.
+          merge_wait_seconds="${RELEASE_MERGE_WAIT_SECONDS:-${RELEASE_PUSH_GH006_WINDOW:-1800}}"
+          merge_poll_seconds="${RELEASE_MERGE_POLL_SECONDS:-30}"
+          case "$merge_wait_seconds" in ''|*[!0-9]*) merge_wait_seconds=1800 ;; esac
+          case "$merge_poll_seconds" in ''|*[!0-9]*) merge_poll_seconds=30 ;; esac
+          deadline=$((SECONDS + merge_wait_seconds))
+
+          required_checks_state() {
+            pr="$1"
+            head_sha="$2"
+            owner="${GITHUB_REPOSITORY%/*}"
+            repo="${GITHUB_REPOSITORY#*/}"
+            # shellcheck disable=SC2016 # GraphQL variables are expanded by gh, not by the shell.
+            if ! json="$(gh api graphql \
+              -f owner="$owner" -f name="$repo" -F number="$pr" -f branch=v5 -f head="$head_sha" \
+              -f query='
+                query($owner:String!,$name:String!,$number:Int!,$branch:String!){
+                  repository(owner:$owner,name:$name){
+                    ref(qualifiedName:$branch){
+                      branchProtectionRule{ requiredStatusCheckContexts }
+                    }
+                    pullRequest(number:$number){
+                      commits(last:1){
+                        nodes{
+                          commit{
+                            statusCheckRollup{
+                              contexts(first:100){
+                                nodes{
+                                  __typename
+                                  ... on CheckRun { name status conclusion }
+                                  ... on StatusContext { context state }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }' 2>/dev/null)"; then
+              echo "::warning::Could not read required-check rollup for PR #${pr}; treating checks as pending until the merge deadline." >&2
+              echo pending
+              return
+            fi
+
+            required="$(jq -r '.data.repository.ref.branchProtectionRule.requiredStatusCheckContexts[]? // empty' <<<"$json" 2>/dev/null || true)"
+            if [ -z "$required" ]; then
+              required="$(cat <<'REQ'
+          gate
+          DCO
+          build-and-test
+          test
+          coverage
+          golangci-lint
+          gosec (insecure patterns)
+          govulncheck (known vulnerabilities)
+          changelog-fragment-guard
+          verify PR contents
+          Sign-off survives the squash
+          REQ
+              )"
+            fi
+
+            failed=""
+            pending=""
+            while IFS= read -r context; do
+              [ -n "$context" ] || continue
+              state="$(jq -r --arg c "$context" '
+                [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+                  | select((.name // .context) == $c)
+                  | if .__typename == "CheckRun" then
+                      if .status != "COMPLETED" then "pending"
+                      elif ((.conclusion // "") | ascii_downcase) as $x
+                        | ($x == "success" or $x == "skipped" or $x == "neutral") then "success"
+                      elif ((.conclusion // "") | ascii_downcase) as $x
+                        | ($x == "failure" or $x == "timed_out" or $x == "cancelled" or $x == "action_required" or $x == "startup_failure") then "failed"
+                      else "pending" end
+                    else
+                      if .state == "SUCCESS" then "success"
+                      elif (.state == "FAILURE" or .state == "ERROR") then "failed"
+                      else "pending" end
+                    end
+                ]
+                | if length == 0 then "pending"
+                  elif any(. == "success") then "success"
+                  elif any(. == "pending") then "pending"
+                  else "failed" end
+              ' <<<"$json" 2>/dev/null || echo pending)"
+              case "$state" in
+                failed) failed="${failed}${failed:+, }${context}" ;;
+                success) ;;
+                *) pending="${pending}${pending:+, }${context}" ;;
+              esac
+            done <<<"$required"
+
+            if [ -n "$failed" ]; then
+              echo "Required check(s) failed on ${head_sha}: ${failed}" >&2
+              echo failed
+            elif [ -n "$pending" ]; then
+              echo "Required check(s) still pending on ${head_sha}: ${pending}" >&2
+              echo pending
+            else
+              echo "All required checks have reported success on ${head_sha}; retrying the merge while GitHub settles mergeability." >&2
+              echo success
+            fi
+          }
           while true; do
             # $GITHUB_REPOSITORY (runner-provided) rather than the
             # ${{ github.repository }} expression other steps use: this step's
@@ -994,12 +1102,17 @@ jobs:
             # 405 Method Not Allowed is GitHub's "not mergeable" for this
             # endpoint — including a required check that has not landed yet.
             if grep -qiE 'HTTP 405|not mergeable|required status check' <<<"$out"; then
+              required_state="$(required_checks_state "$pr_number" "$commit_sha")"
+              if [ "$required_state" = failed ]; then
+                echo "::error::PR #${pr_number} has a failed required check on ${commit_sha}; closing the release PR instead of waiting out the deadline." >&2
+                exit 1
+              fi
               if [ "$SECONDS" -lt "$deadline" ]; then
-                echo "PR #${pr_number} not mergeable yet (required-status evaluation still settling after gate succeeded) — retrying in 8s..."
-                sleep 8
+                echo "PR #${pr_number} not mergeable yet (required checks pending or mergeability still settling) — retrying in ${merge_poll_seconds}s..."
+                sleep "$merge_poll_seconds"
                 continue
               fi
-              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; compare ${RELEASE_LINE}'s REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
+              echo "::error::PR #${pr_number} still not mergeable after ${merge_wait_seconds}s on ${commit_sha}. Required checks did not all report before the release merge deadline, or GitHub still rejected the SHA-keyed merge after they did; compare v5's REQUIRED contexts with the combined status for ${commit_sha}, including the mirrored gate status (#5356)." >&2
               exit 1
             fi
             echo "::error::merging PR #${pr_number} failed for an unrecognized reason (see the API response above) — not retrying." >&2

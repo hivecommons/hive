@@ -868,6 +868,14 @@ func (s *Store) Excerpt(repo string, number int) string {
 	return ""
 }
 
+// IsEscalated reports an independent fix-loop reason to retain needs-human.
+func (s *Store) IsEscalated(repo string, number int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	return e != nil && e.Escalated
+}
+
 // Attempts returns the recorded failed-attempt count for a PR.
 func (s *Store) Attempts(repo string, number int) int {
 	s.mu.Lock()

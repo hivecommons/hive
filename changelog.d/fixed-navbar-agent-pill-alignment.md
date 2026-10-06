@@ -1,0 +1,1 @@
+- Centre the navbar agent schedule pills' two text rows within padded borders, keeping status dots and UP NEXT badges aligned and allowing room for theme typography ([#10816](https://github.com/hivecommons/hive/issues/10816)).

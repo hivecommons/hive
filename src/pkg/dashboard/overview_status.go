@@ -343,9 +343,7 @@ func overviewKindEquationTitle(eq *FrontendActionableEquation) string {
 	if strings.EqualFold(eq.Kind, "PRs") {
 		what = "pull requests"
 	}
-	return strings.ToUpper("actionable "+eq.Kind) + " — " + what + " that can move without waiting.\n\n" +
-		"WHAT: The " + eq.Kind + " split of the shared Overview Actionable now set.\n\n" +
-		"HOW: " + eq.Text + ". Each open item is assigned once, in order: actionable, held, blocked/needs-human, or one outside reason. Confirm/close items are blocked/needs-human; draft PRs are outside. Claimed/in-progress work remains actionable unless it is in one of those excluded terms."
+	return strings.ToUpper("actionable "+eq.Kind) + " — " + what + " that can move without waiting."
 }
 
 func overviewEquationText(eq *FrontendActionableEquation) string {
@@ -365,47 +363,11 @@ func overviewEquationText(eq *FrontendActionableEquation) string {
 	return fmt.Sprintf("%d issues + %d PRs = %s", eq.OpenIssues, eq.OpenPRs, strings.Join(parts, " + "))
 }
 
-func overviewEquationTitle(eq *FrontendActionableEquation, totals FrontendOverviewTotals) string {
+func overviewEquationTitle(eq *FrontendActionableEquation, _ FrontendOverviewTotals) string {
 	if eq == nil {
 		return ""
 	}
-	lines := []string{"Open issue/PR partition: " + eq.Text}
-	if detail := overviewOutsideDetail("outside issues", totals.Issues.Breakdown); detail != "" {
-		lines = append(lines, detail)
-	}
-	if detail := overviewOutsideDetail("outside PRs", totals.PRs.Breakdown); detail != "" {
-		lines = append(lines, detail)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func overviewOutsideDetail(prefix string, breakdown map[string]int) string {
-	if len(breakdown) == 0 {
-		return ""
-	}
-	labels := map[string]string{
-		"needs_direction":      "needs-direction",
-		"needs_decision":       "needs-decision",
-		"needs_spec":           "needs-spec",
-		"exempt":               "exempt",
-		"filtered":             "filtered",
-		"reporter_triage":      "reporter triage",
-		"hive_advisory":        "hive advisory",
-		"dependency_dashboard": "dependency dashboard",
-		"other":                "other",
-	}
-	order := []string{"needs_direction", "needs_decision", "needs_spec", "exempt", "filtered", "reporter_triage", "hive_advisory", "dependency_dashboard", "other"}
-	parts := make([]string, 0, len(breakdown))
-	for _, key := range order {
-		count := breakdown[key]
-		if count > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", count, labels[key]))
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return prefix + ": " + strings.Join(parts, " · ")
+	return "Actionable now — work that can move without waiting."
 }
 
 type overviewPartitionMeta struct {

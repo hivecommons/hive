@@ -201,11 +201,7 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		if err != nil {
 			return "", "", fmt.Errorf("validating closing reference %s#%d: %w", ref.Repo, ref.Issue, err)
 		}
-		reason := incompleteIssueReason(issue)
-		if reason == "" {
-			reason = humanFiledBugReason(issue)
-		}
-		if reason != "" {
+		if reason := incompleteIssueReason(issue); reason != "" {
 			key := claimKey(strings.ToLower(refOwner+"/"+refRepo), ref.Issue)
 			downgrade[key] = reason
 			c.logger.Warn("pr-request watcher: downgraded closing reference to Refs",
@@ -279,11 +275,10 @@ const humanFiledBugConfirmationMarker = "hive: reporter-confirmed"
 // protection is unchanged.
 const humanFiledBugCloseOnMergeMarker = "hive: close-on-merge"
 
-// humanFiledBugReason returns a non-empty downgrade reason when issue is a
-// human-filed bug report that has NOT been marked as reporter-confirmed. When
-// this reason is applied by validatePRRequestClaims the PR body's "Closes #N"
-// is rewritten to "Refs #N", so a merge does NOT auto-close the reporter's
-// bug (kubestellar/hive#6781).
+// humanFiledBugReason returns a non-empty close-gate reason when issue is a
+// human-filed bug report that has NOT been marked as reporter-confirmed. The
+// issue close path uses this reason to ask for reporter confirmation rather
+// than closing the issue as completed.
 //
 // Why this exists. GitHub auto-closes an issue on the merge of a PR that
 // carries "Closes #N", attributed to whoever pushed the merge — for the hive,
@@ -295,10 +290,10 @@ const humanFiledBugCloseOnMergeMarker = "hive: close-on-merge"
 // booked two extra maintainer-filed bugs within hours.
 //
 // The philosophy mirrors isEvidenceLessCompletion in
-// pkg/dashboard/contribute_ws.go (#6730): do not act — including "act by
-// merging a Closes"-carrying PR — on a weak signal. A merged PR is evidence
-// the CODE landed; it is NOT evidence the REPORTER'S SYMPTOM is gone. The
-// reporter (or a maintainer) confirms that by dropping
+// pkg/dashboard/contribute_ws.go (#6730): do not close a human reporter's
+// issue on a weak signal. A merged PR is evidence the CODE landed; it is NOT
+// evidence the REPORTER'S SYMPTOM is gone. The reporter (or a maintainer)
+// confirms that by dropping
 // humanFiledBugConfirmationMarker on the issue.
 //
 // Scope. This gate ONLY applies to bugs filed by HUMANS. An agent's own

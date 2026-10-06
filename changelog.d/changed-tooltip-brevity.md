@@ -1,0 +1,1 @@
+- Shorten Overview and Governor KPI info hovers into compact bucket summaries with one shared Settings/docs footer.

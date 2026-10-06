@@ -71,13 +71,14 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 	topbar := dashboardTopbarHTML(t)
 	for _, want := range []string{
 		`.oc-topbar {`,
-		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0);`,
-		`grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
-		`width: auto;`,
+		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: auto;`,
+		`--topbar-grid-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
+		`display: grid; grid-template-columns: var(--topbar-grid-columns); align-items: center;`,
+		`width: 100%;`,
 		`z-index: var(--navbar-sticky-z);`,
-		`.oc-topbar-left { font-size: var(--fs-base); color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; justify-content: flex-start; overflow: hidden; }`,
-		`.oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }`,
-		`.oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }`,
+		`.oc-topbar-left { justify-self: start; max-width: 100%; font-size: var(--fs-base); color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; justify-content: flex-start; overflow: hidden; }`,
+		`.oc-topbar-center { justify-self: center; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }`,
+		`.oc-topbar-right { justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }`,
 		`overflow-x: auto; overflow-y: hidden;`,
 		`scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5));`,
 		`#oc-drawer-backdrop {`,
@@ -87,6 +88,30 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Fatalf("sticky navbar contract missing %q", want)
 		}
+	}
+	topbarRuleRE := regexp.MustCompile(`(?s)\.oc-topbar\s*\{[^}]*\}`)
+	topbarRules := topbarRuleRE.FindAllString(html, -1)
+	gridTemplateCount := 0
+	displayCount := 0
+	for _, rule := range topbarRules {
+		if strings.Contains(rule, `grid-template-columns:`) {
+			gridTemplateCount++
+		}
+		if strings.Contains(rule, `display:`) {
+			displayCount++
+			if !strings.Contains(rule, `display: grid;`) {
+				t.Fatalf("topbar display override is not grid: %s", rule)
+			}
+		}
+	}
+	if gridTemplateCount != 1 {
+		t.Fatalf("topbar must have exactly one grid-template-columns declaration, found %d in %v", gridTemplateCount, topbarRules)
+	}
+	if displayCount != 1 {
+		t.Fatalf("topbar must have exactly one display declaration, found %d in %v", displayCount, topbarRules)
+	}
+	if strings.Contains(html, `topbar.style.display = 'flex'`) || strings.Contains(html, `topbar.style.display = "flex"`) {
+		t.Fatal("layout script must not override #oc-topbar display:flex; CSS owns the grid display")
 	}
 	for _, want := range []string{`class="oc-topbar-left"`, `class="oc-topbar-center"`, `class="oc-topbar-right"`} {
 		if !strings.Contains(topbar, want) {

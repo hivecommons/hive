@@ -64,6 +64,18 @@ func TestEstimateCostUSD_FractionalTokens(t *testing.T) {
 	}
 }
 
+func TestEstimateCostUSD_UsesPerMillionTokenPrices(t *testing.T) {
+	// claude-sonnet-5 input is $3 per 1,000,000 tokens; treating the table as
+	// per-1K would return $3,000 and treating it as per-token would explode.
+	usd, priced := EstimateCostUSD("claude-sonnet-5", 1_000_000, 0, 0, 0)
+	if !priced {
+		t.Fatalf("expected claude-sonnet-5 to be priced")
+	}
+	if !approxEqual(usd, 3.0) {
+		t.Fatalf("1M input tokens at $3/MTok = $3.00, got $%.6f", usd)
+	}
+}
+
 func TestNormalizeModelID(t *testing.T) {
 	cases := map[string]string{
 		"claude-opus-4-8":                   "claude-opus-4-8",

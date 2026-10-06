@@ -1,0 +1,1 @@
+- Restore the dashboard upgrade bees' black-and-gold contrast and smooth their orbit loop.
