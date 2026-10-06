@@ -1,0 +1,1 @@
+- The config precedence section of `src/docs/manual-provisioning.md` now separates the first boot (ConfigMap seed plus overlay merge) from later boots, which start from `/data/hive.yaml.runtime` since #2392 ([#10754](https://github.com/hivecommons/hive/issues/10754)).
