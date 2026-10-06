@@ -574,6 +574,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	if signal := issueRequestStartSignal(kind); signal != "" {
+		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
+	}
+
 	action := AuditActionAgentIssueCreated
 	switch kind {
 	case "comment":
