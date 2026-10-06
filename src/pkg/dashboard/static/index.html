@@ -26393,7 +26393,9 @@ function burnAreaChart() {
         const nextAt = au.nextUpdateAt ? new Date(au.nextUpdateAt) : null;
         const nextOK = nextAt && !isNaN(nextAt.getTime());
         const nextStatus = au.nextUpdateStatus || '';
-        if (nextOK) {
+        if (nextOK && nextAt.getTime() <= Date.now()) {
+          html += row('Next update', value('overdue since ' + nextAt.toLocaleString(), 'The next build crossed the 24h soak line at ' + au.nextUpdateAt + ' but the hub has not promoted it yet — the promotion workflow runs hourly and may be delayed or failing'), 'overdue since ' + au.nextUpdateAt);
+        } else if (nextOK) {
           html += row('Next update', value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds'), au.nextUpdateAt);
         } else if (nextStatus === 'none') {
           html += row('Next update', value('none queued (stable is current)', 'Stable and candidate currently point at the same built image'), 'none queued');

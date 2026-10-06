@@ -1,0 +1,1 @@
+- The hub's stable-promotion `eligible_at` now reports when a build actually crossed the 24h soak line instead of drifting to "now" on every poll; the hub release card and spoke Version panel say "overdue since …" when that time has passed and promotion has not happened (#10042, #10187).

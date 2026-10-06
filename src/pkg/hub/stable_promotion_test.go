@@ -183,8 +183,9 @@ func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testi
 	if build.Generation != 200 || build.SHA != "old1234" {
 		t.Fatalf("eligible build = %+v, want superseded soaked generation 200", build)
 	}
-	if eligibleAt != now.Format(time.RFC3339) {
-		t.Fatalf("eligibleAt = %q, want now %q", eligibleAt, now.Format(time.RFC3339))
+	wantEligible := now.Add(-25 * time.Hour).Add(time.Duration(stablePromotionSoakHours) * time.Hour).Format(time.RFC3339)
+	if eligibleAt != wantEligible {
+		t.Fatalf("eligibleAt = %q, want soak-crossing time %q (not now, which would drift every poll)", eligibleAt, wantEligible)
 	}
 }
 
