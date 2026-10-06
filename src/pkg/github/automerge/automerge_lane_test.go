@@ -42,7 +42,7 @@ func newLaneSweepEngine(apiURL, strategy string, gate hgithub.SerializedLaneGate
 	return New(client, opts)
 }
 
-func greenQueuedPR(number int) sweepPR {
+func greenLanePR(number int) sweepPR {
 	return sweepPR{number: number, author: "alice", queuedBy: "bob", label: true, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"}
 }
 
@@ -53,7 +53,7 @@ func greenSelfPR(number int) selfAuthoredPR {
 // AC2: a direct repo never consults the lane and merges exactly as today.
 func TestLaneSweep_DirectRepoMergesAsToday(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7)}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenLanePR(7)}, &merged)
 	defer api.Close()
 	g := &laneGate{answer: func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
 		t.Fatal("a direct repo must never consult the lane")
@@ -73,7 +73,7 @@ func TestLaneSweep_DirectRepoMergesAsToday(t *testing.T) {
 // with that reason and no merge call; it stays queued for the next sweep.
 func TestLaneSweep_QueuedNotAtFrontIsDeferred(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7)}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenLanePR(7)}, &merged)
 	defer api.Close()
 	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeDeferred, "deferred: not at the front of the lane")}
 	c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
@@ -94,7 +94,7 @@ func TestLaneSweep_QueuedNotAtFrontIsDeferred(t *testing.T) {
 // approval itself: it holds for the approved head only.
 func TestLaneSweep_QueuedMergesWithApprovalAuthorization(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7)}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenLanePR(7)}, &merged)
 	defer api.Close()
 	g := &laneGate{answer: func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
 		if err := req.Authorize(ctx, "sha7"); err != nil {
@@ -125,7 +125,7 @@ func TestLaneSweep_QueuedMergesWithApprovalAuthorization(t *testing.T) {
 // one pass; the second PR is not even handed to the lane.
 func TestLaneSweep_OneMergePerLaneBranchPerPass(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7), greenQueuedPR(8)}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenLanePR(7), greenLanePR(8)}, &merged)
 	defer api.Close()
 	g := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeMerged, "merged")}
 	c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
@@ -141,7 +141,7 @@ func TestLaneSweep_OneMergePerLaneBranchPerPass(t *testing.T) {
 // AC26 and fail-closed outcomes surface as skips with the lane's reason.
 func TestLaneSweep_RefusalAndErrorAreSkips(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7)}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenLanePR(7)}, &merged)
 	defer api.Close()
 
 	refusal := `target branch "main" has GitHub's native merge queue; Hive makes no direct merge`
@@ -169,7 +169,7 @@ func TestLaneSweep_RefusalAndErrorAreSkips(t *testing.T) {
 // AC4: auto-merge off or a held PR never reaches the lane.
 func TestLaneSweep_GatesAheadOfTheLane(t *testing.T) {
 	var merged []int
-	held := greenQueuedPR(7)
+	held := greenLanePR(7)
 	held.extraLabels = []string{"hold"}
 	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{held}, &merged)
 	defer api.Close()
