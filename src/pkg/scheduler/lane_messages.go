@@ -589,7 +589,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		b.WriteString(fmt.Sprintf("FORK PRs (%d — review/comment only, do not push unless an explicit contributor-PR gate says this hive may):\n", len(forks)))
 		b.WriteString("  Their head branch lives in the contributor's fork. Default action is to report the\n")
 		b.WriteString("  failing/held required check and the exact fix in one PR comment; do NOT create a\n")
-		b.WriteString("  same-named branch on the base repo. Only an owner-enabled contributor_prs gate may\n")
+		b.WriteString("  same-named branch on the base repo. Only review.contributor_prs.base_sync may\n")
 		b.WriteString("  allow DCO-safe unstick moves such as merge-commit base syncs or approved reruns.\n")
 		for i, pr := range forks {
 			if i >= limit {

@@ -7476,6 +7476,11 @@ type ReviewConfig struct {
 	// false is never overwritten. Read via FixHumanPRsEnabled(), never
 	// dereferenced raw.
 	FixHumanPRs *bool `yaml:"fix_human_prs,omitempty" json:"fix_human_prs,omitempty"`
+	// ContributorPRs gates owner-authorized maintenance actions on
+	// contributor PRs that this hive's own lanes authored through a fork.
+	// Zero value is deliberately off: only an owner who opts in may let Hive
+	// ask GitHub to sync a fork PR branch with the base branch.
+	ContributorPRs ContributorPRsConfig `yaml:"contributor_prs,omitempty" json:"contributor_prs,omitempty"`
 	// AcknowledgeNoFindings makes a clean review leave a one-line record
 	// instead of nothing. Silence keeps a PR uncluttered but is
 	// indistinguishable from a reviewer that never ran, so where review
@@ -7565,6 +7570,16 @@ type ReviewConfig struct {
 // that neither helps nor hurts its confidence score.
 type PlanMatchConfig struct {
 	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ContributorPRsConfig is the owner-only gate for lane-authored contributor
+// PRs. It is separate from fix_human_prs: that setting authorizes pushing
+// Hive-authored fixes to human PRs, while this one only authorizes GitHub's
+// update-branch API for fork PRs whose authoring pointer belongs to this hive.
+type ContributorPRsConfig struct {
+	// BaseSync enables automatic update-branch attempts for fork PRs that are
+	// behind or dirty and have "allow edits by maintainers" on. Default off.
+	BaseSync bool `yaml:"base_sync,omitempty" json:"base_sync,omitempty"`
 }
 
 // DuplicateSweepConfig gates the cross-PR duplicate sweep

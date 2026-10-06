@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -45,6 +46,7 @@ import (
 	"sync"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 	"github.com/hivecommons/hive/pkg/turn"
@@ -73,6 +75,14 @@ const (
 	// varPending holds the human feedback queued for the next fresh kick
 	// (JSON []pendingHandoff).
 	varPending = "handoff_pending"
+	// varBaseMovedHeadPrefix records the first dirty head seen for a base SHA.
+	// A later head SHA while GitHub still reports dirty for that same base is
+	// a stale push on top of a known-conflicted branch.
+	varBaseMovedHeadPrefix    = "base_moved_head:"
+	varStaleHeadNotePrefix    = "stale_head_note:"
+	varBaseSyncSuccessPrefix  = "base_sync_success:"
+	varBaseSyncConflictPrefix = "base_sync_conflict:"
+	varBaseSyncStalePrefix    = "base_sync_stale:"
 	// varHandoffs counts human-feedback events handed to a fresh kick; with
 	// TurnCount it is the per-PR follow-up budget MaxFollowUpsPerPR bounds.
 	varHandoffs = "handoff_count"
@@ -154,6 +164,7 @@ const (
 	RouteResumed  = "resumed"
 	RouteFallback = "fallback"
 	RouteDeferred = "deferred"
+	RouteUpdated  = "updated_branch"
 )
 
 // ErrBusy is returned by a Resumer when the authoring session exists but
@@ -288,6 +299,7 @@ type EventKind string
 
 const (
 	EventBaseMoved        EventKind = "base_moved"
+	EventStaleHeadPush    EventKind = "stale_head_push"
 	EventCIFailure        EventKind = "ci_failure"
 	EventChangesRequested EventKind = "changes_requested"
 	EventReviewThread     EventKind = "review_thread"
@@ -320,9 +332,23 @@ type Options struct {
 	// github.FetchHumanPRComments, already filtered to human authors). Nil
 	// means none known.
 	Comments map[string][]github.PRComment
+	// BaseSyncEnabled reports whether the owner enabled
+	// review.contributor_prs.base_sync for a repo. Nil is disabled.
+	BaseSyncEnabled func(repo string) bool
+	// BranchUpdater is the GitHub write surface used for owner-gated fork
+	// base sync and stale-head notes. Nil makes Route fall back to comments
+	// and kicks only.
+	BranchUpdater BranchUpdater
 	// Audit, when non-nil, records every routing decision and skip.
 	Audit  AuditFunc
 	Logger *slog.Logger
+}
+
+// BranchUpdater is the narrow GitHub write surface Route needs.
+type BranchUpdater interface {
+	UpdateBranch(ctx context.Context, repo string, number int) error
+	UpdateBranchExpectedHead(ctx context.Context, repo string, number int, expectedHeadSHA string, observedBaseSHA string) error
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 }
 
 // Outcome reports what Route did for one PR that had pending follow-ups.
@@ -341,9 +367,9 @@ type Outcome struct {
 // Route walks the open PRs, and for every PR this hive authored (has a
 // pointer) with new follow-up events, either resumes the authoring session
 // with them or records a fallback to the ordinary fresh-dispatch path. It
-// performs no GitHub calls: every signal it reads is already on the PR from
-// the eval tick's enumeration, or was collected by the caller (Threads,
-// Comments).
+// reads signals already on the PR from the eval tick's enumeration, or
+// collected by the caller (Threads, Comments). The only optional GitHub write
+// is the owner-gated contributor_prs base sync for hive-authored fork PRs.
 func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Options, now time.Time) []Outcome {
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -395,7 +421,7 @@ func Route(ctx context.Context, prs []github.PullRequest, r Resumer, opts Option
 			}
 			key := ThreadsKey(pr.Repo, pr.Number)
 			var routed bool
-			out, routed = routeOne(&env, pr, opts.Threads[key], opts.Comments[key], r, opts, now, &delta)
+			out, routed = routeOne(ctx, &env, pr, opts.Threads[key], opts.Comments[key], r, opts, now, &delta)
 			changed = changed || routed
 		}
 		if changed {
@@ -470,9 +496,13 @@ func eventKinds(events []Event) string {
 
 // routeOne handles one eligible PR. It returns the outcome (nil when there
 // was nothing to do) and whether env changed and must be persisted.
-func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, r Resumer, opts Options, now time.Time, delta *Stats) (result *Outcome, changed bool) {
-	events := detectEvents(pr, threads, comments, env.CreatedAt)
-	changed = reconcilePending(env, r, delta)
+func routeOne(ctx context.Context, env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, r Resumer, opts Options, now time.Time, delta *Stats) (result *Outcome, changed bool) {
+	if out, ok := tryOwnerGatedBaseSync(ctx, env, pr, opts, now, delta); ok {
+		return out, true
+	}
+	events := detectEvents(env, pr, threads, comments, env.CreatedAt)
+	changed = rememberDirtyBaseHead(env, pr)
+	changed = reconcilePending(env, r, delta) || changed
 	// A PR is "live" while it still has follow-up activity: a fact that stays
 	// true until the agent fixes it (red CI, changes requested, an open bot
 	// thread) or human feedback still waiting for a fresh kick. A human
@@ -535,6 +565,9 @@ func routeOne(env *turn.SessionEnvelope, pr *github.PullRequest, threads []githu
 		return out, true
 	}
 
+	if postStaleHeadPushNotes(ctx, env, opts.BranchUpdater, pr, pending) {
+		changed = true
+	}
 	if reason := resumeBlocker(env, r, opts, now); reason != "" {
 		intend()
 		return fallback(reason)
@@ -633,13 +666,148 @@ func needsBaseSync(pr *github.PullRequest) bool {
 	return pr.BaseSHA != "" && (pr.MergeableState == "dirty" || pr.MergeableState == "behind")
 }
 
-func detectEvents(pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, since time.Time) []Event {
+func baseSyncKey(pr *github.PullRequest) string {
+	return "base-sync:" + pr.BaseSHA + ":" + pr.HeadSHA
+}
+
+func baseMovedHeadVar(baseSHA string) string {
+	return varBaseMovedHeadPrefix + baseSHA
+}
+
+func baseHeadKey(pr *github.PullRequest) string {
+	return pr.BaseSHA + ":" + pr.HeadSHA
+}
+
+func baseSyncEnabled(opts Options, repo string) bool {
+	return opts.BaseSyncEnabled != nil && opts.BaseSyncEnabled(repo)
+}
+
+func tryOwnerGatedBaseSync(ctx context.Context, env *turn.SessionEnvelope, pr *github.PullRequest, opts Options, now time.Time, delta *Stats) (*Outcome, bool) {
+	if !pr.FromFork || !needsBaseSync(pr) || !baseSyncEnabled(opts, pr.Repo) || !pr.MaintainerCanModify || opts.BranchUpdater == nil {
+		return nil, false
+	}
+	if env.Variables[varBaseSyncSuccessPrefix+baseHeadKey(pr)] != "" || env.Variables[varBaseSyncConflictPrefix+pr.BaseSHA] != "" || env.Variables[varBaseSyncStalePrefix+baseHeadKey(pr)] != "" {
+		return nil, false
+	}
+	key := turn.DeriveIdempotencyKey(env.SessionID, turn.OpIntent{
+		Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: baseSyncKey(pr),
+	})
+	if e, ok := env.Journal.Lookup(key); ok && !e.Ambiguous() {
+		return nil, false
+	}
+	env.Journal.RecordIntent(key, turn.OpIntent{
+		Kind: turn.OpFollowUpKick, Repo: pr.Repo, Target: "#" + strconv.Itoa(pr.Number), Body: baseSyncKey(pr),
+	}, now)
+	if err := opts.BranchUpdater.UpdateBranchExpectedHead(ctx, pr.Repo, pr.Number, pr.HeadSHA, pr.BaseSHA); err != nil {
+		if updateBranchStaleHead(err) {
+			env.Variables[varBaseSyncStalePrefix+baseHeadKey(pr)] = "1"
+			env.Journal.Settle(key, turn.OpFailed, "", "update-branch stale head; waiting for next PR snapshot", now)
+			return nil, true
+		}
+		if updateBranchConflict(err) {
+			env.Variables[varBaseSyncConflictPrefix+pr.BaseSHA] = "1"
+			env.Journal.Settle(key, turn.OpFailed, "", "update-branch conflict; routing base repair", now)
+			return nil, false
+		}
+		env.Journal.Settle(key, turn.OpFailed, "", err.Error(), now)
+		out := &Outcome{Repo: pr.Repo, Number: pr.Number, Agent: env.Agent.Name, Route: RouteDeferred, Reason: err.Error()}
+		delta.Deferred++
+		return out, true
+	}
+	env.Variables[varBaseSyncSuccessPrefix+baseHeadKey(pr)] = "1"
+	env.Journal.Settle(key, turn.OpSucceeded, "update-branch", "", now)
+	return &Outcome{Repo: pr.Repo, Number: pr.Number, Agent: env.Agent.Name, Route: RouteUpdated}, true
+}
+
+func updateBranchStaleHead(err error) bool {
+	if !isUpdateBranch422(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "expected_head_sha") ||
+		strings.Contains(msg, "expected head") ||
+		strings.Contains(msg, "head sha") ||
+		strings.Contains(msg, "head_sha") ||
+		strings.Contains(msg, "does not match")
+}
+
+func updateBranchConflict(err error) bool {
+	if !isUpdateBranch422(err) {
+		return false
+	}
+	return true
+}
+
+func isUpdateBranch422(err error) bool {
+	var apiErr *gh.ErrorResponse
+	if errors.As(err, &apiErr) && apiErr.Response != nil && apiErr.Response.StatusCode == http.StatusUnprocessableEntity {
+		return true
+	}
+	return strings.Contains(err.Error(), "422") || strings.Contains(strings.ToLower(err.Error()), "validation failed")
+}
+
+func rememberDirtyBaseHead(env *turn.SessionEnvelope, pr *github.PullRequest) bool {
+	if pr.BaseSHA == "" || pr.HeadSHA == "" || pr.MergeableState != "dirty" {
+		return false
+	}
+	key := baseMovedHeadVar(pr.BaseSHA)
+	if env.Variables[key] != "" {
+		return false
+	}
+	env.Variables[key] = pr.HeadSHA
+	return true
+}
+
+func staleHeadPushEvent(env turn.SessionEnvelope, pr *github.PullRequest) (Event, bool) {
+	if pr.BaseSHA == "" || pr.HeadSHA == "" || pr.MergeableState != "dirty" {
+		return Event{}, false
+	}
+	first := env.Variables[baseMovedHeadVar(pr.BaseSHA)]
+	if first == "" || first == pr.HeadSHA {
+		return Event{}, false
+	}
+	return Event{
+		Kind:   EventStaleHeadPush,
+		Key:    "stale-head:" + pr.BaseSHA + ":" + pr.HeadSHA,
+		Detail: fmt.Sprintf("<!-- hive-stale-head-push --> New head %s was pushed while this PR is still dirty against base %s. Repair the base conflict first: fetch %s at %s and merge or rebase the PR branch before addressing any other work.", shortSHA(pr.HeadSHA), pr.BaseRef, pr.BaseRef, pr.BaseSHA),
+	}, true
+}
+
+func postStaleHeadPushNotes(ctx context.Context, env *turn.SessionEnvelope, commenter BranchUpdater, pr *github.PullRequest, events []Event) bool {
+	if commenter == nil {
+		return false
+	}
+	changed := false
+	for _, ev := range events {
+		if ev.Kind == EventStaleHeadPush {
+			key := varStaleHeadNotePrefix + pr.HeadSHA
+			if env.Variables[key] != "" {
+				continue
+			}
+			env.Variables[key] = "1"
+			changed = true
+			_ = commenter.CreateIssueComment(ctx, pr.Repo, pr.Number, ev.Detail)
+		}
+	}
+	return changed
+}
+
+func detectEvents(env *turn.SessionEnvelope, pr *github.PullRequest, threads []github.ReviewThread, comments []github.PRComment, since time.Time) []Event {
 	// Base repair takes precedence over review feedback. Do not settle review
 	// events until the PR is mergeable again; they will be detected next pass.
 	// Key by base, not head: pushing onto the stale head must not create a
 	// fresh repair event on every tick. Include state so behind -> dirty wakes
 	// the owner again even if an earlier update attempt did not complete.
 	if needsBaseSync(pr) {
+		if env.Variables[varBaseSyncSuccessPrefix+baseHeadKey(pr)] != "" {
+			return nil
+		}
+		if env.Variables[varBaseSyncStalePrefix+baseHeadKey(pr)] != "" {
+			return nil
+		}
+		if ev, ok := staleHeadPushEvent(*env, pr); ok {
+			return []Event{ev}
+		}
 		return []Event{{
 			Kind:   EventBaseMoved,
 			Key:    "base:" + pr.BaseSHA + ":" + pr.MergeableState,
@@ -714,6 +882,13 @@ func commentDetail(c github.PRComment) string {
 		}
 	}
 	return fmt.Sprintf("%s from %s%s (%s): %s", what, c.Author, where, c.ID, truncateRunes(strings.TrimSpace(c.Body), threadBodyRunes))
+}
+
+func shortSHA(sha string) string {
+	if len(sha) <= shortSHALen {
+		return sha
+	}
+	return sha[:shortSHALen]
 }
 
 func threadDetail(th github.ReviewThread) string {
