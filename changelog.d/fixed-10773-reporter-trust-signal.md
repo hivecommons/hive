@@ -1,0 +1,1 @@
+- Reporter-trust PR holds now raise `needs-human`, persist a human-only escalation reason, identify the original issue reporter in dashboard and hive-advice queues, and clear only the hold's own signal after a human removes `hold` ([#10773](https://github.com/hivecommons/hive/issues/10773), [#10818](https://github.com/hivecommons/hive/issues/10818)).

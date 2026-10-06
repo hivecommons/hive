@@ -42,8 +42,9 @@ type PRItem struct {
 	// NeedsHuman and NeedsDecision mirror the needs-human and
 	// needs-decision/2-discussing labels — the two human-gate causes the
 	// waiting band groups together.
-	NeedsHuman    bool
-	NeedsDecision bool
+	NeedsHumanReason string
+	NeedsHuman       bool
+	NeedsDecision    bool
 	// CIFailing, Conflict and VerdictBlocked are the three blocked-band
 	// causes. They are not exclusive: a PR can fail CI and have conflicts.
 	CIFailing      bool
@@ -353,7 +354,11 @@ func prWaitingNote(pr PRItem) string {
 		parts = append(parts, "held")
 	}
 	if pr.NeedsHuman {
-		parts = append(parts, "needs-human")
+		note := "needs-human"
+		if pr.NeedsHumanReason != "" {
+			note += ": " + pr.NeedsHumanReason
+		}
+		parts = append(parts, note)
 	}
 	if pr.NeedsDecision {
 		parts = append(parts, "needs-decision")

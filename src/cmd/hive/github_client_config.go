@@ -253,6 +253,7 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 	client.SetOtherNeedsHumanReason(func(repo string, number int) bool {
 		return getEscalationStore().IsEscalated(repo, number)
 	})
+	client.SetReporterTrustEscalation(getEscalationStore().SetReporterTrustReason)
 	// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
 	// re-engage the fix loop instead of abandoning the PR. The hook records a
 	// re-engagement under the escalation store's per-red-SHA cap (shared with

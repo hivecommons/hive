@@ -4597,7 +4597,7 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: a human-only gate or exhausted fix attempts requires operator review"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
     <div class="section-body">
       <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
         <span id="repos-overview-filter-chip" class="repo-filtered-chip" hidden></span>
@@ -12686,9 +12686,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // are not: `hold` on an agent's own PR is usually the ACMM level gate
     // ("held for human review"), which the hive lifts itself once policy no
     // longer requires the checkpoint; `needs-human` beside the hold is the
-    // escalation ledger saying automated fix attempts are exhausted, and
-    // that one only a person can clear. The labels are the single source of
-    // truth here, exactly as they are for the needs-human pill. Returned
+    // fix-loop fallback, unless reporter_trust_reason carries the original
+    // reporter-trust notice evidence. Neither reason changes the label-driven
+    // hold gate; only a person clears a reporter-trust hold. Returned
     // without wrapping so the state chip can show it as-is and the pill can
     // append it in parentheses after the title.
     function heldReason(item) {
@@ -12697,6 +12697,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
+      if (item && item.reporter_trust_reason) {
+        parts.push(item.reporter_trust_reason + ', a maintainer must review this');
+        return parts.join('; ');
+      }
       if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
