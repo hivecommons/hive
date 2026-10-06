@@ -89,5 +89,11 @@ func (c *Client) searchTotal(ctx context.Context, qualifier string) (int, error)
 	if err != nil {
 		return 0, err
 	}
+	// Search can return HTTP 200 with partial results when GitHub cannot
+	// finish the query. Such a total (often zero) must not replace the
+	// dashboard's persisted last-good cost divisors.
+	if result == nil || result.Total == nil || result.GetIncompleteResults() {
+		return 0, fmt.Errorf("search returned an incomplete or missing total")
+	}
 	return result.GetTotal(), nil
 }

@@ -1,0 +1,1 @@
+- Dashboard cost-per-PR and cost-per-issue divisors retain their persisted last-good counts when GitHub returns incomplete search results, rather than replacing them with partial or zero totals (#10875).
