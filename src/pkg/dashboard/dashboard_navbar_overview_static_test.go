@@ -63,11 +63,13 @@ func TestDashboardOverviewKPIGridAndTooltipMarkup(t *testing.T) {
 	}
 	html := string(raw)
 	for _, want := range []string{
-		`<div class="overview-kpis">`,
+		`<div class="overview-kpis" aria-label="${esc(equationLabel)}">`,
 		`{ key: 'held', field: 'overviewHeld'`,
 		`{ key: 'blocked-needs-human', field: 'overviewBlockedHuman'`,
+		`{ key: 'outside', field: 'overviewOutside'`,
+		`class="overview-kpi-operator" aria-hidden="true"`,
 		`<div class="overview-kpi" role="button" tabindex="0"`,
-		`data-keydown-action="ocNavigate"`,
+		`data-keydown-action="overviewApplyKPIProjectFilter"`,
 		`<span class="overview-kpi-subline">${card.subline}</span>`,
 		`class="config-tooltip overview-partition-tooltip" role="tooltip"`,
 		`<span class="config-info overview-term-info"`,

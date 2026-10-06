@@ -1113,6 +1113,7 @@ type TrendHistoryEntry struct {
 	OverviewActionable   int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewOutside      int  `json:"overviewOutside,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -3534,6 +3535,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			}
 		}
 	}
+	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
 }
 
 func overviewKPIExcludedBand(band string) bool {
@@ -3564,6 +3566,7 @@ type OverviewKPIHistoryEntry struct {
 	OverviewActionable   *int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3576,12 +3579,13 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 	out := make([]OverviewKPIHistoryEntry, 0, len(entries))
 	for _, e := range entries {
 		row := OverviewKPIHistoryEntry{Timestamp: e.Timestamp}
-		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 {
+		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 || e.OverviewOutside != 0 {
 			row.OverviewOpenIssues = intPtr(e.OverviewOpenIssues)
 			row.OverviewOpenPRs = intPtr(e.OverviewOpenPRs)
 			row.OverviewActionable = intPtr(e.OverviewActionable)
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
+			row.OverviewOutside = intPtr(e.OverviewOutside)
 		}
 		out = append(out, row)
 	}

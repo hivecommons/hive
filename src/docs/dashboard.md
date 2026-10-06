@@ -204,19 +204,20 @@ client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
-shows total open issues, total open PRs, actionable now, held, and
-blocked/needs-human. This is the same partition used by the Governor
-actionable issue/PR subtitles. **Total open issues** and **Total open PRs** are
-forge totals for the selected configured repositories from the existing scanner tick:
-open GitHub issues exclude pull requests, while open GitHub pull requests
-include drafts. Their subtitles stay empty so the reconciliation is not split
-across tiles. **Actionable now** is the shared server-side count used by the
-Overview KPI and the Governor collapsed split: open enumerated issues plus open
-enumerated PRs after hold/exempt filters, excluding items in the waiting, done,
-draft, or blocked Overview bands. Its subtitle carries the complete partition,
-for example `41 issues + 17 PRs = 13 actionable + 13 held + 10
-blocked/needs-human + 22 outside`; the held and blocked/needs-human tiles use
-the same server-side terms. The `outside` term is also server-side and is
+renders the partition as an equation: **Total open issues + Total open PRs =
+Actionable now + Held + Blocked/needs-human + Outside**. This is the same
+partition used by the Governor actionable issue/PR subtitles. **Total open
+issues** and **Total open PRs** are forge totals for the selected configured
+repositories from the existing scanner tick: open GitHub issues exclude pull
+requests, while open GitHub pull requests include drafts. Their subtitles show
+the per-kind terms without repeating the headline total. **Actionable now** is
+the shared server-side count used by the Overview KPI and the Governor collapsed
+split: open enumerated issues plus open enumerated PRs after hold/exempt
+filters, excluding items in the waiting, done, draft, or blocked Overview
+bands. The following tiles expose issue/PR splits such as `13 = 5 issues + 8
+PRs`, and the operator glyphs between cards make the full strip read like
+`41 TOTAL OPEN ISSUES + 17 TOTAL OPEN PRS = 13 ACTIONABLE NOW + 13 HELD + 10
+BLOCKED / NEEDS-HUMAN + 22 OUTSIDE`. The `outside` tile is server-side and is
 broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
 row naming the count, rule, current setting, and how to change it for this
 hive. The rows cover hard-suppress labels (`needs-direction`,

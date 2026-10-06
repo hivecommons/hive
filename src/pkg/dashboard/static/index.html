@@ -1794,7 +1794,10 @@
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: min(16rem, 32vh); overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .overview-headline { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); }
+    .overview-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
+    .overview-kpi-operator { display: inline-flex; align-items: center; justify-content: center; align-self: start; padding-top: var(--sp-3); color: var(--muted); font-size: var(--fs-lg); font-weight: 800; line-height: 1; }
+    @media (max-width: 1399px) { .overview-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .overview-kpi-operator { display: none; } }
+    @media (max-width: 720px) { .overview-kpis { grid-template-columns: minmax(0, 1fr); } }
     .overview-kpi-range { display: inline-flex; gap: var(--sp-1); }
     .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
     .overview-kpi-range-btn.active { border-color: var(--accent); color: var(--accent); }
@@ -7046,8 +7049,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function _ocSectionFromHash() {
       const h = location.hash.replace('#', '');
+      if (h === 'throughput') return 'pr-throughput-section';
       const route = h.split('?')[0];
-      if (route === 'throughput') return 'pr-throughput-section';
       if (route === 'projects') {
         const key = overviewProjectFilterKeyFromURL();
         if (key) _overviewProjectFilterKey = key;
@@ -14200,11 +14203,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const blocked = overviewEquationTermCount(equation, 'blocked_needs_human');
       const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
       const detail = overviewOutsideBreakdownText(equation);
-      return `${esc(String(total))} = ${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
+      return `${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
     }
 
     function renderOverviewSplitSubline(total, issueCount, prCount, label) {
-      return `${esc(String(Number(total || 0)))} ${esc(label)} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
+      return `${esc(String(Number(total || 0)))} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
     }
 
     function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
@@ -14213,13 +14216,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const outsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
       const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
       const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman + confirmClose;
-      const outside = Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman + draft);
+      const outside = Math.max(0, totalOpen - Number(actionable || 0) - Number(held || 0) - blockedTerm);
       const terms = [
         { key: 'actionable', label: 'actionable', count: actionable },
         { key: 'held', label: 'held', count: held },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: blockedTerm },
       ];
-      if (outside > 0) terms.push({ key: 'outside', label: 'outside', count: outside });
+      terms.push({ key: 'outside', label: 'outside', count: outside });
       const sum = terms.reduce((n, t) => n + Number(t.count || 0), 0);
       if (totalOpen > sum) terms.push({ key: 'other', label: 'other', count: totalOpen - sum });
       const text = `${openIssues} issues + ${openPRs} PRs = ` + terms.filter(t => Number(t.count || 0) > 0).map(t => `${Number(t.count || 0)} ${t.label}`).join(' + ');
@@ -14269,6 +14272,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const computedActionableNow = actionableIssues + actionablePRs;
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
+      const serverActionableIssues = Number(window._lastStatus?.actionableNow?.issues);
+      const serverActionablePRs = Number(window._lastStatus?.actionableNow?.prs);
+      const actionableIssueSplit = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableIssues) ? serverActionableIssues : actionableIssues;
+      const actionablePRSplit = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionablePRs) ? serverActionablePRs : actionablePRs;
       const computedHeld = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
       const computedBlockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
@@ -14281,15 +14288,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issueHeldLocal = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length, 0);
       const prHeldLocal = (repos || []).reduce((n, r) => n + (r.heldPrs || []).length, 0);
       const localOutsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
+      const issueBlockedLocal = Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman;
+      const prBlockedLocal = Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0);
+      const issueOutsideLocal = Math.max(0, openIssues - actionableIssues - issueHeldLocal - issueBlockedLocal);
+      const prOutsideLocal = Math.max(0, openPRs - actionablePRs - prHeldLocal - prBlockedLocal);
       const issueEq = serverIssueEq || overviewKPIKindEquation('issues', openIssues, actionableIssues, [
         { key: 'held', label: 'held', count: issueHeldLocal },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman },
-        { key: 'outside', label: 'outside', count: Math.max(0, Number(forgeTotals?.issues?.outside || 0) - localOutsideNeedsHuman) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: issueBlockedLocal },
+        { key: 'outside', label: 'outside', count: issueOutsideLocal },
       ]);
       const prEq = serverPREq || overviewKPIKindEquation('PRs', openPRs, actionablePRs, [
         { key: 'held', label: 'held', count: prHeldLocal },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
-        { key: 'outside', label: 'outside', count: Number(forgeTotals?.prs?.outside || 0) + Number(prCounts.draft || 0) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: prBlockedLocal },
+        { key: 'outside', label: 'outside', count: prOutsideLocal },
       ]);
       const held = overviewKPITerm(equation, 'held', computedHeld);
       const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
@@ -14300,6 +14311,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const heldPRs = overviewEquationTermCount(prEq, 'held');
       const blockedIssues = overviewEquationTermCount(issueEq, 'blocked_needs_human');
       const blockedPRs = overviewEquationTermCount(prEq, 'blocked_needs_human');
+      const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
+      const outsideIssues = overviewEquationTermCount(issueEq, 'outside') + overviewEquationTermCount(issueEq, 'other');
+      const outsidePRs = overviewEquationTermCount(prEq, 'outside') + overviewEquationTermCount(prEq, 'other');
+      const outsideTermBase = (equation?.terms || []).find(t => t && t.key === 'outside');
+      const outsideTerm = Object.assign({ key: 'outside', label: 'outside', count: outside, rule: "Open items excluded before they enter Overview bands by this hive's scanner settings." }, outsideTermBase || {});
+      const outsideInfo = overviewPartitionInfo(outsideTerm, 'overview-kpi-outside');
       const useServerHistory = _overviewKPILocalScope === 'all';
       const kpiFilterSummary = key => overviewProjectFilterSummary(key, repos, issueSlices, prSlices);
       const openIssueFilter = kpiFilterSummary('open-issues');
@@ -14308,19 +14325,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const heldFilter = kpiFilterSummary('held');
       const blockedFilter = kpiFilterSummary('blocked-needs-human');
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. Click to filter Projects to matching issues.', subline: renderOverviewTotalPartitionSubline(issueEq) },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. Click to filter Projects to matching PRs.', subline: renderOverviewTotalPartitionSubline(prEq) },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle + ' Click to filter Projects to this band.', subline: equationHTML },
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. In Overview bands means actionable + held + blocked/needs-human. Click to filter Projects to matching issues.', subline: renderOverviewTotalPartitionSubline(issueEq) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. In Overview bands means actionable + held + blocked/needs-human; draft PRs are outside until ready. Click to filter Projects to matching PRs.', subline: renderOverviewTotalPartitionSubline(prEq) },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle + ' Click to filter Projects to this band.', subline: renderOverviewSplitSubline(actionableNow, actionableIssueSplit, actionablePRSplit, 'actionable') },
         { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: `${held} held = ${heldIssues} issues + ${heldPRs} PRs. Issues and PRs deliberately paused by a hold. Click to filter Projects.`, subline: renderOverviewSplitSubline(held, heldIssues, heldPRs, 'held') },
-        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency. Click to filter Projects.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') }
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency. Click to filter Projects.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') },
+        { key: 'outside', field: 'overviewOutside', label: 'Outside', value: outside, rawValue: outside, color: 'var(--muted)', tip: `${outside} outside = ${outsideIssues} issues + ${outsidePRs} PRs. Open items excluded before they enter Overview bands by this hive's scanner settings. Click to filter Projects.`, subline: renderOverviewSplitSubline(outside, outsideIssues, outsidePRs, 'outside'), infoHTML: outsideInfo }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
+      const ops = ['+', '=', '+', '+', '+'];
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${held} held + ${blockedNeedsHuman} blocked or needs-human + ${outside} outside`;
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
-        return `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
+        const label = `<span class="overview-kpi-label">${esc(card.label)}${card.infoHTML || ''}</span>`;
+        const tile = `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span>${label}${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
+        return tile + (ops[i] ? `<span class="overview-kpi-operator" aria-hidden="true">${ops[i]}</span>` : '');
       }).join('')}</div></div>`;
     }
 
@@ -14689,6 +14711,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const filteredOpenPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => !entry.held).map(entry => entry.pr) : (r.openPrs || []);
         const filteredHeldPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => entry.held).map(entry => entry.pr) : (r.heldPrs || []);
         const filteredBuckets = overviewRepoMatches ? overviewRepoMatches.buckets : [];
+        const overviewIssueKeys = overviewRepoMatches ? new Set(filteredIssues.map(i => String(i.number))) : null;
+        const overviewPRKeys = overviewRepoMatches ? new Set(filteredOpenPrs.concat(filteredHeldPrs).map(p => String(p.number))) : null;
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
         const repoIssueFilterRows = filteredIssues.map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
         const repoPRFilterRows = filteredOpenPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat(filteredHeldPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
@@ -14726,9 +14750,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const statusKind = isHeldIssue ? 'issue:held' : ('issue:' + info.band);
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
-        const issuePills = groupedRepoIssues(filteredIssues).map(g => {
-          const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
-          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+        const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {
+          const shown = overviewIssueKeys ? g.issues.filter(entry => overviewIssueKeys.has(String(entry.issue.number))) : g.issues;
+          if (!shown.length) return '';
+          const items = shown.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -14817,9 +14843,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const statusKind = held ? 'pr:held' : (needsHuman ? 'needs-human' : (mergeState === 'eligible' ? 'pr:eligible' : (mergeState === 'outstanding' ? 'pr:outstanding' : ((reviewClass === 'fix') ? 'pr:fix' : 'pr:open'))));
           return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
-        const prPills = groupedRepoPRs(filteredOpenPrs, filteredHeldPrs).map(g => {
-          const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
-          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
+        const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
+          const shown = overviewPRKeys ? g.prs.filter(entry => overviewPRKeys.has(String(entry.pr.number))) : g.prs;
+          if (!shown.length) return '';
+          const items = shown.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable and held
         // grouped into the same display bands) under "issues", PR pills grouped
@@ -14829,9 +14857,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const prCol = prPills ? `<div class="repo-pill-run-title">PULL REQUESTS</div>${prPills}` : '';
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const bucketHtml = overviewProjectBucketRowsHTML(filteredBuckets);
-        const pillsHtml = (issueCol || prCol || bucketHtml)
-          ? `<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}${bucketHtml}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
-          : '';
+        const pillsHtml = ((issueCol || prCol)
+          ? `<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
+          : '') + (bucketHtml ? `<div class="repo-pills repo-pills-issues-only"><div class="repo-pill-col repo-pill-col-issues">${bucketHtml}</div></div>` : '');
         // Per-repo agent pause (#6203). The tooltip carries the provenance the
         // pill has no room for; without it a paused repo raises "who did this
         // and why" every time someone new looks at the dashboard.
