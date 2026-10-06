@@ -19,6 +19,10 @@ sync with the Go config schema. `pkg/dashboard` has a guard test that extracts
 those keys from the FAQ panel and asserts each path exists in `config.Config`
 via YAML tags.
 
+## Section help
+
+Every dashboard section title has a small **?** mark. Hovering or focusing it shows a one-sentence summary; clicking it (or pressing Enter) opens that section's entry in [Dashboard sections explained](dashboard-sections.md), the plain-language help page for operators. The help sentences live in one table in `index.html` (`DASHBOARD_SECTION_HELP`), and `dashboardDocsHref` is the single place that builds every help address: a hive built from the `v6` branch or a `v6.x.y` tag opens the `v6` page, anything else opens `v5`. A guard test fails when a section has no help entry or its sentence drifts from the page.
+
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
@@ -28,7 +32,7 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
 
-The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
+On the v5 line the standalone Platform section is not part of the default dashboard layout; on the v6 line Platform is a top-level section. On v5 its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
 
 ## Topbar and sidebar status
 
@@ -92,7 +96,7 @@ count without changing the selected window.
 
 ## Throughput
 
-The Throughput panel appears as a nested Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
+The Throughput panel is a top-level dashboard section with its own sidebar entry, listed under Overview and Governor; its subtitle uses the small muted dashboard subtitle style. For a plain-language summary see [Throughput](dashboard-sections.md#throughput).
 
 The **Throughput** section (`pr-throughput-section`) summarizes
 pull/merge requests and issues across tracked forges. It reads

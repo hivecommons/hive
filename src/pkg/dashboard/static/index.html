@@ -2811,6 +2811,8 @@
       pointer-events: none;
     }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
+    .section-help-mark { text-decoration: none; }
+    .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
     .overview-partition-tooltip {
       width: min(24rem, calc(100vw - var(--sp-8)));
       max-height: min(18rem, calc(100vh - var(--sp-8)));
@@ -4573,7 +4575,7 @@
     <div class="section-body section-group-body">
     <div class="advisory-subsection" id="advisory-digest-section">
       <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: var(--sp-4); cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
-        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest
+        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest<span data-section-help="advisory-digest-section"></span>
       </h2>
       <div class="section-body">
         <div id="advisory-digest"></div>
@@ -5503,6 +5505,74 @@
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
+    // Section help marks (#10915). Each entry's help sentence is word for word
+    // the first line of its entry in src/docs/dashboard-sections.md, and the
+    // link anchor is derived from its heading; runs-section and
+    // platform-section exist only on the v6 line.
+    const DASHBOARD_HELP_PAGE = 'dashboard-sections';
+    const DASHBOARD_HELP_CLICK_LINE = 'Click (or press Enter) for the full explanation';
+    const DASHBOARD_DOCS_LINES = ['v5', 'v6'];
+    const DASHBOARD_SECTION_HELP = Object.freeze({
+      'overview-section': { heading: 'Overview', help: 'How many issues and pull requests Hive is tracking right now, and how many of them it can work on.' },
+      'governor': { heading: 'Governor', help: 'How busy Hive thinks your projects are right now, and how often it wakes its workers as a result.' },
+      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, and how often each model's work was merged without extra fixes." },
+      'advisory-section': { heading: 'Advisory', help: 'Reports, advice and suggestions Hive has written about your projects and about how it is running.' },
+      'advisory-digest-section': { heading: 'Advisory Digest', help: "The open findings Hive's workers have written down, such as bugs, ideas and advice, grouped by who wrote them." },
+      'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
+      'fleet-report-section': { heading: 'Fleet Report Preview', help: 'Problems Hive has noticed in itself that it would report to the Hive maintainers, and problems that have since gone away.' },
+      'acmm-reco-section': { heading: 'Ready to level up?', help: 'Whether Hive thinks you could safely let it do more on its own, and what still has to be true first.' },
+      'lifecycle-section': { heading: 'Lifecycle Timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
+      'pr-throughput-section': { heading: 'Throughput', help: 'How many pull requests were opened, merged and closed over a chosen time window, and who did the work.' },
+      'token-panel': { heading: 'Tokens', help: 'How much text the AI models read and wrote for Hive recently, broken down by model and by worker.' },
+      'cost-panel': { heading: 'Cost', help: "An estimate of what Hive's use of AI models has cost so far, based on public list prices." },
+      'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
+      'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
+      'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
+      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first.' },
+      'review-queue-section': { heading: 'Review Queue', help: 'Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.' },
+      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
+      'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
+      'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
+      'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
+      'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
+      'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
+      'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
+      'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people most often ask when they start using Hive.' },
+      'runs-section': { heading: 'Runs', help: 'Longer pieces of work Hive is carrying out in stages, and which ones are waiting for you.' },
+      'platform-section': { heading: 'Platform', help: 'Which code hosting service Hive is connected to and which optional platform services are switched on.' },
+    });
+    // The one place that decides where dashboard help lives: every help mark and
+    // Overview "Learn more" link is built here, so moving them (for example to
+    // docs.hivecommons.dev) is a single change. Builds that are not on a known
+    // release line (forks, feature branches, unknown versions) open v5's help.
+    function dashboardDocsHref(page, anchor) {
+      const line = (typeof window !== 'undefined' && window._hiveDocsLine) || 'v5';
+      return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
+    }
+    function dashboardDocsHrefFromPath(path) {
+      const m = /^\/docs\/([\w-]+)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
+      return m ? dashboardDocsHref(m[1], m[2] || '') : String(path || '');
+    }
+    function setDashboardDocsLine(branch) {
+      const m = /^(v\d+)(?:\.\d+)*$/.exec(String(branch || '').trim());
+      window._hiveDocsLine = m && DASHBOARD_DOCS_LINES.includes(m[1]) ? m[1] : '';
+      document.querySelectorAll('a[data-docs-page]').forEach(a => { a.href = dashboardDocsHref(a.dataset.docsPage, a.dataset.docsAnchor || ''); });
+    }
+    function dashboardSectionHelpAnchor(heading) {
+      return String(heading || '').toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s/g, '-');
+    }
+    function dashboardSectionHelpMark(sectionId) {
+      const entry = DASHBOARD_SECTION_HELP[sectionId];
+      if (!entry) return '';
+      const anchor = dashboardSectionHelpAnchor(entry.heading);
+      const tipId = sectionId + '-help-tip';
+      return `<a class="config-info section-help-mark" href="${esc(dashboardDocsHref(DASHBOARD_HELP_PAGE, anchor))}" data-docs-page="${DASHBOARD_HELP_PAGE}" data-docs-anchor="${esc(anchor)}" target="_blank" rel="noopener noreferrer" data-action="gh3" data-stop="1" title="" aria-label="Help: ${esc(entry.heading)}" aria-describedby="${esc(tipId)}">?<span id="${esc(tipId)}" class="config-tooltip section-help-tip" role="tooltip">${esc(entry.help)}<span class="section-help-tip-action">${DASHBOARD_HELP_CLICK_LINE}</span></span></a>`;
+    }
+    function fillSectionHelpMarks() {
+      document.querySelectorAll('[data-section-help]').forEach(el => {
+        if (!el.querySelector('.section-help-mark')) el.innerHTML = dashboardSectionHelpMark(el.dataset.sectionHelp);
+      });
+    }
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
@@ -5521,7 +5591,7 @@
       const summaryText = textOrDash(opts.summaryHtml || opts.summary || '');
       const summary = `<span class="dash-card-summary ${opts.summaryClass || ''}" id="${esc(opts.summaryId || (id + '-summary'))}" title="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}" aria-label="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}">${visualSectionSummary(id, summaryText, opts.summaryTitle)}</span>`;
       const cls = ['dash-card-header','section-header-toggle',opts.headerClass || ''].filter(Boolean).join(' ');
-      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${subtitle}</span>${badges}${actions}${summary}</div>`;
+      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${subtitle}</span>${badges}${actions}${summary}</div>`;
     }
     function sectionCardShell(opts, bodyHtml) {
       opts = opts || {};
@@ -5592,6 +5662,7 @@
     }
     function initializeDashboardSectionCards() {
       Object.keys(DASHBOARD_SECTION_CARD_CONFIG).forEach(refreshSectionCardShell);
+      fillSectionHelpMarks();
     }
     const MINI_SUMMARY_HISTORY_PREFIX = 'hive_visual_summary_history:';
     const MINI_SUMMARY_HISTORY_POINTS = 48;
@@ -6852,7 +6923,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardRegionEl(name){return document.getElementById('hive-dashboard-root');}
     function dashboardCardEl(id){return document.querySelector('[data-dashboard-section="'+id+'"]');}
     function dashboardLayoutAnnounce(msg){var live=document.getElementById('dashboard-layout-live');if(live)live.textContent=msg;}
-    function dashboardLayoutCardName(card){var h=card&&card.querySelector('.dash-card-title,.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
+    function dashboardLayoutCardName(card){var h=card&&card.querySelector('.dash-card-title,.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button,.section-help-mark'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
     function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.filter(function(id){return !dashboardFeatureSectionHidden(id);});}
     function dashboardLayoutRead(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
     function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id&&!dashboardFeatureSectionHidden(id))out.main.push(id);});return out;}
@@ -11815,7 +11886,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
         <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
           <span class="section-chevron" aria-hidden="true">▼</span>
-          <span>PRS BY MODEL<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
+          <span>PRS BY MODEL${dashboardSectionHelpMark('governor-pr-models-section')}<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
           <span class="gov-pr-models-summary">${collapsedSummary}</span>
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
@@ -14167,7 +14238,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
+      return href ? `<a href="${esc(dashboardDocsHrefFromPath(href))}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
@@ -14250,7 +14321,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const settingsRow = overviewPartitionPreferredSettings(rows);
       const fixed = rows.some(row => row && !row.settingsTab) ? '<span class="text-muted">fixed buckets</span>' : '';
       const more = hiddenCount > 0 && docsRow?.docsHref
-        ? `<a class="overview-partition-more" href="${esc(docsRow.docsHref)}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
+        ? `<a class="overview-partition-more" href="${esc(dashboardDocsHrefFromPath(docsRow.docsHref))}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
         : (hiddenCount > 0 ? `<span class="overview-partition-more text-muted">+${esc(String(hiddenCount))} more</span>` : '');
       const footerParts = [overviewPartitionSettingsButton(settingsRow), overviewPartitionDocsLink(docsRow), fixed].filter(Boolean).join('');
       const footer = footerParts ? `<span class="overview-partition-footer">${footerParts}</span>` : '';
@@ -16895,6 +16966,7 @@ function burnAreaChart() {
     }
     /** Enter/Space activate the header like a button. */
     function costHeaderKey(ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.section-help-mark')) return;
       if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
         ev.preventDefault();
         toggleCostPanel();
@@ -27690,6 +27762,7 @@ function burnAreaChart() {
     function startVersionCheck() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
+        setDashboardDocsLine(d.branch);
       }).catch(function() {});
       dashboardSetInterval('version-reload-check', function() {
         fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {

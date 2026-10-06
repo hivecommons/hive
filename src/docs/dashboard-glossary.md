@@ -2,6 +2,8 @@
 
 This glossary records the operator-facing names used by the dashboard. The ADR-0018 IA/naming pass is implemented.
 
+For a plain-language explanation of every dashboard section — what it shows, how its numbers are worked out, and what to do about them — see [Dashboard sections explained](dashboard-sections.md). Each section title's **?** mark opens its entry there.
+
 ## Terms
 
 | Term | Meaning | Use in operator UI |
@@ -25,12 +27,14 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 
 | Group | Items |
 | --- | --- |
-| Overview | Governor |
-| Agents | Dynamic agent tree, `+ agent`, `+ group` |
-| Resources | Repos, Contributors |
+| Dashboard | Overview, Governor, Throughput |
+| Agents | Dynamic agent tree, `+ Add agent`, `+ Group` |
+| Resources | Projects, Contributors |
 | Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Strategy Lab |
-| Admin | Tokens, Cost, Audit Log |
-| Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Report an Issue |
+| Admin | Tokens, Cost, Review Queue, Agents, Audit Log, Diagnostics |
+| Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Join our Discord, Report an Issue |
+
+On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
 
 Count badges use the shared `.badge-count` recipe. Zero counts render as dimmed `0` badges with `data-zero`.
 
