@@ -1322,9 +1322,9 @@ spec:
       serviceAccountName: hive-sa
       # ── init containers — REQUIRED. The ConfigMap is mounted read-only at
       # /etc/hive-seed and copied into a WRITABLE emptyDir at /etc/hive. The hive
-      # process must WRITE /etc/hive/hive.yaml at runtime (the entrypoint seeds
-      # it, then merges the PVC overlay over it, and the dashboard's Save writes
-      # it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
+      # process must WRITE /etc/hive/hive.yaml at runtime (the entrypoint boots
+      # from the PVC runtime config, or on first boot seeds it and merges the
+      # PVC overlay over it, and the dashboard's Save writes it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
       # every config save fails with "open /etc/hive/hive.yaml: read-only file
       # system" — and dashboard-installed GitHub App auth / ACMM changes are lost.
       initContainers:
