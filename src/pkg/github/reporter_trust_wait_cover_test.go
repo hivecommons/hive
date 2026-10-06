@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -382,5 +383,102 @@ func TestReporterTrustWaitComments_Pagination(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != marked {
 		t.Errorf("comments = %v, want only the page-2 marker comment", got)
+	}
+}
+
+type clankerWaitAdmitter struct {
+	plainWaitAdmitter
+	on       bool
+	addendum string
+}
+
+func (a clankerWaitAdmitter) ReporterTrustClankerRequestedOn() bool         { return a.on }
+func (a clankerWaitAdmitter) ReporterTrustClankerRequestedLabel() string    { return "clanker-requested" }
+func (a clankerWaitAdmitter) ReporterTrustClankerRequestedAddendum() string { return a.addendum }
+func (a clankerWaitAdmitter) ReporterTrustTrusts(string, string) bool       { return false }
+
+// reporterTrustWaitGolden is the wait comment as it stood before the
+// clanker-requested policy (hivecommons/hive#10780). With the switch off the
+// output must stay byte-identical to it.
+const reporterTrustWaitGolden = "<!-- hive:reporter-trust-wait repo=o/r added-label=needs-triage -->\n" +
+	"Thanks — this hive only works issues from OWNER, MEMBER, COLLABORATOR automatically. " +
+	"A maintainer can admit this one by adding the label `triage/accepted` (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
+	"Until then the hive will not claim, label, or open PRs for it."
+
+func TestReporterTrustWaitComment_ClankerOffGolden(t *testing.T) {
+	for name, ra := range map[string]ReporterAdmitter{
+		"no clanker config": plainWaitAdmitter{},
+		"clanker off":       clankerWaitAdmitter{on: false, addendum: "ignored while off"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := reporterTrustWaitComment("o/r", "needs-triage", ra); got != reporterTrustWaitGolden {
+				t.Errorf("comment changed with the switch off:\n got %q\nwant %q", got, reporterTrustWaitGolden)
+			}
+		})
+	}
+}
+
+func TestReporterTrustWaitComment_ClankerOn(t *testing.T) {
+	got := reporterTrustWaitComment("o/r", "needs-triage", clankerWaitAdmitter{on: true, addendum: "  See CONTRIBUTING.md.  "})
+	if !strings.HasPrefix(got, reporterTrustWaitGolden+"\n\n") {
+		t.Fatalf("first paragraph must be unchanged:\n%s", got)
+	}
+	for _, want := range []string{"ClankeR", clankerRelayDocURL, "contributor-relay.md#basic-setup",
+		"this issue will be offered to it", "\n\nSee CONTRIBUTING.md."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("comment missing %q:\n%s", want, got)
+		}
+	}
+	if !strings.HasSuffix(got, "See CONTRIBUTING.md.") {
+		t.Errorf("addendum must close the comment:\n%s", got)
+	}
+	noAddendum := reporterTrustWaitComment("o/r", "", clankerWaitAdmitter{on: true})
+	if !strings.HasSuffix(noAddendum, "like any other queued work.") {
+		t.Errorf("blank addendum must add nothing:\n%s", noAddendum)
+	}
+	if !strings.Contains(noAddendum, reporterTrustWaitMarker("o/r", "")) {
+		t.Errorf("marker missing:\n%s", noAddendum)
+	}
+}
+
+func TestMarkReporterTrustAwaiting_ClankerOnPostsOnce(t *testing.T) {
+	ra := clankerWaitAdmitter{on: true, addendum: "Extra."}
+	var mu sync.Mutex
+	var posted []string
+	handlers := map[string]http.HandlerFunc{
+		"GET /repos/o/r/issues/1/comments": func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make([]map[string]string, 0, len(posted))
+			for _, b := range posted {
+				out = append(out, map[string]string{"body": b})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		},
+		"POST /repos/o/r/issues/1/comments": func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			posted = append(posted, req.Body)
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{}`)
+		},
+	}
+	server, _ := newWaitTestServer(t, map[string]int{"GET /repos/o/r/labels/needs-triage": 200, "POST /repos/o/r/issues/1/labels": 200}, handlers)
+	c, _ := waitTestClient(t, server)
+	for i := 0; i < 2; i++ {
+		c.markReporterTrustAwaiting(context.Background(), "o/r", &gh.Issue{Number: gh.Ptr(1)}, nil, ra, nil)
+	}
+	if len(posted) != 1 {
+		t.Fatalf("posted %d comments, want exactly one", len(posted))
+	}
+	if !strings.Contains(posted[0], clankerRelayDocURL) || !strings.HasSuffix(posted[0], "\n\nExtra.") ||
+		!strings.Contains(posted[0], "added-label=needs-triage") {
+		t.Errorf("posted comment missing relay link, addendum or marker:\n%s", posted[0])
 	}
 }

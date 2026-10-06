@@ -174,6 +174,11 @@ type Client struct {
 	reporterTrustMu          sync.RWMutex
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
+	// relayContributor reports whether a login holds a live contributor
+	// (relay) claim, the provenance that exempts its PRs from the
+	// clanker-requested parking (pr_clanker_requested.go). nil knows no relay
+	// contributors.
+	relayContributor func(login string) bool
 	// prSignedCommits, when set and returning true, makes the PR-request watcher
 	// re-author each head branch through createCommitOnBranch before opening the
 	// PR, so the commit is GitHub-signed (Verified) and authored by the App bot.
@@ -1016,6 +1021,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// one of those paths runs through.
 	repos := c.activeRepos()
 	reporterTrustWaitBudget := newReporterTrustWaitBudget()
+	clankerRequestedBudget := newClankerRequestedBudget()
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
@@ -1029,7 +1035,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo)
+		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo, clankerRequestedBudget)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -1338,7 +1344,7 @@ func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) strin
 	return ""
 }
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
+func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -1362,6 +1368,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
+		// Parked before the hold check so a freshly labelled PR lands in the
+		// held partition on this same poll (hivecommons/hive#10781).
+		labels = c.parkClankerRequestedPR(ctx, repo, pr, labels, clankerBudget)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
 		scopeContract := reviewScopeContract(pr.GetTitle(), pr.GetBody(), owner+"/"+repoName, runKey, planRef)

@@ -805,3 +805,60 @@ func TestReleaseLevelHold_TrustedReporterStillReleases(t *testing.T) {
 		t.Fatalf("reason = %q; a trusted reporter's PR must not be held by the reporter gate", reason)
 	}
 }
+
+func clankerReporterTrust() config.IssueFilterConfig {
+	f := enabledReporterTrust()
+	on := true
+	f.ReporterTrust.ClankerRequested = &on
+	f.ReporterTrust.ClankerRequestedAddendum = "Please read CONTRIBUTING.md first."
+	return f
+}
+
+// TestEnumerateActionable_ReporterTrustWaitClankerParagraph pins
+// hivecommons/hive#10780 end to end: with clanker_requested on, the one-shot
+// wait comment carries the ClankeR pointer and addendum, and is still posted
+// once per issue.
+func TestEnumerateActionable_ReporterTrustWaitClankerParagraph(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 104, Title: "stranger asks", User: wireUser{"stranger"}, AuthorAssociation: "NONE", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(clankerReporterTrust())
+
+	for i := 0; i < 2; i++ {
+		if _, err := c.EnumerateActionable(context.Background()); err != nil {
+			t.Fatalf("EnumerateActionable: %v", err)
+		}
+	}
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("comments = %d, want one wait comment", got)
+	}
+	for _, want := range []string{reporterTrustWaitMarkerPrefix, "triage/accepted", clankerRelayDocURL, "Please read CONTRIBUTING.md first."} {
+		if !strings.Contains(h.comments[0], want) {
+			t.Errorf("wait comment missing %q:\n%s", want, h.comments[0])
+		}
+	}
+	if !h.labels["needs-triage"] {
+		t.Fatalf("awaiting label flow changed: %#v", h.labels)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitClankerTrustedNoop(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 105, Title: "maintainer asks", User: wireUser{"maintainer"}, AuthorAssociation: "MEMBER", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(clankerReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 || len(h.comments) != 0 || h.labels["needs-triage"] {
+		t.Fatalf("trusted reporter affected: count=%d comments=%d labels=%#v", result.Issues.Count, len(h.comments), h.labels)
+	}
+}

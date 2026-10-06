@@ -285,3 +285,24 @@ func TestReporterTrust_ClankerRequestedHoldLabels(t *testing.T) {
 		t.Errorf("on = %v", got)
 	}
 }
+
+func TestIssueFilter_ReporterTrustClankerAccessors(t *testing.T) {
+	var zero IssueFilterConfig
+	if zero.ReporterTrustClankerRequestedOn() || zero.ReporterTrustClankerRequestedLabel() != DefaultClankerRequestedLabel ||
+		zero.ReporterTrustClankerRequestedAddendum() != "" {
+		t.Error("zero filter must leave the clanker-requested policy off with defaults")
+	}
+	if zero.ReporterTrustTrusts("anyone", "NONE") || !zero.ReporterTrustTrusts("", "MEMBER") {
+		t.Error("ReporterTrustTrusts must follow ReporterTrustConfig.Trusted")
+	}
+	on, lbl := true, "parked"
+	f := IssueFilterConfig{ReporterTrust: ReporterTrustConfig{
+		ClankerRequested: &on, ClankerRequestedLabel: &lbl, ClankerRequestedAddendum: "x", TrustedLogins: []string{"friend"},
+	}}
+	if !f.ReporterTrustClankerRequestedOn() || f.ReporterTrustClankerRequestedLabel() != "parked" || f.ReporterTrustClankerRequestedAddendum() != "x" {
+		t.Errorf("accessors = %v %q %q", f.ReporterTrustClankerRequestedOn(), f.ReporterTrustClankerRequestedLabel(), f.ReporterTrustClankerRequestedAddendum())
+	}
+	if !f.ReporterTrustTrusts("Friend", "NONE") {
+		t.Error("trusted login must be trusted")
+	}
+}

@@ -181,6 +181,30 @@ func (f IssueFilterConfig) ReporterTrustCommentEnabled() bool {
 	return f.ReporterTrust.CommentOn()
 }
 
+// ReporterTrustClankerRequestedOn reports whether the opt-in clanker-requested
+// policy (hivecommons/hive#10766) is on.
+func (f IssueFilterConfig) ReporterTrustClankerRequestedOn() bool {
+	return f.ReporterTrust.ClankerRequestedOn()
+}
+
+// ReporterTrustClankerRequestedLabel returns the label that parks an
+// untrusted author's direct PR.
+func (f IssueFilterConfig) ReporterTrustClankerRequestedLabel() string {
+	return f.ReporterTrust.EffectiveClankerRequestedLabel()
+}
+
+// ReporterTrustClankerRequestedAddendum returns the operator's optional free
+// text appended to the ClankeR pointer.
+func (f IssueFilterConfig) ReporterTrustClankerRequestedAddendum() string {
+	return f.ReporterTrust.ClankerRequestedAddendum
+}
+
+// ReporterTrustTrusts reports whether login/association is a trusted reporter,
+// independent of whether the issue-admission gate is switched on.
+func (f IssueFilterConfig) ReporterTrustTrusts(login, association string) bool {
+	return f.ReporterTrust.Trusted(login, association)
+}
+
 func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 	for _, actual := range labels {
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsHuman() {
