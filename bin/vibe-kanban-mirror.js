@@ -29,9 +29,18 @@
 // VIBE_KANBAN_PROJECT_ID are set. No credentials: both hive endpoints are
 // public reads and the MCP server is local.
 //
+// Phase 1 (opt-in, VIBE_KANBAN_SHADOW_LOG): a developer picking a queued hive
+// item up on the board (start_workspace moves the card forward, or a PR gets
+// linked to it) is recorded as an `ext_work_shadow_observed` event in the
+// extwork ProgressEvent shape, appended to a local JSONL file. Observation is
+// read-only: hive dispatches nothing, the board is not changed, and a
+// picked-up card is no longer pulled back to To do. Acceptance still goes
+// through hive's own receipt/PR path.
+//
 // Run: node bin/vibe-kanban-mirror.js --once [--dry-run]
 // Docs: src/docs/vibe-kanban.md
 
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 // Hive work state → vibe-kanban status key (the upstream TaskStatus spelling).
@@ -57,6 +66,21 @@ const DEFAULT_STATUS_NAMES = Object.freeze({
 });
 
 const HIVE_TAG = 'hive';
+const BOARD_HOST = 'vibe-kanban';
+
+// Mirrors pkg/extwork: the audit action for a shadow observation and the
+// engine-neutral states an observation may report.
+const EVENT_SHADOW_OBSERVED = 'ext_work_shadow_observed';
+const STATE_RUNNING = 'running';
+const STATE_WAITING = 'waiting';
+const STATE_TERMINAL = 'terminal';
+
+// Board status key → extwork state for a board-side pick-up.
+const PICKUP_STATES = Object.freeze({
+  inprogress: STATE_RUNNING,
+  inreview: STATE_WAITING,
+  done: STATE_TERMINAL,
+});
 const DEFAULT_INTERVAL_S = 300;
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 
@@ -73,6 +97,8 @@ Options:
   --project-id UUID    vibe-kanban project             (VIBE_KANBAN_PROJECT_ID)
   --mcp-cmd CMD        vibe-kanban MCP server command  (VIBE_KANBAN_MCP_CMD)
   --interval SECONDS   loop interval, default ${DEFAULT_INTERVAL_S}  (VIBE_KANBAN_SYNC_INTERVAL_S)
+  --shadow-log PATH    record board pick-ups of queued items as shadow
+                       executions in this JSONL file (VIBE_KANBAN_SHADOW_LOG)
   -h, --help           show this help
 
 The mirror is off unless VIBE_KANBAN_MCP_CMD and VIBE_KANBAN_PROJECT_ID are set.
@@ -88,6 +114,7 @@ function parseArgs(argv, env = process.env) {
     projectId: env.VIBE_KANBAN_PROJECT_ID || '',
     mcpCmd: env.VIBE_KANBAN_MCP_CMD || '',
     intervalS: Number(env.VIBE_KANBAN_SYNC_INTERVAL_S) || DEFAULT_INTERVAL_S,
+    shadowLog: env.VIBE_KANBAN_SHADOW_LOG || '',
     statusNames: { ...DEFAULT_STATUS_NAMES },
   };
   if (env.VIBE_KANBAN_STATUS_NAMES) {
@@ -119,6 +146,7 @@ function parseArgs(argv, env = process.env) {
       case '--hive-url': opts.hiveUrl = value(i, arg); i++; break;
       case '--project-id': opts.projectId = value(i, arg); i++; break;
       case '--mcp-cmd': opts.mcpCmd = value(i, arg); i++; break;
+      case '--shadow-log': opts.shadowLog = value(i, arg); i++; break;
       case '--interval': {
         const n = Number(value(i, arg));
         if (!Number.isFinite(n) || n <= 0) throw new Error('--interval must be a positive number of seconds');
@@ -165,6 +193,17 @@ function boardStatusKey(state) {
   const key = HIVE_TO_BOARD[String(state || '').toLowerCase()];
   if (!key) throw new Error(`unknown hive work state "${state}"`);
   return key;
+}
+
+// Board status NAME → status key, the inverse of statusNames. Returns '' for a
+// column the mirror does not know (for example Backlog).
+function statusKeyForName(name, statusNames = DEFAULT_STATUS_NAMES) {
+  const want = String(name || '').toLowerCase();
+  if (!want) return '';
+  for (const [key, n] of Object.entries(statusNames)) {
+    if (String(n).toLowerCase() === want) return key;
+  }
+  return '';
 }
 
 function workKey(item) {
@@ -244,6 +283,7 @@ async function readHiveItems({ hiveUrl, repo, fetchImpl = globalThis.fetch }) {
       title: w.title || prev.title || '',
       url: prev.url || canonicalUrl(w),
       state: 'leased',
+      taskId: w.task_id || '',
     });
   }
   return [...items.values()].sort((a, b) => a.key.localeCompare(b.key));
@@ -385,10 +425,89 @@ class McpStdioClient {
   }
 }
 
+// Decides whether a board issue shows a developer picking up a hive item that
+// hive itself has not dispatched. Only `queued` items qualify: a leased item is
+// already hive's own execution, and a parked one is held by the operator.
+// Returns null when there is nothing to observe.
+function observePickup({ item, issue, projectId, statusNames = DEFAULT_STATUS_NAMES }) {
+  if (!item || !issue || item.state !== 'queued') return null;
+  const boardKey = statusKeyForName(issue.status, statusNames);
+  const prUrl = issue.latest_pr_url || '';
+  const prStatus = String(issue.latest_pr_status || '').toLowerCase();
+  let state = PICKUP_STATES[boardKey] || '';
+  if (prStatus === 'merged' || prStatus === 'closed') state = STATE_TERMINAL;
+  else if (prUrl && !state) state = STATE_WAITING;
+  if (!state) return null;
+  const fields = {
+    external_start: false,
+    host: BOARD_HOST,
+    work_key: item.key,
+    board_issue_id: issue.id,
+    board_status: issue.status || '',
+  };
+  if (issue.simple_id) fields.simple_id = issue.simple_id;
+  if (prUrl) fields.latest_pr_url = prUrl;
+  if (prStatus) fields.latest_pr_status = prStatus;
+  return {
+    action: EVENT_SHADOW_OBSERVED,
+    execution_key: `${BOARD_HOST}:${projectId}/${issue.id}`,
+    assignment_id: item.taskId || '',
+    state,
+    fields,
+  };
+}
+
+// What makes two observations of the same execution the same fact.
+function observationFingerprint(ev) {
+  const f = ev.fields || {};
+  return JSON.stringify([ev.state, f.board_status || '', f.latest_pr_url || '', f.latest_pr_status || '']);
+}
+
+// Appends shadow observations to a local JSONL file, one extwork
+// ProgressEvent per line plus `observed_at`. It remembers the last fact per
+// execution key (read back from the file on start), so an unchanged pick-up is
+// recorded once, not on every pass.
+class ShadowLog {
+  constructor(filePath, { now = () => new Date() } = {}) {
+    this.filePath = filePath;
+    this.now = now;
+    this.last = new Map();
+    let text = '';
+    try {
+      text = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw new Error(`cannot read shadow log ${filePath}: ${err.message}`);
+    }
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let ev;
+      try {
+        ev = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (ev && ev.action === EVENT_SHADOW_OBSERVED && ev.execution_key) {
+        this.last.set(ev.execution_key, observationFingerprint(ev));
+      }
+    }
+  }
+
+  isNew(ev) {
+    return this.last.get(ev.execution_key) !== observationFingerprint(ev);
+  }
+
+  record(ev) {
+    if (!this.isNew(ev)) return false;
+    fs.appendFileSync(this.filePath, `${JSON.stringify({ ...ev, observed_at: this.now().toISOString() })}\n`);
+    this.last.set(ev.execution_key, observationFingerprint(ev));
+    return true;
+  }
+}
+
 // One mirror pass. Idempotent: an item already on the board (found by its
 // work-key trailer) is updated only when its status or title drifted.
-async function syncOnce({ items, client, projectId, statusNames = DEFAULT_STATUS_NAMES, dryRun = false, log = console.log }) {
-  const summary = { created: 0, updated: 0, unchanged: 0, errors: 0 };
+async function syncOnce({ items, client, projectId, statusNames = DEFAULT_STATUS_NAMES, dryRun = false, shadowLog = null, log = console.log }) {
+  const summary = { created: 0, updated: 0, unchanged: 0, errors: 0, observed: 0 };
   const tags = await client.callTool('list_tags', { project_id: projectId });
   const hiveTag = ((tags && tags.tags) || []).find((t) => String(t.name).toLowerCase() === HIVE_TAG);
   if (!hiveTag) {
@@ -422,7 +541,16 @@ async function syncOnce({ items, client, projectId, statusNames = DEFAULT_STATUS
         continue;
       }
       const patch = {};
-      if (String(existing.status || '').toLowerCase() !== status.toLowerCase()) patch.status = status;
+      const pickup = shadowLog ? observePickup({ item, issue: existing, projectId, statusNames }) : null;
+      if (pickup && shadowLog.isNew(pickup)) {
+        if (!dryRun) shadowLog.record(pickup);
+        log(`${dryRun ? 'would record' : 'recorded'} shadow pick-up ${item.key} (${existing.id}) ${pickup.state}, board "${existing.status}"`);
+        summary.observed++;
+      }
+      // A developer's pick-up is left on the board; anything else drifts back
+      // to the hive-mapped column.
+      const keepBoardStatus = pickup && PICKUP_STATES[statusKeyForName(existing.status, statusNames)];
+      if (!keepBoardStatus && String(existing.status || '').toLowerCase() !== status.toLowerCase()) patch.status = status;
       if (existing.title !== title) patch.title = title;
       if (Object.keys(patch).length === 0) {
         summary.unchanged++;
@@ -442,6 +570,7 @@ async function syncOnce({ items, client, projectId, statusNames = DEFAULT_STATUS
 
 async function runPass(opts, { fetchImpl = globalThis.fetch, spawnImpl = spawn, env = process.env, log = console.log } = {}) {
   const items = await readHiveItems({ hiveUrl: opts.hiveUrl, repo: opts.repo, fetchImpl });
+  const shadowLog = opts.shadowLog ? new ShadowLog(opts.shadowLog) : null;
   const client = new McpStdioClient(opts.mcpCmd, { spawnImpl, env });
   try {
     await client.initialize();
@@ -451,9 +580,11 @@ async function runPass(opts, { fetchImpl = globalThis.fetch, spawnImpl = spawn, 
       projectId: opts.projectId,
       statusNames: opts.statusNames,
       dryRun: opts.dryRun,
+      shadowLog,
       log,
     });
-    log(`${opts.dryRun ? 'dry-run: ' : ''}${opts.repo}: ${items.length} hive item(s); created ${summary.created}, updated ${summary.updated}, unchanged ${summary.unchanged}, errors ${summary.errors}`);
+    const observed = shadowLog ? `, shadow pick-ups ${summary.observed}` : '';
+    log(`${opts.dryRun ? 'dry-run: ' : ''}${opts.repo}: ${items.length} hive item(s); created ${summary.created}, updated ${summary.updated}, unchanged ${summary.unchanged}, errors ${summary.errors}${observed}`);
     return summary;
   } finally {
     await client.close();
@@ -508,13 +639,17 @@ async function main(argv = process.argv.slice(2), env = process.env, deps = {}) 
 module.exports = {
   HIVE_TO_BOARD,
   DEFAULT_STATUS_NAMES,
+  EVENT_SHADOW_OBSERVED,
   McpStdioClient,
+  ShadowLog,
   boardDescription,
   boardStatusKey,
   main,
+  observePickup,
   parseArgs,
   readHiveItems,
   splitCommand,
+  statusKeyForName,
   syncOnce,
   trailer,
 };

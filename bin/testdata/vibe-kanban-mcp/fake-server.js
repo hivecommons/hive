@@ -45,7 +45,15 @@ function fail(message, details) {
 }
 
 function summary(issue) {
-  return { id: issue.id, title: issue.title, simple_id: issue.simple_id, status: issue.status };
+  return {
+    id: issue.id,
+    title: issue.title,
+    simple_id: issue.simple_id,
+    status: issue.status,
+    pull_request_count: issue.latest_pr_url ? 1 : 0,
+    latest_pr_url: issue.latest_pr_url || null,
+    latest_pr_status: issue.latest_pr_status || null,
+  };
 }
 
 function callTool(state, name, args) {
