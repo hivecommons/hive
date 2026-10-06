@@ -13,7 +13,8 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/dco-post-merge.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
   pull_request:
     branches: [v4, v5, v6]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -26,7 +27,8 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
+    paths: ['src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/dco-post-merge.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
 
 permissions:
   contents: read
