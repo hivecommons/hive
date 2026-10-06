@@ -1,0 +1,1 @@
+- Stable-channel promotion runs on GitHub-hosted runners again; the self-hosted image lacks `gh`, so every scheduled promotion since the lane move failed and `stable` stopped advancing (#10042).

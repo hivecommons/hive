@@ -110,7 +110,7 @@
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
          media query overrides it with its own FAB-sized clearance. */
-      padding: var(--sp-0) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
+      padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
       margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
     }
     [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
@@ -341,10 +341,12 @@
       transition: width 0.5s ease, background 0.5s ease;
     }
 
-    /* Topbar — sticky blurred header (hub .site-header recipe). */
+    /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
-      position: sticky; top: var(--sp-0); min-height: var(--navbar-sticky-height);
-      margin: var(--sp-0) calc(-1 * var(--sp-7)) var(--sp-6);
+      position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0); min-height: var(--navbar-sticky-height);
+      width: auto;
+      box-sizing: border-box;
+      margin: var(--sp-0);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--line);
@@ -363,7 +365,7 @@
     }
     #acmm-badge { overflow: hidden; text-overflow: ellipsis; }
     #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); min-width: 0; max-width: 100%; }
-    #oc-git-version #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
+    .oc-version-menu #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
     .oc-version-chip {
       width: 100%; display: flex; align-items: center; gap: var(--sp-2); min-height: 32px;
       padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill);
@@ -376,8 +378,8 @@
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
-    .oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior: contain; }
-    .avatar-menu.oc-version-menu { position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; }
+    .oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed; --oc-version-menu-min-width: min(420px, calc(100vw - 24px)); left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: var(--oc-version-menu-min-width); width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior: contain; }
+    .avatar-menu.oc-version-menu { position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: var(--oc-version-menu-min-width); width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; }
     .oc-version-menu:empty { display: none; }
     .oc-version-focus-pulse { outline: 2px solid color-mix(in srgb, var(--amber) 72%, transparent); outline-offset: 3px; border-radius: var(--r); }
     .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
@@ -387,15 +389,17 @@
     .oc-version-row strong, .oc-version-row a { color: var(--text); }
     .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
-    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
+    .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+    .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
     .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: visible; }
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
-    .oc-version-bee { --oc-version-bee-radius: 17px; position: absolute; z-index: 3; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
-    .oc-version-bee:nth-child(2) { animation-delay: -0.6s; }
-    .oc-version-bee:nth-child(3) { animation-delay: -1.2s; }
+    .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: calc(var(--navbar-motion-duration, var(--overview-transition-duration, 600ms)) * 3.2); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: center; will-change: transform, opacity; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite; }
+    .oc-version-bee:nth-child(2) { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
+    .oc-version-bee:nth-child(3) { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
+    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); }
     .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
     .oc-version-progress-copy { position: relative; z-index: 1; min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
     .oc-version-progress-title { color: var(--text); font-weight: 700; }
@@ -414,8 +418,9 @@
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      from { transform: rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg); }
-      to { transform: rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg); }
+      0% { opacity: 0.9; transform: translate(-50%, -50%) rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg) translateZ(0); }
+      50% { opacity: 1; transform: translate(-50%, -50%) rotate(180deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-180deg) translateZ(0); }
+      100% { opacity: 0.9; transform: translate(-50%, -50%) rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg) translateZ(0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -428,7 +433,7 @@
     @media (prefers-reduced-motion: reduce) {
       .oc-version-bee, .oc-version-bee-chip, .oc-version-honey-dot { animation: none; }
       .oc-version-hive .oc-version-bee { display: none; }
-      .oc-version-hive .oc-version-bee:nth-child(2) { display: inline; transform: translate(-50%, -50%); }
+      .oc-version-hive .oc-version-bee:nth-child(2) { display: grid; transform: translate(-50%, -50%) translateZ(0); }
       .oc-version-honey-dot { opacity: 0.75; transform: none; }
     }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
@@ -439,7 +444,7 @@
       margin-left: -10px;
     }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; }
+    .oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
     .dashboard-custom-style-note { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
     .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
@@ -506,16 +511,16 @@
 
     @media (max-width: 1280px) {
       .oc-topbar {
-        grid-template-columns: minmax(0, 1fr) auto; height: auto; min-height: var(--navbar-sticky-height);
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height);
         align-content: center;
         column-gap: var(--sp-5); row-gap: var(--sp-2); padding-top: var(--sp-3); padding-bottom: var(--sp-3);
       }
       .oc-topbar-left { min-width: 0; }
-      .oc-topbar-center { justify-content: flex-end; }
+      .oc-topbar-center { justify-content: center; }
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
       #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
-      .oc-topbar-right { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
+      .oc-topbar-right { justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }
 
@@ -845,7 +850,7 @@
         transition: opacity .22s ease;
       }
       #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
-      .oc-topbar { margin-left: calc(-1 * var(--sp-6)); }
+      .oc-topbar { left: var(--sp-0); right: var(--sp-0); margin-left: var(--sp-0); }
       body { padding-left: var(--sp-6); }
     }
     @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
@@ -3452,9 +3457,13 @@
     .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
-    .agent-navbar-upnext { display: inline-flex; align-items: stretch; justify-content: center; gap: var(--sp-2); min-width: 0; max-width: min(480px, 34vw); overflow: hidden; }
+    .agent-navbar-upnext {
+      display: inline-flex; align-items: stretch; justify-content: flex-start; gap: var(--sp-2);
+      min-width: 0; max-width: min(640px, 42vw); overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: thin; mask-image: linear-gradient(90deg, var(--text) 0, var(--text) calc(100% - var(--sp-4)), transparent 100%);
+    }
     .agent-navbar-upnext[hidden] { display: none; }
-    .agent-navbar-tile { flex: 0 0 calc(var(--sp-9) * 4); min-width: 0; height: calc(var(--nav-chip-h) + var(--sp-2)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; gap: 0 var(--sp-2); padding: var(--sp-1) var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
+    .agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px); min-width: 136px; height: calc(var(--nav-chip-h) + var(--sp-2)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; gap: 0 var(--sp-2); padding: var(--sp-1) var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-navbar-tile.up-next-pulse { animation: navbar-up-next-pulse var(--navbar-motion-duration) ease-out; }
@@ -3473,7 +3482,7 @@
       45% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 90%, transparent), 0 0 0 var(--sp-4) color-mix(in srgb, var(--amber) 24%, transparent); }
       100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
     }
-    @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
+    @media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     @media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }
     .advisory-collapsed-advice { display: flex; align-items: stretch; gap: var(--sp-2); width: min(760px, 52vw); max-width: 760px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
@@ -4555,10 +4564,10 @@
     </div>
     <div class="oc-topbar-right">
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
+      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
-      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
@@ -6046,21 +6055,61 @@
       const levels = Array.isArray(data && data.levels) ? data.levels : [];
       return levels.map(l => ({ name: `L${l.level} ${l.name || ''}`.trim(), passed: !!l.passed, detail: `${Number(l.matched) || 0}/${Number(l.total) || 0}` }));
     }
+    function acmmCollapsedCurrentLevel(text) {
+      const statusLevel = Number(window._lastStatus && window._lastStatus.acmmLevel);
+      if (Number.isFinite(statusLevel) && statusLevel > 0) return statusLevel;
+      const evalLevel = Number(typeof _acmmEvalData !== 'undefined' && _acmmEvalData && _acmmEvalData.operational_level);
+      if (Number.isFinite(evalLevel) && evalLevel > 0) return evalLevel;
+      const textMatch = String(text || '').match(/L\s*(\d+)/i);
+      const textLevel = textMatch ? Number(textMatch[1]) : NaN;
+      return Number.isFinite(textLevel) && textLevel > 0 ? textLevel : NaN;
+    }
+    function acmmCollapsedLevelLabel(level) {
+      if (!Number.isFinite(level) || level <= 0) return 'not yet evaluated';
+      if (typeof acmmLevelLabel === 'function') return acmmLevelLabel(level).replace(' ', ' · ');
+      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+      return `L${level}${levelNames[level] ? ' · ' + levelNames[level] : ''}`;
+    }
+    function acmmCollapsedGapDetail(data, level, dims, total, met) {
+      const levels = Array.isArray(data && data.levels) ? data.levels : [];
+      if (Number.isFinite(level) && levels.length) {
+        const next = levels.find(l => Number(l.level) === level + 1);
+        const current = levels.find(l => Number(l.level) === level);
+        const target = next || current;
+        if (target) {
+          const targetTotal = Number(target.total) || 0;
+          const targetMet = Number(target.matched) || 0;
+          const gaps = Math.max(0, targetTotal - targetMet);
+          if (gaps) return {
+            detail: next ? `${gaps} gap${gaps === 1 ? '' : 's'} to L${level + 1}` : `${gaps} gap${gaps === 1 ? '' : 's'}`,
+            tip: next ? `${gaps} open gap${gaps === 1 ? '' : 's'} toward L${level + 1}` : `${gaps} open gap${gaps === 1 ? '' : 's'} at current level L${level}`
+          };
+          return { detail: next ? `ready for L${level + 1}` : `${targetMet}/${targetTotal} dims`, tip: next ? `No open gaps toward L${level + 1}` : `Current level L${level} has ${targetMet}/${targetTotal}` };
+        }
+      }
+      const gaps = Math.max(0, total - met);
+      return {
+        detail: total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'not yet evaluated',
+        tip: total ? `${gaps} open gap${gaps === 1 ? '' : 's'} in the current evaluation` : 'ACMM evaluation has not reported criteria yet'
+      };
+    }
     function acmmCollapsedEvalHtml(text) {
       const data = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? ((typeof acmmGetActiveData === 'function' && acmmGetActiveData()) || _acmmEvalData) : null;
-      if (!data) return miniWrap('acmm-eval-section', text, miniText(text, text));
-      const codebase = Number(data.codebase_level);
-      const op = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? Number(_acmmEvalData.operational_level) : Number(data.operational_level);
-      const level = Number.isFinite(Number(data.overall_level)) ? Number(data.overall_level) : (Number.isFinite(codebase) && Number.isFinite(op) ? Math.min(codebase, op) : Number(text && String(text).match(/\d+/)));
+      const level = acmmCollapsedCurrentLevel(text);
+      if (!data) {
+        const label = acmmCollapsedLevelLabel(level);
+        const title = Number.isFinite(level) ? `${label} · not yet evaluated` : 'ACMM not yet evaluated';
+        return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>${escapeHtml(label)}</span><span class="acmm-pill-detail">not yet evaluated</span></button>`;
+      }
       const dims = acmmCollapsedDimensions(data);
       const total = dims.length || Number(data.criteria_total) || 0;
       const met = dims.length ? dims.filter(d => d.passed).length : Number(data.criteria_passed) || 0;
-      const gaps = Math.max(0, total - met);
-      const detail = total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'no criteria';
-      const tipLines = dims.length ? dims.map(d => `${d.passed ? '✓' : '•'} ${d.name}: ${d.detail}`) : [`criteria: ${met}/${total}`];
+      const gapDetail = acmmCollapsedGapDetail(data, level, dims, total, met);
+      const detail = gapDetail.detail;
+      const label = acmmCollapsedLevelLabel(level);
       const scope = (typeof _acmmSelectedRepo !== 'undefined' && _acmmSelectedRepo) ? `Showing ${_acmmSelectedRepo}` : 'Aggregate ACMM evaluation';
-      const title = [`L${Number.isFinite(level) ? level : '—'} · ${detail}`, scope, ...tipLines].join('\n');
-      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>L${escapeHtml(Number.isFinite(level) ? String(level) : '—')}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
+      const title = [`current level ${label}; ${gapDetail.tip}`, scope, 'Expand ACMM Eval for per-level details.'].join('\n');
+      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>${escapeHtml(label)}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
     }
     function knowledgeCollapsedSummary(text) {
       const history = typeof _factHistory !== 'undefined' && Array.isArray(_factHistory) ? _factHistory : [];
@@ -14470,12 +14519,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">docs ↗</a>` : '';
+      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
       const tab = row && row.settingsTab;
-      return tab ? ` <button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</button>` : '';
+      // Not a <button>: this tooltip is rendered inside the <button class="overview-kpi"> card, and the HTML
+      // parser force-closes an open <button> when it meets a nested one, spilling the tooltip inline.
+      return tab ? ` <span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</span>` : '';
     }
 
     function overviewPartitionTooltip(term, context) {
@@ -14516,21 +14567,46 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `${esc(String(openIssues))} issues + ${esc(String(openPRs))} PRs = ${terms || '0 actionable'}`;
     }
 
+    function overviewEquationTermCount(equation, key) {
+      const term = (equation?.terms || []).find(t => t && t.key === key);
+      const n = Number(term?.count || 0);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function overviewOutsideBreakdownText(equation) {
+      const outside = (equation?.terms || []).find(t => t && t.key === 'outside');
+      const rows = Array.isArray(outside?.breakdown) ? outside.breakdown : [];
+      if (!rows.length) return '';
+      return rows.map(row => `${Number(row?.count || 0)} ${row?.label || row?.key || 'other'}`).join(' · ');
+    }
+
+    function renderOverviewTotalPartitionSubline(equation) {
+      if (!equation) return '';
+      const total = Number(equation.open || equation.totalOpen || 0);
+      const actionable = Number(equation.result || 0);
+      const held = overviewEquationTermCount(equation, 'held');
+      const blocked = overviewEquationTermCount(equation, 'blocked_needs_human');
+      const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
+      const detail = overviewOutsideBreakdownText(equation);
+      return `${esc(String(total))} = ${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
+    }
+
+    function renderOverviewSplitSubline(total, issueCount, prCount, label) {
+      return `${esc(String(Number(total || 0)))} ${esc(label)} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
+    }
+
     function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
-      const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
       const draft = (prSlices || []).filter(s => s.key === 'draft').reduce((n, s) => n + Number(s.count || 0), 0);
       const totalOpen = Number(openIssues || 0) + Number(openPRs || 0);
       const outsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
-      const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman;
-      const known = Number(actionable || 0) + Number(held || 0) + blockedTerm + confirmClose + draft;
-      const outside = Math.min(Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman), Math.max(0, totalOpen - known));
+      const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
+      const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman + confirmClose;
+      const outside = Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman + draft);
       const terms = [
         { key: 'actionable', label: 'actionable', count: actionable },
         { key: 'held', label: 'held', count: held },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: blockedTerm },
       ];
-      if (confirmClose > 0) terms.push({ key: 'confirm_close', label: 'confirm/close', count: confirmClose });
-      if (draft > 0) terms.push({ key: 'draft', label: 'draft', count: draft });
       if (outside > 0) terms.push({ key: 'outside', label: 'outside', count: outside });
       const sum = terms.reduce((n, t) => n + Number(t.count || 0), 0);
       if (totalOpen > sum) terms.push({ key: 'other', label: 'other', count: totalOpen - sum });
@@ -14557,15 +14633,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const outsideNeedsHuman = Number(totals.issues?.breakdown?.needs_human || 0);
       const issueEq = overviewKPIKindEquation('issues', Number(totals.issues?.forge || issueCount || 0), Number(issueCount || 0), [
         { key: 'held', label: 'held', count: issueHeld },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + outsideNeedsHuman },
-        { key: 'confirm_close', label: 'confirm/close', count: Number(issueCounts.done || 0) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + outsideNeedsHuman },
         { key: 'outside', label: 'outside', count: Math.max(0, Number(totals.issues?.outside || 0) - outsideNeedsHuman) },
       ]);
       const prEq = overviewKPIKindEquation('PRs', Number(totals.prs?.forge || prCount || 0), Number(prCount || 0), [
         { key: 'held', label: 'held', count: prHeld },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
-        { key: 'draft', label: 'draft', count: Number(prCounts.draft || 0) },
-        { key: 'outside', label: 'outside', count: Number(totals.prs?.outside || 0) },
+        { key: 'outside', label: 'outside', count: Number(totals.prs?.outside || 0) + Number(prCounts.draft || 0) },
       ]);
       return { issueEq, prEq };
     }
@@ -14576,9 +14650,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const forgeTotals = overviewKPIForgeTotals(repos);
       const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const actionableIssues = (issueSlices || []).filter(s => !['waiting', 'done'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const actionablePRs = (prSlices || []).filter(s => !['waiting', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
       const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);
       const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);
-      const computedActionableNow = (issueSlices || []).concat(prSlices || []).filter(s => !['waiting', 'done', 'draft', 'blocked'].includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const computedActionableNow = actionableIssues + actionablePRs;
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
       const computedHeld = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
@@ -14586,17 +14662,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
       const serverEquation = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.equation : null;
       const equation = serverEquation || overviewKPIEquation(openIssues, openPRs, actionableNow, computedHeld, computedBlockedNeedsHuman, issueSlices, prSlices, forgeTotals);
+      const serverIssueEq = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.issueEquation : null;
+      const serverPREq = _overviewKPILocalScope === 'all' ? window._lastStatus?.actionableNow?.prEquation : null;
+      const issueCounts = Object.fromEntries((issueSlices || []).map(s => [s.key, Number(s.count || 0)]));
+      const prCounts = Object.fromEntries((prSlices || []).map(s => [s.key, Number(s.count || 0)]));
+      const issueHeldLocal = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length, 0);
+      const prHeldLocal = (repos || []).reduce((n, r) => n + (r.heldPrs || []).length, 0);
+      const localOutsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
+      const issueEq = serverIssueEq || overviewKPIKindEquation('issues', openIssues, actionableIssues, [
+        { key: 'held', label: 'held', count: issueHeldLocal },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman },
+        { key: 'outside', label: 'outside', count: Math.max(0, Number(forgeTotals?.issues?.outside || 0) - localOutsideNeedsHuman) },
+      ]);
+      const prEq = serverPREq || overviewKPIKindEquation('PRs', openPRs, actionablePRs, [
+        { key: 'held', label: 'held', count: prHeldLocal },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
+        { key: 'outside', label: 'outside', count: Number(forgeTotals?.prs?.outside || 0) + Number(prCounts.draft || 0) },
+      ]);
       const held = overviewKPITerm(equation, 'held', computedHeld);
       const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
       const equationText = equation?.text || '';
       const equationHTML = equationText ? renderActionableEquationSubline(equation) : '';
       const equationTitle = equation?.title || equationText || 'Items in bands that can move without waiting.';
-      const useServerHistory = _overviewKPILocalScope === 'all';      const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos.' },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts.' },
+      const heldIssues = overviewEquationTermCount(issueEq, 'held');
+      const heldPRs = overviewEquationTermCount(prEq, 'held');
+      const blockedIssues = overviewEquationTermCount(issueEq, 'blocked_needs_human');
+      const blockedPRs = overviewEquationTermCount(prEq, 'blocked_needs_human');
+      const useServerHistory = _overviewKPILocalScope === 'all';
+      const cards = [
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. In Overview bands means actionable + held + blocked/needs-human.', subline: renderOverviewTotalPartitionSubline(issueEq) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. In Overview bands means actionable + held + blocked/needs-human; draft PRs are outside until ready.', subline: renderOverviewTotalPartitionSubline(prEq) },
         { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationHTML },
-        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: 'Issues and PRs deliberately paused by a hold.' },
-        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: 'Waiting, blocked, or escalated work needing a person or dependency.' }
+        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: `${held} held = ${heldIssues} issues + ${heldPRs} PRs. Issues and PRs deliberately paused by a hold.`, subline: renderOverviewSplitSubline(held, heldIssues, heldPRs, 'held') },
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
@@ -14604,8 +14702,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
-      }).join('')}</div></div>`;    }
+        return `<div class="overview-kpi" role="button" tabindex="0" data-action="ocNavigate" data-keydown-action="ocNavigate" data-keys="Enter, " data-prevent="1" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
+      }).join('')}</div></div>`;
+    }
 
     function overviewRepoFilterHTML(repos) {
       const all = overviewAllRepoNames(repos);
@@ -27327,18 +27426,30 @@ function burnAreaChart() {
       return phase + ' → ' + target + (elapsed ? ' · ' + elapsed : '');
     }
 
+    function versionUpgradeKey(st) {
+      if (!st) return '';
+      return [st.target || st.targetShort || 'target', st.startedAt || '0'].map(function(part) { return String(part || '').trim(); }).join('|');
+    }
+
     function versionBeeProgressHTML(st, v) {
       if (!st) return '';
       const title = st.completedAt ? 'Upgrade complete' : 'Upgrading…';
-      return '<div class="oc-version-upgrade-progress" role="status" aria-live="polite">' +
-        versionUpgradeHiveHTML() + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
-        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+      const key = versionUpgradeKey(st);
+      return '<div class="oc-version-upgrade-progress" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML(key) + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + '</div>' +
+        '<div class="oc-version-progress-status" data-upgrade-status="1">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
     }
 
-    function versionUpgradeHiveHTML() {
-      return '<span class="oc-version-hive" aria-hidden="true">' +
+    function versionBeeGlyphHTML() {
+      return '<svg class="oc-version-bee-glyph" viewBox="0 0 32 32" focusable="false" aria-hidden="true"><path d="M12 8c-2-4-6-5-8-2 0 3 3 5 7 5m9-3c2-4 6-5 8-2 0 3-3 5-7 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 17c0-5 4-9 10-9s10 4 10 9-4 9-10 9S6 22 6 17Z" fill="currentColor"/><path d="M12 9c-2 4-2 11 0 16m8-16c2 4 2 11 0 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.45"/><path d="M24 15h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    }
+
+    function versionUpgradeHiveHTML(key) {
+      const keyAttr = key ? ' data-upgrade-hive-key="' + escapeHtml(key) + '"' : '';
+      const bee = '<span class="oc-version-bee" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
+      return '<span class="oc-version-hive"' + keyAttr + ' aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
-        '<span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-honey-dot"></span>' +
+        bee + bee + bee + '<span class="oc-version-honey-dot"></span>' +
         '</span>';
     }
 
@@ -27349,9 +27460,39 @@ function burnAreaChart() {
       const complete = !!st.completedAt;
       const title = complete ? 'Upgrade complete ✓' : 'Upgrading…';
       const status = complete ? (target || '') : ((target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : ''));
-      return '<span class="oc-version-navbar-upgrade" role="status" aria-live="polite">' +
-        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
-        '<span class="oc-version-progress-status">' + escapeHtml(status) + '</span></span></span>';
+      const key = versionUpgradeKey(st);
+      return '<span class="oc-version-navbar-upgrade" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML(key) + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
+        '<span class="oc-version-progress-status" data-upgrade-status="1">' + escapeHtml(status) + '</span></span></span>';
+    }
+
+    function versionSetHTMLPreservingUpgradeBee(el, html, upgradeKey) {
+      if (!el) return false;
+      if (!upgradeKey || !el.querySelector || !el.replaceChildren || !document || !document.createElement) {
+        el.innerHTML = html;
+        return false;
+      }
+      const currentProgress = el.querySelector('[data-upgrade-key]');
+      if (!currentProgress || currentProgress.getAttribute('data-upgrade-key') !== upgradeKey) {
+        el.innerHTML = html;
+        return false;
+      }
+      const currentHive = currentProgress.querySelector && currentProgress.querySelector('.oc-version-hive');
+      const template = document.createElement('template');
+      template.innerHTML = String(html || '').trim();
+      const nextProgress = template.content && template.content.querySelector && template.content.querySelector('[data-upgrade-key]');
+      if (!currentHive || !nextProgress || nextProgress.getAttribute('data-upgrade-key') !== upgradeKey) {
+        el.innerHTML = html;
+        return false;
+      }
+      const nextHive = nextProgress.querySelector && nextProgress.querySelector('.oc-version-hive');
+      if (!nextHive || !nextHive.replaceWith) {
+        el.innerHTML = html;
+        return false;
+      }
+      nextHive.replaceWith(currentHive);
+      el.replaceChildren.apply(el, Array.from(template.content.childNodes));
+      return true;
     }
 
     function versionButtonHTML(label, title, targetHash, enabled) {
@@ -27424,7 +27565,18 @@ function burnAreaChart() {
       if (au.enabled !== false && au.state !== 'disabled' && au.state !== 'paused') {
         const nextAt = au.nextUpdateAt ? new Date(au.nextUpdateAt) : null;
         const nextOK = nextAt && !isNaN(nextAt.getTime());
-        html += row('Next update', nextOK ? value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds') : value('unknown', 'The hub has not reported when the next update is expected'), nextOK ? au.nextUpdateAt : 'unknown');
+        const nextStatus = au.nextUpdateStatus || '';
+        if (nextOK && nextAt.getTime() <= Date.now()) {
+          html += row('Next update', value('overdue since ' + nextAt.toLocaleString(), 'The next build crossed the 24h soak line at ' + au.nextUpdateAt + ' but the hub has not promoted it yet — the promotion workflow runs hourly and may be delayed or failing'), 'overdue since ' + au.nextUpdateAt);
+        } else if (nextOK) {
+          html += row('Next update', value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds'), au.nextUpdateAt);
+        } else if (nextStatus === 'none') {
+          html += row('Next update', value('none queued (stable is current)', 'Stable and candidate currently point at the same built image'), 'none queued');
+        } else if (nextStatus === 'paused') {
+          html += row('Next update', value('paused', 'Stable auto-promotion is paused'), 'paused');
+        } else {
+          html += row('Next update', value('unknown', 'The hub has not reported when the next update is expected'), 'unknown');
+        }
       }
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
@@ -27437,9 +27589,11 @@ function burnAreaChart() {
     }
 
     function renderVersionMenu(v, ctx) {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (!menu) return;
-      menu.innerHTML = renderVersionDetails(v, ctx);
+      const html = renderVersionDetails(v, ctx);
+      const progress = ctx && ctx.upgradeProgress || null;
+      versionSetHTMLPreservingUpgradeBee(menu, html, progress ? versionUpgradeKey(progress) : '');
     }
 
     function versionManualUpgradeActive(v, offeredTargetHash) {
@@ -27461,9 +27615,10 @@ function burnAreaChart() {
       const upgrading = progress && !progress.completedAt;
       const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
       if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
-      chip.innerHTML = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
+      const html = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
         '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
         (channel ? '<span class="oc-version-channel">' + escapeHtml(channel) + '</span>' : '') + progressGlyph + updateDot + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>';
+      versionSetHTMLPreservingUpgradeBee(chip, html, upgrading ? versionUpgradeKey(progress) : '');
       chip.title = progress && !progress.completedAt ? 'Upgrade in progress — Version & upgrade details' : 'Version & upgrade details';
       chip.setAttribute('aria-label', upgrading ? 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version & upgrade details' : 'Version & upgrade details');
     }
@@ -27479,7 +27634,7 @@ function burnAreaChart() {
       }
       const complete = !!progress.completedAt;
       el.hidden = false;
-      el.innerHTML = versionNavbarUpgradeHTML(progress, v || {});
+      versionSetHTMLPreservingUpgradeBee(el, versionNavbarUpgradeHTML(progress, v || {}), versionUpgradeKey(progress));
       el.title = complete ? 'Upgrade complete — jump to Version details' : 'Upgrade in progress — jump to Version details';
       el.setAttribute('aria-label', complete ? 'Upgrade complete — Version details' : 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version details');
     }
@@ -27612,32 +27767,57 @@ function burnAreaChart() {
     }
 
     function closeVersionMenu() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       const chip = document.getElementById('oc-version-chip');
       if (menu) menu.hidden = true;
       if (chip) chip.setAttribute('aria-expanded', 'false');
     }
 
+    function ensureVersionMenuPortal() {
+      const menu = document.getElementById('oc-version-menu');
+      if (!menu || !document.body) return menu;
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);
+      return menu;
+    }
+
     function positionVersionMenu() {
       const chip = document.getElementById('oc-version-chip');
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (!chip || !menu || typeof window === 'undefined') return;
       const viewportW = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 0);
       const viewportH = Math.max(240, window.innerHeight || document.documentElement.clientHeight || 0);
       const gutter = 12;
       const gap = 10;
-      const width = Math.min(640, Math.max(0, viewportW - gutter * 2));
+      const minUsefulWidth = Math.min(420, Math.max(0, viewportW - gutter * 2));
+      let width = Math.min(640, Math.max(0, viewportW - gutter * 2));
       const rect = chip.getBoundingClientRect ? chip.getBoundingClientRect() : { left: gutter, top: gutter, bottom: gutter };
-      const height = Math.min(menu.offsetHeight || 0, Math.max(0, viewportH - gutter * 2));
-      let left = rect.left;
-      if (left + width > viewportW - gutter) left = viewportW - gutter - width;
-      if (left < gutter) left = gutter;
-      let top = rect.top - height - gap;
-      if (top < gutter) top = rect.bottom + gap;
-      if (top + height > viewportH - gutter) top = Math.max(gutter, viewportH - gutter - height);
+      const sidebar = document.querySelector ? document.querySelector('.oc-sidebar') : null;
+      const sidebarRect = sidebar && sidebar.getBoundingClientRect ? sidebar.getBoundingClientRect() : null;
+      const besideLeft = sidebarRect ? sidebarRect.right + gap : 0;
+      const besideWidth = sidebarRect ? viewportW - besideLeft - gutter : 0;
+      const placeBesideSidebar = sidebarRect && besideWidth >= minUsefulWidth;
+      let left;
+      if (placeBesideSidebar) {
+        left = besideLeft;
+        width = Math.min(640, Math.max(0, besideWidth));
+      } else {
+        left = rect.left;
+        if (left + width > viewportW - gutter) left = viewportW - gutter - width;
+        if (left < gutter) left = gutter;
+      }
       menu.style.width = width + 'px';
       menu.style.maxWidth = width + 'px';
       menu.style.maxHeight = Math.max(0, viewportH - gutter * 2) + 'px';
+      const height = Math.min(menu.offsetHeight || 0, Math.max(0, viewportH - gutter * 2));
+      let top;
+      if (placeBesideSidebar) {
+        top = rect.top + ((rect.height || 0) / 2) - (height / 2);
+      } else {
+        top = rect.top - height - gap;
+        if (top < gutter) top = rect.bottom + gap;
+      }
+      if (top + height > viewportH - gutter) top = Math.max(gutter, viewportH - gutter - height);
+      if (top < gutter) top = gutter;
       menu.style.left = left + 'px';
       menu.style.top = top + 'px';
       menu.style.right = 'auto';
@@ -27645,12 +27825,12 @@ function burnAreaChart() {
     }
 
     function positionVersionMenuIfOpen() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (menu && !menu.hidden) positionVersionMenu();
     }
 
     function toggleVersionMenu() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       const chip = document.getElementById('oc-version-chip');
       if (!menu || !chip) return;
       const nextHidden = !menu.hidden ? true : false;
@@ -31138,7 +31318,10 @@ function burnAreaChart() {
         if (au.policySource === 'hub') rows += '<div>Policy source: the hub (heartbeat)</div>';
         else rows += '<div>Policy source: this spoke\'s local config (the hub has not reported a policy)</div>';
         if (au.commitsBehind != null) rows += '<div>Commits behind: ' + escapeHtml(String(au.commitsBehind)) + '</div>';
-        if (au.state !== 'disabled' && au.state !== 'paused') rows += '<div>Next update: ' + (au.nextUpdateAt ? escapeHtml(au.nextUpdateAt) : 'unknown') + '</div>';
+        if (au.state !== 'disabled' && au.state !== 'paused') {
+          var next = au.nextUpdateAt || (au.nextUpdateStatus === 'none' ? 'none queued (stable is current)' : (au.nextUpdateStatus === 'paused' ? 'paused' : 'unknown'));
+          rows += '<div>Next update: ' + escapeHtml(next) + '</div>';
+        }
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div class="text-danger">Last error: ' + escapeHtml(au.lastError) + '</div>';
         el.style.color = 'var(--muted)';
@@ -33257,6 +33440,77 @@ function burnAreaChart() {
       }
     }
 
+    const OUTSIDE_BUCKET_DEFS = [
+      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Issues waiting for maintainer direction before an agent may work them.' },
+      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs-decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues waiting for a maintainer decision.' },
+      { key: 'needsSpec', saveKey: 'needs_spec', label: 'needs-spec', setting: 'project.issue_filter.hard_suppress_labels.needs_spec', fixed: false, definition: 'Issues waiting for specification or acceptance criteria.' },
+      { key: 'labels', saveKey: 'labels', label: 'exempt labels', setting: 'governor.labels.exempt', fixed: false, definition: 'Issues or PRs that must never be agent work; permanent do-not-merge and hold labels also apply.' },
+      { key: 'reporterTrust', saveKey: 'reporter_trust', label: 'reporter triage', setting: 'project.issue_filter.reporter_trust', fixed: false, definition: 'When enabled, issues from untrusted reporters wait for a maintainer triage label.' },
+      { key: 'requireLabels', saveKey: 'require_labels', label: 'project issue filter', setting: 'project.issue_filter.require_labels', fixed: false, definition: 'When non-empty, issues must carry at least one required label before agents may work them.' },
+      { key: 'standingMeta', label: 'standing meta/advisory', setting: 'fixed: advisory title or hive/advisory label', fixed: true, definition: 'Hive advisory reports are standing coordination issues, not agent tasks.' },
+      { key: 'dependencyDashboard', label: 'dependency dashboard', setting: 'fixed: bot author + Dependency/Renovate Dashboard title', fixed: true, definition: 'Renovate/Dependabot dashboard issues are bot control panels, not discrete work.' },
+      { key: 'holdAdjacent', label: 'hold-adjacent/other', setting: 'fixed: scanner safety remainder', fixed: true, definition: 'Open items not assigned to a named bucket; kept outside until a dedicated classifier exists.' }
+    ];
+
+    function hardSuppressState() {
+      const hs = _configState.data.hardSuppressLabels || {};
+      return {
+        needsHuman: Array.isArray(hs.needsHuman) ? hs.needsHuman : ['needs-human'],
+        needsDirection: Array.isArray(hs.needsDirection) ? hs.needsDirection : ['needs-direction'],
+        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['needs-decision'],
+        needsSpec: Array.isArray(hs.needsSpec) ? hs.needsSpec : ['needs-spec']
+      };
+    }
+
+    function stageHardSuppressLabels(next) {
+      _configState.data.hardSuppressLabels = Object.assign({}, hardSuppressState(), next);
+      const st = hardSuppressState();
+      markDirty('labels', 'hard_suppress_labels', {
+        needs_human: st.needsHuman,
+        needs_direction: st.needsDirection,
+        needs_decision: st.needsDecision,
+        needs_spec: st.needsSpec
+      });
+    }
+
+    function renderHardSuppressEditor(key, label, setting) {
+      const st = hardSuppressState();
+      const list = (st[key] || []).map((l, i) => `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="hard:${key}" data-arg2="${i}" data-arg-types="s,s,j" title="Remove ${esc(l)} from ${esc(label)} labels">✕</button></div>`).join('');
+      const inputId = `cfg-hard-${key}-input`;
+      return `<div class="config-list mt-2">
+        ${list || '<div class="fs-sm text-muted mb-3">No labels — add at least one to keep this bucket active</div>'}
+        <div class="config-list-add">
+          <input type="text" id="${esc(inputId)}" placeholder="label name" title="Label counted as ${esc(label)} outside work (${esc(setting)}).">
+          <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="hard:${key}" data-arg2="${esc(inputId)}" title="Add a ${esc(label)} label">+ Add</button>
+        </div>
+      </div>`;
+    }
+
+    function renderOutsideBucketsPanel(labels, requireLabels) {
+      const st = hardSuppressState();
+      const rt = reporterTrustState();
+      const currentValue = (def) => {
+        if (def.key === 'needsDirection') return st.needsDirection.join(', ');
+        if (def.key === 'needsDecision') return st.needsDecision.join(', ');
+        if (def.key === 'needsSpec') return st.needsSpec.join(', ');
+        if (def.key === 'labels') return (labels || []).concat(['do-not-merge']).join(', ') || 'none';
+        if (def.key === 'reporterTrust') return rt.enabled ? `enabled; triage labels: ${rt.untrustedRequireLabels.join(', ')}` : 'disabled';
+        if (def.key === 'requireLabels') return (requireLabels || []).join(', ') || 'disabled (no required labels)';
+        return def.setting;
+      };
+      const rows = OUTSIDE_BUCKET_DEFS.map(def => `<tr><td><b>${esc(def.label)}</b></td><td>${esc(def.definition)}</td><td><code>${esc(currentValue(def))}</code></td><td>${def.fixed ? 'Fixed scanner rule' : `Edit here in Settings → Labels<br><code>${esc(def.setting)}</code>`}</td></tr>`).join('');
+      return `<h4 id="outside-buckets" class="mt-6 mb-3">Triage buckets: what counts as outside</h4>
+        <p class="fs-sm text-muted mb-4">The Overview/Governor <b>outside</b> number is open work excluded before it can enter the actionable band. Use this panel to see and change the owner-controlled rules.</p>
+        <div class="config-table-wrap mb-4">
+          <table class="config-table"><thead><tr><th>Bucket</th><th>Definition</th><th>Current rule</th><th>How to change</th></tr></thead><tbody>${rows}</tbody></table>
+        </div>
+        <div class="config-grid mb-5">
+          <div><div class="fs-sm mb-2"><b>needs-direction labels</b></div><p class="fs-xs text-muted mb-2">Maintainer direction required.</p>${renderHardSuppressEditor('needsDirection', 'needs-direction', 'project.issue_filter.hard_suppress_labels.needs_direction')}</div>
+          <div><div class="fs-sm mb-2"><b>needs-decision labels</b></div><p class="fs-xs text-muted mb-2">Maintainer decision required.</p>${renderHardSuppressEditor('needsDecision', 'needs-decision', 'project.issue_filter.hard_suppress_labels.needs_decision')}</div>
+          <div><div class="fs-sm mb-2"><b>needs-spec labels</b></div><p class="fs-xs text-muted mb-2">Spec or acceptance criteria required.</p>${renderHardSuppressEditor('needsSpec', 'needs-spec', 'project.issue_filter.hard_suppress_labels.needs_spec')}</div>
+        </div>`;
+    }
+
     function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
@@ -33276,6 +33530,7 @@ function burnAreaChart() {
         ? _configState.dirty.labels.writing_guide
         : (_configState.data.writingGuide || '');
       return `
+        ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
         <p style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-4);font-style:italic">Permanent labels cannot be removed. Hold labels also appear in the On Hold section of the dashboard.</p>
@@ -33288,7 +33543,7 @@ function burnAreaChart() {
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="list" data-arg2="cfg-label-input" title="Add this label to the exempt list">+ Add</button>
           </div>
         </div>
-        <h4 style="margin:18px 0 6px">Required labels (allow-list)</h4>
+        <h4 class="mt-6 mb-3">Required labels (allow-list)</h4>
         <p class="fs-sm text-muted mb-4">The opposite polarity: when this list is non-empty, agents may <b>only</b> initiate work on issues carrying at least one of these labels — "only work approved issues". Empty = every issue is eligible (the default). Exempt labels above still win on conflict; PRs and the Hold list are unaffected. Matching is exact (case-insensitive).</p>
         <div class="config-list">
           ${reqList || '<div class="fs-sm text-muted mb-3">No required labels — agents may work every actionable issue</div>'}
@@ -33336,19 +33591,60 @@ function burnAreaChart() {
         untrustedRequireLabels: Array.isArray(d.untrustedRequireLabels) ? d.untrustedRequireLabels : ['triage/accepted'],
         knownAssociations: Array.isArray(d.knownAssociations) && d.knownAssociations.length
           ? d.knownAssociations
-          : ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE']
+          : ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'],
+        clankerRequested: !!d.clankerRequested,
+        clankerRequestedLabel: typeof d.clankerRequestedLabel === 'string' ? d.clankerRequestedLabel : 'clanker-requested',
+        clankerRequestedAddendum: typeof d.clankerRequestedAddendum === 'string' ? d.clankerRequestedAddendum : '',
+        clankerStaged: !!d.clankerStaged
       };
+    }
+
+    // Live preview of the clanker-requested explanation, shared by the render
+    // and the input handlers so typing updates it without re-rendering.
+    function clankerRequestedPreviewText(label, addendum) {
+      const name = (label || '').trim() || 'clanker-requested';
+      let text = 'This PR carries the `' + name + '` label, so Hive is holding it for a maintainer.';
+      const extra = (addendum || '').trim();
+      if (extra) text += '\n\n' + extra;
+      return text;
+    }
+
+    function updateClankerRequestedPreview() {
+      const lbl = document.getElementById('cfg-clanker-label');
+      const add = document.getElementById('cfg-clanker-addendum');
+      const prev = document.getElementById('cfg-clanker-preview');
+      if (prev) prev.textContent = clankerRequestedPreviewText(lbl ? lbl.value : '', add ? add.value : '');
+    }
+
+    function setClankerRequestedField(key, value) {
+      stageReporterTrust({ [key]: value });
+      updateClankerRequestedPreview();
+    }
+
+    function toggleClankerRequested(el) {
+      const isOn = el.classList.toggle('on');
+      stageReporterTrust({ clankerRequested: isOn });
+      renderConfigTab('Labels');
     }
 
     function stageReporterTrust(next) {
       _configState.data.reporterTrust = Object.assign({}, _configState.data.reporterTrust || {}, next);
       const st = reporterTrustState();
-      markDirty('labels', 'reporter_trust', {
+      const block = {
         enabled: st.enabled,
         trusted_associations: st.trustedAssociations,
         trusted_logins: st.trustedLogins,
         untrusted_require_labels: st.untrustedRequireLabels
-      });
+      };
+      // Only send the clanker-requested keys once the operator touched them, so
+      // an unrelated edit never writes the defaults into config.
+      if ('clankerRequested' in next || 'clankerRequestedLabel' in next || 'clankerRequestedAddendum' in next || st.clankerStaged) {
+        _configState.data.reporterTrust.clankerStaged = true;
+        block.clanker_requested = st.clankerRequested;
+        block.clanker_requested_label = st.clankerRequestedLabel;
+        block.clanker_requested_addendum = st.clankerRequestedAddendum;
+      }
+      markDirty('labels', 'reporter_trust', block);
     }
 
     function toggleReporterTrustEnabled(el) {
@@ -33409,6 +33705,23 @@ function burnAreaChart() {
               <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="reporter_label" data-arg2="cfg-reporter-label-input" ${st.enabled ? '' : 'disabled'} title="Add this triage label">+ Add</button>
             </div>
           </div>
+        </div>
+        <h4 class="rt-h4">Clanker-requested PRs</h4>
+        <div class="config-toggle rt-toggle">
+          <div class="config-toggle-switch ${st.clankerRequested ? 'on' : ''}" data-action="toggleClankerRequested" data-arg-types="t" title="Hold PRs that carry the clanker-requested label"></div>
+          <span class="config-toggle-label">Hold PRs carrying the clanker-requested label <span class="config-info">i<span class="config-tooltip">Off by default. While on, a PR carrying this label is treated as held for a maintainer; Hive never removes the hold.</span></span></span>
+        </div>
+        <div class="rt-body${st.clankerRequested ? '' : ' rt-dim'}">
+          <div class="config-field">
+            <label for="cfg-clanker-label">Label name</label>
+            <input type="text" id="cfg-clanker-label" value="${esc(st.clankerRequestedLabel)}" placeholder="clanker-requested" ${st.clankerRequested ? '' : 'disabled'} data-input-action="setClankerRequestedField" data-arg0="clankerRequestedLabel" data-arg-types="s,v" title="Label that marks a PR as clanker-requested; must not be blank">
+          </div>
+          <div class="config-field">
+            <label for="cfg-clanker-addendum">Comment addendum</label>
+            <textarea id="cfg-clanker-addendum" rows="3" maxlength="1000" placeholder="Optional text appended to the explanation (max 1000 bytes)" ${st.clankerRequested ? '' : 'disabled'} data-input-action="setClankerRequestedField" data-arg0="clankerRequestedAddendum" data-arg-types="s,v" title="Optional free text appended to the explanation comment">${esc(st.clankerRequestedAddendum)}</textarea>
+          </div>
+          <div class="fs-sm mb-2 rt-subhead">Comment preview</div>
+          <pre id="cfg-clanker-preview" class="fs-xs" style="white-space:pre-wrap">${esc(clankerRequestedPreviewText(st.clankerRequestedLabel, st.clankerRequestedAddendum))}</pre>
         </div>`;
     }
 
@@ -37156,7 +37469,11 @@ function burnAreaChart() {
         _configState.data.hooks[key].push(val);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (key === 'require') {
+        if (String(key).startsWith('hard:')) {
+          const bucket = String(key).slice(5);
+          const st = hardSuppressState();
+          stageHardSuppressLabels({ [bucket]: (st[bucket] || []).concat([val]) });
+        } else if (key === 'require') {
           if (!_configState.data.requireLabels) _configState.data.requireLabels = [];
           _configState.data.requireLabels.push(val);
           markDirty('labels', 'require_labels', _configState.data.requireLabels);
@@ -37187,7 +37504,11 @@ function burnAreaChart() {
         _configState.data.hooks[key].splice(index, 1);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (key === 'require') {
+        if (String(key).startsWith('hard:')) {
+          const bucket = String(key).slice(5);
+          const st = hardSuppressState();
+          stageHardSuppressLabels({ [bucket]: (st[bucket] || []).filter((_, i) => i !== index) });
+        } else if (key === 'require') {
           _configState.data.requireLabels.splice(index, 1);
           markDirty('labels', 'require_labels', _configState.data.requireLabels);
         } else if (key === 'reporter_login') {
@@ -38523,7 +38844,8 @@ function burnAreaChart() {
 
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-git-version');
-      if (wrap && !wrap.contains(e.target)) closeVersionMenu();
+      const menu = document.getElementById('oc-version-menu');
+      if (wrap && !wrap.contains(e.target) && !(menu && menu.contains(e.target))) closeVersionMenu();
     });
     window.addEventListener('resize', positionVersionMenuIfOpen);
     window.addEventListener('scroll', positionVersionMenuIfOpen, true);

@@ -441,6 +441,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	closedPR := false
 	switch kind {
 	case "claim":
+		var reason string
+		reason, err = c.IssueClaimBlockReason(ctx, req.Repo, req.Number)
+		if err != nil {
+			break // Retry a failed lookup; never claim on unknown labels.
+		}
+		if reason != "" {
+			c.denyIssueRequest(path, req, "issue claim refused: "+reason, nowFn)
+			return
+		}
 		// Apply a namespaced ownership label (App bots can't be assignees).
 		label := claimLabelPrefix + sanitizeAgentName(req.Agent)
 		err = c.AddLabels(ctx, req.Repo, req.Number, []string{label})
@@ -572,6 +581,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
 			slog.String("repo", req.Repo), slog.String("kind", kind), slog.String("error", err.Error()))
 		return
+	}
+
+	if signal := issueRequestStartSignal(kind); signal != "" {
+		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
 	}
 
 	action := AuditActionAgentIssueCreated

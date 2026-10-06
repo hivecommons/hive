@@ -56,6 +56,32 @@ GIT_AUTHOR_NAME=Copilot GIT_AUTHOR_EMAIL=223556219+Copilot@users.noreply.github.
   git commit -q -m "agent authored change" \
   -m "Signed-off-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
+# The automated release commit (tagged-release.yml): authored and signed off
+# by hive-release-bot, touching only CHANGELOG.md and changelog.d/, on a PR a
+# human login opens with RELEASE_PR_TOKEN and merges with a merge commit.
+git checkout -q -b releasecommit "$base_sha"
+mkdir -p changelog.d
+echo "- fragment" > changelog.d/added-1.md
+git add changelog.d/added-1.md
+git commit -q -m "fragment" -m "Signed-off-by: Base <base@example.com>"
+release_base_sha=$(git rev-parse HEAD)
+echo "## v9.9.9" > CHANGELOG.md
+git rm -q changelog.d/added-1.md
+git add CHANGELOG.md
+GIT_AUTHOR_NAME=hive-release-bot GIT_AUTHOR_EMAIL=actions@github.com \
+  git commit -q -m "🔖 release: v9.9.9" \
+  -m "Signed-off-by: hive-release-bot <actions@github.com>"
+
+# Same identity and sign-off, but the diff carries a code file: no longer the
+# release shape, so the bot sign-off must still be rejected on a human PR.
+git checkout -q -b releaseforged "$base_sha"
+echo "## v9.9.9" > CHANGELOG.md
+echo code > code.go
+git add CHANGELOG.md code.go
+GIT_AUTHOR_NAME=hive-release-bot GIT_AUTHOR_EMAIL=actions@github.com \
+  git commit -q -m "🔖 release: v9.9.9" \
+  -m "Signed-off-by: hive-release-bot <actions@github.com>"
+
 run() { # run <head> <pr-author>
   set +e
   output=$(bash "$CHECKER" "$base_sha" "$1" "$2" 2>&1)
@@ -103,6 +129,40 @@ if printf '%s\n' "$output" | grep -q 'commit --amend -s'; then
   pass "the failure explains how to fix it"
 else
   bad "failure output does not give the remediation command"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The release commit's PR is opened by the RELEASE_PR_TOKEN owner (a human
+# login) and merged with a merge commit, so no squash rewrite ever happens.
+# Both with and without a login map: the exemption must not depend on the
+# commits API answering (#10795: a rate-limited lookup made the verdict flap).
+set +e
+output=$(bash "$CHECKER" "$release_base_sha" releasecommit clubanderson 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -q 'release commit authored and signed by hive-release-bot'; then
+  pass "the automated release commit is exempt on a human-opened release PR"
+else
+  bad "release commit was rejected (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+set +e
+output=$(DCO_AUTHOR_LOGIN_MAP="$(git rev-parse releasecommit)=actions-user" \
+  bash "$CHECKER" "$release_base_sha" releasecommit clubanderson 2>&1); rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  pass "the release commit stays exempt when the API resolves its author to actions-user"
+else
+  bad "release commit rejected once author login resolved (rc=${rc})"
+  echo "$output" | sed 's/^/      | /'
+fi
+
+# The exemption is bounded by the diff, not the identity: the same bot
+# author and sign-off carrying a code file is still a mismatched squash.
+run releaseforged clubanderson
+if [ "$rc" -eq 1 ]; then
+  pass "a release-bot-signed commit that touches code is still rejected"
+else
+  bad "release-bot identity exempted a commit with a code change (rc=${rc})"
   echo "$output" | sed 's/^/      | /'
 fi
 

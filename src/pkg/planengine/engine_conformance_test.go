@@ -18,7 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 )
 
-// Conformance suite for ADR-0021 AC-4(a), (b) and (c): the lease invariants
+// Conformance suite for ADR-0022 AC-4(a), (b) and (c): the lease invariants
 // an engine may never observe, every row of the failure-mapping table, and a
 // second registered engine surfacing on the receipt and the plan import. The
 // fake engine records every call it receives, so "this never reached the

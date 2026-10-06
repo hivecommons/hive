@@ -1,4 +1,4 @@
-# ADR-0021: Named planning-engine boundary for Project Inception runs
+# ADR-0022: Named planning-engine boundary for Project Inception runs
 
 Status: Accepted
 

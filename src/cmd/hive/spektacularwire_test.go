@@ -139,7 +139,7 @@ func TestRewireSpektacular_KeepPathDoesNotStopExecutor(t *testing.T) {
 	}
 }
 
-// ADR-0021 AC-4(d): with runs.engine unset the default engine is wired and
+// ADR-0022 AC-4(d): with runs.engine unset the default engine is wired and
 // named on the status card; an unknown runs.engine installs no stage runner
 // at boot or on a live rewire, and never falls back to another engine.
 func TestWirePlanningEngine_UnknownEngineInstallsNoRunner(t *testing.T) {
@@ -246,7 +246,7 @@ func (probeFailureEngine) ExportPlan(context.Context, string, string) (planengin
 
 func (probeFailureEngine) ReadSpec(context.Context, string, string) (string, error) { return "", nil }
 
-// ADR-0021 AC-4(b), last row: an engine whose Probe fails is shown absent on
+// ADR-0022 AC-4(b), last row: an engine whose Probe fails is shown absent on
 // the Extensions card, but the stage observer is still installed — a missing
 // binary today must not leave the run stages unobserved when it appears.
 func TestWirePlanningEngine_ProbeFailureStillInstallsTheObserver(t *testing.T) {

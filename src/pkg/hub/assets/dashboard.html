@@ -7703,7 +7703,11 @@
         : 'auto-promotion: paused by ' + (st.paused_by || 'operator') + (st.paused_at ? ' ' + stablePromotionAge(st.paused_at) : '');
       if (on && st.eligible_build) {
         var eb = st.eligible_build || {};
-        base += ' — next build across the 24h line: ' + (eb.sha || '?') + (eb.generation ? ' generation ' + eb.generation : '') + (st.eligible_at ? ' at ' + st.eligible_at : '');
+        var elig = st.eligible_at ? new Date(st.eligible_at) : null;
+        var overdue = elig && !isNaN(elig.getTime()) && elig.getTime() <= Date.now();
+        base += ' — next build across the 24h line: ' + (eb.sha || '?') + (eb.generation ? ' generation ' + eb.generation : '');
+        if (overdue) base += ' crossed it at ' + st.eligible_at + ' (' + stablePromotionAge(st.eligible_at) + ') and is waiting on the promotion workflow';
+        else if (st.eligible_at) base += ' at ' + st.eligible_at;
       }
       if (!on && ct && ct.behind) base = '↓' + ct.behind + ' behind — ' + base;
       var title = base;

@@ -44,6 +44,8 @@ type MyHiveEntry struct {
 	// on) so the dashboard can render the effective mode without re-deriving the
 	// legacy empty-means-instant rule in JavaScript.
 	AutoUpgradeMode     string                 `json:"autoUpgradeMode,omitempty"`
+	NextUpdateAt        string                 `json:"nextUpdateAt,omitempty"`
+	NextUpdateStatus    string                 `json:"nextUpdateStatus,omitempty"`
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
@@ -683,6 +685,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
+	stablePromotion := s.stablePromotionFromTargets(channelTargets)
+	stableNextUpdateAt, stableNextUpdateStatus := s.stableNextPromotion(channelTargets)
+
 	// Attach the user-journey stage to every row so the table can show who is
 	// stalled where. Derived on read; never persisted on the registry entry.
 	journeyNow := time.Now()
@@ -695,6 +701,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// the same resolution the auto-upgrade engine uses — not the branch
 		// tip. A :stable spoke at the channel's commit is 0 behind here even
 		// when CommitsBehindStableV4 says 128.
+		if result[i].TrackedChannel == ReleaseChannelStable && result[i].AutoUpgrade {
+			result[i].NextUpdateAt = stableNextUpdateAt
+			result[i].NextUpdateStatus = stableNextUpdateStatus
+		}
 		if bt := s.behindTargetFor(&result[i].RegistryEntry, result[i].TrackedChannel); bt.SHA != "" {
 			result[i].BehindTargetRef = bt.Ref
 			result[i].BehindTargetSHA = bt.SHA
@@ -851,8 +861,6 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		hivesView, matched = applyMyHivesQuery(result, query)
 	}
 
-	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
-	stablePromotion := s.stablePromotionFromTargets(channelTargets)
 	resp := map[string]any{
 		"hives": hivesView,
 		// The fleet average backs the reference polygon drawn behind every

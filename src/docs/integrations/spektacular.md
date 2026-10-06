@@ -13,7 +13,7 @@ Spektacular owns artifact state; Hive owns the workflow lease. Hive polls Spekta
 ## Selecting an engine
 
 Which planning engine observes those stages is named by `runs.engine`
-(ADR-0021). Unset means `spektacular`, which is the CLI contract described
+(ADR-0022). Unset means `spektacular`, which is the CLI contract described
 below, so existing `runs.spektacular` configs need no edit:
 
 ```yaml

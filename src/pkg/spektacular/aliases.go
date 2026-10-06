@@ -2,7 +2,7 @@ package spektacular
 
 import "github.com/hivecommons/hive/pkg/planengine"
 
-// The engine-neutral types live in pkg/planengine (ADR-0021). These aliases
+// The engine-neutral types live in pkg/planengine (ADR-0022). These aliases
 // keep every existing caller of pkg/spektacular compiling unchanged.
 type (
 	DocumentStatus  = planengine.DocumentStatus
@@ -17,7 +17,7 @@ type (
 )
 
 // The stage observer and its lease plumbing live in pkg/planengine too
-// (ADR-0021); these aliases keep the boot wiring and the dashboard's
+// (ADR-0022); these aliases keep the boot wiring and the dashboard's
 // integration spelled the way they always were.
 type (
 	Stage         = planengine.Stage
@@ -65,6 +65,6 @@ const (
 )
 
 // RenderTaskList turns an exported plan into the task-list text Hive's
-// planner admits. The rendering is Hive-owned (ADR-0021); this is the
+// planner admits. The rendering is Hive-owned (ADR-0022); this is the
 // spelling existing callers of this package use.
 func RenderTaskList(plan Plan) string { return planengine.RenderTaskList(plan) }

@@ -2593,7 +2593,8 @@ type HeartbeatUpgradePolicy struct {
 	// either the stable-channel promotion ETA or the next daily/weekly managed
 	// upgrade window. Empty means unknown — including older hubs that do not
 	// send it — and must not be rendered as "no update coming".
-	NextUpdateAt string `json:"next_update_at,omitempty"`
+	NextUpdateAt     string `json:"next_update_at,omitempty"`
+	NextUpdateStatus string `json:"next_update_status,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror

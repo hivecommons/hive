@@ -99,6 +99,30 @@ else
   bad "healthy candidate hive should satisfy automated smoke evidence"
 fi
 
+# #10042: a hive on a later candidate build counts for an older eligible build
+# when the caller passes the eligible build's generation; it never counts for a
+# newer build, and never without that generation.
+lagging_state='{"auto_promote":true,"maintained_hives":[{"id":"h-later","image_ref":"ghcr.io/hivecommons/hive:candidate","git_hash":"fedcba9","generation":21700,"last_heartbeat_at":"2999-01-01T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}'
+if out=$(STABLE_PROMOTION_STATE_JSON="$lagging_state" stable_smoke_from_hub "abcdef1" "sha256:eligible" 24 21660); then
+  if grep -q 'h-later healthy on fedcba9 (later candidate generation 21700 >= 21660)' <<<"$out"; then
+    pass "hive on a later candidate build is smoke evidence for an older eligible build"
+  else
+    bad "later-candidate evidence text is unclear (output: ${out})"
+  fi
+else
+  bad "hive on a later candidate build should satisfy smoke for an older eligible build"
+fi
+if STABLE_PROMOTION_STATE_JSON="$lagging_state" stable_smoke_from_hub "abcdef1" "sha256:eligible" 24 21800 >/dev/null; then
+  bad "hive on an older build must not be smoke evidence for a newer eligible build"
+else
+  pass "hive on an older build is refused for a newer eligible build"
+fi
+if STABLE_PROMOTION_STATE_JSON="$lagging_state" stable_smoke_from_hub "abcdef1" "sha256:eligible" 24 >/dev/null; then
+  bad "lineage matching must require the eligible build's generation"
+else
+  pass "lineage matching is off without the eligible build's generation"
+fi
+
 empty_state='{"auto_promote":true,"maintained_hives":[]}'
 if STABLE_PROMOTION_STATE_JSON="$empty_state" stable_smoke_from_hub "abcdef1" "sha256:candidate" 24 >/dev/null; then
   bad "missing candidate hive should not synthesize smoke evidence"

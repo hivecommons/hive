@@ -1,0 +1,1 @@
+- Fixed a race in the banked-reset redemption controller where two controllers taking over the same abandoned lock could both proceed and redeem twice with different idempotency keys; takeover is now atomic (#10774).

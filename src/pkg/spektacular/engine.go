@@ -21,7 +21,7 @@ const (
 
 // Engine answers the stage observer's questions about Spektacular documents
 // through the CLI. It never sees a lease: identity, task id and generation
-// stay on the Hive side of the boundary (ADR-0021).
+// stay on the Hive side of the boundary (ADR-0022).
 type Engine struct {
 	binary string
 	runner *Runner

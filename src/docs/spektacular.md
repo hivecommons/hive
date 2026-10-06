@@ -214,7 +214,7 @@ runs:
 ### Selecting a planning engine
 
 `runs.engine` names the planning engine that observes `spec` and `plan`
-documents (ADR-0021, #10293). It is the only engine-selection knob:
+documents (ADR-0022, #10293). It is the only engine-selection knob:
 
 - **Unset means `spektacular`.** `EngineOrDefault` lower-cases and trims the
   configured name and falls back to `DefaultRunsEngine`
@@ -748,31 +748,11 @@ imports the first capped set and records `campaign_recheck_delta_capped`.
 Each revision carries a `drift` evidence block with `codebase_changed`,
 `prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
 The codebase signal compares the prior recorded head SHA with the current Git
-HEAD when available.
-
-### Outward-looking discovery
-
-Outward discovery is opt-in under `runs.spektacular.recheck.discovery`. Hive
-only reads operator-declared sources, bounded by `timeout` (default `30s`),
-each source's `max_items` (default `20`), and `max_total_items` (default
-`100`). It never searches the web, never crawls arbitrary or competitor
-websites, never applies findings automatically, and rejects any configured
-host that is not listed in `variables.security.http_allowlist`. GitHub-backed
-sources use the existing authenticated GitHub client; feed sources use GET
-through the normal proxy/egress path.
-
-Supported source kinds are:
-
-- `upstream_release`: GitHub releases for a named `owner/repo` since the prior
-  revision timestamp.
-- `repo_activity`: merged PRs and tagged releases for a named `owner/repo`
-  since the prior timestamp.
-- `standards_feed`: an Atom or RSS URL such as a spec repo's `releases.atom`
-  or a standards-body feed.
-- `landscape`: GitHub repositories linked from `docs/landscape.md`, checked
-  for new releases using the same release reader as `upstream_release`.
-
-Example:
+HEAD when available. Outward discovery can add two optional evidence shapes
+before the revision's `spec` lease starts: typed release/activity/feed signals
+as `drift.external[]`, and exact document snapshots as `drift.drift_source[]`.
+Both default to empty and perform no discovery network access unless explicitly
+configured.
 
 ```yaml
 runs:
@@ -787,12 +767,18 @@ runs:
           - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
           - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
           - {kind: landscape, name: project-landscape, max_items: 20}
+      discovery_proxy: http://relay:18443
+      egress_allowlist: [api.github.com, www.ietf.org]
+      sources:
+        - name: upstream-release-doc
+          kind: release
+          url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest
 variables:
   security:
     http_allowlist: [api.github.com, www.ietf.org]
 ```
 
-Findings are recorded on the revision as
+Typed findings are recorded on the revision as
 `drift.external[] = {source, kind, title, url, published_at, summary}` with
 summaries capped at 280 characters, plus `external_count` and
 `sources_failed[] = {name, reason}`. A failed source is non-fatal: Hive records
@@ -800,6 +786,25 @@ the typed reason and continues with the rest. The same evidence is included in
 the `spec` stage assignment prompt as context so the spec generator can decide
 what, if anything, belongs in the revised spec; the spec and plan human
 checkpoints remain the only approval gates.
+
+Exact document sources use `runs.spektacular.recheck.sources`.
+`discovery_proxy` must be the operator's existing relay egress proxy, with its
+normal network policy and trust roots installed. It is required when exact
+sources are configured; discovery never falls back to direct access, including
+when `NO_PROXY` matches. `egress_allowlist` contains exact DNS hostnames, with
+no wildcards or IP literals. Config validation rejects a source outside that
+list, even when cadence is disabled, because forced manual rechecks use the
+same policy.
+
+Each exact source declares a unique `name`, a `kind` (`release`, `changelog`,
+`repo`, `standards`, or `landscape`), and an exact HTTPS `url`. Source kind
+labels provenance; it does not enable crawling or additional API calls. A pass
+makes one GET per declared document, at most 16 sources, with a 10-second
+request timeout, a 30-second total deadline, and a 32 KiB UTF-8 response cap.
+Redirects are refused. No links are followed and no writes are issued. Each
+retained snapshot includes its name, kind, URL, SHA-256 and text; failed reads
+retain an error instead of claiming no drift. This exact-document path does not
+invoke `upstreamwatch`'s multi-page PR and release scanner.
 
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
@@ -992,7 +997,7 @@ func init() {
 
 ### Invariants Hive keeps, not the engine
 
-These are the properties the registry exists to preserve (ADR-0021). An engine
+These are the properties the registry exists to preserve (ADR-0022). An engine
 cannot opt out of them, and new engines should not try to re-implement them.
 
 1. **Lease ownership.** The engine never sees lease identity, task ID,
@@ -1026,7 +1031,7 @@ The failure mapping an engine's return values produce — which outcomes are
 refusals (`stale_plan`, `replaced_document`, `archived_document`,
 `plan_import_failed`, `missing_workdir`) and which are counted errors retried
 on the next tick — is the table in
-[ADR-0021](adr/0021-planning-engine-boundary.md#failure-mapping). Every row of
+[ADR-0022](adr/0022-planning-engine-boundary.md#failure-mapping). Every row of
 it, plus the "engine never sees an unclaimed lease" cases and a second
 registered engine appearing in `Receipt.Engine.Name`, `ContractRevision` and
 `MetaSource`, is exercised against a fake engine in
@@ -1042,7 +1047,7 @@ documents rather than observe them and remain Spektacular-specific.
   (`run_stages: true`) and the `<repo>!<runKey>:<stage>` key.
 - [hooks.md](hooks.md): the `stage_completed` transition.
 - [design/run-artifacts.md](design/run-artifacts.md): multi-repo waves.
-- [adr/0021-planning-engine-boundary.md](adr/0021-planning-engine-boundary.md):
+- [adr/0022-planning-engine-boundary.md](adr/0022-planning-engine-boundary.md):
   the named planning-engine boundary behind `runs.engine`.
 - [integrations/spektacular.md](integrations/spektacular.md): the CLI contract
   the baseline `spektacular` engine speaks.

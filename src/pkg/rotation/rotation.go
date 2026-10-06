@@ -716,6 +716,30 @@ func (p CodexProber) Provider() string { return "openai" }
 func (p CodexProber) Probe(ctx context.Context) Headroom {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout+5*time.Second)
 	defer cancel()
+	result, err := codexAppServerRequest(ctx, "account/rateLimits/read", map[string]any{})
+	if errors.Is(err, errCodexAppServerNoResponse) {
+		err = errors.New("codex app-server: no rateLimits response")
+	}
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	h, err := codexHeadroom(p.Provider(), p.ThresholdPct, result)
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	return h
+}
+
+// errCodexAppServerNoResponse reports that the app-server closed its output
+// before answering the request.
+var errCodexAppServerNoResponse = errors.New("codex app-server: no response")
+
+// codexAppServerRequest spawns `codex app-server`, performs the initialize
+// handshake, sends one JSON-RPC request and returns its result. It is shared
+// by the read-only usage probe and the consent-gated reset redemption
+// controller (codex_reset_redeem.go) so both speak the protocol identically.
+// The caller bounds ctx.
+func codexAppServerRequest(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	cmd := exec.CommandContext(ctx, "codex", "app-server")
 	// See probeWaitDelay: codex app-server forks helpers that inherit the
 	// stdout pipe, so the deferred Kill+Wait below blocked forever without
@@ -731,15 +755,15 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return failOpen(p.Provider(), err)
+		return nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return failOpen(p.Provider(), err)
+		return nil, err
 	}
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
-		return failOpen(p.Provider(), err)
+		return nil, err
 	}
 	// Kill AND reap: without Wait the killed app-server stays a zombie for the
 	// life of the hive process, one per probe cycle.
@@ -763,7 +787,7 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	if err := send(0, "initialize", map[string]any{
 		"clientInfo": map[string]string{"name": "hive-rotation", "title": "Hive Rotation", "version": "1.0"},
 	}); err != nil {
-		return failOpen(p.Provider(), err)
+		return nil, err
 	}
 	handshake := false
 	sc := bufio.NewScanner(stdout)
@@ -781,27 +805,23 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 			continue // keepalives / config warnings that are not JSON objects
 		}
 		if m.Error != nil {
-			return failOpen(p.Provider(), fmt.Errorf("codex app-server error: %s", string(*m.Error)))
+			return nil, fmt.Errorf("codex app-server error: %s", string(*m.Error))
 		}
 		if m.ID == 0 && !handshake {
 			handshake = true
-			if err := send(1, "account/rateLimits/read", map[string]any{}); err != nil {
-				return failOpen(p.Provider(), err)
+			if err := send(1, method, params); err != nil {
+				return nil, err
 			}
 			continue
 		}
 		if m.ID == 1 {
-			h, err := codexHeadroom(p.Provider(), p.ThresholdPct, m.Result)
-			if err != nil {
-				return failOpen(p.Provider(), err)
-			}
-			return h
+			return m.Result, nil
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return failOpen(p.Provider(), err)
+		return nil, err
 	}
-	return failOpen(p.Provider(), errors.New("codex app-server: no rateLimits response"))
+	return nil, errCodexAppServerNoResponse
 }
 
 // codexHeadroom builds a normalized reading from a rateLimits payload
@@ -1419,6 +1439,10 @@ type Manager struct {
 	// its unprovisioned admit for that pool. Never set under operator-
 	// configured rotation, where unknown/not_installed is deliberate signal.
 	contributorPublishSkipNotInstalled bool
+	// codexResetRedeem is the consent-gated banked-reset redemption
+	// controller (hivecommons/hive#10598). Nil unless the contributor opted in
+	// locally; see EnableCodexResetRedeem.
+	codexResetRedeem *codexResetRedeemer
 }
 
 // NewManager builds a Manager with the default prober set for every provider
@@ -1535,6 +1559,7 @@ func (m *Manager) probeAll(ctx context.Context) {
 		}
 		h := p.Probe(ctx)
 		h = m.applyProbeResult(p.Provider(), h, now)
+		h = m.maybeRedeemCodexReset(ctx, p, h)
 		m.logProbeFailure(h)
 		m.storeHeadroom(h)
 		m.publishContributorReading(h)

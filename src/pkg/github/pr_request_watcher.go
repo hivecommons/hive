@@ -417,6 +417,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		c.rejectPRRequest(path, req, "body", reason, nowFn)
 		return
 	}
+	// #10527: an authorized PR request naming an issue is the agent's start
+	// signal on it, whether or not the claim gates below let the PR open.
+	for _, n := range req.IssueN {
+		c.notifyAgentStart(req.Agent, req.Repo, n, AgentStartSignalPRRequest)
+	}
 
 	// Validate claims while the request is still at the server-side choke point.
 	// Agents cannot bypass this by invoking a different CLI: direct POST /pulls

@@ -7,7 +7,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planengine"
 )
 
-// The CLI engine is the default planning engine (ADR-0021 AC-1): linking this
+// The CLI engine is the default planning engine (ADR-0022 AC-1): linking this
 // package registers it under its receipt name.
 func init() {
 	planengine.Register(EngineName, buildEngine)

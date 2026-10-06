@@ -44,6 +44,15 @@ type ReporterTrustNoticeConfig interface {
 	ReporterTrustCommentEnabled() bool
 }
 
+// HardSuppressClassifier is the optional configurable form of the issue
+// escalation labels that park an issue outside the actionable queue. It returns
+// the canonical bucket label (needs-human, needs-direction, needs-decision, or
+// needs-spec) for counting, even when the operator configured different GitHub
+// label names.
+type HardSuppressClassifier interface {
+	HardSuppressIssueBucket(labels []string) string
+}
+
 // admitAllIssues is the filter used when none has been installed. It preserves
 // the pre-existing zero-value behaviour of config.IssueFilterConfig, where an
 // unset filter admits every issue.

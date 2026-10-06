@@ -360,17 +360,23 @@ stable_promotion_preflight() {
   return 0
 }
 
+# stable_smoke_from_hub <sha> <digest> <soak_hours> [min_generation]
+# A maintained hive is smoke evidence for the build when it runs that exact
+# build, or — when min_generation is given and the hub reports the hive's
+# build generation — any build at or after it in the same monotonic v5
+# lineage (#10042: candidate moves faster than spokes update on busy days).
 stable_smoke_from_hub() {
-  local candidate_sha=$1 candidate_digest=$2 soak_hours=${3:-$SOAK_HOURS_DEFAULT}
+  local candidate_sha=$1 candidate_digest=$2 soak_hours=${3:-$SOAK_HOURS_DEFAULT} min_generation=${4:-0}
   local state=${STABLE_PROMOTION_STATE_JSON:-}
   [[ -n $state ]] || return 1
-  STABLE_PROMOTION_STATE_JSON="$state" python3 - "$candidate_sha" "$candidate_digest" "$soak_hours" <<'PY'
+  STABLE_PROMOTION_STATE_JSON="$state" python3 - "$candidate_sha" "$candidate_digest" "$soak_hours" "$min_generation" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone, timedelta
 
 sha, digest, soak_hours = sys.argv[1], sys.argv[2], float(sys.argv[3])
+min_generation = int(sys.argv[4] or 0)
 try:
     state = json.loads(os.environ["STABLE_PROMOTION_STATE_JSON"])
 except Exception:
@@ -382,7 +388,10 @@ matches = []
 for hive in state.get("maintained_hives") or []:
     hsha = str(hive.get("git_hash") or "")
     image = str(hive.get("image_ref") or "")
-    if sha and hsha and not (hsha.startswith(sha) or sha.startswith(hsha)):
+    generation = int(hive.get("generation") or 0)
+    exact = bool(sha and hsha and (hsha.startswith(sha) or sha.startswith(hsha)))
+    later = min_generation > 0 and generation >= min_generation
+    if sha and hsha and not (exact or later):
         continue
     if not hsha and digest and digest not in image:
         continue
@@ -397,12 +406,15 @@ for hive in state.get("maintained_hives") or []:
         continue
     if now - seen > window:
         continue
-    matches.append((hive.get("id") or "unknown", seen.isoformat().replace("+00:00", "Z"), hsha or image))
+    matches.append((hive.get("id") or "unknown", seen.isoformat().replace("+00:00", "Z"), hsha or image, exact, generation))
 
 if not matches:
     raise SystemExit(1)
-hid, seen, ref = matches[0]
-print(f"hub candidate smoke: maintained hive {hid} healthy on {ref} with heartbeat {seen}, 0 crash restarts/{int(soak_hours)}h")
+# Prefer a hive on the exact build; otherwise the oldest later build.
+matches.sort(key=lambda m: (not m[3], m[4]))
+hid, seen, ref, exact, generation = matches[0]
+lineage = "" if exact else f" (later candidate generation {generation} >= {min_generation})"
+print(f"hub candidate smoke: maintained hive {hid} healthy on {ref}{lineage} with heartbeat {seen}, 0 crash restarts/{int(soak_hours)}h")
 PY
 }
 
@@ -565,7 +577,7 @@ PYEOF
       smoke=${!SMOKE_VAR_DEFAULT:-}
     fi
     if [[ -z $smoke ]]; then
-      smoke=$(stable_smoke_from_hub "$run_sha" "$first_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}" 2>/dev/null || true)
+      smoke=$(stable_smoke_from_hub "$run_sha" "$first_digest" "${SOAK_HOURS:-$SOAK_HOURS_DEFAULT}" "$run_number" 2>/dev/null || true)
     fi
     if [[ -z $smoke && -n ${current_smoke:-} && ${current_candidate_generation:-0} =~ ^[0-9]+$ ]] && (( current_candidate_generation >= run_number )); then
       smoke="hub later-candidate smoke: ${current_smoke}"

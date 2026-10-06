@@ -38,7 +38,7 @@ func wireSpektacularRunnerWithCloneAuth(cfg *config.Config, srv *dashboard.Serve
 }
 
 // wirePlanningEngine builds the planning engine selected by runs.engine
-// (ADR-0021), probes it, publishes the probe through SetSpektacularStatus and
+// (ADR-0022), probes it, publishes the probe through SetSpektacularStatus and
 // installs the stage observer when the selected engine's block is enabled.
 // With runs.engine unset that is exactly runs.spektacular.enabled. An unknown
 // engine installs no runner and never falls back to another engine.

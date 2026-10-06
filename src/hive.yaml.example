@@ -30,6 +30,15 @@ project:
   #     by: your-github-login
   #     reason: release freeze until Friday
 
+# Optional opt-in "clanker-requested" policy, under project.issue_filter.reporter_trust.
+# Off by default. While on, a PR carrying the label below is treated as held.
+# project:
+#   issue_filter:
+#     reporter_trust:
+#       clanker_requested: true                       # default: false
+#       clanker_requested_label: clanker-requested    # default: clanker-requested; must not be blank
+#       clanker_requested_addendum: ""                # optional free text, max 1000 bytes
+
 # Optional merge-request safety exceptions. Hive now merges into any protected
 # or unprotected base branch the App can write, while still refusing a PR with
 # zero statuses + zero check runs + zero workflow runs. `allow_unprotected_base`

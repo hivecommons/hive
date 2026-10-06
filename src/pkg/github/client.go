@@ -195,6 +195,9 @@ type Client struct {
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
 	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// agentStartHook is told when an agent's own relay request shows it
+	// working an issue (#10527). See agent_start_hook.go.
+	agentStartHook atomic.Pointer[AgentStartHook]
 	// mergeAuthz gates merge requests from the merge-request watcher against the
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
 	// TARGET (pinned SHA + governor merge-eligible membership; see
@@ -1175,7 +1178,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Exempt++
 			continue
 		}
-		if suppress := hardSuppressIssueLabel(labels); suppress != "" {
+		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
 			continue
@@ -1561,6 +1564,12 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 	}
 	c.storeAttributedClosedPRs(repo, out)
 	return out, nil
+}
+
+// AttributedClosedPRLookback is the updated-time window the closed attributed
+// PR scan covers, so consumers can report the history they actually hold.
+func AttributedClosedPRLookback() time.Duration {
+	return attributedClosedPRLookback()
 }
 
 func attributedClosedPRLookback() time.Duration {
@@ -3411,4 +3420,11 @@ func ExtractPRLabels(labels []*gh.Label) []string {
 // SafeGetLogin returns a GitHub user's login, or an empty string for nil.
 func SafeGetLogin(u *gh.User) string {
 	return safeGetLogin(u)
+}
+
+func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
+	if classifier, ok := filter.(HardSuppressClassifier); ok {
+		return classifier.HardSuppressIssueBucket(labels)
+	}
+	return hardSuppressIssueLabel(labels)
 }

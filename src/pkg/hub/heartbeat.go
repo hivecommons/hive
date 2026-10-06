@@ -485,8 +485,10 @@ type HeartbeatUpgradePolicy struct {
 	// NextUpdateAt is the next operator-relevant update time (RFC3339 UTC,
 	// #10256): for stable-channel hives, the channel promotion ETA; otherwise,
 	// for daily/weekly managed hives, the next scheduled upgrade window. Omitted
-	// when unknown, instant, disabled, or paused.
-	NextUpdateAt string `json:"next_update_at,omitempty"`
+	// when unknown, instant, disabled, or paused. NextUpdateStatus is queued,
+	// none, paused, or unknown when the hub can say why there is no timestamp.
+	NextUpdateAt     string `json:"next_update_at,omitempty"`
+	NextUpdateStatus string `json:"next_update_status,omitempty"`
 }
 
 type TaskStatusPayload struct {

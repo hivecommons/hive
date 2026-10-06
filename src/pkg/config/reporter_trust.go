@@ -51,7 +51,24 @@ type ReporterTrustConfig struct {
 	// Comment controls the one-shot explanation comment on held-out issues.
 	// nil defaults on.
 	Comment *bool `yaml:"comment,omitempty" json:"comment,omitempty"`
+	// ClankerRequested turns on the opt-in "clanker-requested" policy
+	// (hivecommons/hive#10766). nil defaults off. While on, a PR carrying
+	// ClankerRequestedLabel counts as held.
+	ClankerRequested *bool `yaml:"clanker_requested,omitempty" json:"clanker_requested,omitempty"`
+	// ClankerRequestedLabel names the label; unset uses
+	// DefaultClankerRequestedLabel.
+	ClankerRequestedLabel *string `yaml:"clanker_requested_label,omitempty" json:"clanker_requested_label,omitempty"`
+	// ClankerRequestedAddendum is optional free text appended to the policy's
+	// explanation.
+	ClankerRequestedAddendum string `yaml:"clanker_requested_addendum,omitempty" json:"clanker_requested_addendum,omitempty"`
 }
+
+// DefaultClankerRequestedLabel is the label for the clanker-requested policy
+// when the operator has not named their own.
+const DefaultClankerRequestedLabel = "clanker-requested"
+
+// MaxClankerRequestedAddendumLen caps ClankerRequestedAddendum, in bytes.
+const MaxClankerRequestedAddendumLen = 1000
 
 // GitHub's author_association vocabulary, as the REST API spells it.
 const (
@@ -131,6 +148,32 @@ func (r ReporterTrustConfig) CommentOn() bool {
 	return r.Comment == nil || *r.Comment
 }
 
+// ClankerRequestedOn reports whether the clanker-requested policy is on. The
+// default is off.
+func (r ReporterTrustConfig) ClankerRequestedOn() bool {
+	return r.ClankerRequested != nil && *r.ClankerRequested
+}
+
+// EffectiveClankerRequestedLabel returns the configured label or the default.
+func (r ReporterTrustConfig) EffectiveClankerRequestedLabel() string {
+	if r.ClankerRequestedLabel != nil {
+		return strings.TrimSpace(*r.ClankerRequestedLabel)
+	}
+	return DefaultClankerRequestedLabel
+}
+
+// ExtraHoldLabels returns the labels this block adds to the hold-label set:
+// the clanker-requested label while that policy is on, otherwise none.
+func (r ReporterTrustConfig) ExtraHoldLabels() []string {
+	if !r.ClankerRequestedOn() {
+		return nil
+	}
+	if l := r.EffectiveClankerRequestedLabel(); l != "" {
+		return []string{l}
+	}
+	return nil
+}
+
 // Trusted reports whether a reporter is trusted: by explicit login first, then
 // by association. An empty login with an empty association is NOT trusted —
 // "we could not tell who filed this" must fail toward the triage path, the
@@ -167,13 +210,17 @@ func (r ReporterTrustConfig) Equal(o ReporterTrustConfig) bool {
 		equalStringSlices(r.TrustedLogins, o.TrustedLogins) &&
 		equalStringSlices(r.UntrustedRequireLabels, o.UntrustedRequireLabels) &&
 		stringPtrEqual(r.AwaitingLabel, o.AwaitingLabel) &&
-		boolPtrEqual(r.Comment, o.Comment)
+		boolPtrEqual(r.Comment, o.Comment) &&
+		boolPtrEqual(r.ClankerRequested, o.ClankerRequested) &&
+		stringPtrEqual(r.ClankerRequestedLabel, o.ClankerRequestedLabel) &&
+		r.ClankerRequestedAddendum == o.ClankerRequestedAddendum
 }
 
 // IsZero reports whether the block is entirely absent.
 func (r ReporterTrustConfig) IsZero() bool {
 	return r.Enabled == nil && len(r.TrustedAssociations) == 0 && len(r.TrustedLogins) == 0 && len(r.UntrustedRequireLabels) == 0 &&
-		r.AwaitingLabel == nil && r.Comment == nil
+		r.AwaitingLabel == nil && r.Comment == nil &&
+		r.ClankerRequested == nil && r.ClankerRequestedLabel == nil && r.ClankerRequestedAddendum == ""
 }
 
 // ValidateReporterTrust rejects association names GitHub never reports, so a
@@ -196,6 +243,13 @@ func ValidateReporterTrust(r ReporterTrustConfig) error {
 		if strings.TrimSpace(l) == "" {
 			return fmt.Errorf("reporter_trust.untrusted_require_labels: empty label")
 		}
+	}
+	if r.ClankerRequestedLabel != nil && strings.TrimSpace(*r.ClankerRequestedLabel) == "" {
+		return fmt.Errorf("reporter_trust.clanker_requested_label: empty label")
+	}
+	if len(r.ClankerRequestedAddendum) > MaxClankerRequestedAddendumLen {
+		return fmt.Errorf("reporter_trust.clanker_requested_addendum: %d bytes exceeds the %d-byte limit",
+			len(r.ClankerRequestedAddendum), MaxClankerRequestedAddendumLen)
 	}
 	return nil
 }

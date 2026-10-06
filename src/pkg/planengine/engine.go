@@ -1,5 +1,5 @@
 // Package planengine is the engine-neutral planning-engine boundary for
-// Project Inception runs (ADR-0021, hivecommons/hive#10293). It holds the
+// Project Inception runs (ADR-0022, hivecommons/hive#10293). It holds the
 // Engine interface, the name-keyed engine registry, and the document types an
 // engine reports. It must not import pkg/dashboard or pkg/spektacular.
 package planengine

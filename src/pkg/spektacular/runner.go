@@ -8,7 +8,7 @@
 // artifact arrives through Exec, which is the only seam to the outside world,
 // so tests drive the engine with a fake and production wires BinaryExec. The
 // Hive-owned stage observer that drives this engine lives in pkg/planengine
-// (ADR-0021).
+// (ADR-0022).
 package spektacular
 
 import (
@@ -30,7 +30,7 @@ import (
 )
 
 // Artifact kinds accepted by the status verb. They are the neutral kinds the
-// stage observer asks about (ADR-0021).
+// stage observer asks about (ADR-0022).
 const (
 	KindSpec = planengine.KindSpec
 	KindPlan = planengine.KindPlan
@@ -282,7 +282,7 @@ type ExecFunc func(ctx context.Context, dir string, args []string) ([]byte, erro
 // Runner is the CLI client behind the Spektacular Engine: it invokes the
 // verbs, classifies the JSON error envelopes and normalises artifact names.
 // It holds no lease state; the poll loop that does is the Hive-owned stage
-// observer in pkg/planengine (ADR-0021).
+// observer in pkg/planengine (ADR-0022).
 type Runner struct {
 	// Exec is the only path to the outside world.
 	Exec ExecFunc
