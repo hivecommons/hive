@@ -174,6 +174,7 @@ type Client struct {
 	reporterTrustMu          sync.RWMutex
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
+	otherNeedsHumanReason    func(repo string, number int) bool
 	// relayContributor reports whether a login holds a live contributor
 	// (relay) claim, the provenance that exempts its PRs from the
 	// clanker-requested parking (pr_clanker_requested.go). nil knows no relay
@@ -1371,6 +1372,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		// Parked before the hold check so a freshly labelled PR lands in the
 		// held partition on this same poll (hivecommons/hive#10781).
 		labels = c.parkClankerRequestedPR(ctx, repo, pr, labels, clankerBudget)
+		labels = c.clearReleasedReporterTrustNeedsHuman(ctx, repo, pr.GetNumber(), labels)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
 		scopeContract := reviewScopeContract(pr.GetTitle(), pr.GetBody(), owner+"/"+repoName, runKey, planRef)

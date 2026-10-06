@@ -92,10 +92,8 @@ func TestOverviewActionableEquationPartitionsOpenWork(t *testing.T) {
 	if want := "9 issues + 5 PRs = 3 actionable + 2 held + 4 blocked/needs-human + 5 outside"; got.Equation.Text != want {
 		t.Fatalf("equation text = %q, want %q", got.Equation.Text, want)
 	}
-	for _, want := range []string{"1 exempt", "1 hive advisory", "1 dependency dashboard", "outside PRs: 1 filtered"} {
-		if !strings.Contains(got.Equation.Title, want) {
-			t.Fatalf("equation title missing %q: %q", want, got.Equation.Title)
-		}
+	if want := "Actionable now — work that can move without waiting."; got.Equation.Title != want {
+		t.Fatalf("equation title = %q, want %q", got.Equation.Title, want)
 	}
 }
 
@@ -196,11 +194,14 @@ const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   { key: 'held', label: 'held', count: 10 },
   { key: 'blocked_needs_human', label: 'blocked/needs-human', count: 3 },
   { key: 'outside', label: 'outside', count: 25, breakdown: [
-    { key: 'needs-direction', label: 'needs-direction', count: 6 },
+    { key: 'needs-direction', label: 'needs-direction', count: 6, settingsTab: 'Labels', docsHref: '/docs/dashboard.md#outside-buckets' },
     { key: 'needs-decision', label: 'needs-decision', count: 2 },
+    { key: 'needs-spec', label: 'needs-spec', count: 0 },
     { key: 'exempt-labels', label: 'exempt', count: 1 },
     { key: 'reporter-triage', label: 'reporter triage', count: 7 },
+    { key: 'project-issue-filter', label: 'project issue filter', count: 0 },
     { key: 'standing-meta-advisory', label: 'hive advisory', count: 1 },
+    { key: 'dependency-dashboard', label: 'dependency dashboard', count: 0 },
     { key: 'hold-adjacent-other-issues', label: 'other/unclassified', count: 8 }
   ] }
 ] };
@@ -211,6 +212,12 @@ const nums = m.slice(1).map(Number);
 if (42 !== nums[0] + nums[1] + nums[2] + nums[3]) throw new Error('partition terms do not sum to open total: ' + subline);
 const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
 if (outside !== nums[3]) throw new Error('outside breakdown does not sum: ' + subline);
+const actionSubline = renderActionableEquationSubline(issueEq);
+if (!actionSubline.includes('Outside: items Hive is configured to leave alone.')) throw new Error('compact outside summary missing: ' + actionSubline);
+if (!actionSubline.includes('overview-partition-row')) throw new Error('compact rows missing: ' + actionSubline);
+if (!actionSubline.includes('+1 more')) throw new Error('long outside list was not collapsed: ' + actionSubline);
+if (!actionSubline.includes('Settings → Labels') || !actionSubline.includes('Learn more ↗') || !actionSubline.includes('fixed buckets')) throw new Error('single footer row missing: ' + actionSubline);
+if (actionSubline.includes('project.issue_filter') || actionSubline.includes('change:') || actionSubline.includes('Open Settings')) throw new Error('tooltip still duplicates settings prose: ' + actionSubline);
 const held = renderOverviewSplitSubline(12, 10, 2, 'held');
 if (held !== '12 = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
 `
@@ -278,9 +285,12 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"All open GitHub pull requests across the selected configured repos, including drafts",
 		"overview-kpi-subline",
 		"overviewPartitionTooltip(term, context)",
+		"overview-partition-summary",
+		"Outside: items Hive is configured to leave alone.",
+		"Settings → ${esc(tab)}",
+		"Learn more ↗",
 		"aria-describedby",
 		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
-		"These items are not actionable because this hive&apos;s filters exclude them",
 		"overview-kpi-outside",
 		"Triage buckets: what counts as outside",
 		"project.issue_filter.hard_suppress_labels.needs_direction",
@@ -298,6 +308,9 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		// The tooltip renders inside <button class="overview-kpi">; a nested <button> makes the HTML
 		// parser close the card early and the tooltip spills inline (oke-11 screenshot, 2026-10-05).
 		`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2`,
+		"These items are not actionable because this hive&apos;s filters exclude them",
+		"setting: <code>",
+		"change: ${esc(row.howToChange)}",
 	} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("static/index.html uses forbidden native/dialog tooltip pattern %q", forbidden)

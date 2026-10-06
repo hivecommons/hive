@@ -191,17 +191,11 @@ func TestValidatePRRequestClaims_LeavesCompleteIssueClosingReference(t *testing.
 	}
 }
 
-// TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation is the
-// break-it-proof for kubestellar/hive#6781. Before the humanFiledBugReason
-// gate, a human maintainer's bug labeled "bug" with no hive attribution
-// trailer was auto-closed on merge via "Closes #N", leaving the reporter
-// unable to reopen (the App bot was the closer). The regression that
-// #6500 → #6762/#6767 was filed against was exactly this shape.
-//
-// With the gate, that Closes # is downgraded to Refs #. Neutering
-// humanFiledBugReason to return "" restores the old behaviour and fails this
-// test — proving the enforcement is behavioural, not documentation.
-func TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation(t *testing.T) {
+// TestValidatePRRequestClaims_KeepsHumanFiledBugClosingReference pins the
+// scanner/contributor PR-body contract: a fix PR keeps its closing keyword, and
+// the reporter-confirmation policy is enforced by the issue close path instead
+// of by rewriting the PR to a non-closing Refs line.
+func TestValidatePRRequestClaims_KeepsHumanFiledBugClosingReference(t *testing.T) {
 	// A maintainer-filed bug: has the "bug" label, no hive attribution
 	// trailer in the body, and User.Type is "User" (not "Bot").
 	issue := map[string]any{
@@ -222,14 +216,8 @@ func TestValidatePRRequestClaims_DowngradesHumanFiledBugWithoutConfirmation(t *t
 	if err != nil {
 		t.Fatalf("validatePRRequestClaims: %v", err)
 	}
-	if !strings.HasPrefix(body, "Refs #6500") || strings.Contains(body, "Closes #6500") {
-		t.Fatalf("body was not downgraded (Closes # would let the App bot auto-close a maintainer bug on merge, and the reporter cannot reopen): got %q", body)
-	}
-	// The rewrite explains itself in the body so the maintainer reading the PR
-	// knows the reporter still has to confirm (#7156).
-	if !strings.Contains(body, "closing keyword withheld by the hive watcher") ||
-		!strings.Contains(body, humanFiledBugConfirmationMarker) {
-		t.Fatalf("downgraded body does not state the reason: %q", body)
+	if body != "Closes #6500\n\nDetails" {
+		t.Fatalf("human-filed bug PR should keep its closing keyword; issue close gate handles reporter confirmation: got %q", body)
 	}
 	if title != "fix copilot check" {
 		t.Fatalf("title mutated unexpectedly: %q", title)
@@ -265,8 +253,8 @@ func TestValidatePRRequestClaims_LeavesAgentFiledBugClosingReference(t *testing.
 
 // TestValidatePRRequestClaims_HonoursReporterConfirmation confirms that a
 // maintainer/reporter can opt in to auto-close by dropping the
-// humanFiledBugConfirmationMarker in the body — a documented, low-friction
-// override that keeps the gate from becoming a hard block on all human bugs.
+// humanFiledBugConfirmationMarker in the body. PR claim validation now keeps
+// closing keywords either way; the marker is consumed by the issue close gate.
 func TestValidatePRRequestClaims_HonoursReporterConfirmation(t *testing.T) {
 	issue := map[string]any{
 		"number": 42,
@@ -291,41 +279,35 @@ func TestValidatePRRequestClaims_HonoursReporterConfirmation(t *testing.T) {
 	}
 }
 
-// TestValidatePRRequestClaims_CloseOnMergeOptIn pins hivecommons/hive#10304:
-// a human-filed kind/bug issue that the filer marked with
-// humanFiledBugCloseOnMergeMarker — in the body or as a label — keeps
-// "Closes #N" with no Refs downgrade and no "closing keyword withheld" note,
-// while the same issue without the marker is still downgraded (#6781).
-func TestValidatePRRequestClaims_CloseOnMergeOptIn(t *testing.T) {
+// TestValidatePRRequestClaims_HumanFiledBugCloseOnMergeMarkerDoesNotAffectPRClaims
+// pins that PR claim validation no longer uses the reporter-confirmation
+// markers. Marked and unmarked human-filed bugs keep "Closes #N"; the issue
+// close path decides whether the merge may actually close the issue.
+func TestValidatePRRequestClaims_HumanFiledBugCloseOnMergeMarkerDoesNotAffectPRClaims(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		labels    []map[string]string
-		wantKeeps bool
+		name   string
+		body   string
+		labels []map[string]string
 	}{
 		{
-			name:      "marker in body keeps Closes",
-			body:      "Found by reading the code ...\n\nhive: close-on-merge",
-			labels:    []map[string]string{{"name": "kind/bug"}},
-			wantKeeps: true,
+			name:   "marker in body keeps Closes",
+			body:   "Found by reading the code ...\n\nhive: close-on-merge",
+			labels: []map[string]string{{"name": "kind/bug"}},
 		},
 		{
-			name:      "mixed-case marker in body keeps Closes",
-			body:      "Sweep finding\n\nHive: Close-On-Merge",
-			labels:    []map[string]string{{"name": "kind/bug"}},
-			wantKeeps: true,
+			name:   "mixed-case marker in body keeps Closes",
+			body:   "Sweep finding\n\nHive: Close-On-Merge",
+			labels: []map[string]string{{"name": "kind/bug"}},
 		},
 		{
-			name:      "marker as label keeps Closes",
-			body:      "Found by reading the code ...",
-			labels:    []map[string]string{{"name": "kind/bug"}, {"name": "hive: close-on-merge"}},
-			wantKeeps: true,
+			name:   "marker as label keeps Closes",
+			body:   "Found by reading the code ...",
+			labels: []map[string]string{{"name": "kind/bug"}, {"name": "hive: close-on-merge"}},
 		},
 		{
-			name:      "no marker is still downgraded",
-			body:      "Found by reading the code ...",
-			labels:    []map[string]string{{"name": "kind/bug"}},
-			wantKeeps: false,
+			name:   "no marker also keeps Closes",
+			body:   "Found by reading the code ...",
+			labels: []map[string]string{{"name": "kind/bug"}},
 		},
 	}
 	for _, tt := range tests {
@@ -351,17 +333,8 @@ func TestValidatePRRequestClaims_CloseOnMergeOptIn(t *testing.T) {
 			if title != "fix it" {
 				t.Fatalf("title = %q, want unchanged", title)
 			}
-			if tt.wantKeeps {
-				if body != "Closes #42" {
-					t.Fatalf("close-on-merge bug should keep Closes: body = %q", body)
-				}
-				return
-			}
-			if !strings.Contains(body, "Refs #42") || strings.Contains(body, "Closes #42") {
-				t.Fatalf("bug without opt-in should be downgraded to Refs: body = %q", body)
-			}
-			if !strings.Contains(body, "closing keyword withheld") {
-				t.Fatalf("downgrade should carry the withheld annotation: body = %q", body)
+			if body != "Closes #42" {
+				t.Fatalf("human-filed bug should keep Closes regardless of close-gate marker: body = %q", body)
 			}
 		})
 	}

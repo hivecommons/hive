@@ -196,16 +196,16 @@ above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
 
 For the full operator-side label reference, including `hold`, `approved-direction`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
-Beyond the empty-body and `--issues` checks above, the watcher applies three
-policy gates before opening the PR. Two can rewrite what you wrote; one rejects
-the request outright.
+Beyond the empty-body and `--issues` checks above, the watcher applies policy
+gates before opening the PR. Tracker/epic claims can be rewritten, and unsafe
+base drift or unsupported artifact claims can still reject the request outright.
 
-### `Closes #N` can be silently downgraded to `Refs #N`
+### `Closes #N` can be downgraded to `Refs #N` for trackers
 
 The watcher (`pkg/github.validatePRRequestClaims`) looks up every issue your
 title or body claims to close and rewrites `Closes #N` (also `Fixes`/`Resolves`)
-to `Refs #N` in the **opened PR** when auto-closing that issue on merge would be
-unsafe:
+to `Refs #N` in the **opened PR** only when the issue shape says the PR cannot
+finish it:
 
 - **The issue is a tracker or epic** — an `epic`/`tracker`/`meta-tracker`
   label, an `[epic]`/`[tracker]` title prefix, or tracker-shaped content.
@@ -217,38 +217,19 @@ unsafe:
   for an unsplittable finding — does **not** trigger this, and boxes inside a
   fenced code block never count, so quoting the policy's own `- [ ]` example is
   free ([#7156](https://github.com/hivecommons/hive/issues/7156)).
-- **The issue is a human-filed bug that the reporter has not confirmed fixed**
-  ([#6781](https://github.com/hivecommons/hive/issues/6781)). Merges land under
-  the App bot, and GitHub does not let a reporter without write access reopen
-  an issue the App bot closed — so an unverified auto-close strands the
-  reporter (that dead end produced [#6762](https://github.com/hivecommons/hive/issues/6762)
-  and [#6767](https://github.com/hivecommons/hive/issues/6767)). A reporter can
-  now comment `/reopen` on their own closed issue to reopen it
-  ([#6799](https://github.com/hivecommons/hive/issues/6799),
-  `.github/workflows/issue-reopen-command.yml`), but that is a backstop — this
-  downgrade gate is the primary control that stops the bad close from
-  happening at all. The gate
-  triggers only when **all** of these hold: a bug-family label (`bug`,
-  `kind/bug`, `type/bug`, `type:bug`, `adoption-blocker`), no `— hive:`
-  attribution trailer in the body (so agent-filed findings are unaffected), and
-  a non-Bot author. The reporter or a maintainer opts back in to auto-close by
-  adding `hive: reporter-confirmed` to the issue body or applying it as a
-  label; the downgrade then does not fire and `Closes #N` goes through. When
-  the merged fix is itself the only verification available — a code-sweep
-  finding with no observed symptom, or a timing, failure-path, or fleet-only
-  bug the reporter cannot reproduce on demand — the filer can say so up front
-  with `hive: close-on-merge` in the issue body or as a label
-  (`hive-open-issue --close-on-merge` adds it); the fix PR then keeps
-  `Closes #N` with no withheld-keyword note, and merging it closes the issue
-  ([#10304](https://github.com/hivecommons/hive/issues/10304)). Without either
-  marker the downgrade is unchanged. Once a
-  downgraded `Refs #N` has merged, the reporter or a maintainer can instead
-  reply `/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue): that
-  applies the same label and closes the issue
-  ([#9746](https://github.com/hivecommons/hive/issues/9746),
-  `.github/workflows/issue-confirm-fixed.yml`).
 
-A downgraded reference says so in the PR body it lands in:
+Human-filed bug reports are no longer rewritten to `Refs #N` for
+reporter-confirmation. A fix PR should still carry `Closes #N` / `Fixes #N`;
+when the merge reaches the issue close path, `CloseIssue` applies the
+reporter-confirmation gate. If the issue has `hive: reporter-confirmed` or
+`hive: close-on-merge`, the close proceeds. Otherwise Hive leaves the issue
+open, asks the reporter to confirm, and the reporter or a maintainer can reply
+`/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue) to close it
+([#9746](https://github.com/hivecommons/hive/issues/9746),
+`.github/workflows/issue-confirm-fixed.yml`). This keeps GitHub's PR/issue
+closing relationship visible while Hive owns the reporter-verification policy.
+
+A downgraded tracker reference says so in the PR body it lands in:
 
 ```text
 Refs #318 — closing keyword withheld by the hive watcher: `issue is a tracker`. Merging this PR will not close the issue.
@@ -258,8 +239,7 @@ so a maintainer reading the PR can tell a watcher rewrite from a deliberate
 `Refs` ([#7156](https://github.com/hivecommons/hive/issues/7156)). The title is
 rewritten without the note. The hive log carries the same reason under
 `pr-request watcher: downgraded closing reference to Refs`, but that log has a
-retention window and the PR body does not. A merged fix is evidence the code landed, not that the
-reporter's symptom is gone; the issue stays open until the reporter confirms.
+retention window and the PR body does not.
 
 ### Base drift: a branch cut from the wrong line is rejected
 

@@ -46,7 +46,7 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 		`id="agent-navbar-upnext"`,
 		`class="agent-navbar-upnext"`,
 		`function renderAgentNavbarUpNext(agents, nowMs)`,
-		`sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3)`,
+		`agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3)`,
 		`function renderAgentNavbarTileDiff(wrap, list, now)`,
 		`data-agent-key`,
 		`function openAgentsUpNextPanel()`,
@@ -64,6 +64,50 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 	}
 }
 
+// The two-line navbar pill needs its own layout rather than the fixed-height
+// single-line chip recipe. Keep both rows centred within explicit insets, and
+// allow the pill to grow when theme typography needs more room.
+func TestAgentNavbarTileContentInsets(t *testing.T) {
+	html := indexHTML(t)
+	const selector = ".agent-navbar-tile {"
+	start := strings.Index(html, selector)
+	if start < 0 {
+		t.Fatal("navbar agent pill CSS missing")
+	}
+	rule, _, found := strings.Cut(html[start+len(selector):], "}")
+	if !found {
+		t.Fatal("navbar agent pill CSS is unterminated")
+	}
+	for _, want := range []string{
+		"min-height: calc(var(--nav-chip-h) + var(--sp-4));",
+		"grid-template-rows: max-content max-content;",
+		"align-content: center;",
+		"align-items: center;",
+		"gap: var(--sp-1) var(--sp-2);",
+		"padding: var(--sp-2) var(--nav-chip-px);",
+		"box-sizing: border-box;",
+		"line-height: 1.2;",
+	} {
+		if !strings.Contains(rule, want) {
+			t.Errorf("navbar agent pill content layout missing %q", want)
+		}
+	}
+	for _, declaration := range strings.Split(rule, ";") {
+		if strings.HasPrefix(strings.TrimSpace(declaration), "height:") {
+			t.Error("navbar agent pill must grow with its two padded text rows, not use a fixed height")
+		}
+	}
+	for _, want := range []string{
+		".agent-navbar-tile .agent-tile-dot { grid-column: 2; grid-row: 1; justify-self: end; }",
+		".agent-navbar-tile .agent-tile-next { grid-column: 1; grid-row: 2; color: var(--muted); }",
+		".agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 2; color: var(--amber); }",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("navbar agent pill row alignment missing %q", want)
+		}
+	}
+}
+
 func TestAgentsCollapsedTileSortOrder(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -75,7 +119,10 @@ function agentIsDisabled(a) { return !!a && a.enabled === false; }
 ` + jsFunc(t, html, "agentCollapsedParseNextKick") + `
 ` + jsFunc(t, html, "formatKickCountdown") + `
 ` + jsFunc(t, html, "agentCollapsedNextKickMs") + `
+` + jsFunc(t, html, "agentCollapsedNextLabel") + `
+` + jsFunc(t, html, "agentTileIsRunning") + `
 ` + jsFunc(t, html, "agentCollapsedSortKey") + `
+` + jsFunc(t, html, "agentTileStates") + `
 ` + jsFunc(t, html, "sortAgentsForCollapsedTiles") + `
 const now = Date.UTC(2026, 9, 3, 11, 40, 0);
 const agents = [

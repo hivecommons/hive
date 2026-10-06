@@ -53,7 +53,7 @@ const (
 	envBackend = "AGENT_BACKEND"
 	// envAutoUseBankedReset is the contributor-local opt-in that also gates
 	// the relay's weekly-reserve exception (hivecommons/hive#10597). Here it
-	// enables the banked-reset redemption controller (#10598, ADR-0021). It is
+	// enables the banked-reset redemption controller (#10598, ADR-0022). It is
 	// read only from this process's own environment.
 	envAutoUseBankedReset = "HIVE_CODEX_AUTO_USE_BANKED_RESET"
 )

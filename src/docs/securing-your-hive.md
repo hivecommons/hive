@@ -79,10 +79,10 @@ project:
 **Anyone outside the trusted set (`CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`,
 `FIRST_TIMER`, `NONE`) files an issue:** not actionable until someone adds
 `triage/accepted` (the default `untrusted_require_labels`).
-Once triaged, an agent may work it — but the resulting PR still gets `hold`
-at every level, L6 included, because the reporter-trust merge-side check
-re-evaluates who the rationale traces to; triaging the issue does not
-un-hold the PR. See [agent-configuration.md §
+Once triaged, an agent may work it, and the acceptance label also satisfies
+the reporter-trust merge-side sign-off. A PR linked to an unaccepted issue
+from an untrusted reporter still gets `hold` at every level, L6 included.
+Adding acceptance later does not auto-release an existing PR hold. See [agent-configuration.md §
 Admission/Merge](agent-configuration.md#reporter-trust-who-filed-it-not-only-what-it-is-labelled).
 
 **A team member (`MEMBER`/`COLLABORATOR`/`OWNER`) files an issue:** admitted
@@ -90,8 +90,8 @@ and worked exactly as before reporter trust existed — no triage label needed,
 and at L6 the resulting PR merges on green CI with no level hold (unless some
 other hold applies).
 
-**Who merges:** agents, autonomously, for team-filed work. A human, always,
-for anything traceable to an untrusted reporter.
+**Who merges:** agents, autonomously, for team-filed or explicitly accepted
+work. Unaccepted requests from untrusted reporters require human sign-off.
 
 ### Open community — L6, reporter trust on, also trusting CONTRIBUTOR
 
@@ -109,12 +109,12 @@ resulting PR can merge unattended on green CI.
 
 **Anyone else** (`FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`, or an
 association GitHub didn't report): requires `triage/accepted` for admission,
-and any resulting PR is still held for a human, exactly as in the trusted-team
-posture above.
+and that acceptance also satisfies the reporter-trust PR check, exactly as
+in the trusted-team posture above.
 
-**Who merges:** agents, for anyone with standing history in the repo. A human
-for first-time strangers, always — this posture widens *whose* work gets
-autonomy, not *whether* an unvetted stranger's work can merge unattended.
+**Who merges:** agents, for anyone with standing history in the repo or an
+explicitly accepted issue. First-time strangers' unaccepted requests still
+require human sign-off.
 
 ## Who gets worked, who gets merged: the reporter-trust matrix
 
@@ -132,7 +132,7 @@ trusted, and does it carry `triage/accepted`?
 | | **No `triage/accepted`** | **Has `triage/accepted`** |
 |---|---|---|
 | **Filed by a trusted person** | ✅ Worked. Hive's PR merges on its own on green CI. | ✅ Worked. Hive's PR merges on its own on green CI (the label changes nothing). |
-| **Filed by anyone else** | ⛔ Not worked. | ✅ Worked. ✋ Hive's PR is held until a person removes `hold`. |
+| **Filed by anyone else** | ⛔ Not worked. | ✅ Worked. Hive's PR may merge on green CI; acceptance supplies sign-off. |
 
 "Trusted" means the reporter's GitHub association is one of the checked boxes,
 or their login is under **Always-trusted logins**.
@@ -147,10 +147,10 @@ GitHub, not Hive, decides each issue author's association.
 | `MEMBER` | Is a member of the org that owns the repo | ✅ | Yes | Yes | Yes, on green CI |
 | `COLLABORATOR` | Was given access to the repo (invited) | ✅ | Yes | Yes | Yes, on green CI |
 | Always-trusted login | You added their login on the Labels tab | n/a | Yes | Yes | Yes, on green CI |
-| `CONTRIBUTOR` | **Automatic:** has previously committed to this repo (one typo fix is enough) | ☐ | No | Yes | **No.** Held until a person removes `hold` |
-| `FIRST_TIME_CONTRIBUTOR` | **Automatic:** has commits elsewhere on GitHub, none here | ☐ | No | Yes | **No.** Held until a person removes `hold` |
-| `FIRST_TIMER` | **Automatic:** has never committed anywhere on GitHub | ☐ | No | Yes | **No.** Held until a person removes `hold` |
-| `NONE` | No relationship to the repo | ☐ | No | Yes | **No.** Held until a person removes `hold` |
+| `CONTRIBUTOR` | **Automatic:** has previously committed to this repo (one typo fix is enough) | ☐ | No | Yes | Yes, if accepted and CI is green |
+| `FIRST_TIME_CONTRIBUTOR` | **Automatic:** has commits elsewhere on GitHub, none here | ☐ | No | Yes | Yes, if accepted and CI is green |
+| `FIRST_TIMER` | **Automatic:** has never committed anywhere on GitHub | ☐ | No | Yes | Yes, if accepted and CI is green |
+| `NONE` | No relationship to the repo | ☐ | No | Yes | Yes, if accepted and CI is green |
 
 ### What changes automatically, and what doesn't
 
@@ -182,12 +182,13 @@ repo access, which inviting them as a collaborator would.
   read-only collaborator from an admin. Checking the box trusts everyone you
   have added as a collaborator.
 - **Hive checks that `triage/accepted` is present, not who added it.** Anyone
-  with Triage access or higher on the repo can add it. Triage only lets the
-  work start; the hold is what stops the merge.
+  with Triage access or higher on the repo can add it. Acceptance lets work
+  start and satisfies reporter-trust sign-off, but not other merge gates.
 - **The hold depends on who filed the issue, not on who did the work.** It
   doesn't matter which agent or contributor wrote the PR. If the PR is linked
   to any issue from an untrusted reporter (`Closes #N`, `Refs #N`, or the
-  issues the agent declared when it asked Hive to open the PR), it's held.
+  issues the agent declared when it asked Hive to open the PR), it's held
+  unless that issue carries a configured acceptance label.
 - **The hold only covers PRs Hive opens.** A PR a person opens by hand goes
   through the repo's normal branch protection and review rules.
 - **Issues filed by bots or by Hive itself skip reporter trust.** A different
@@ -240,11 +241,11 @@ the GitHub timeline. That's the gap this page closes.
 ## Q&A for first deployments
 
 **Can an untrusted reporter get code merged?**
-No, not unattended. Their issue waits for `triage/accepted` (or your
-configured label) if reporter trust is on. Once admitted (or if reporter
-trust is off entirely), a resulting PR is still held for a human at **every**
-ACMM level, including L6 — reporter trust's merge-side check runs
-independently of the level gate. "Untrusted" means *outside the trusted
+Yes, after maintainer acceptance. Their issue waits for `triage/accepted`
+(or your configured label) if reporter trust is on. That label also satisfies
+the reporter-trust PR check. Without acceptance, a resulting PR is held at
+**every** ACMM level, including L6, when the PR-side hold is enabled. With
+reporter trust and its PR hold off, neither reporter gate applies. "Untrusted" means *outside the trusted
 associations/logins*, not "no merge history": `OWNER`, `MEMBER`, and
 `COLLABORATOR` are trusted by default even for an account with zero merged
 commits, because GitHub itself vouches for the relationship (org membership
@@ -277,16 +278,16 @@ Yes. `ReporterTrustConfig.Trusted()` checks the reporter's
 or PR history. The association alone is enough.
 
 **What exactly does `triage/accepted` unlock, and what does it not unlock?**
-It unlocks **admission**: an agent may now work the issue (open a PR about
-it, comment, classify it) the same as any other actionable issue. It does
-**not** unlock unattended merge. While the issue is waiting, Hive posts one
+It unlocks **admission** and satisfies **reporter-trust PR sign-off**: an
+agent may work the issue, and its PR is not held solely for that reporter.
+Other merge gates still apply. While the issue is waiting, Hive posts one
 marked explanation comment and applies `needs-triage` (or the configured
 `awaiting_label`) when the issue does not already have it; adding
 `triage/accepted` removes that waiting label only if Hive's marker records
 that Hive added it, then admits the issue. If the resulting PR's rationale
-traces back to that untrusted-reporter issue, the reporter-trust merge-side
-check still applies `hold` at every level — a human still has to remove that
-label.
+traces back to that accepted issue, the reporter-trust merge-side check does
+not apply a new hold. An existing reporter-trust hold remains a human's to
+remove; acceptance does not auto-release it.
 
 **How do I stop all auto-merges right now?**
 Drop below L6 — merge permission is not granted below L6 at the token/proxy
@@ -303,7 +304,7 @@ Nothing immediately for maintainer-filed issues — `OWNER`/`MEMBER`/
 being actionable until triaged, and once reporter-trust is enabled its PR-side
 hold defaults on too (`github.reporter_trust_hold` follows
 `reporter_trust.enabled` unless you set it explicitly), so any PR tracing to
-an untrusted-reporter issue starts getting held for review even at L6. It is
+an unaccepted untrusted-reporter issue starts getting held even at L6. It is
 opt-in for exactly this reason — an existing hive that takes issues from the
 public changes nothing until you flip the switch.
 
@@ -380,7 +381,7 @@ project:
   [agent-configuration.md](agent-configuration.md).
 - **reporter trust** — the opt-in gate (`project.issue_filter.reporter_trust`)
   that admits or holds work based on *who filed the issue*, using GitHub's
-  `author_association`, separately from any label. See
+  `author_association` and configured issue acceptance labels. See
   [agent-configuration.md § Reporter
   trust](agent-configuration.md#reporter-trust-who-filed-it-not-only-what-it-is-labelled).
 - **GitHub author association** — GitHub's own classification of an issue or
@@ -394,8 +395,8 @@ project:
 - **triage label (`triage/accepted`)** — the default label
   (`untrusted_require_labels`) that admits an untrusted reporter's issue for
   agent work. Hive checks that it is present, not who added it, so anyone with
-  Triage access or higher on the repo can admit an issue. Does not by itself
-  remove a PR-side reporter-trust hold.
+  Triage access or higher on the repo can admit an issue and satisfy PR-side
+  reporter sign-off. Does not auto-remove an existing reporter-trust hold.
 - **`hold`** — the literal label multiple gates apply (level gate,
   reporter-trust hold, `#5117` self-authorization hold, SHA-hold, holdguard).
   Any label containing the substring `hold` is treated as a hard hold by

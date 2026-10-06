@@ -90,6 +90,68 @@ func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
 	}
 }
 
+func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`.oc-version-bee-wing`,
+		`.oc-version-bee-body`,
+		`.oc-version-bee-stripe`,
+		`.oc-version-bee-head`,
+		`.oc-version-bee-stinger`,
+		`fill: var(--amber)`,
+		`stroke: var(--terminal-bg)`,
+		`color-mix(in srgb, var(--panel) 80%, transparent)`,
+		`function versionBeeGlyphHTML()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("upgrade bee two-tone token palette missing %q", want)
+		}
+	}
+	glyph := jsFunc(t, html, "versionBeeGlyphHTML")
+	for _, want := range []string{
+		`class="oc-version-bee-wing"`,
+		`class="oc-version-bee-body"`,
+		`class="oc-version-bee-stripe"`,
+		`class="oc-version-bee-head"`,
+		`class="oc-version-bee-stinger"`,
+	} {
+		if !strings.Contains(glyph, want) {
+			t.Fatalf("upgrade bee SVG no longer exposes %q for token styling:\n%s", want, glyph)
+		}
+	}
+	if strings.Contains(glyph, "currentColor") {
+		t.Fatalf("upgrade bee SVG must not collapse to one-color currentColor styling:\n%s", glyph)
+	}
+}
+
+func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
+	html := indexHTML(t)
+	beeRule := cssRule(t, html, ".oc-version-bee")
+	for _, want := range []string{
+		"linear infinite both",
+		"will-change: transform, opacity",
+	} {
+		if !strings.Contains(beeRule, want) {
+			t.Fatalf("orbiting bee rule missing seamless animation hint %q in %s", want, beeRule)
+		}
+	}
+
+	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
+	for _, want := range []string{
+		"0% { opacity: 0.96; transform: translate(-50%, -50%) rotate(0turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
+		"100% { opacity: 0.96; transform: translate(-50%, -50%) rotate(1turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
+	} {
+		if !strings.Contains(orbit, want) {
+			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)
+		}
+	}
+	for _, forbidden := range []string{"\n      50%", "rotate(-"} {
+		if strings.Contains(orbit, forbidden) {
+			t.Fatalf("upgrade bee orbit should avoid loop-boundary decomposition hitches from %q in %s", forbidden, orbit)
+		}
+	}
+}
+
 func TestNavbarUpgradeBeeDoesNotAddBareSetInterval(t *testing.T) {
 	html := indexHTML(t)
 	if got := strings.Count(html, "setInterval("); got > 11 {
