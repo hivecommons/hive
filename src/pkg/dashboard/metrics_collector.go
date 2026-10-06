@@ -182,16 +182,17 @@ func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 	)
 }
 
-// collectPRIssueCounts fetches the total merged-PR and closed-issue counts for
-// the primary repo, persists the result to disk, and stores it in memory. Used
-// by the dashboard's Cost section to derive cost-per-PR / cost-per-issue.
+// collectPRIssueCounts fetches the hive-attributed merged-PR and closed-issue
+// counts for the primary repo, persists the result to disk, and stores it in
+// memory. Used by the dashboard's Cost section to derive cost-per-PR /
+// cost-per-issue.
 func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 	gh := mc.client()
 	if gh == nil || mc.repo == "" {
 		return
 	}
 
-	result, err := gh.ComputePRIssueCounts(ctx, mc.repo)
+	result, err := gh.ComputePRIssueCounts(ctx, mc.repo, mc.aiAuthor)
 	if err != nil {
 		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
 		return

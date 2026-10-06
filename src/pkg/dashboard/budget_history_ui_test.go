@@ -78,7 +78,9 @@ func TestSparklinesCarryAxesOrScaleTooltips(t *testing.T) {
 	html := string(b)
 
 	for _, snippet := range []string{
-		"axisSparkSvg(_costHistory",
+		"const total = costAllTimeEstimate",
+		"const hist = total.series",
+		"axisSparkSvg(hist",
 		"sparkSvg(values, 'var(--blue)', times)",
 		// sparkSvg + miniSparkSvg embed an SVG <title> stating the range.
 		"<title>range ${fmtSparkVal(min)}",

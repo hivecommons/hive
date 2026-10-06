@@ -8856,11 +8856,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch { /* non-critical */ }
     }
     function costSparkSvg() {
-      const hist = costHist();
+      const total = costAllTimeEstimate(_lastCost && _lastCost.estimated);
+      const hist = total.series;
       const title = hist.length
-        ? `Estimated cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; recorded history samples`
+        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} lineage reset(s) preserved in the cumulative total` : 'recorded history samples'}`
         : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
-      return axisSparkSvg(_costHistory, e => e.usd, e => e.t ?? e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
+      return axisSparkSvg(hist, e => e.usd, e => e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
         title);
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
@@ -9001,6 +9002,65 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return (_costHistory || [])
         .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
         .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    const COST_LINEAGE_RESET_FLOOR_USD = 100;
+    const COST_LINEAGE_RESET_RATIO = 0.5;
+
+    function costHistWithCurrent(est) {
+      const hist = costHist();
+      const currentUSD = est && Number(est.total_usd);
+      if (Number.isFinite(currentUSD)) {
+        if (hist.length) {
+          const latest = hist[hist.length - 1];
+          if (Math.abs(Number(latest.usd) - currentUSD) > 0.000001) {
+            hist.push({ ...latest, timestamp: Date.now(), usd: currentUSD });
+          }
+        } else {
+          hist.push({ timestamp: Date.now(), usd: currentUSD });
+        }
+      }
+      return hist;
+    }
+
+    function costAllTimeEstimate(est) {
+      const hist = costHistWithCurrent(est);
+      const resets = [];
+      const series = [];
+      let offset = 0, prev = null, linePeak = 0, first = 0;
+      for (const e of hist) {
+        const cur = Number(e.usd);
+        if (!Number.isFinite(cur)) continue;
+        if (!first) first = e.timestamp;
+        if (prev != null && prev - cur > COST_LINEAGE_RESET_FLOOR_USD && cur < prev * COST_LINEAGE_RESET_RATIO) {
+          offset += linePeak;
+          resets.push({ timestamp: e.timestamp, previous: prev, next: cur, preserved: offset });
+          linePeak = 0;
+        }
+        if (cur > linePeak) linePeak = cur;
+        series.push({ ...e, usd: offset + linePeak });
+        prev = cur;
+      }
+      return {
+        usd: series.length ? series[series.length - 1].usd : 0,
+        firstTimestamp: first,
+        currentUSD: Number.isFinite(est && Number(est.total_usd)) ? Number(est.total_usd) : null,
+        currentStart: est && est.window_start ? est.window_start : 0,
+        resets,
+        series,
+      };
+    }
+
+    function costCurrentLineageHist(currentUSD) {
+      const hist = costHistWithCurrent({ total_usd: currentUSD });
+      if (!hist.length) return [];
+      let start = 0;
+      for (let i = 1; i < hist.length; i++) {
+        const prev = Number(hist[i - 1].usd);
+        const cur = Number(hist[i].usd);
+        if (Number.isFinite(prev) && Number.isFinite(cur) && prev - cur > COST_LINEAGE_RESET_FLOOR_USD && cur < prev * COST_LINEAGE_RESET_RATIO) start = i;
+      }
+      return hist.slice(start);
     }
 
     // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
@@ -16449,9 +16509,46 @@ function burnAreaChart() {
     function fmtUSD(n) {
       if (n == null || isNaN(n)) return '—';
       if (n === 0) return '$0.00';
-      if (n < 0.01) return '<$0.01';
+      if (n > 0 && n < 0.01) {
+        let s = Number(n).toPrecision(3);
+        if (s.includes('e')) s = Number(s).toFixed(Math.ceil(-Math.log10(Number(n))) + 3);
+        s = s.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+        return '$' + s;
+      }
       const frac = n < 100 ? 2 : 0;
       return '$' + n.toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
+    }
+
+    function costTotalLabel(total) {
+      if (total && total.firstTimestamp) {
+        return `estimated total — since ${fmtCostDateTime(total.firstTimestamp)} (persisted history × list price)`;
+      }
+      return 'estimated total — persisted history unavailable';
+    }
+
+    function costTotalTooltip(total) {
+      if (!total || !total.series.length) return 'no cost records yet';
+      const parts = [`Persisted all-time estimate ${fmtUSD(total.usd)} since ${fmtCostDateTime(total.firstTimestamp)}.`];
+      if (total.currentUSD != null) {
+        const since = total.currentStart ? ` since ${fmtCostDateTime(total.currentStart)}` : '';
+        parts.push(`Current token-summary lineage: ${fmtUSD(total.currentUSD)}${since}.`);
+      }
+      if (total.resets.length) {
+        parts.push(`Preserved ${total.resets.length} lineage reset(s): ` + total.resets.map(r => `${fmtCostDateTime(r.timestamp)} dropped ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ') + '.');
+      }
+      return parts.join(' ');
+    }
+
+    function costPerUnitDisplay(totalUSD, count, unitLabel) {
+      const total = Number(totalUSD) || 0;
+      const n = Number(count) || 0;
+      if (!(total > 0)) return { value: '—', title: 'no cost records yet' };
+      if (!(n > 0)) return { value: '—', title: `no ${unitLabel} yet` };
+      const value = total / n;
+      return {
+        value: fmtUSD(value),
+        title: `${fmtUSD(total)} ÷ ${n.toLocaleString('en-US')} ${unitLabel} = ${fmtUSD(value)}`,
+      };
     }
 
     // Last cost payload, so the range pills can re-render the trend chart
@@ -16803,14 +16900,20 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      const allTimeCost = costAllTimeEstimate(est);
+      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
+      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
+        ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
+        : '';
 
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
-            <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
-            <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
-            <div class="cost-stat"><div class="cval" title="${cost.closed_issues ? `${fmtUSD(est.total_usd)} ÷ ${cost.closed_issues} closed issues` : 'no closed issues yet'}">${cost.closed_issues ? fmtUSD(est.total_usd / cost.closed_issues) : '—'}</div><div class="clabel">cost / issue — all-time total ÷ closed issues</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
@@ -16823,7 +16926,7 @@ function burnAreaChart() {
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}`;
-      el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(est.total_usd), summaryTitle: 'Estimated all-time total', bodyId: 'cost-panel-body' }, costBody);
+      el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body' }, costBody);
       // Re-apply the persisted collapsed state so a poll re-render never resets it.
       applyCostCollapse();
       applyCostSubCollapse();
