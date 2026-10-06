@@ -416,7 +416,10 @@ type overviewPartitionMeta struct {
 	ReporterTrustTrusted        []string
 	ReporterTrustAwaitingLabel  string
 	HoldLabels                  []string
-	HardSuppressIssueLabels     []string
+	HardSuppressNeedsHuman      []string
+	HardSuppressNeedsDirection  []string
+	HardSuppressNeedsDecision   []string
+	HardSuppressNeedsSpec       []string
 }
 
 type overviewPartitionBreakdowns struct {
@@ -436,6 +439,11 @@ func overviewPartitionMetadataFromConfig(cfg *config.Config, hiveID string) over
 	meta := overviewPartitionDefaults(hiveID)
 	meta.ExemptLabels = append(append([]string(nil), cfg.Governor.Labels.Exempt...), github.PermanentExemptLabels...)
 	meta.RequireLabels = append([]string(nil), cfg.Project.IssueFilter.RequireLabels...)
+	hs := cfg.Project.IssueFilter.HardSuppressLabels
+	meta.HardSuppressNeedsHuman = hs.EffectiveNeedsHuman()
+	meta.HardSuppressNeedsDirection = hs.EffectiveNeedsDirection()
+	meta.HardSuppressNeedsDecision = hs.EffectiveNeedsDecision()
+	meta.HardSuppressNeedsSpec = hs.EffectiveNeedsSpec()
 	meta.ReporterTrustEnabled = rt.IsEnabled()
 	meta.ReporterTrustRequiredLabels = rt.EffectiveUntrustedRequireLabels()
 	meta.ReporterTrustTrusted = append([]string(nil), rt.EffectiveTrustedAssociations()...)
@@ -454,7 +462,10 @@ func overviewPartitionDefaults(hiveID string) overviewPartitionMeta {
 		ReporterTrustTrusted:        config.ReporterTrustConfig{}.EffectiveTrustedAssociations(),
 		ReporterTrustAwaitingLabel:  config.ReporterTrustConfig{}.EffectiveAwaitingLabel(),
 		HoldLabels:                  holdLabels,
-		HardSuppressIssueLabels:     []string{"needs-human", "needs-direction", "needs-decision", "needs-spec"},
+		HardSuppressNeedsHuman:      config.HardSuppressLabelsConfig{}.EffectiveNeedsHuman(),
+		HardSuppressNeedsDirection:  config.HardSuppressLabelsConfig{}.EffectiveNeedsDirection(),
+		HardSuppressNeedsDecision:   config.HardSuppressLabelsConfig{}.EffectiveNeedsDecision(),
+		HardSuppressNeedsSpec:       config.HardSuppressLabelsConfig{}.EffectiveNeedsSpec(),
 	}
 }
 
@@ -466,9 +477,9 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 	issueDependencyDashboard := totals.Issues.Breakdown["dependency_dashboard"]
 	issueOther := totals.Issues.Breakdown["other"]
 	issueRows := []FrontendActionableBreakdownTerm{
-		overviewBreakdownTerm("needs-direction", "needs-direction", totals.Issues.Breakdown["needs_direction"], "Issue carries the hard-suppress label needs-direction, so Hive waits for maintainer direction before offering it to agents.", "hardSuppressIssueLabels", overviewValue(meta.HardSuppressIssueLabels), "Remove the label from the issue, or change the code-level escalation labels if your hive fork owns that policy.", "Labels", "/docs/labels-and-control-signals.md"),
-		overviewBreakdownTerm("needs-decision", "needs-decision", totals.Issues.Breakdown["needs_decision"], "Issue carries the hard-suppress label needs-decision, so Hive waits for a maintainer decision.", "hardSuppressIssueLabels", overviewValue(meta.HardSuppressIssueLabels), "Remove the label from the issue after the decision is made.", "Labels", "/docs/labels-and-control-signals.md"),
-		overviewBreakdownTerm("needs-spec", "needs-spec", totals.Issues.Breakdown["needs_spec"], "Issue carries the hard-suppress label needs-spec, so Hive waits for specification or acceptance criteria.", "hardSuppressIssueLabels", overviewValue(meta.HardSuppressIssueLabels), "Remove the label after adding enough spec for agents to act.", "Labels", "/docs/labels-and-control-signals.md"),
+		overviewBreakdownTerm("needs-direction", "needs-direction", totals.Issues.Breakdown["needs_direction"], "Issue carries a needs-direction hard-suppress label, so Hive waits for maintainer direction before offering it to agents.", "project.issue_filter.hard_suppress_labels.needs_direction", overviewValue(meta.HardSuppressNeedsDirection), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
+		overviewBreakdownTerm("needs-decision", "needs-decision", totals.Issues.Breakdown["needs_decision"], "Issue carries a needs-decision hard-suppress label, so Hive waits for a maintainer decision.", "project.issue_filter.hard_suppress_labels.needs_decision", overviewValue(meta.HardSuppressNeedsDecision), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
+		overviewBreakdownTerm("needs-spec", "needs-spec", totals.Issues.Breakdown["needs_spec"], "Issue carries a needs-spec hard-suppress label, so Hive waits for specification or acceptance criteria.", "project.issue_filter.hard_suppress_labels.needs_spec", overviewValue(meta.HardSuppressNeedsSpec), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
 		overviewBreakdownTerm("exempt-labels", "exempt labels", issueExempt, "Issue matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/labels-and-control-signals.md"),
 		overviewBreakdownTerm("reporter-triage", "reporter triage", issueReporter, "Reporter trust is enabled and the issue author is not trusted until a maintainer adds an allowed triage label.", "project.issue_filter.reporter_trust", overviewReporterValue(meta), "Open Settings → Labels → Reporter trust, or edit hive.yaml project.issue_filter.reporter_trust.", "Labels", "/docs/dashboard.md#overview"),
 		overviewBreakdownTerm("project-issue-filter", "project issue filter", issueFiltered, "Issue lacks every label required by project.issue_filter.require_labels.", "project.issue_filter.require_labels", overviewValue(meta.RequireLabels), "Open Settings → Labels to change require labels, or edit hive.yaml project.issue_filter.require_labels.", "Labels", "/docs/dashboard.md#overview"),
@@ -495,7 +506,7 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 			overviewBreakdownTerm("pr-hold-labels", "held PRs", totals.PRs.Held, "PR carries a hold label and is intentionally parked for a maintainer.", "github.HoldLabels + hive scoped hold label", overviewValue(meta.HoldLabels), "Remove the hold label from the PR, or use the dashboard hold toggle.", "Labels", "/docs/labels-and-control-signals.md"),
 		},
 		IssueBlocked: []FrontendActionableBreakdownTerm{
-			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries the hard-suppress label needs-human, so Hive waits for a person.", "hardSuppressIssueLabels", overviewValue(meta.HardSuppressIssueLabels), "Remove needs-human after the person finishes the required action.", "Labels", "/docs/labels-and-control-signals.md"),
+			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label after the person finishes.", "Labels", "/docs/dashboard.md#outside-buckets"),
 			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
 		},
 		PRBlocked: []FrontendActionableBreakdownTerm{

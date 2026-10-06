@@ -13764,7 +13764,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">docs ↗</a>` : '';
+      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
@@ -32206,6 +32206,77 @@ function burnAreaChart() {
       }
     }
 
+    const OUTSIDE_BUCKET_DEFS = [
+      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Issues waiting for maintainer direction before an agent may work them.' },
+      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs-decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues waiting for a maintainer decision.' },
+      { key: 'needsSpec', saveKey: 'needs_spec', label: 'needs-spec', setting: 'project.issue_filter.hard_suppress_labels.needs_spec', fixed: false, definition: 'Issues waiting for specification or acceptance criteria.' },
+      { key: 'labels', saveKey: 'labels', label: 'exempt labels', setting: 'governor.labels.exempt', fixed: false, definition: 'Issues or PRs that must never be agent work; permanent do-not-merge and hold labels also apply.' },
+      { key: 'reporterTrust', saveKey: 'reporter_trust', label: 'reporter triage', setting: 'project.issue_filter.reporter_trust', fixed: false, definition: 'When enabled, issues from untrusted reporters wait for a maintainer triage label.' },
+      { key: 'requireLabels', saveKey: 'require_labels', label: 'project issue filter', setting: 'project.issue_filter.require_labels', fixed: false, definition: 'When non-empty, issues must carry at least one required label before agents may work them.' },
+      { key: 'standingMeta', label: 'standing meta/advisory', setting: 'fixed: advisory title or hive/advisory label', fixed: true, definition: 'Hive advisory reports are standing coordination issues, not agent tasks.' },
+      { key: 'dependencyDashboard', label: 'dependency dashboard', setting: 'fixed: bot author + Dependency/Renovate Dashboard title', fixed: true, definition: 'Renovate/Dependabot dashboard issues are bot control panels, not discrete work.' },
+      { key: 'holdAdjacent', label: 'hold-adjacent/other', setting: 'fixed: scanner safety remainder', fixed: true, definition: 'Open items not assigned to a named bucket; kept outside until a dedicated classifier exists.' }
+    ];
+
+    function hardSuppressState() {
+      const hs = _configState.data.hardSuppressLabels || {};
+      return {
+        needsHuman: Array.isArray(hs.needsHuman) ? hs.needsHuman : ['needs-human'],
+        needsDirection: Array.isArray(hs.needsDirection) ? hs.needsDirection : ['needs-direction'],
+        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['needs-decision'],
+        needsSpec: Array.isArray(hs.needsSpec) ? hs.needsSpec : ['needs-spec']
+      };
+    }
+
+    function stageHardSuppressLabels(next) {
+      _configState.data.hardSuppressLabels = Object.assign({}, hardSuppressState(), next);
+      const st = hardSuppressState();
+      markDirty('labels', 'hard_suppress_labels', {
+        needs_human: st.needsHuman,
+        needs_direction: st.needsDirection,
+        needs_decision: st.needsDecision,
+        needs_spec: st.needsSpec
+      });
+    }
+
+    function renderHardSuppressEditor(key, label, setting) {
+      const st = hardSuppressState();
+      const list = (st[key] || []).map((l, i) => `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="hard:${key}" data-arg2="${i}" data-arg-types="s,s,j" title="Remove ${esc(l)} from ${esc(label)} labels">✕</button></div>`).join('');
+      const inputId = `cfg-hard-${key}-input`;
+      return `<div class="config-list mt-2">
+        ${list || '<div class="fs-sm text-muted mb-3">No labels — add at least one to keep this bucket active</div>'}
+        <div class="config-list-add">
+          <input type="text" id="${esc(inputId)}" placeholder="label name" title="Label counted as ${esc(label)} outside work (${esc(setting)}).">
+          <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="hard:${key}" data-arg2="${esc(inputId)}" title="Add a ${esc(label)} label">+ Add</button>
+        </div>
+      </div>`;
+    }
+
+    function renderOutsideBucketsPanel(labels, requireLabels) {
+      const st = hardSuppressState();
+      const rt = reporterTrustState();
+      const currentValue = (def) => {
+        if (def.key === 'needsDirection') return st.needsDirection.join(', ');
+        if (def.key === 'needsDecision') return st.needsDecision.join(', ');
+        if (def.key === 'needsSpec') return st.needsSpec.join(', ');
+        if (def.key === 'labels') return (labels || []).concat(['do-not-merge']).join(', ') || 'none';
+        if (def.key === 'reporterTrust') return rt.enabled ? `enabled; triage labels: ${rt.untrustedRequireLabels.join(', ')}` : 'disabled';
+        if (def.key === 'requireLabels') return (requireLabels || []).join(', ') || 'disabled (no required labels)';
+        return def.setting;
+      };
+      const rows = OUTSIDE_BUCKET_DEFS.map(def => `<tr><td><b>${esc(def.label)}</b></td><td>${esc(def.definition)}</td><td><code>${esc(currentValue(def))}</code></td><td>${def.fixed ? 'Fixed scanner rule' : `Edit here in Settings → Labels<br><code>${esc(def.setting)}</code>`}</td></tr>`).join('');
+      return `<h4 id="outside-buckets" class="mt-6 mb-3">Triage buckets: what counts as outside</h4>
+        <p class="fs-sm text-muted mb-4">The Overview/Governor <b>outside</b> number is open work excluded before it can enter the actionable band. Use this panel to see and change the owner-controlled rules.</p>
+        <div class="config-table-wrap mb-4">
+          <table class="config-table"><thead><tr><th>Bucket</th><th>Definition</th><th>Current rule</th><th>How to change</th></tr></thead><tbody>${rows}</tbody></table>
+        </div>
+        <div class="config-grid mb-5">
+          <div><div class="fs-sm mb-2"><b>needs-direction labels</b></div><p class="fs-xs text-muted mb-2">Maintainer direction required.</p>${renderHardSuppressEditor('needsDirection', 'needs-direction', 'project.issue_filter.hard_suppress_labels.needs_direction')}</div>
+          <div><div class="fs-sm mb-2"><b>needs-decision labels</b></div><p class="fs-xs text-muted mb-2">Maintainer decision required.</p>${renderHardSuppressEditor('needsDecision', 'needs-decision', 'project.issue_filter.hard_suppress_labels.needs_decision')}</div>
+          <div><div class="fs-sm mb-2"><b>needs-spec labels</b></div><p class="fs-xs text-muted mb-2">Spec or acceptance criteria required.</p>${renderHardSuppressEditor('needsSpec', 'needs-spec', 'project.issue_filter.hard_suppress_labels.needs_spec')}</div>
+        </div>`;
+    }
+
     function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
@@ -32225,6 +32296,7 @@ function burnAreaChart() {
         ? _configState.dirty.labels.writing_guide
         : (_configState.data.writingGuide || '');
       return `
+        ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
         <p style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-4);font-style:italic">Permanent labels cannot be removed. Hold labels also appear in the On Hold section of the dashboard.</p>
@@ -32237,7 +32309,7 @@ function burnAreaChart() {
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="list" data-arg2="cfg-label-input" title="Add this label to the exempt list">+ Add</button>
           </div>
         </div>
-        <h4 style="margin:18px 0 6px">Required labels (allow-list)</h4>
+        <h4 class="mt-6 mb-3">Required labels (allow-list)</h4>
         <p class="fs-sm text-muted mb-4">The opposite polarity: when this list is non-empty, agents may <b>only</b> initiate work on issues carrying at least one of these labels — "only work approved issues". Empty = every issue is eligible (the default). Exempt labels above still win on conflict; PRs and the Hold list are unaffected. Matching is exact (case-insensitive).</p>
         <div class="config-list">
           ${reqList || '<div class="fs-sm text-muted mb-3">No required labels — agents may work every actionable issue</div>'}
@@ -35554,7 +35626,11 @@ function burnAreaChart() {
         _configState.data.hooks[key].push(val);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (key === 'require') {
+        if (String(key).startsWith('hard:')) {
+          const bucket = String(key).slice(5);
+          const st = hardSuppressState();
+          stageHardSuppressLabels({ [bucket]: (st[bucket] || []).concat([val]) });
+        } else if (key === 'require') {
           if (!_configState.data.requireLabels) _configState.data.requireLabels = [];
           _configState.data.requireLabels.push(val);
           markDirty('labels', 'require_labels', _configState.data.requireLabels);
@@ -35585,7 +35661,11 @@ function burnAreaChart() {
         _configState.data.hooks[key].splice(index, 1);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (key === 'require') {
+        if (String(key).startsWith('hard:')) {
+          const bucket = String(key).slice(5);
+          const st = hardSuppressState();
+          stageHardSuppressLabels({ [bucket]: (st[bucket] || []).filter((_, i) => i !== index) });
+        } else if (key === 'require') {
           _configState.data.requireLabels.splice(index, 1);
           markDirty('labels', 'require_labels', _configState.data.requireLabels);
         } else if (key === 'reporter_login') {

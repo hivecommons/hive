@@ -281,6 +281,9 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"aria-describedby",
 		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
 		"These items are not actionable because this hive&apos;s filters exclude them",
+		"Triage buckets: what counts as outside",
+		"project.issue_filter.hard_suppress_labels.needs_direction",
+		"Fixed scanner rule",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("static/index.html missing %q", want)

@@ -102,6 +102,13 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"untrustedRequireLabelsSet": len(reporterTrust.UntrustedRequireLabels) > 0,
 		"knownAssociations":         config.KnownAuthorAssociations,
 	}
+	hardSuppress := cfg.Project.IssueFilter.HardSuppressLabels
+	hardSuppressPayload := map[string]any{
+		"needsHuman":     hardSuppress.EffectiveNeedsHuman(),
+		"needsDirection": hardSuppress.EffectiveNeedsDirection(),
+		"needsDecision":  hardSuppress.EffectiveNeedsDecision(),
+		"needsSpec":      hardSuppress.EffectiveNeedsSpec(),
+	}
 
 	// Build notifications — mask sensitive values like the old hive does.
 	notifications := s.governorNotificationsPayload()
@@ -126,6 +133,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// ONLY initiate work on issues carrying at least one of them. Edited
 		// on the same Labels tab so operators have one place for label policy.
 		"requireLabels":                  cfg.Project.IssueFilter.RequireLabels,
+		"hardSuppressLabels":             hardSuppressPayload,
 		"writingGuide":                   cfg.Project.WritingGuide,
 		"repos":                          repos,
 		"primaryRepo":                    primaryRepo,
@@ -578,9 +586,15 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	// that only touched the require list must not wipe the exempt list to
 	// empty, and vice versa.
 	var body struct {
-		Labels        *[]string `json:"labels"`
-		RequireLabels *[]string `json:"require_labels"`
-		WritingGuide  *string   `json:"writing_guide"`
+		Labels             *[]string `json:"labels"`
+		RequireLabels      *[]string `json:"require_labels"`
+		HardSuppressLabels *struct {
+			NeedsHuman     *[]string `json:"needs_human"`
+			NeedsDirection *[]string `json:"needs_direction"`
+			NeedsDecision  *[]string `json:"needs_decision"`
+			NeedsSpec      *[]string `json:"needs_spec"`
+		} `json:"hard_suppress_labels"`
+		WritingGuide *string `json:"writing_guide"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -632,6 +646,16 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.HardSuppressLabels != nil {
+		for _, labels := range []*[]string{body.HardSuppressLabels.NeedsHuman, body.HardSuppressLabels.NeedsDirection, body.HardSuppressLabels.NeedsDecision, body.HardSuppressLabels.NeedsSpec} {
+			if labels != nil {
+				if err := validateGovernorLabels(*labels); err != nil {
+					jsonError(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -668,6 +692,25 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// The require gate (project.issue_filter): empty list = filter off.
 		// Takes effect on the next enumeration via the scan client.
 		s.deps.Config.Project.IssueFilter.RequireLabels = *body.RequireLabels
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
+		}
+	}
+	if body.HardSuppressLabels != nil {
+		hs := s.deps.Config.Project.IssueFilter.HardSuppressLabels
+		if body.HardSuppressLabels.NeedsHuman != nil {
+			hs.NeedsHuman = trimNonEmpty(*body.HardSuppressLabels.NeedsHuman)
+		}
+		if body.HardSuppressLabels.NeedsDirection != nil {
+			hs.NeedsDirection = trimNonEmpty(*body.HardSuppressLabels.NeedsDirection)
+		}
+		if body.HardSuppressLabels.NeedsDecision != nil {
+			hs.NeedsDecision = trimNonEmpty(*body.HardSuppressLabels.NeedsDecision)
+		}
+		if body.HardSuppressLabels.NeedsSpec != nil {
+			hs.NeedsSpec = trimNonEmpty(*body.HardSuppressLabels.NeedsSpec)
+		}
+		s.deps.Config.Project.IssueFilter.HardSuppressLabels = hs
 		if s.deps.GHClient != nil {
 			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
 		}

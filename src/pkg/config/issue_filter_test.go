@@ -82,3 +82,18 @@ func TestIssueFilterEqual(t *testing.T) {
 		t.Error("two zero filters reported unequal")
 	}
 }
+
+func TestIssueFilterHardSuppressDefaultsAndOverrides(t *testing.T) {
+	var f IssueFilterConfig
+	if got := f.HardSuppressIssueBucket([]string{"needs-direction"}); got != DefaultNeedsDirectionLabel {
+		t.Fatalf("default bucket = %q, want %q", got, DefaultNeedsDirectionLabel)
+	}
+
+	f.HardSuppressLabels.NeedsDirection = []string{"direction-needed"}
+	if got := f.HardSuppressIssueBucket([]string{"needs-direction"}); got != "" {
+		t.Fatalf("default label matched after override: %q", got)
+	}
+	if got := f.HardSuppressIssueBucket([]string{"Direction-Needed"}); got != DefaultNeedsDirectionLabel {
+		t.Fatalf("override bucket = %q, want %q", got, DefaultNeedsDirectionLabel)
+	}
+}
