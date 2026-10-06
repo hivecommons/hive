@@ -141,6 +141,7 @@ func TestOverviewKPIProjectFiltersShareClassificationFunction(t *testing.T) {
 	summary := jsFunc(t, html, "overviewProjectFilterSummary")
 	predicate := jsFunc(t, html, "overviewProjectFilterRepoMatches")
 	apply := jsFunc(t, html, "overviewApplyKPIProjectFilter")
+	setHash := jsFunc(t, html, "overviewSetProjectFilterHash")
 	for _, want := range []string{
 		"overviewProjectFilterSummary(key, repos, issueSlices, prSlices)",
 		`data-action="overviewApplyKPIProjectFilter"`,
@@ -156,7 +157,7 @@ func TestOverviewKPIProjectFiltersShareClassificationFunction(t *testing.T) {
 	if !strings.Contains(predicate, "overviewProjectFilterMatchesEntry(entry, filter)") {
 		t.Fatal("overviewProjectFilterRepoMatches must filter individual issue/PR rows with the shared band predicate")
 	}
-	if !strings.Contains(apply, "#projects?band=") || !strings.Contains(html, "Filtered by: ${esc(filter.label)}") {
+	if !strings.Contains(apply, "overviewSetProjectFilterHash(key)") || !strings.Contains(setHash, "#projects?band=") || !strings.Contains(html, "Filtered by: ${esc(filter.label)}") {
 		t.Fatal("KPI project filters must be deep-linkable and visibly clearable")
 	}
 }
