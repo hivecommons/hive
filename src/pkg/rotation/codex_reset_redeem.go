@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,8 +65,9 @@ import (
 // share one Codex account; across that boundary the provider-side
 // idempotency key is the only protection, which is why each pool keeps its
 // own persisted key. A lock left behind by a crashed holder is taken over
-// once it is older than codexResetRedeemLockStale; the takeover renames the
-// stale file aside so only one taker can win it.
+// once it is older than codexResetRedeemLockStale. A persistent flock guard
+// serializes acquisition, stale takeover and release, and is held throughout
+// the attempt. Process death releases the guard; it is never unlinked.
 
 const (
 	codexResetRedeemStateSuffix = ".reset-redeem.json"
@@ -404,33 +406,43 @@ func (r *codexResetRedeemer) lock() (func(), bool) {
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		return nil, false
 	}
+	// Keep this inode on disk: unlinking a flock file lets different takers
+	// lock different inodes for the same path. Hold it until after release of
+	// the sentinel so no delayed stale taker can move a fresh owner's lock.
+	guard, err := os.OpenFile(path+".guard", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false
+	}
+	if err := syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = guard.Close()
+		return nil, false
+	}
+	unlock := func() {
+		_ = syscall.Flock(int(guard.Fd()), syscall.LOCK_UN)
+		_ = guard.Close()
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, fs.ErrExist) {
 		if fi, statErr := os.Stat(path); statErr == nil && time.Since(fi.ModTime()) > codexResetRedeemLockStale {
-			// Rename, never Remove: of several takers that all saw the same
-			// stale lock exactly one rename succeeds, so no taker can delete a
-			// fresh lock that another taker just created.
-			aside := path + ".stale-" + uuid.NewString()
-			if os.Rename(path, aside) != nil {
+			// All participating controllers hold the guard before mutating
+			// the sentinel, so a stale sentinel can now be removed safely.
+			if err := os.Remove(path); err != nil {
+				unlock()
 				return nil, false
 			}
-			if fi2, err2 := os.Stat(aside); err2 == nil && time.Since(fi2.ModTime()) <= codexResetRedeemLockStale {
-				// We moved a fresh lock that was created after our Stat; put it
-				// back (Link fails if the path is taken) and treat it as held.
-				_ = os.Link(aside, path)
-				_ = os.Remove(aside)
-				return nil, false
-			}
-			_ = os.Remove(aside)
 			f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		}
 	}
 	if err != nil {
+		unlock()
 		return nil, false
 	}
 	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	_ = f.Close()
-	return func() { _ = os.Remove(path) }, true
+	return func() {
+		_ = os.Remove(path)
+		unlock()
+	}, true
 }
 
 func (r *codexResetRedeemer) loadState() (codexResetRedeemState, error) {

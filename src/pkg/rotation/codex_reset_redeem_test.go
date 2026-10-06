@@ -527,6 +527,52 @@ func TestCodexResetRedeem_HeldLockHoldsAndStaleLockIsTakenOver(t *testing.T) {
 	}
 }
 
+// Aging a live holder's sentinel must not let a stale taker steal ownership.
+// This deterministically exercises the exclusion needed by stale takeover,
+// without depending on the scheduler to hit the Stat/rename race.
+func TestCodexResetRedeem_StaleSentinelCannotDisplaceLiveHolder(t *testing.T) {
+	dir := t.TempDir()
+	fake := &redeemFake{reply: redeemReply(`"reset"`)}
+	clock := newRedeemClock()
+	a := newTestRedeemer(dir, fake, clock)
+	b := newTestRedeemer(dir, fake, clock)
+	release, ok := a.lock()
+	if !ok {
+		t.Fatal("first controller must acquire the lock")
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	old := time.Now().Add(-2 * codexResetRedeemLockStale)
+	if err := os.Chtimes(a.lockPath(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if stolenRelease, ok := b.lock(); ok {
+		stolenRelease()
+		t.Fatal("a stale sentinel must not displace a live holder")
+	}
+	guardBefore, err := os.Stat(a.lockPath() + ".guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	release = nil
+	nextRelease, ok := b.lock()
+	if !ok {
+		t.Fatal("second controller must acquire after release")
+	}
+	defer nextRelease()
+	guardAfter, err := os.Stat(b.lockPath() + ".guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(guardBefore, guardAfter) {
+		t.Fatal("the flock guard inode must survive release and reacquisition")
+	}
+}
+
 // Many takers racing on one abandoned lock: exactly one may proceed.
 func TestCodexResetRedeem_StaleLockTakeoverRaceHasOneWinner(t *testing.T) {
 	dir := t.TempDir()
@@ -552,7 +598,9 @@ func TestCodexResetRedeem_StaleLockTakeoverRaceHasOneWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if _, ok := r.lock(); ok {
+			if release, ok := r.lock(); ok {
+				// Keep the winner held until every contender has finished.
+				t.Cleanup(release)
 				won.Add(1)
 			}
 		}()
