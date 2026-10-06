@@ -1,1 +1,0 @@
-- Fix the v5 tagged-release backstop so it primes Docker image publication for a busy branch tip instead of waiting indefinitely for a quiet hourly tick.
