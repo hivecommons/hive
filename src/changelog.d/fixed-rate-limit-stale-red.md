@@ -1,0 +1,1 @@
+- Fixed the dashboard GitHub API diagnostics card so reset-passed rate-limit snapshots stop rendering as exhausted and the row/pill colour on remaining quota.
