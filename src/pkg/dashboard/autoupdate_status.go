@@ -85,13 +85,14 @@ type AutoUpdateStatus struct {
 	LastUpdatedAt string `json:"lastUpdatedAt,omitempty"`
 	// NextUpdateAt is the RFC3339 time the hub expects the next promotion into
 	// this hive's release channel (#10257), relayed from the heartbeat upgrade
-	// policy. Additive and omitempty: absent means unknown (older hub, channel
-	// without a predictable ETA, or updates disabled/paused), never "no update
-	// coming". It may be in the past while a promotion gate holds.
-	NextUpdateAt string `json:"nextUpdateAt,omitempty"`
-	LastError    string `json:"lastError,omitempty"`
-	Attempts     int    `json:"attempts,omitempty"`
-	MaxAttempts  int    `json:"maxAttempts,omitempty"`
+	// policy. NextUpdateStatus distinguishes queued/none/unknown so a current
+	// stable hive can explicitly say no update is queued instead of going blank.
+	// It may be in the past while a promotion gate holds.
+	NextUpdateAt     string `json:"nextUpdateAt,omitempty"`
+	NextUpdateStatus string `json:"nextUpdateStatus,omitempty"`
+	LastError        string `json:"lastError,omitempty"`
+	Attempts         int    `json:"attempts,omitempty"`
+	MaxAttempts      int    `json:"maxAttempts,omitempty"`
 	// Detail is a human-friendly one-liner that always explains the state and,
 	// for a failure or unknown, WHY.
 	Detail string `json:"detail"`
@@ -167,6 +168,7 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 		st.Period = normalizeAutoUpdatePeriod(p.Schedule)
 		st.Paused = p.Paused
 		st.NextUpdateAt = strings.TrimSpace(p.NextUpdateAt)
+		st.NextUpdateStatus = strings.TrimSpace(p.NextUpdateStatus)
 		switch {
 		case p.HubManaged:
 			st.ManagedBy = autoUpdateManagedByHub
@@ -185,6 +187,7 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 
 	if !st.Enabled {
 		st.NextUpdateAt = ""
+		st.NextUpdateStatus = ""
 		st.State = autoUpdateStateDisabled
 		// Disabled is a deliberate configuration, not a fault, so it is not
 		// "unhealthy" — but it must never read as "up to date" either.
@@ -198,6 +201,7 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	}
 	if st.Paused {
 		st.NextUpdateAt = ""
+		st.NextUpdateStatus = ""
 		st.State = autoUpdateStatePaused
 		st.Healthy = true
 		st.Detail = "Automatic updates are paused fleet-wide by a hub admin; no new version is applied until the hub resumes spoke upgrades."
