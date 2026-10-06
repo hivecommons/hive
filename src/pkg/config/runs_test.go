@@ -121,3 +121,42 @@ func TestOMPBindingDefaultsOffAndModes(t *testing.T) {
 		t.Fatalf("parsed = %+v mode=%q", cfg.Runs.External.OMP, cfg.OMPBindingMode())
 	}
 }
+
+func TestVibeKanbanBindingDefaultsOffModesAndYAML(t *testing.T) {
+	var nilCfg *Config
+	if nilCfg.VibeKanbanBindingEnabled() || nilCfg.VibeKanbanBindingMode() != FlueBindingModeOff {
+		t.Fatal("nil config must be off")
+	}
+	var cfg Config
+	if cfg.VibeKanbanBindingEnabled() || cfg.VibeKanbanBindingMode() != FlueBindingModeOff {
+		t.Fatalf("zero config: enabled=%v mode=%q", cfg.VibeKanbanBindingEnabled(), cfg.VibeKanbanBindingMode())
+	}
+	cfg.Runs.External.VibeKanban.Enabled = true
+	if cfg.FlueBindingEnabled() || cfg.OMPBindingEnabled() || cfg.VibeKanbanBindingMode() != FlueBindingModeShadow {
+		t.Fatalf("vibe-kanban enabled leaked to other hosts: flue=%v omp=%v vk=%q", cfg.FlueBindingEnabled(), cfg.OMPBindingEnabled(), cfg.VibeKanbanBindingMode())
+	}
+	cases := []struct {
+		enabled bool
+		mode    string
+		want    string
+	}{
+		{false, "", FlueBindingModeOff},
+		{false, FlueBindingModeReportOnly, FlueBindingModeOff},
+		{true, "", FlueBindingModeShadow},
+		{true, " report-only ", FlueBindingModeReportOnly},
+		{true, "publish", FlueBindingModeOff},
+	}
+	for _, tc := range cases {
+		if got := (VibeKanbanBindingConfig{Enabled: tc.enabled, Mode: tc.mode}).EffectiveMode(); got != tc.want {
+			t.Errorf("enabled=%v mode=%q: got %q want %q", tc.enabled, tc.mode, got, tc.want)
+		}
+	}
+	src := "runs:\n  external:\n    vibe_kanban:\n      enabled: true\n      mode: report-only\n      mcp_command: npx -y vibe-kanban@latest --mcp\n      project_id: project-1\n      state_dir: /data/extwork/vibe-kanban\n      workflow_version: vibe-kanban/phase2\n"
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	v := cfg.Runs.External.VibeKanban
+	if !cfg.VibeKanbanBindingEnabled() || cfg.VibeKanbanBindingMode() != FlueBindingModeReportOnly || v.ProjectID != "project-1" || v.WorkflowVersion != "vibe-kanban/phase2" {
+		t.Fatalf("parsed = %+v mode=%q", v, cfg.VibeKanbanBindingMode())
+	}
+}
