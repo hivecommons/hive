@@ -343,9 +343,7 @@ func overviewKindEquationTitle(eq *FrontendActionableEquation) string {
 	if strings.EqualFold(eq.Kind, "PRs") {
 		what = "pull requests"
 	}
-	return strings.ToUpper("actionable "+eq.Kind) + " — " + what + " that can move without waiting.\n\n" +
-		"WHAT: The " + eq.Kind + " split of the shared Overview Actionable now set.\n\n" +
-		"HOW: " + eq.Text + ". Each open item is assigned once, in order: actionable, held, blocked/needs-human, or one outside reason. Confirm/close items are blocked/needs-human; draft PRs are outside. Claimed/in-progress work remains actionable unless it is in one of those excluded terms."
+	return strings.ToUpper("actionable "+eq.Kind) + " — " + what + " that can move without waiting."
 }
 
 func overviewEquationText(eq *FrontendActionableEquation) string {
@@ -365,18 +363,11 @@ func overviewEquationText(eq *FrontendActionableEquation) string {
 	return fmt.Sprintf("%d issues + %d PRs = %s", eq.OpenIssues, eq.OpenPRs, strings.Join(parts, " + "))
 }
 
-func overviewEquationTitle(eq *FrontendActionableEquation, totals FrontendOverviewTotals) string {
+func overviewEquationTitle(eq *FrontendActionableEquation, _ FrontendOverviewTotals) string {
 	if eq == nil {
 		return ""
 	}
-	lines := []string{"Open issue/PR partition: " + eq.Text}
-	if detail := overviewOutsideDetail("outside issues", totals.Issues.Breakdown); detail != "" {
-		lines = append(lines, detail)
-	}
-	if detail := overviewOutsideDetail("outside PRs", totals.PRs.Breakdown); detail != "" {
-		lines = append(lines, detail)
-	}
-	return strings.Join(lines, "\n")
+	return "Actionable now — work that can move without waiting."
 }
 
 func overviewOutsideDetail(prefix string, breakdown map[string]int) string {
