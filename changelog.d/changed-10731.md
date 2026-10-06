@@ -1,0 +1,1 @@
+- docs: record opt-in Codex reset redemption ruling and allow-list the guard test (#10731)
