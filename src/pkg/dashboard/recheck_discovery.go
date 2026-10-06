@@ -30,13 +30,25 @@ type recheckDiscoveryCollector struct {
 	client *http.Client
 }
 
+// collectRecheckDiscovery is the single outward discovery entry point for a
+// Spek recheck. It gathers exact-document snapshots (runs.spektacular.recheck.sources)
+// and typed findings (runs.spektacular.recheck.discovery) for the rewound
+// generation's Drift. Every HTTP read goes through the configured relay proxy
+// when one is declared; exact-document sources require it.
 func (s *Server) collectRecheckDiscovery(ctx context.Context, base Campaign, since time.Time) ([]knowledge.CampaignExternalEvidence, []knowledge.CampaignSourceFailure) {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return nil, nil
 	}
 	cfg := s.deps.Config.Runs.Spektacular
-	if !cfg.Recheck.Discovery.Enabled || len(cfg.Recheck.Discovery.Sources) == 0 {
+	typed := cfg.Recheck.Discovery.Enabled && len(cfg.Recheck.Discovery.Sources) > 0
+	exact := len(cfg.Recheck.Sources) > 0
+	if !typed && !exact {
 		return nil, nil
+	}
+	// Revalidate at use as well as at load: configuration overlays must not
+	// introduce an unvalidated destination or enable a direct fallback.
+	if err := s.deps.Config.ValidateRecheckDiscovery(); err != nil {
+		return nil, []knowledge.CampaignSourceFailure{{Name: "config", Reason: discoveryFailureReason(err)}}
 	}
 	timeout := cfg.DiscoveryTimeout()
 	if timeout > 0 {
@@ -44,12 +56,37 @@ func (s *Server) collectRecheckDiscovery(ctx context.Context, base Campaign, sin
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	var ghc *gh.Client
-	if s.deps.GHClient != nil {
-		ghc = s.deps.GHClient.GoGitHub()
+	var client *http.Client
+	if strings.TrimSpace(cfg.Recheck.DiscoveryProxy) != "" {
+		proxied, closeIdle, err := discoveryProxyClient(cfg.Recheck.DiscoveryProxy)
+		if err != nil {
+			return nil, []knowledge.CampaignSourceFailure{{Name: "config", Reason: discoveryFailureReason(err)}}
+		}
+		defer closeIdle()
+		client = proxied
 	}
-	collector := recheckDiscoveryCollector{cfg: cfg, gh: ghc, client: http.DefaultClient}
-	return collector.collect(ctx, base, since)
+	external := []knowledge.CampaignExternalEvidence{}
+	failures := []knowledge.CampaignSourceFailure{}
+	if exact {
+		items, failed := collectDiscoveryDocuments(ctx, cfg.Recheck.Sources, client)
+		external = append(external, items...)
+		failures = append(failures, failed...)
+	}
+	if typed {
+		var ghc *gh.Client
+		if s.deps.GHClient != nil {
+			ghc = s.deps.GHClient.GoGitHub()
+		}
+		feedClient := client
+		if feedClient == nil {
+			feedClient = http.DefaultClient
+		}
+		collector := recheckDiscoveryCollector{cfg: cfg, gh: ghc, client: feedClient}
+		items, failed := collector.collect(ctx, base, since)
+		external = append(external, items...)
+		failures = append(failures, failed...)
+	}
+	return external, failures
 }
 
 func (c recheckDiscoveryCollector) collect(ctx context.Context, base Campaign, since time.Time) ([]knowledge.CampaignExternalEvidence, []knowledge.CampaignSourceFailure) {

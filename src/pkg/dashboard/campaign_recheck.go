@@ -23,8 +23,8 @@ const (
 )
 
 // RecheckEvidenceSource is the extension point for evidence gathered before a
-// recheck revision starts. This PR implements only the codebase-head source;
-// external-source discovery is intentionally a follow-up.
+// recheck revision starts. Outward discovery is gathered separately by
+// collectRecheckDiscovery (recheck_discovery.go).
 type RecheckEvidenceSource interface {
 	Evidence(ctx context.Context, campaign Campaign, priorHead string) (CampaignDrift, error)
 }
@@ -380,6 +380,7 @@ func campaignExternalEvidenceFromKnowledge(in []knowledge.CampaignExternalEviden
 			URL:         ev.URL,
 			PublishedAt: formatRunTime(ev.PublishedAt),
 			Summary:     ev.Summary,
+			SHA256:      ev.SHA256,
 		})
 	}
 	return out
