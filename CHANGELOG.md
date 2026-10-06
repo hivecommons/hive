@@ -11,6 +11,45 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.137.0)
+
+### Added
+
+- Contributor quota guard: new local opt-in `HIVE_CODEX_AUTO_USE_BANKED_RESET` admits work below the weekly reserve (above 0%) when a fresh reading shows a banked rate-limit reset credit; short-term windows, manual pauses and stale/unknown readings are unchanged (#10597).
+- Contributor quota: with the local opt-in `HIVE_CODEX_AUTO_USE_BANKED_RESET` on, `hive-quota-publisher` now redeems one already-earned Codex rate-limit reset when a fresh reading shows the weekly window at 0% and a reset is banked, then re-reads the quota so the relay resumes only once a fresh reading clears its guard. Redemption is idempotent (a UUID key persisted in the pool directory before sending and reused across retries and restarts), serialized per pool by a lock file, never triggered by the reserve or short-term windows, backs off on `nothingToReset`/`noCredit`/errors/timeouts, and never buys credits, upgrades plans or enables overage (#10598, ADR-0021).
+- `issue_filter.reporter_trust` gains the opt-in `clanker_requested`, `clanker_requested_label` (default `clanker-requested`) and `clanker_requested_addendum` keys. While `clanker_requested` is on, a PR carrying the configured label is treated as held. Off by default; omitted keys change nothing ([#10777](https://github.com/hivecommons/hive/issues/10777), part of [#10766](https://github.com/hivecommons/hive/issues/10766)).
+- Added Overview/Governor outside-bucket explanations, docs, and Settings controls for triage bucket labels.
+- Spektacular rechecks can opt into bounded, read-only discovery of declared documents through a relay proxy, retaining source-labelled evidence on each revision without bypassing approval checkpoints.
+- Hive can now mirror one repository's admitted queue onto a local [vibe-kanban](https://github.com/BloopAI/vibe-kanban) board with `bin/vibe-kanban-mirror.js` ([#10641](https://github.com/hivecommons/hive/issues/10641)). The mirror is report-only and off by default. It reads `/api/contribute/queue` and `/api/contribute/fleet`, then creates or updates vibe-kanban Issues through the MCP stdio server: queued → To do, leased → In progress, operator-held → Cancelled. Each issue is tagged `hive` and keyed by a `[hive-work-key: …]` description trailer, so reruns are idempotent. Turn it on with `VIBE_KANBAN_MCP_CMD` and `VIBE_KANBAN_PROJECT_ID`; it needs no new credentials. Use `--dry-run` to preview the changes and `--once` to run a single pass. See `src/docs/vibe-kanban.md`.
+
+### Changed
+
+- docs: record opt-in Codex reset redemption ruling and allow-list the guard test (#10731)
+
+### Fixed
+
+- An agent no longer re-claims the same issue forever when nothing moves between its claims ([#10527](https://github.com/hivecommons/hive/issues/10527)). An agent claim lapses after `agent_ttl_s`, the issue went back into the work lists, and the next kick claimed it again, so an issue only a person could unblock showed as "claimed" for hours (#10512: `scanner` claimed at 15:50Z and again at 17:57Z with no commit, PR or label change in between). The claim ledger now remembers each agent's claims on an issue. When one agent's last `governor.claims.escalate_after_claims` claims (default `2`; negative turns the gate off) on a free issue were followed by no linked or referencing pull request, no referencing commit, no label or assignee change and no close/reopen, the issue is left out of every kick instead of being claimed a third time, labelled `needs-human`, and given one comment listing the claims and how each ended (ADR-0019). The claim machinery's own `claimed`/`preempted:*` labels and the gate's own `needs-human` do not count as progress; a person removing `needs-human` (or `/hive approve`) does, so the next claim goes ahead. If the issue timeline cannot be read, the claim is allowed.
+- A governor kick no longer claims, or posts a 🔒 claim comment on, every issue in the agent's work list every two hours ([#10527](https://github.com/hivecommons/hive/issues/10527)). The kick now only *lists* those issues: a 30-minute hold in the ledger, with no GitHub comment, that keeps relay contributors and other agents off them while the kick is live. The agent claim, with its comment and `claimed` label, is recorded on the agent's first start signal on an issue — its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming the issue — and only those claims count toward `escalate_after_claims`, so an issue that merely sat in a work list is never escalated.
+- A `hive/likely-done` issue is verified once instead of every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527), the #10509 pattern of eight near-identical verification comments). Once an agent has started on the issue after the merged pull request — its verification comment, then the reporter-confirmation request for a human-filed bug — the issue is withheld from kicks until a person (the reporter or a maintainer) comments, labels, assigns, closes or reopens it. If the issue timeline cannot be read, the issue is offered as before.
+- dashboard: Most effective models matches contributor PRs by full owner/repo, reports closed-PR and run-history coverage (reading the rotated run log) for 30d/All, shows — instead of 0% for run rates with no recorded runs, and no longer labels hosted Pi providers as local (#10687, #10688, #10689, #10690)
+- fix: do not claim dependency-blocked issues on kick (#10724)
+- dashboard: Overview tiles show reconciling math for totals (#10727)
+- fix: show stable next update status (#10729)
+- dashboard: restore top navbar and Overview tile layout (#10732)
+- dashboard: stop nesting a <button> inside the Overview KPI card tooltip (#10735)
+- dashboard: portal the version popover out of the sidebar so it can't be clipped (#10739)
+- dashboard: smooth the upgrade bee animation (persist across refreshes, composite-only motion) (#10741)
+- dashboard: ACMM Eval collapsed pill shows the current level only (#10743)
+- Fixed a race in the banked-reset redemption controller where two controllers taking over the same abandoned lock could both proceed and redeem twice with different idempotency keys; takeover is now atomic (#10774).
+- The hourly coverage gate now installs Node.js on self-hosted runners before Go tests that shell out to JavaScript harnesses, so dashboard and hub coverage are scored instead of failing with `node` missing ([#10747](https://github.com/hivecommons/hive/issues/10747)).
+- The post-merge DCO monitor now records the accepted maintainer waiver for v5 squash commit `a8104b0c`, clearing the protected-branch trailer alert for #10746.
+- The post-merge DCO monitor now records the accepted maintainer waivers for v5 squash commits `692d068f` and `b893b01c`, clearing the protected-branch trailer alert for #10767.
+- Fixed the dashboard navbar so left, centered running-agent, and right control zones stay distributed without clipping the agent strip.
+- Refuse automated claims on `needs-human` or held issues and release existing automated claims on the next cleanup tick, without disturbing human claims ([#10526](https://github.com/hivecommons/hive/issues/10526)).
+- Stable-channel promotion runs on GitHub-hosted runners again; the self-hosted image lacks `gh`, so every scheduled promotion since the lane move failed and `stable` stopped advancing (#10042).
+- The hub's stable-promotion `eligible_at` now reports when a build actually crossed the 24h soak line instead of drifting to "now" on every poll; the hub release card and spoke Version panel say "overdue since …" when that time has passed and promotion has not happened (#10042, #10187).
+- Stable promotion accepts a healthy maintained hive on any later `candidate` build as smoke evidence for an older eligible build, instead of only the exact current candidate; on busy merge days the exact-match rule left the gate with no evidence and `stable` never advanced (#10042).
+
 ## 2026-10-05 (v5.136.0)
 
 ### Added
