@@ -682,6 +682,9 @@ type FrontendAgent struct {
 	StallNudges            int    `json:"stallNudges,omitempty"`
 	ActionNudges           int    `json:"actionNudges,omitempty"`
 	TransientNudges        int    `json:"transientNudges,omitempty"`
+	// LastAction is the last issue or PR the agent acted on through the hive
+	// (#10925); see FrontendAgentLastAction.
+	LastAction *FrontendAgentLastAction `json:"lastAction,omitempty"`
 	// CIPollNudges (#9673) is the cumulative count of stop-polling nudges
 	// nudgeIfPollingCI has sent this agent, surfaced beside the other nudge
 	// counters so a fleet operator can tell whether an agent is still
