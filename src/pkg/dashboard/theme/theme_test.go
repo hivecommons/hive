@@ -190,7 +190,7 @@ func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
 		t.Fatalf("CSS custom layout guard: %v", err)
 	}
 	customIdx := strings.Index(css, `#oc-topbar{display:flex!important}`)
-	guardIdx := strings.Index(css, `body #oc-topbar.oc-topbar{position:fixed!important;`)
+	guardIdx := strings.Index(css, `body #oc-topbar.oc-topbar{--topbar-grid-columns:auto minmax(0,1fr) auto!important;position:fixed!important;`)
 	if customIdx < 0 || guardIdx < 0 {
 		t.Fatalf("theme CSS missing custom override or layout guard:\n%s", css)
 	}
