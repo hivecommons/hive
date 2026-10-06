@@ -33,6 +33,8 @@ github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
 github.com/hivecommons/hive/pkg/logscrub
 github.com/hivecommons/hive/pkg/mention
+# mergelane: serialized lane state view reads the merge-lane store (hivecommons/hive#10892).
+github.com/hivecommons/hive/pkg/mergelane
 github.com/hivecommons/hive/pkg/notify
 github.com/hivecommons/hive/pkg/outputschema
 github.com/hivecommons/hive/pkg/planning
