@@ -76,9 +76,11 @@ func TestInvalidMergeStrategyFailsValidationAndStopsAutoMerge(t *testing.T) {
 	cfg.ACMMLevel = &level
 	cfg.Project.RepoPolicies = []RepoPolicy{{Repo: "console", MergeStrategy: "hive-serialised"}}
 
-	err := cfg.Validate()
+	// No agents on purpose: RequireAgents=false so the merge_strategy check is
+	// the first thing that can fail.
+	err := cfg.ValidateWithOptions(ValidateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "console") || !strings.Contains(err.Error(), "hive-serialised") {
-		t.Fatalf("Validate() = %v, want error naming repo and value", err)
+		t.Fatalf("ValidateWithOptions() = %v, want error naming repo and value", err)
 	}
 	if cfg.RepoAutoMergeEnabled("console") {
 		t.Error("auto-merge must be off for a repo with an invalid merge_strategy")
