@@ -35,7 +35,11 @@ on:
       - 'config/**'
       - 'Justfile'
       - 'dashboard/openapi.json'
+      # release PRs touch only these; the required contexts must report — #10795
+      - 'CHANGELOG.md'
+      - 'changelog.d/**'
       - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/tagged-release.yml'
       # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
       - '.github/workflows/coverage-hourly.yml'
       - '.github/workflows/dco-post-merge.yml'
@@ -59,7 +63,11 @@ on:
       - 'config/**'
       - 'Justfile'
       - 'dashboard/openapi.json'
+      # release PRs touch only these; the required contexts must report — #10795
+      - 'CHANGELOG.md'
+      - 'changelog.d/**'
       - '.github/workflows/v2-tests.yml'
+      - '.github/workflows/tagged-release.yml'
       # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
       - '.github/workflows/coverage-hourly.yml'
       - '.github/workflows/dco-post-merge.yml'
