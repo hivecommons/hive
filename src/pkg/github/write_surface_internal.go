@@ -43,6 +43,12 @@ const (
 	// one-time hold-label migration puts under the new hold label
 	// (hive_hold_migration.go).
 	AuditActionHoldMigrationLabelAdded = "hold_migration_label_added"
+	// AuditActionReporterTrustWaitNoticed is recorded when the core poller
+	// posts the one-shot reporter-trust wait explanation comment.
+	AuditActionReporterTrustWaitNoticed = "reporter_trust_wait_noticed"
+	// AuditActionReporterTrustWaitCleared is recorded when the core poller
+	// removes a needs-triage label that its wait marker proves Hive added.
+	AuditActionReporterTrustWaitCleared = "reporter_trust_wait_cleared"
 )
 
 // Outcome values for the internal-writer audit entries' "outcome" pair.
@@ -71,5 +77,7 @@ func InternalWriteAuditActions() []string {
 		AuditActionFleetReportPosted,
 		AuditActionFleetReportRecovered,
 		AuditActionHoldMigrationLabelAdded,
+		AuditActionReporterTrustWaitNoticed,
+		AuditActionReporterTrustWaitCleared,
 	}
 }

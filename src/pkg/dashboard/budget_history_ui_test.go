@@ -42,7 +42,7 @@ func TestBudgetHistoryChartWiredIntoDashboard(t *testing.T) {
 	// which is exactly the event the chart exists to record).
 	for _, snippet := range []string{
 		"${budgetHistoryChart()}",
-		"() => fetchBudgetHistory().then(() => { setInterval(fetchBudgetHistory, HISTORY_REFRESH_MS); })",
+		"() => fetchBudgetHistory().then(() => { dashboardSetInterval('budget-history', fetchBudgetHistory, HISTORY_REFRESH_MS); })",
 		"fetchBudgetHistory(); // a reset closes a window",
 	} {
 		if !strings.Contains(html, snippet) {

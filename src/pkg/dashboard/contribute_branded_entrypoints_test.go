@@ -224,8 +224,8 @@ func TestContributeAgySurface(t *testing.T) {
 	if strings.Contains(body, `HOST_ONLY_BACKENDS=['other','agy']`) {
 		t.Error("agy must not be in HOST_ONLY_BACKENDS — the contributor image now ships the agy binary (#5048)")
 	}
-	if !strings.Contains(body, `var HOST_ONLY_BACKENDS=['other']`) {
-		t.Error("HOST_ONLY_BACKENDS must still cover 'other' — the entry that has no image by definition")
+	if !strings.Contains(body, `var HOST_ONLY_BACKENDS=['other','openhands']`) {
+		t.Error("HOST_ONLY_BACKENDS must cover 'other' and OpenHands, which is not in the stock contributor image")
 	}
 
 	// The host-only fallback (now scoped to "other") must still switch the
@@ -248,6 +248,23 @@ func TestContributeAgySurface(t *testing.T) {
 // contributor image; this page needs to surface the documented install/sign-in
 // steps, tile metadata, model flag, generated launch commands, and the
 // Kubernetes warning caused by omp staying out of K8S_HEADLESS_BACKENDS.
+func TestContributeOpenHandsOnboardingSurface(t *testing.T) {
+	body := renderContributePage(t)
+	for _, want := range []string{
+		`value="openhands"`,
+		`OpenHands (new experimental)</option>`,
+		`uv tool install openhands --python 3.12`,
+		`HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED`,
+		`openhands:{name:'OpenHands'`,
+		`openhands:'<svg viewBox="0 0 24 24"`,
+		`var HOST_ONLY_BACKENDS=['other','openhands']`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("OpenHands contributor surface missing %q", want)
+		}
+	}
+}
+
 func TestContributeOmpOnboardingSurface(t *testing.T) {
 	body := renderContributePage(t)
 
@@ -277,5 +294,8 @@ func TestContributeOmpOnboardingSurface(t *testing.T) {
 
 	if strings.Contains(body, "K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,omp:1") {
 		t.Error("omp must stay out of K8S_HEADLESS_BACKENDS — its one-shot pod contract is unverified")
+	}
+	if strings.Contains(body, "K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,openhands:1") {
+		t.Error("openhands must stay out of K8S_HEADLESS_BACKENDS — the stock pod image does not ship the CLI")
 	}
 }

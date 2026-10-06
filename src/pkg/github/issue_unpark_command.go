@@ -82,6 +82,12 @@ type IssueUnparkSweepOptions struct {
 	MaxActions int
 	// Audit, when set, is called once per un-parked issue.
 	Audit func(IssueUnparkEvent)
+	// LabelDriven reports whether a watched repo opted in to label-driven
+	// triage via project.repo_policies[].label_driven (hivecommons/hive#10537).
+	// On such a repo the sweep posts no "What to reply" notice and never
+	// removes a parking label; `/hive approve` and `/hive decision` get a
+	// one-line reply pointing at the labels instead. nil means no repo opts in.
+	LabelDriven func(repo string) bool
 }
 
 // IssueUnparkSweepResult reports what one pass did.
@@ -131,6 +137,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
+		labelDriven := opts.LabelDriven != nil && opts.LabelDriven(repo)
 		issues, err := c.listOpenIssuesForTaskListSweep(ctx, owner, repoName)
 		if err != nil {
 			return result, err
@@ -146,7 +153,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				continue
 			}
 			result.Seen++
-			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, result, opts.Audit)
+			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, result, opts.Audit)
 			if err != nil {
 				if c.logger != nil {
 					c.logger.Warn("unpark sweep skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
@@ -163,15 +170,19 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 }
 
 // tryUnparkIssue handles one parked issue: keep its "What to reply" comment
-// current, then answer the newest eligible command on it.
-func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
+// current, then answer the newest eligible command on it. On a label-driven
+// repo there is no notice and no label change: commands get a pointer to the
+// labels and prose assent gets no hint.
+func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
 	number := issue.GetNumber()
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
 		return false, err
 	}
-	if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), comments); err != nil {
-		return false, err
+	if !labelDriven {
+		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), comments); err != nil {
+			return false, err
+		}
 	}
 
 	answered := answeredUnparkCommentIDs(comments)
@@ -183,6 +194,21 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return false, nil
 	}
 	actor := safeGetLogin(candidate.GetUser())
+
+	if labelDriven {
+		body := unparkLabelDrivenReply
+		switch command.Kind {
+		case unparkCommandNone:
+			return false, nil
+		case unparkCommandHelp:
+			body = unparkLabelDrivenReply + "\n\n" + maintainerCommandReference()
+		}
+		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), body); err != nil {
+			return false, err
+		}
+		result.Replies++
+		return true, nil
+	}
 
 	switch command.Kind {
 	case unparkCommandHelp:
@@ -424,6 +450,10 @@ func isUnparkProseAssent(body string) bool {
 }
 
 const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
+
+// unparkLabelDrivenReply answers `/hive approve`, `/hive decision` and
+// `/hive help` on a repo with project.repo_policies[].label_driven set.
+const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human`, `needs-decision` and `needs-direction` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
 
 func renderUnparkAcceptedReply(actor, decision string) string {
 	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human`, `needs-decision` and `needs-direction` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",

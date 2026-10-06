@@ -1,0 +1,1 @@
+- Add opt-in outward discovery sources for Spektacular recheck revisions, surfacing bounded external evidence in drift metadata and the Campaigns dashboard.

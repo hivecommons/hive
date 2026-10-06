@@ -654,6 +654,19 @@ governor:
 #     binary: spektacular
 #     poll_interval_s: 30
 #     interview: human # human (default) pauses for dashboard answers; auto preserves headless self-answering.
+#     recheck:
+#       enabled: false
+#       default_interval: 168h
+#       max_delta_tasks: 50
+#       discovery:
+#         enabled: false
+#         timeout: 30s
+#         max_total_items: 100
+#         sources:
+#           - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
+#           - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
+#           - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
+#           - {kind: landscape, name: project-landscape, max_items: 20}
 #   checkpoints:
 #     spec: true        # false records finalized spec checkpoints as auto-approved by actor "auto".
 #     plan: true        # false auto-approves imported plans and records config_source in audit/timeline history.
@@ -852,9 +865,9 @@ dashboard:
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Contributor queue: "already done" no_work_needed verdicts are commented
 #   # and labeled so the issue stays out of re-offer until a maintainer removes
-#   # the label. Verified evidence can optionally be auto-closed when ACMM permits.
+#   # the label. Verified merged-PR evidence runs the normal completed close path.
 #   contribute_already_done_label: hive/already-done
-#   contribute_close_already_done: false
+#   contribute_close_already_done: false  # deprecated compatibility key
 #   contribute_already_done_hold_days: 30
 #
 # hive_id: my-hive

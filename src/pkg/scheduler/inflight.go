@@ -83,3 +83,12 @@ func (s *Scheduler) freeOfInflight(issues []github.Issue) []github.Issue {
 	free, _ := s.splitInflight(issues)
 	return free
 }
+
+// kickIssueRefs returns the issues a kick actually offers: not held by a
+// session and not dependency-blocked. The blocked footer tells the agent
+// "do NOT start these", so recording a claim for them (and posting the 🔒
+// comment on GitHub every kick) would contradict the kick itself.
+func (s *Scheduler) kickIssueRefs(issues []github.Issue) []github.Issue {
+	ready, _ := partitionBlockedIssues(s.freeOfInflight(issues))
+	return ready
+}

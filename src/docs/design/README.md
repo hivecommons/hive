@@ -122,9 +122,9 @@ that status is the thing to check before treating a page as current behaviour:
   generations code and the session-cookie domain have landed
   (`src/pkg/hub/hub_generations*.go`, `hub_cookie_generations.go`); the
   remaining per-domain adoptions listed under "Follow-on PRs" are still pending.
-- [Wrapped master delivery to pull-only spokes](master-delivery-wrapped.md) —
+- [Wrapped master delivery to push-reported spokes](master-delivery-wrapped.md) —
   **design only**. Read it after master-key-rotation.md: rotation is complete on
-  the hub and delivers nothing to the two thirds of the fleet on pull-only
+  the hub and delivers nothing to the two thirds of the fleet on push-reported
   clusters, which the hub cannot write to by design. Records Option D — the spoke
   generates a keypair, publishes the public half over its own outbound heartbeat,
   and the hub seals each new master to it — and why Options A and B were
@@ -215,7 +215,7 @@ that status is the thing to check before treating a page as current behaviour:
   The first inbound GitHub trigger: a human summons an agent by mentioning the
   App on an issue or PR, mirroring the Linear agent-session path
   (`pkg/linearagent`) that already exists. Poll-first transport so it works on
-  pull-only spokes, a mention grammar with `ask <agent>` routing under the
+  push-reported spokes, a mention grammar with `ask <agent>` routing under the
   `linear.session_agent` resolution rule, a kick built like the Linear
   responder's, replies through `Converse` on the existing watcher write path
   with no new outbound surface, and seven guards each mapped to a mechanism

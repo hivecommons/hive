@@ -165,6 +165,7 @@ The watsonx path uses the same gateway machinery: configure the gateway endpoint
 | --- | --- | --- |
 | `401` or repeated gateway auth errors | Missing/stale API key or wrong LiteLLM virtual key | Rotate the key, update the env/file reference, restart or reload the hive. |
 | Model dropdown empty or unverified | `/v1/models` unreachable or blocked | Check endpoint URL, network policy, TLS CA bundle, and gateway logs. |
+| Test connection says a proxy refused the request | The Hive pod reached an HTTP proxy, ingress, WAF, VPN boundary, or load balancer in front of the gateway before LiteLLM evaluated the key. The diagnostic quotes the observed `Server` header (for example `awselb/2.0`) and content type; that identifies the fronting proxy class, not its owner or rules. | Allow the Hive cluster's egress IPs/network path through the gateway's ELB/WAF/VPN/allow-list, or configure an endpoint reachable from the cluster. This is outside Hive's control; compare the dashboard's HTTPS_PROXY/NO_PROXY egress note with the path your laptop uses. |
 | Agent starts but every prompt fails | Endpoint does not implement OpenAI chat completions for the selected model | Select a chat-capable model or fix gateway routing. |
 | Connection refused / timeout | Service name or port is wrong, or NetworkPolicy blocks it | From the Hive pod, curl the gateway health and `/v1/models` endpoints. |
 | Model rejected despite discovery | The agent model differs from the gateway entitlement name | Use the exact model ID returned by `/v1/models`; Hive passes it through verbatim. |

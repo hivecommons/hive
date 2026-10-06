@@ -10,8 +10,8 @@
 
 set -euo pipefail
 
-INPUT_FILE="/var/run/hive-metrics/actionable.json"
-LOG="/var/log/kick-agents.log"
+INPUT_FILE="${HIVE_ACTIONABLE_FILE:-/var/run/hive-metrics/actionable.json}"
+LOG="${HIVE_CLASSIFIER_LOG:-/var/log/kick-agents.log}"
 
 PROJECT_YAML="${HIVE_PROJECT_YAML:-/etc/hive/hive-project.yaml}"
 if [ ! -f "$PROJECT_YAML" ]; then

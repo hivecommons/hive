@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // Tests for hivecommons/hive#8380: an issue someone has CLAIMED on the issue
-// itself — a `hive-claim` marker comment or an assignee — is withheld from the
+// itself — a `hive:claim` marker comment or an assignee — is withheld from the
 // contribute queue while the claim is live, released when it expires, and
 // invisible while governor.claims.enabled is off. A relay contributor that
 // takes a lease asserts its own claim: on the issue when its tier may write
@@ -73,15 +75,29 @@ func issueClaimConn(tier string) *ContributorConnection {
 // claimRecorder is the forge seam stand-in: it records every claim comment
 // the hub posts, or fails them on demand.
 type claimRecorder struct {
-	mu    sync.Mutex
-	posts []claimPost
-	fail  error
+	mu      sync.Mutex
+	posts   []claimPost
+	labels  []claimLabelPost
+	removed []claimLabelRemove
+	fail    error
 }
 
 type claimPost struct {
 	repo   string
 	number int
 	body   string
+}
+
+type claimLabelPost struct {
+	repo   string
+	number int
+	labels []string
+}
+
+type claimLabelRemove struct {
+	repo   string
+	number int
+	label  string
 }
 
 func (r *claimRecorder) CreateIssueComment(_ context.Context, repo string, number int, body string) error {
@@ -94,10 +110,36 @@ func (r *claimRecorder) CreateIssueComment(_ context.Context, repo string, numbe
 	return nil
 }
 
+func (r *claimRecorder) AddLabels(_ context.Context, repo string, number int, labels []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.labels = append(r.labels, claimLabelPost{repo: repo, number: number, labels: append([]string(nil), labels...)})
+	return nil
+}
+
+func (r *claimRecorder) RemoveLabel(_ context.Context, repo string, number int, label string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.removed = append(r.removed, claimLabelRemove{repo: repo, number: number, label: label})
+	return nil
+}
+
 func (r *claimRecorder) all() []claimPost {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]claimPost(nil), r.posts...)
+}
+
+func (r *claimRecorder) allLabels() []claimLabelPost {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]claimLabelPost(nil), r.labels...)
+}
+
+func (r *claimRecorder) allRemovedLabels() []claimLabelRemove {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]claimLabelRemove(nil), r.removed...)
 }
 
 // A live claim withholds the issue from assignment and from the ready queue,
@@ -273,6 +315,10 @@ func TestIssueClaim_AgentClaimPostedOnlyAtCommentCapableTier(t *testing.T) {
 				if len(posts) != 1 || posts[0].repo != issueClaimRepoFull || posts[0].number != claimedNumber {
 					t.Fatalf("expected one claim comment on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, posts)
 				}
+				labels := recorder.allLabels()
+				if len(labels) != 1 || labels[0].repo != issueClaimRepoFull || labels[0].number != claimedNumber || strings.Join(labels[0].labels, ",") != "claimed" {
+					t.Fatalf("expected claimed label mirror on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, labels)
+				}
 				parsed, ok := issueclaim.ParseMarker(posts[0].body)
 				if !ok || parsed.Identity != "relay-bot" || !parsed.ExpiresAt.Equal(claim.ExpiresAt.Truncate(time.Second)) {
 					t.Fatalf("posted comment must carry a parseable marker for the same claim: ok=%v %+v body=%q", ok, parsed, posts[0].body)
@@ -283,6 +329,9 @@ func TestIssueClaim_AgentClaimPostedOnlyAtCommentCapableTier(t *testing.T) {
 			} else {
 				if len(posts) != 0 {
 					t.Fatalf("tier %s must not comment, posted %+v", tc.tier, posts)
+				}
+				if labels := recorder.allLabels(); len(labels) != 0 {
+					t.Fatalf("tier %s must not label without a claim comment, labeled %+v", tc.tier, labels)
 				}
 				if claim.Source != issueclaim.SourceLease {
 					t.Errorf("a lease-only claim reports source %q, want %q", claim.Source, issueclaim.SourceLease)
@@ -297,6 +346,59 @@ func TestIssueClaim_AgentClaimPostedOnlyAtCommentCapableTier(t *testing.T) {
 				t.Fatalf("lease claim = %+v, want claimant relay-bot, expiry %v, posted %v", l, claim.ExpiresAt, tc.posted)
 			}
 		})
+	}
+}
+
+func TestIssueClaim_RankedLedgerSuppressesLegacyClaimComment(t *testing.T) {
+	hub, s := covK2Hub(t)
+	enableIssueClaims(s)
+	recorder := &claimRecorder{}
+	hub.claimCommenter = recorder
+	l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.deps.IssueClaims = l
+	c := issueClaimConn("contributor")
+	now := time.Now()
+	if err := hub.recordLeaseForKey(identityOf(c), "task-ledger", issueClaimRepoFull, claimedNumber, "", "contributor", 1, now); err != nil {
+		t.Fatalf("recordLease: %v", err)
+	}
+	hub.claimIssueForContributor(c, issueClaimRepoFull, claimedNumber)
+
+	claim, posted := hub.recordAgentClaim(context.Background(), c, "task-ledger", issueClaimRepoFull, claimedNumber, now)
+	if posted {
+		t.Fatal("legacy claim writer posted even though the ranked ledger owns the claim comment")
+	}
+	if claim.Source != issueclaim.SourceMarker {
+		t.Fatalf("ledger-backed claim source = %q, want marker", claim.Source)
+	}
+	if posts := recorder.all(); len(posts) != 0 {
+		t.Fatalf("legacy writer posted duplicate comments: %+v", posts)
+	}
+	if labels := recorder.allLabels(); len(labels) != 0 {
+		t.Fatalf("legacy writer applied duplicate labels: %+v", labels)
+	}
+}
+
+func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
+	hub, s := covK2Hub(t)
+	enableIssueClaims(s)
+	recorder := &claimRecorder{}
+	hub.claimCommenter = recorder
+	c := issueClaimConn("contributor")
+	now := time.Now()
+	if err := hub.recordLeaseForKey(identityOf(c), "task-legacy", issueClaimRepoFull, claimedNumber, "", "contributor", 1, now); err != nil {
+		t.Fatalf("recordLease: %v", err)
+	}
+	if _, posted := hub.recordAgentClaim(context.Background(), c, "task-legacy", issueClaimRepoFull, claimedNumber, now); !posted {
+		t.Fatal("legacy claim writer did not post")
+	}
+
+	hub.releaseClaimForLease(identityOf(c), issueClaimRepoFull+"#353", "done")
+	removed := recorder.allRemovedLabels()
+	if len(removed) != 1 || removed[0].repo != issueClaimRepoFull || removed[0].number != claimedNumber || removed[0].label != "claimed" {
+		t.Fatalf("legacy claimed label removals = %+v", removed)
 	}
 }
 
@@ -342,6 +444,9 @@ func TestIssueClaim_SelectTaskPostsClaimForAssignedIssue(t *testing.T) {
 	posts := recorder.all()
 	if len(posts) != 1 || posts[0].repo != issueClaimRepoFull || posts[0].number != claimedNumber {
 		t.Fatalf("expected one claim comment on the assigned issue, got %+v", posts)
+	}
+	if labels := recorder.allLabels(); len(labels) != 1 || strings.Join(labels[0].labels, ",") != "claimed" {
+		t.Fatalf("expected claimed label mirror on the assigned issue, got %+v", labels)
 	}
 	parsed, ok := issueclaim.ParseMarker(posts[0].body)
 	if !ok {

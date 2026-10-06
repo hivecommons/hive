@@ -2,9 +2,13 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -23,6 +27,7 @@ type StablePromotionState struct {
 type StablePromotionBuild struct {
 	SHA        string `json:"sha,omitempty"`
 	Digest     string `json:"digest,omitempty"`
+	Generation int    `json:"generation,omitempty"`
 	BuiltAt    string `json:"built_at,omitempty"`
 	PromotedAt string `json:"promoted_at,omitempty"`
 }
@@ -44,6 +49,7 @@ type StablePromotionStatus struct {
 	Candidate       StablePromotionBuild    `json:"candidate"`
 	Stable          StablePromotionBuild    `json:"stable"`
 	EligibleAt      *string                 `json:"eligible_at"`
+	EligibleBuild   *StablePromotionBuild   `json:"eligible_build,omitempty"`
 	MaintainedHives []MaintainedHiveSummary `json:"maintained_hives,omitempty"`
 }
 
@@ -104,25 +110,153 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 			if imageSHA := channelRevisionSHA(ReleaseChannelCandidate, s.logger); imageSHA != "" {
 				sha = imageSHA
 			}
-			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, BuiltAt: t.CommittedAt}
-			if eligible := stablePromotionEligibleAt(t.CommittedAt); eligible != "" {
-				status.EligibleAt = &eligible
-			}
+			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelCandidate, s.logger), BuiltAt: t.CommittedAt}
 		case ReleaseChannelStable:
 			sha := t.SHA
 			if imageSHA := channelRevisionSHA(ReleaseChannelStable, s.logger); imageSHA != "" {
 				sha = imageSHA
 			}
-			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, PromotedAt: t.CommittedAt}
+			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, s.logger), PromotedAt: t.CommittedAt}
+		}
+	}
+	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, time.Now().UTC(), s.logger); eligibleAt != "" {
+		status.EligibleAt = &eligibleAt
+		if build.Generation != 0 || build.SHA != "" {
+			status.EligibleBuild = &build
+		}
+	} else if status.Candidate.Generation > status.Stable.Generation {
+		if eligible := stablePromotionEligibleAt(status.Candidate.BuiltAt); eligible != "" {
+			status.EligibleAt = &eligible
+			candidate := status.Candidate
+			status.EligibleBuild = &candidate
 		}
 	}
 	status.MaintainedHives = s.maintainedCandidateHives(status.Candidate)
 	return status
 }
 
-// stablePromotionEligibleAt is when the current candidate's 24-hour soak
-// (rule 1 in docs/stable-soak-policy.md) is satisfied for a candidate built at
-// builtAt, RFC3339 UTC, or "" when builtAt is unknown.
+type stablePromotionWorkflowRun struct {
+	RunNumber  int    `json:"run_number"`
+	HeadSHA    string `json:"head_sha"`
+	UpdatedAt  string `json:"updated_at"`
+	CreatedAt  string `json:"created_at"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+const stablePromotionRunsPerPage = 100
+const stablePromotionRunPages = 5
+
+// stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
+// through stablePromotionRuns, which caches the answer.
+var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
+	client := &http.Client{Timeout: 5 * time.Second}
+	var runs []stablePromotionWorkflowRun
+	for page := 1; page <= stablePromotionRunPages; page++ {
+		runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=%d&page=%d", githubAPIBase, stablePromotionRunsPerPage, page)
+		req, err := http.NewRequest(http.MethodGet, runsURL, nil)
+		if err != nil {
+			return runs
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		authGitHubRequest(req)
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
+			return runs
+		}
+		var body struct {
+			WorkflowRuns []stablePromotionWorkflowRun `json:"workflow_runs"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
+			return runs
+		}
+		if err != nil {
+			logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
+			return runs
+		}
+		if len(body.WorkflowRuns) == 0 {
+			break
+		}
+		runs = append(runs, body.WorkflowRuns...)
+		if len(body.WorkflowRuns) < stablePromotionRunsPerPage {
+			break
+		}
+	}
+	if runs == nil {
+		runs = []stablePromotionWorkflowRun{}
+	}
+	return runs
+}
+
+// stablePromotionEligibleBuild returns the newest verified build newer than
+// stableGeneration that has already soaked (eligible now), or else the
+// verified build that will finish soaking soonest and when. Runs and GHCR
+// verifications are cached, and at most stablePromotionMaxVerifiedRuns runs
+// are verified per call.
+func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
+	type pending struct {
+		run      stablePromotionWorkflowRun
+		built    time.Time
+		eligible time.Time
+	}
+	var soaked, soaking []pending
+	for _, run := range stablePromotionRuns(logger) {
+		if run.Status != "" && run.Status != "completed" {
+			continue
+		}
+		if run.Conclusion != "" && run.Conclusion != "success" {
+			continue
+		}
+		if run.RunNumber <= stableGeneration {
+			continue
+		}
+		builtAt := run.UpdatedAt
+		if builtAt == "" {
+			builtAt = run.CreatedAt
+		}
+		built, err := time.Parse(time.RFC3339, builtAt)
+		if err != nil {
+			continue
+		}
+		p := pending{run: run, built: built.UTC(), eligible: built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC()}
+		if !p.eligible.After(now) {
+			soaked = append(soaked, p)
+		} else {
+			soaking = append(soaking, p)
+		}
+	}
+	// Runs arrive newest-first; prefer the newest soaked build.
+	sort.SliceStable(soaked, func(i, j int) bool { return soaked[i].run.RunNumber > soaked[j].run.RunNumber })
+	sort.SliceStable(soaking, func(i, j int) bool { return soaking[i].eligible.Before(soaking[j].eligible) })
+
+	verified := 0
+	for i, group := range [][]pending{soaked, soaking} {
+		for _, p := range group {
+			if verified >= stablePromotionMaxVerifiedRuns {
+				return StablePromotionBuild{}, ""
+			}
+			verified++
+			short := shortSHA(p.run.HeadSHA)
+			v := stablePromotionVerifyBuild(p.run.RunNumber, short, logger)
+			if !v.ok {
+				continue
+			}
+			build := StablePromotionBuild{SHA: short, Digest: v.digest, Generation: p.run.RunNumber, BuiltAt: p.built.Format(time.RFC3339)}
+			if i == 0 {
+				return build, now.UTC().Format(time.RFC3339)
+			}
+			return build, p.eligible.Format(time.RFC3339)
+		}
+	}
+	return StablePromotionBuild{}, ""
+}
+
+// stablePromotionEligibleAt is when a build crosses the stable channel's
+// 24-hour line, or "" when builtAt is unknown.
 func stablePromotionEligibleAt(builtAt string) string {
 	if builtAt == "" {
 		return ""
@@ -135,11 +269,10 @@ func stablePromotionEligibleAt(builtAt string) string {
 }
 
 // stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same current-candidate soak rule the
-// release-channel block's eligible_at uses, so the spoke and the hub card
-// cannot disagree. Returns "" (unknown) when stable auto-promotion is
-// paused, either channel is unresolved, or nothing is queued (candidate and
-// stable are the same build).
+// stable channel (#10256), from the same "stable chases candidate and is always
+// 24 hours behind it" rule the release-channel block's eligible_at uses, so
+// the spoke and the hub card cannot disagree. Returns "" (unknown) when stable
+// auto-promotion is paused, either channel is unresolved, or nothing is queued.
 func stableNextPromotionAt(targets []ChannelTarget) string {
 	if !loadStablePromotionState().AutoPromote {
 		return ""
@@ -173,6 +306,17 @@ func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) [
 		}
 	}
 	return out
+}
+
+// stablePromotionFromTargets returns the status channelTargetsWithStablePromotion
+// already attached to the stable row, computing it only when there is none.
+func (s *HubServer) stablePromotionFromTargets(targets []ChannelTarget) StablePromotionStatus {
+	for _, t := range targets {
+		if t.Channel == ReleaseChannelStable && t.StablePromotion != nil {
+			return *t.StablePromotion
+		}
+	}
+	return s.stablePromotionStatus(targets)
 }
 
 func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []MaintainedHiveSummary {

@@ -126,14 +126,14 @@ func TestRealInClusterStillUsesServiceAccount(t *testing.T) {
 	}
 }
 
-// TestUnreachableRemoteClusterUnchanged pins the pre-existing pull-only
+// TestUnreachableRemoteClusterUnchanged pins the pre-existing push-reported
 // behaviour so this change is provably additive: a non-InCluster cluster the
 // hub cannot reach already aimed at the sentinel, and still must.
 func TestUnreachableRemoteClusterUnchanged(t *testing.T) {
 	pullOnly := &ClusterConfig{ID: "vllm-d", PullOnly: true, KubeconfigPath: "/etc/hive/kubeconfigs/vllm-d"}
 	argv := kubectlArgsForCluster(pullOnly, "get", "ns")
 	if got := flagValue(argv, "--kubeconfig"); got != unreachableKubeconfigSentinel {
-		t.Errorf("pull-only cluster --kubeconfig = %q, want sentinel %q", got, unreachableKubeconfigSentinel)
+		t.Errorf("push-reported cluster --kubeconfig = %q, want sentinel %q", got, unreachableKubeconfigSentinel)
 	}
 
 	reachable := &ClusterConfig{ID: "a-ks-wec2", KubeconfigPath: "/etc/hive/kubeconfigs/a-ks-wec2", Context: "wec2"}

@@ -102,19 +102,20 @@ const (
 // production sandbox, deny-list, and refusal helpers; this table is the join
 // that makes those tests exhaustive over the production backend registry.
 var localBackendPostures = map[string]localConfinementPosture{
-	"claude":   postureSandboxed,
-	"copilot":  postureSandboxed,
-	"goose":    postureRefusalGated,
-	"codex":    postureSandboxed,
-	"agy":      postureRefusalGated,
-	"bob":      postureRefusalGated,
-	"pi":       postureRefusalGated,
-	"aider":    postureRefusalGated,
-	"litellm":  postureSandboxed,
-	"opencode": postureDenylisted,
-	"kilo":     postureRefusalGated,
-	"muse":     postureSandboxed,
-	"omp":      postureRefusalGated,
+	"claude":    postureSandboxed,
+	"copilot":   postureSandboxed,
+	"goose":     postureRefusalGated,
+	"codex":     postureSandboxed,
+	"agy":       postureRefusalGated,
+	"bob":       postureRefusalGated,
+	"pi":        postureRefusalGated,
+	"aider":     postureRefusalGated,
+	"litellm":   postureSandboxed,
+	"opencode":  postureDenylisted,
+	"kilo":      postureRefusalGated,
+	"muse":      postureSandboxed,
+	"omp":       postureRefusalGated,
+	"openhands": postureRefusalGated,
 }
 
 func shellKnownLocalBackends(t *testing.T) []string {
@@ -512,7 +513,7 @@ func TestLocalModeBannerNamesCopilotSandbox(t *testing.T) {
 func TestBackendsConfDocumentsWhyUnconfinedBackendsHaveNoWiring(t *testing.T) {
 	src := backendsConfSource(t)
 	for _, want := range []string{
-		"goose, agy, bob, pi, aider, kilo, and omp expose no OS-level sandbox",
+		"goose, agy, bob, pi, aider, kilo, omp, and openhands expose no OS-level sandbox",
 		"unconfined_local_backend_env_var",
 		"unconfined_local_perm_flag_shell",
 	} {

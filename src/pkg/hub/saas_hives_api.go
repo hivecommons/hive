@@ -196,6 +196,12 @@ type MyHiveEntry struct {
 	CommitsBehindTarget *int   `json:"commitsBehindTarget,omitempty"`
 	BehindTargetRef     string `json:"behindTargetRef,omitempty"`
 	BehindTargetSHA     string `json:"behindTargetSHA,omitempty"`
+	// Channel-image target details. Present for release-channel rows so the
+	// dashboard can distinguish "latest published channel image" from "newer
+	// git commits still awaiting an immutable image/tag".
+	BehindTargetFloatingSHA             string `json:"behindTargetFloatingSHA,omitempty"`
+	BehindTargetPendingImageCommits     int    `json:"behindTargetPendingImageCommits,omitempty"`
+	BehindTargetVerificationUnavailable bool   `json:"behindTargetVerificationUnavailable,omitempty"`
 
 	// InactiveAgents is how many of this hive's agents are RUNNING but not
 	// doing any work — session gone, sitting on a login prompt, or producing
@@ -692,6 +698,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if bt := s.behindTargetFor(&result[i].RegistryEntry, result[i].TrackedChannel); bt.SHA != "" {
 			result[i].BehindTargetRef = bt.Ref
 			result[i].BehindTargetSHA = bt.SHA
+			if bt.FloatingSHA != "" && !sameCommit(bt.FloatingSHA, bt.SHA) {
+				result[i].BehindTargetFloatingSHA = bt.FloatingSHA
+			}
+			result[i].BehindTargetPendingImageCommits = bt.PendingImageCommits
+			result[i].BehindTargetVerificationUnavailable = bt.VerificationUnavailable
 			if count, known := commitsBehindTarget(result[i].GitHash, bt.SHA, s.logger); known {
 				result[i].CommitsBehindTarget = &count
 			}
@@ -841,7 +852,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
-	stablePromotion := s.stablePromotionStatus(channelTargets)
+	stablePromotion := s.stablePromotionFromTargets(channelTargets)
 	resp := map[string]any{
 		"hives": hivesView,
 		// The fleet average backs the reference polygon drawn behind every

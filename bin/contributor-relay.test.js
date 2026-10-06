@@ -1467,6 +1467,44 @@ test('muse headless argv uses `muse exec` with the prompt as a trailing position
   } finally { teardown(relay); }
 });
 
+test('openhands headless argv never carries --model and maps AGENT_MODEL to LLM_MODEL', () => {
+  // OpenHands has no --model flag: an argv --model would be rejected by its
+  // argparse (exit 2) and the task would be reported failed. The model
+  // travels as LLM_MODEL in the environment, which the CLI only honours with
+  // --override-with-envs (the perm flags backends.conf supplies).
+  const relay = loadRelay({
+    backend: 'openhands', mode: 'headless', model: 'anthropic/claude-sonnet-4-6',
+    backendPerm: '--always-approve --override-with-envs',
+  });
+  try {
+    const a = relay.buildHeadlessArgv('fix the flaky test');
+    assert.equal(a.bin, 'openhands');
+    assert.ok(!a.args.includes('--model'), `openhands must not receive --model: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('--override-with-envs'), `openhands lost --override-with-envs: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('--always-approve'), `openhands lost its unattended approval flag: ${JSON.stringify(a.args)}`);
+    assert.deepStrictEqual(a.args.slice(-3), ['--headless', '-t', 'fix the flaky test']);
+    assert.ok(relay.NO_MODEL_FLAG_BACKENDS.includes('openhands'));
+    const env = relay.headlessChildEnv();
+    assert.equal(env.LLM_MODEL, 'anthropic/claude-sonnet-4-6', 'AGENT_MODEL must surface as LLM_MODEL');
+  } finally { teardown(relay); }
+});
+
+test('openhands headless env leaves an explicit LLM_MODEL alone and is a no-op for other backends', () => {
+  const pinned = loadRelay({ backend: 'openhands', mode: 'headless', model: 'anthropic/claude-sonnet-4-6' });
+  const prior = process.env.LLM_MODEL;
+  process.env.LLM_MODEL = 'openai/gpt-5';
+  try {
+    assert.equal(pinned.headlessChildEnv().LLM_MODEL, 'openai/gpt-5', 'an operator-pinned LLM_MODEL must win');
+  } finally {
+    if (prior === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = prior;
+    teardown(pinned);
+  }
+  const other = loadRelay({ backend: 'muse', mode: 'headless', model: 'some-model' });
+  try {
+    assert.strictEqual(other.headlessChildEnv(), process.env, 'non-openhands backends must not get a copied env');
+  } finally { teardown(other); }
+});
+
 test('muse headless argv carries --reasoning-effort exactly once', () => {
   // The effort is assembled in two places (buildLaunchCommand for the
   // interactive path, buildHeadlessArgv for the one-shot path). A stray
@@ -4187,6 +4225,9 @@ test('buildHeadlessArgv maps each supported backend to its one-shot invocation',
     { backend: 'agy', tail: ['-p', PROMPT] },
     // Pi has a print/JSON one-shot path and requires a canonical selection.
     { backend: 'pi', model: 'openai/gpt-5', tail: ['--print', '--mode', 'json', PROMPT] },
+    // openhands --headless -t "<prompt>" — the OpenHands CLI's documented
+    // non-interactive entry point; headless is its only hive launch mode.
+    { backend: 'openhands', tail: ['--headless', '-t', PROMPT] },
     // Interactive-TUI backend with no known one-shot entry point.
     { backend: 'bob', tail: null },
   ]) {

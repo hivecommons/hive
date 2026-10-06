@@ -13,7 +13,9 @@ jobs:
   verify:
     name: verify PR contents
     if: github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    # Keep fork PRs on GitHub-hosted for pull_request_target safety; same-repo
+    # PRs use the self-hosted lane that already carries Docker.
+    runs-on: ${{ (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     env:
       PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
     steps:

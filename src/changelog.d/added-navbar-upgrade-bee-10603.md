@@ -1,0 +1,1 @@
+- Added the dashboard navbar upgrade bee indicator and tightened the upgrade pill animation clipping. (#10603)

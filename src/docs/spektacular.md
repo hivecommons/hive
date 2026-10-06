@@ -718,6 +718,96 @@ returns an approved plan to draft, so the re-run plan stage is held at the
 checkpoint again. An epic that already carries children from another planner
 is not re-imported.
 
+## Continuous convergence
+
+Spek campaigns can opt into a scheduler-owned recheck cadence without changing
+the one-shot default. The feature is off unless
+`runs.spektacular.recheck.enabled: true`; opted-in campaigns use
+`runs.spektacular.recheck.default_interval` (default `168h`) unless their
+retained campaign record carries `recheck.interval`, and imported delta tasks
+are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
+
+When a completed `implement` campaign is due, or an owner posts
+`POST /api/campaigns/{id}/recheck`, Hive creates a linked Spektacular revision
+(`revision_of`, `revision`) and starts that revision at the `spec` stage. The
+original campaign is never overwritten; the revision is a new generation with
+the prior final spec/plan treated as prior artifacts by convention. Manual
+requests return `409 Conflict` when another revision is already in flight and
+`404 Not Found` when recheck is disabled unless `?force=true` is supplied.
+
+The recheck follows the same human checkpoints as any Spek run. A final spec
+still waits at the spec boundary when that checkpoint is enabled, and a final
+plan imports as a draft plan until approval. At final-plan import Hive compares
+the revision task list with the prior final plan by normalized task-content
+hash. Unchanged tasks reuse the prior logical operation identity and are not
+imported again; only new or changed tasks become planner children. If the
+codebase and prior plan are unchanged, the delta is empty and Hive creates no
+new planner tasks or issues. If the delta exceeds `max_delta_tasks`, Hive
+imports the first capped set and records `campaign_recheck_delta_capped`.
+
+Each revision carries a `drift` evidence block with `codebase_changed`,
+`prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
+The codebase signal compares the prior recorded head SHA with the current Git
+HEAD when available.
+
+### Outward-looking discovery
+
+Outward discovery is opt-in under `runs.spektacular.recheck.discovery`. Hive
+only reads operator-declared sources, bounded by `timeout` (default `30s`),
+each source's `max_items` (default `20`), and `max_total_items` (default
+`100`). It never searches the web, never crawls arbitrary or competitor
+websites, never applies findings automatically, and rejects any configured
+host that is not listed in `variables.security.http_allowlist`. GitHub-backed
+sources use the existing authenticated GitHub client; feed sources use GET
+through the normal proxy/egress path.
+
+Supported source kinds are:
+
+- `upstream_release`: GitHub releases for a named `owner/repo` since the prior
+  revision timestamp.
+- `repo_activity`: merged PRs and tagged releases for a named `owner/repo`
+  since the prior timestamp.
+- `standards_feed`: an Atom or RSS URL such as a spec repo's `releases.atom`
+  or a standards-body feed.
+- `landscape`: GitHub repositories linked from `docs/landscape.md`, checked
+  for new releases using the same release reader as `upstream_release`.
+
+Example:
+
+```yaml
+runs:
+  spektacular:
+    recheck:
+      discovery:
+        enabled: true
+        timeout: 30s
+        max_total_items: 100
+        sources:
+          - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
+          - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
+          - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
+          - {kind: landscape, name: project-landscape, max_items: 20}
+variables:
+  security:
+    http_allowlist: [api.github.com, www.ietf.org]
+```
+
+Findings are recorded on the revision as
+`drift.external[] = {source, kind, title, url, published_at, summary}` with
+summaries capped at 280 characters, plus `external_count` and
+`sources_failed[] = {name, reason}`. A failed source is non-fatal: Hive records
+the typed reason and continues with the rest. The same evidence is included in
+the `spec` stage assignment prompt as context so the spec generator can decide
+what, if anything, belongs in the revised spec; the spec and plan human
+checkpoints remain the only approval gates.
+
+Campaign list/detail JSON includes
+`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
+external_count, sources_failed}`; recheck revisions also include the `drift`
+block above. The dashboard Campaigns panel renders the cadence, shows
+`N external signals` with an expandable list, and provides an owner-only
+Recheck action.
+
 ## Defensive handling of the open questions
 
 The #8227 questions were answered on jumppad-labs/spektacular#45. The runner

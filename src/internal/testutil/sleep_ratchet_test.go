@@ -21,8 +21,8 @@ import (
 // channel / WaitGroup when a goroutine you own can signal directly); a fixed
 // sleep is only acceptable for a deliberate "nothing happens during this
 // window" negative wait, and that still needs a comment saying so.
-// v5→v6 union adds one existing test sleep from the merged trees.
-const sleepBaseline = 201
+// v5→v6 union adds existing test sleeps from the merged trees (#10738).
+const sleepBaseline = 203
 
 // sleepCall is the literal the ratchet counts. Kept as a constant so the
 // message and the count cannot drift apart.

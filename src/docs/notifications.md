@@ -122,7 +122,7 @@ Current v1 event coverage:
 | Issue | reopened | Closed → open transition. |
 | Issue | hive label added | `claimed`, `hive/*`, and `priority/*`. |
 | Issue | assigned/claimed | Newly added assignee. |
-| Issue | claim marker taken/released | Diffs `<!-- hive-claim -->` in issue body when present in API responses. |
+| Issue | claim marker taken/released | Diffs `<!-- hive:claim ... -->` in issue body when present in API responses. |
 | PR | opened | New non-draft open PRs observed after the initial seed. |
 | PR | ready for review | Draft → ready transition. |
 | PR | review requested | Newly requested reviewers from the PR list response. |

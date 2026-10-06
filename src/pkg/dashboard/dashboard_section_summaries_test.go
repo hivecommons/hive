@@ -19,6 +19,10 @@ func TestDashboardSectionCardsHaveCollapsedSummaries(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "el.innerHTML = visualSectionSummary(sectionId, text, title);") {
 		t.Fatal("setSectionSummary must render visual collapsed summaries instead of bare text")
 	}
+	if strings.Contains(dashboardHTML, `class="kb-stat-grid kb-summary-stats sec-headline"`) ||
+		!strings.Contains(dashboardHTML, `class="kb-stat-grid kb-summary-stats"`) {
+		t.Fatal("Knowledge stat tiles must stay in the expanded body, leaving the collapsed header summary visible")
+	}
 
 	configs := dashboardSectionCardConfigs(t, dashboardHTML)
 	for _, id := range dashboardSectionIDs(t, dashboardHTML) {

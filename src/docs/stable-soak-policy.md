@@ -1,65 +1,84 @@
-# Stable soak and promotion policy (v5 line)
+# Stable chases candidate and is always 24 hours behind it (v5 line)
 
-This policy is enforced by CI: every successful `v5` image build retags
-`candidate`, while a separate scheduled or manually dispatched promotion
-workflow advances `stable` by digest only after the gate below passes.
+Stable chases candidate and is always 24 hours behind it: at each evaluation,
+`stable` is the newest `v5` build whose `docker.yml` run completed at least
+`SOAK_HOURS` ago — the build `candidate` pointed at 24 hours ago — regardless of
+how many newer candidate builds exist.
 
 ## Goals
 
 - Keep `candidate` fast: it should move on every green `v5` release build.
-- Make `stable` automatic by default, but deliberate: it should advance after
-  observable soak unless an operator pauses stable auto-promotion, or by a
-  documented emergency exception.
+- Keep `stable` predictable: when `v5` is busy and the promotion workflow runs
+  hourly, `stable` lags `candidate` by 24 to 25 hours, not by a quiet period.
+- Make longer lag explicit: green evidence, `release-blocker`, and smoke-signal
+  gates are the only normal reasons `stable` stays farther behind, and the
+  workflow names the gate and build holding it.
 - Preserve rollback safety with immutable short-SHA tags and digest evidence.
-- Give operators clear expectations for bursty release days.
 
 ## Promotion rule
 
-This rule is what the `Promote Stable Channel` workflow enforces today. In this
-document a *build* is one successful `docker.yml` run on `v5`; its *generation*
-is that run's number and its *digest* is the image it published. Only the
-current `candidate` build is ever promoted.
+Stable chases candidate and is always 24 hours behind it. In this document a
+*build* is one successful `docker.yml` run on `v5`; its *generation* is that
+run's number and its *digest* is the image manifest list it published for each
+image (`hive`, `hive-contributor`, and `hive-hub`). `candidate` is the newest
+build pointer. `stable` promotes an already-built digest; it does not rebuild.
 
-A `v5` build may be promoted from `candidate` to `stable` only when all of these
-conditions hold:
+At each hourly evaluation, the workflow finds the newest build newer than the
+current `stable` generation whose own `docker.yml` completion time is at least
+`SOAK_HOURS` old. That is the build `candidate` pointed at 24 hours ago. No quiet
+period is ever required: if `v5` keeps merging, newer builds may keep moving
+`candidate`, but the build that just crossed the 24-hour line remains the one
+considered for `stable`.
 
-1. **Minimum candidate soak:** the build being promoted must itself have aged at
-   least 24 hours, measured from the completion of the `docker.yml` run that
-   published it. Frequent `v5` merges keep moving `candidate`, and each new
-   `candidate` build starts its own 24-hour soak timer; a minutes-old build is
-   not promoted merely because an older, now-superseded build soaked after the
-   current `stable` build. (The soak is per build, not per lineage: if build B2
-   replaces B1 on the `candidate` channel while B1 is 25 hours old, B2 is not
-   promotable until B2 itself is 24 hours old, and B1 is no longer promotable at
-   all because it is no longer the current `candidate`.)
-2. **Current candidate only:** the build being promoted must be the current
-   `candidate` both when the gate decides and immediately before any tag is
-   moved. The race being guarded is between the promotion gate reading the
-   candidate digest (to measure its soak age and check evidence) and the
-   `docker.yml` workflow writing a newer candidate digest. The `candidate` tag
-   is a moving release-channel tag written by `docker.yml`; it can change while
-   `src/scripts/promote-stable.sh promote` is reading evidence or between the
-   gate decision and the tag move. If the candidate digest changes before the
-   tag move, the run always holds (never fails the workflow run) and leaves
-   `stable` unchanged, so the next hourly run evaluates the newer `candidate`
-   and its own 24-hour soak window. The gate detects this race in two places:
-   first, the `hive`, `hive-contributor`, and `hive-hub` candidate digests must
-   all resolve to the same revision and generation while evidence is collected;
-   second, each image's `candidate` digest is re-read immediately before any tag
-   moves and must still match the digest the gate decided to promote.
-3. **Green release evidence:** build, lint, unit tests, changelog/release guards,
-   and non-flaky required checks are passing or skipped by policy.
-4. **No open blocker:** no open issue or PR label explicitly marks the candidate
-   digest, release tag, or included fix set as `blocker`, `regression`, or
-   `security` hold for the stable (v5) line.
-5. **Maintained-hive smoke signal:** at least one maintained hive tracking
-   `candidate` has reported a healthy heartbeat on the candidate commit within
-   the soak window with zero crash restarts in that window, or the release
-   captain records manual dispatch evidence explaining why dashboard/heartbeat
-   smoke is not applicable for that digest.
+The workflow moves `stable` to that build only when these hard gates pass:
 
-The release captain records the promoted digest, candidate tag, stable tag, soak
-start/end time, and smoke evidence in the promotion PR or workflow summary.
+1. **Digest integrity:** all three image digests for the chosen generation still
+   exist in GHCR and carry matching `org.opencontainers.image.revision` and
+   `io.kubestellar.hive.github-actions-run-number` labels.
+2. **Green release evidence:** build, lint, unit tests, changelog/release guards,
+   and non-flaky required checks are passing or skipped by policy for the chosen
+   build's commit.
+3. **No open blocker:** no open issue label explicitly marks the candidate
+   digest, release tag, or included fix set as a `release-blocker` for the stable
+   (v5) line.
+4. **Maintained-hive smoke signal:** at least one maintained hive has reported a
+   healthy heartbeat with zero crash restarts in the soak window. The preferred
+   evidence is a maintained hive on the exact build being promoted. When `v5` is
+   busy and the exact build has already been superseded, the workflow may use a
+   healthy maintained hive on the current, later `candidate` in the same
+   monotonic `v5` docker.yml lineage: surviving a later build is conservative
+   smoke evidence for an older build in the same line, and it is never used to
+   justify a younger build. If the hub is reachable but returns no maintained
+   hive summaries, the smoke-signal gate holds the selected build until evidence
+   is available.
+
+If any hard gate fails, the run exits successfully without moving `stable` and
+prints which gate is holding which build. Those gates are the only normal reasons
+`stable` can lag more than 24 to 25 hours on the hourly cadence.
+
+Worked example: `stable` is B1. During the next day, `docker.yml` publishes B2,
+B3, … B52 and `candidate` ends at B52. At time T, B52 is only minutes old, but
+B37 is the newest build whose own `docker.yml` completion time is at least 24
+hours old. The workflow evaluates B37. If B37's digests, evidence, blockers, and
+smoke all pass, `stable` moves to B37, even though `candidate` is B52. On each
+later hourly run, `stable` moves again whenever another newer build crosses the
+24-hour line.
+
+Two promotion runs never execute at the same time: `promote-stable.yml` declares
+a GitHub Actions `concurrency` group (`stable-promotion-v5`,
+`cancel-in-progress: false`), so a scheduled or manually dispatched run waits
+for any in-progress run to finish before it starts. GitHub serialises the
+runs; the workflow itself does not need an atomic primitive. As a second,
+independent guard, immediately before publishing the run re-reads each image's
+current `stable` generation and requires it to be unchanged from the decision
+read and lower than the chosen build's generation. That re-read is not atomic
+with the tag move and is not relied on to be; it only catches a `stable`
+generation that moved between the decision and the publish step (for example a
+manual retag). If the re-read fails, the run exits successfully without moving
+`stable`; the next scheduled run re-evaluates from the new `stable` generation.
+
+The release captain records the promoted digest, selected build, stable tag, soak
+start/end time, and smoke evidence in the workflow summary or promotion PR.
 
 ## CI enforcement
 
@@ -68,67 +87,48 @@ The existing release build continues to publish immutable short-SHA tags and mov
 `Promote Stable Channel` workflow runs hourly and can also be manually dispatched.
 It:
 
-1. resolves the current `candidate` digest for `hive`, `hive-contributor`, and
+1. reads the current `stable` generation for `hive`, `hive-contributor`, and
    `hive-hub`;
-2. compares the candidate digest with the current `stable` digest;
-3. reads the completion time of the successful `docker.yml` run recorded in the
-   image metadata — the moment that build became a candidate, not when its run
-   was queued — and requires that build to have aged for the configured soak
-   window;
-4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the current
-   candidate SHA;
-5. requires no open **issue** labelled `release-blocker` — `blocker_count` in
-   `src/scripts/promote-stable.sh` runs `gh issue list`, which does not return
-   pull requests, so condition 4's "issue or PR" is enforced by CI only for the
-   issue half. A `release-blocker` label on an open PR alone does not hold the
-   gate; open an issue when you need the promotion stopped;
-6. reads `GET /api/hub/release/stable-promotion`; if the hub is unreachable or
-   the stable line is paused, the workflow skips without moving tags. When
-   playing, the hub's public maintained-hive summary synthesizes smoke evidence
-   for a healthy candidate hive. The manual dispatch `smoke-evidence` input or
-   `STABLE_SMOKE_EVIDENCE` repository variable still overrides that automatic
-   evidence; and
-7. retags `stable` to the candidate digest only when the gate passes and the
-   moving-tag generation is newer than the currently published `stable` tag.
+2. lists successful `docker.yml` runs on `v5` newest-to-oldest;
+3. skips builds whose own `docker.yml` completion time has not yet crossed the
+   configured soak line, remembering the newest unsoaked build's `eligible_at`;
+4. selects the first build that has crossed the line — the newest build
+   `candidate` pointed at 24 hours ago;
+5. resolves that build's three short-SHA image tags by digest and verifies their
+   revision and generation labels match that run;
+6. checks required release evidence, open `release-blocker` issues, and
+   maintained-hive smoke evidence for that build; and
+7. retags all three `stable` images to the chosen build's digests only after the
+   stable-generation compare-and-set passes.
 
 The hub dashboard's release-channel block has a play/pause control on the
-`stable` row for hub admins. Play is the default: scheduled runs catch `stable`
-up to `candidate` after the current candidate's 24-hour soak and automatic
-smoke evidence.
-Pause records the admin and timestamp, shows "paused" next to any behind count,
-and stops scheduled and manual stable-promotion runs until an admin resumes.
-The public GET endpoint exposes only non-secret channel state and maintained
-hive smoke summaries; the PUT toggle is hub-admin gated and audit logged.
+`stable` row for hub admins. Play is the default: scheduled runs advance `stable`
+to the newest build that crossed the 24-hour line, so when `v5` is busy and the
+cron is hourly, `stable` stays 24 to 25 hours behind `candidate`. No quiet period
+is required. Pause records the admin and timestamp, shows "paused" next to any
+behind count, and stops scheduled and manual stable-promotion runs until an admin
+resumes.
+
+The public GET endpoint exposes only non-secret channel state, `eligible_at`, an
+`eligible_build` object (`sha`, `generation`, `built_at`, and digest when known),
+and maintained-hive smoke summaries; the PUT toggle is hub-admin gated and audit
+logged.
 
 Hives on the `stable` channel also receive the hub's expected time of the next
 promotion as `next_update_at` in the heartbeat upgrade policy
-([#10256](https://github.com/hivecommons/hive/issues/10256)). It is the end of
-the current `candidate` build's 24-hour soak, and the hourly run promotes at or
-after it once the other conditions pass. It is omitted (unknown) while stable
-is paused, when `candidate` and
-`stable` are the same build, or when the channels have not resolved.
+([#10256](https://github.com/hivecommons/hive/issues/10256)). It is omitted
+(unknown) while stable is paused, when there is no build newer than `stable`, or
+when the channels have not resolved.
 
-The workflow writes the candidate digest, SHA, generation, candidate build
-completion time and age, checks consulted, blocker count, smoke evidence,
-decision, and any exception note to the GitHub Actions step summary. If the
-gate fails, the workflow leaves `stable` unchanged with a human-readable reason
-such as `candidate age 3600s < required 86400s (24h)` or `newer candidate
-superseded this digest before the soak window completed`.
-
-One hold is expected and benign: the candidate digest is pushed part-way
-through its `docker.yml` run, so an hourly promotion that lands in that window
-sees a candidate whose publishing run has not completed yet. Since v4.24.4
-(`hold_with_reason` in `src/scripts/promote-stable.sh`,
-[#6537](https://github.com/hivecommons/hive/issues/6537)) the workflow reports
-
-> `candidate <digest> comes from docker.yml run <N>, which has not completed
-> yet; re-evaluate on the next schedule`
-
-and the next hourly schedule re-evaluates once the run finishes — no action is
-needed. On builds **before v4.24.4** the same race instead killed the script
-with exit 1 and *no output at all* (the empty `workflow_run_completed_at` lookup
-under `set -e`): a Promote Stable Channel run that failed with no step summary
-and nothing in the log is this condition, not a broken gate.
+The workflow writes the selected build digest, SHA, generation, build completion
+time and age, checks consulted, blocker count, smoke evidence, decision, and any
+exception note to the GitHub Actions step summary. If no build has crossed the
+line, the workflow leaves `stable` unchanged and exits successfully with a reason
+such as `no eligible build has completed the 24h soak yet; newest unsoaked build
+<sha> generation <N> completed <time> and is eligible_at <time>`. If a hard gate
+holds the selected build, the reason names the gate and build, for example
+`green evidence gate is holding build <sha> generation <N>` or `release-blocker
+gate is holding build <sha> generation <N>`.
 
 ## Emergency promotion exception
 
@@ -145,19 +145,20 @@ issue.
 
 `normalized_decision` in `src/scripts/promote-stable.sh` checks the emergency
 branch *before* the soak-age and smoke-evidence branches, so an exception waives
-exactly two of the five promotion conditions:
+exactly two promotion requirements:
 
-- **condition 1, minimum candidate soak** — the current candidate age is never
-  compared against `soak-hours`; and
-- **condition 5, operator smoke signal** — the `smoke_evidence` test is only
+- **the 24-hour chase line** — the selected build age is never compared
+  against `soak-hours`; and
+- **the smoke-signal gate** — the `smoke_evidence` test is only
   reached on the non-exception path, so an exception promotes even when both the
   `smoke-evidence` input and `STABLE_SMOKE_EVIDENCE` are empty.
 
 Everything else still holds, and the exception branch fails closed on each:
 a missing `emergency-followup-issue`, non-green `v2 CI` / `v2 Tests` evidence, a
-non-zero blocker count, a superseded candidate, and the monotonic generation
-guard all leave `stable` where it was. A promotion that needs to bypass one of
-*those* is not an emergency exception — fix the blocker or roll back instead.
+non-zero blocker count, missing image metadata, and the monotonic stable
+compare-and-set all leave `stable` where it was. A promotion that needs to
+bypass one of *those* is not an emergency exception — fix the blocker or roll
+back instead.
 
 Those two waived conditions are exactly what the follow-up issue owes after the
 fact, which is what makes it a *post-hoc soak*, not a waiver.
@@ -187,8 +188,9 @@ all four:
    Record which hive reported it.
 
 3. **The gate works unassisted.** The next scheduled `promote-stable.yml` run
-   promotes a v5 candidate on the normal path — step-summary decision `promote`
-   with reason `all stable soak promotion conditions passed`, no exception note:
+   promotes a v5 build on the normal path — step-summary decision `promote`
+   with reason `all stable chases-candidate promotion gates passed`, no
+   exception note:
 
    ```bash
    gh run list -R hivecommons/hive --workflow promote-stable.yml --event schedule --limit 5

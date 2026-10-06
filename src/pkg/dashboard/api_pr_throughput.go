@@ -63,6 +63,7 @@ type PRThroughput struct {
 	SelectedRole  string                   `json:"selected_role"`
 	ByActor       PRThroughputActorMatrix  `json:"by_actor"`
 	Series        []PRThroughputActorPoint `json:"series"`
+	PreviousActor *PRThroughputActorPoint  `json:"previous_actor,omitempty"`
 	Metrics       PRThroughputMetrics      `json:"metrics"`
 	MergedByAgent []PRThroughputTop        `json:"merged_by_agent,omitempty"`
 	TopRepos      []PRThroughputTop        `json:"top_repos,omitempty"`
@@ -240,6 +241,10 @@ func applyPRThroughputAnalytics(out *PRThroughput, entries []AuditEntry, since, 
 	out.Metrics = prThroughputMetrics(counts, ttm, since, until)
 
 	prevStart := since.Add(-until.Sub(since))
+	prevActor := prThroughputActorTotals(entries, prevStart, since, repo, out.SelectedRole)
+	if prevActor.Hive+prevActor.Human+prevActor.Other > 0 {
+		out.PreviousActor = &prevActor
+	}
 	prevCounts, _, _, _, _, prevTTM := summarizePRThroughput(entries, prevStart, since, repo)
 	out.Metrics.Trend.MergedPct = pctChange(float64(out.Merged), float64(prevCounts.Merged))
 	prevMedian := percentileHours(prevTTM, 0.50)
@@ -415,6 +420,51 @@ func prThroughputActorSeries(entries []AuditEntry, since, until time.Time, bucke
 		}
 	}
 	return points
+}
+
+func prThroughputActorTotals(entries []AuditEntry, since, until time.Time, repo, role string) PRThroughputActorPoint {
+	var point PRThroughputActorPoint
+	if !until.After(since) {
+		return point
+	}
+	sorted := append([]AuditEntry(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		ti, _ := prThroughputTime(sorted[i])
+		tj, _ := prThroughputTime(sorted[j])
+		return ti.Before(tj)
+	})
+	seenTerminal := map[string]bool{}
+	for _, e := range sorted {
+		t, ok := prThroughputTime(e)
+		if !ok || !t.Before(until) || !prThroughputEntryMatchesRepo(e, repo) {
+			continue
+		}
+		if prThroughputTerminalAction(e.Action) {
+			key := prThroughputPRKey(e)
+			if key != "" {
+				if seenTerminal[key] {
+					continue
+				}
+				seenTerminal[key] = true
+			}
+		}
+		if t.Before(since) {
+			continue
+		}
+		kind, gotRole, actor, ok := prThroughputActorAttribution(e)
+		if !ok || !prThroughputRoleMatchesSeries(kind, gotRole, role) {
+			continue
+		}
+		switch actor {
+		case prThroughputActorHive:
+			point.Hive++
+		case prThroughputActorHuman:
+			point.Human++
+		case prThroughputActorOtherAutomation:
+			point.Other++
+		}
+	}
+	return point
 }
 
 func prThroughputRoleMatchesSeries(kind, gotRole, selected string) bool {

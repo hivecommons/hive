@@ -1,0 +1,1 @@
+- Clarified project cards by separating issue buckets from pull request buckets. (#10565)

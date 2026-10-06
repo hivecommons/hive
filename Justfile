@@ -247,6 +247,24 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      openhands)
+        if command -v openhands &>/dev/null; then
+          echo "OpenHands CLI detected ($(openhands --version 2>&1 | head -1))"
+          echo "  Headless only: openhands --headless -t \"<prompt>\" --always-approve --override-with-envs"
+          echo "  Model:  export AGENT_MODEL=provider/model (any litellm model id; forwarded as LLM_MODEL)"
+          echo "  Auth:   export LLM_API_KEY=... (and LLM_BASE_URL for an OpenAI-compatible gateway),"
+          echo "          or run 'openhands' once interactively (credential stored at ~/.openhands/settings.json)"
+          echo "  openhands has NO sandbox on this path (its Docker sandbox exists only behind 'openhands serve');"
+          echo "  local mode refuses to launch without HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1."
+          echo "  Note: the contributor image does not ship openhands (needs Python 3.12; the image is bookworm/3.11)."
+          if [[ -z "${LLM_API_KEY:-}" && ! -s "${OPENHANDS_PERSISTENCE_DIR:-$HOME/.openhands}/settings.json" ]]; then
+            echo "  WARNING: no LLM_API_KEY and no ~/.openhands/settings.json — openhands will fail at task time."
+          fi
+        else
+          echo "ERROR: openhands CLI not found. Install: uv tool install openhands --python 3.12 (https://docs.openhands.dev/openhands/usage/cli/installation)"
+          exit 1
+        fi
+        ;;
       muse)
         if command -v muse &>/dev/null; then
           echo "Muse Code CLI detected ($(muse --version 2>&1 | head -1))"
@@ -286,7 +304,7 @@ contribute-check-backend backend="claude":
         fi
         ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
         exit 1
         ;;
     esac
@@ -1149,9 +1167,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo|omp)
+        goose|agy|bob|pi|aider|kilo|omp|openhands)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these seven (see the "no confinement mechanism at all"
+          # any of these eight (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
@@ -1728,6 +1746,16 @@ contribute-hive backend="" mode="docker": check-version
             CLI_MOUNTS="-v ${CLI_STAGE}/opencode:/home/dev/.local/share/opencode${VOLSUF}"
           fi
           ;;
+        openhands)
+          # OpenHands keeps provider credentials in settings.json under
+          # OPENHANDS_PERSISTENCE_DIR (default ~/.openhands). Stage it when
+          # present; LLM_* env vars are forwarded separately below.
+          OPENHANDS_DIR="${OPENHANDS_PERSISTENCE_DIR:-${HOME}/.openhands}"
+          if [ -f "${OPENHANDS_DIR}/settings.json" ]; then
+            stage_copy "${OPENHANDS_DIR}" ".openhands"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.openhands:/home/dev/.openhands${VOLSUF}"
+          fi
+          ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
       # Pi receives ONLY the selected provider's official credential variables.
@@ -1746,7 +1774,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY; do
+        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
         done
       fi

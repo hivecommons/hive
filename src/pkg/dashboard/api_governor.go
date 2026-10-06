@@ -1402,11 +1402,11 @@ var probeProxyFunc = http.ProxyFromEnvironment
 func describeEgressProxy(req *http.Request) string {
 	proxyURL, err := probeProxyFunc(req)
 	if err != nil || proxyURL == nil {
-		return " (no HTTPS_PROXY egress proxy was configured on the hub; the hive's own egress network path, not your laptop's VPN, is what the gateway saw)"
+		return " (egress: no HTTPS_PROXY proxy applies on the hub; HTTPS_PROXY is unset or bypassed by NO_PROXY; the hive's own egress network path, not your laptop's VPN, is what the gateway saw)"
 	}
-	return fmt.Sprintf(" — the hive sent this request through the egress proxy %s (HTTPS_PROXY), which is not on the path your laptop used;"+
+	return fmt.Sprintf(" — egress: HTTPS_PROXY applies via proxy host %s (NO_PROXY did not bypass this request), which is not on the path your laptop used;"+
 		" check that this proxy (or the hive's egress network) is allowed to reach the gateway",
-		proxyURL.Redacted())
+		proxyURL.Host)
 }
 
 // probeModelsWithHeaders is probeLiteLLMModels with an optional set of extra
@@ -1437,41 +1437,7 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 	defer closeHTTPBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		// Error path: only a truncated slice of the body is surfaced to the
-		// dialog (error bodies can be huge and may echo the key).
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
-		gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
-		contentType := resp.Header.Get("Content-Type")
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			// An HTML/empty error body is not a gateway auth answer: some
-			// proxy in front of the endpoint refused GET /v1/models before
-			// the key was ever evaluated. Say so (with the exact URL probed,
-			// the content-type and any Server header) instead of accusing the
-			// key, which may well be valid for inference calls. Also name the
-			// hub's own egress proxy (if any) — a reporter's laptop can reach
-			// the gateway directly while the hive's egress takes a different,
-			// disallowed path (hivecommons/hive#9945).
-			// An empty body with no key configured is the gateway's own
-			// "you sent no credentials" answer (a bare 401 with only a
-			// WWW-Authenticate header), not an edge refusal: keep the more
-			// accurate missing-key message below.
-			if looksLikeIntermediaryRejection(contentType, gatewayMsg) && !(apiKey == "" && gatewayMsg == "") {
-				return 0, &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
-					" (content-type %q, server %q, non-JSON body) — the configured key was probably never evaluated;"+
-					" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
-					modelsURL, resp.StatusCode, contentType, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)}
-			}
-			// The two auth failures lead users to different fixes.
-			if apiKey == "" {
-				return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d for GET %s): %s",
-					resp.StatusCode, modelsURL, gatewayMsg)
-			}
-			return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s): %s",
-				resp.StatusCode, modelsURL, gatewayMsg)
-		default:
-			return 0, fmt.Errorf("gateway returned HTTP %d for GET %s: %s", resp.StatusCode, modelsURL, gatewayMsg)
-		}
+		return 0, litellmModelsHTTPError(req, resp, apiKey)
 	}
 
 	// Success path: parse the FULL body with the exact same lenient decoder
@@ -1486,6 +1452,43 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 		return 0, fmt.Errorf("gateway returned a non-OpenAI /v1/models response")
 	}
 	return len(models), nil
+}
+
+func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey string) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
+	gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
+	contentType := resp.Header.Get("Content-Type")
+	finalURL := req.URL.String()
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// An HTML/empty error body is not a gateway auth answer: some
+		// proxy in front of the endpoint refused GET /v1/models before
+		// the key was ever evaluated. Say so with the exact URL probed,
+		// final URL after redirects, content-type, Server header, and the
+		// hub's resolved egress path instead of accusing the key.
+		// An empty body with no key configured is the gateway's own
+		// "you sent no credentials" answer (a bare 401 with only a
+		// WWW-Authenticate header), not an edge refusal: keep the more
+		// accurate missing-key message below.
+		if looksLikeIntermediaryRejection(contentType, gatewayMsg) && !(apiKey == "" && gatewayMsg == "") {
+			return &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
+				" (content-type %q, server %q, final URL %s, non-JSON body) — the configured key was probably never evaluated;"+
+				" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
+				req.URL.String(), resp.StatusCode, contentType, resp.Header.Get("Server"), finalURL, describeEgressProxy(req), gatewayMsg)}
+		}
+		// The two auth failures lead users to different fixes.
+		if apiKey == "" {
+			return fmt.Errorf("gateway requires an API key and none is configured (HTTP %d for GET %s; final URL %s): %s",
+				resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+		}
+		return fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s; final URL %s): %s",
+			resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+	default:
+		return fmt.Errorf("gateway returned HTTP %d for GET %s (final URL %s): %s", resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+	}
 }
 
 // probeEdgeRejectedError marks a /v1/models probe failure that an ingress,

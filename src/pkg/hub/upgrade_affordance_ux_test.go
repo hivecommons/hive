@@ -83,6 +83,49 @@ func TestNonOwnersGetPassiveUpdateAvailableBadge(t *testing.T) {
 	}
 }
 
+// A release-channel spoke can be at the newest image the channel has actually
+// published while the channel's source branch already has newer commits whose
+// image/tag is still pending. That is not a clickable upgrade yet, but it must
+// also not render as a fully green "latest" row.
+func TestChannelCurrentButBranchImagePendingIsExplicit(t *testing.T) {
+	body := funcBody(t, "var buildRow = function(")
+	for _, want := range []string{
+		"var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
+		"' image is published at ' + behindSHA",
+		"'. Upgrade will appear after a newer immutable image is published.'",
+		`channelImagePending ? '<span style="color:var(--yellow);margin-left:3px"`,
+		"pendingImageCommits > 0",
+		"channelTipBehindCount + ' behind · '",
+		"imagePendingStatus === 'building' ? 'building' : 'image pending'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("channel image-pending rendering is missing %q; a channel-current "+
+				"spoke with newer unpublished branch commits would still look green", want)
+		}
+	}
+}
+
+// The tiny glyphs/counts in the Version column have to say what they measure:
+// the checkmark is against the latest reachable image, the behind badge is
+// against the row's target, and the blue count badge is access requests rather
+// than version drift.
+func TestVersionGlyphAndCountTooltipsNameTheirMeaning(t *testing.T) {
+	body := funcBody(t, "var buildRow = function(")
+	for _, want := range []string{
+		"Current: running commit matches ' + behindRef",
+		"Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')'",
+		"Badge measures running commit against ' + behindRef",
+		"channel tag still points at ' + h.behindTargetFloatingSHA",
+		"image verification unavailable; using the channel tag target",
+		"h.pendingRequestCount + (h.pendingRequestCount === 1 ? ' pending access request' : ' pending access requests')",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing explanatory tooltip fragment %q; compact version/count "+
+				"badges must explain what they measure", want)
+		}
+	}
+}
+
 // The named style constants exist (no magic inline styles) and the two
 // visual vocabularies stay distinct: buttons look clickable, badges do not.
 func TestUpgradeAffordanceStyleConstantsAreNamed(t *testing.T) {

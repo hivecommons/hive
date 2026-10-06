@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 )
 
@@ -66,6 +67,27 @@ func TestClaims_SelectTaskSkipsHumanClaimedIssue(t *testing.T) {
 	}
 	if _, ok := l.Lookup("myorg/repo1", 1); !ok {
 		t.Fatal("alice's claim was disturbed by another identity's revoke")
+	}
+}
+
+func TestClaims_SelectTaskSkipsAlreadyDoneIssue(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	done := intgIssue(1, "already fixed", "someone", nil)
+	done["labels"] = []any{ghpkg.AlreadyDoneLabel}
+	free := intgIssue(2, "free", "someone", nil)
+	free["labels"] = []any{"bug"}
+	setStatusIssues(s, done, free)
+	c := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "worker", ContributorID: "c-worker", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+
+	msg := hub.selectTask(c)
+	if msg == nil || msg.Type != "task_assign" || msg.Number != 2 {
+		t.Fatalf("expected #2 (the not-already-done issue), got %+v", msg)
+	}
+	if _, ok := l.Lookup("myorg/repo1", 1); ok {
+		t.Fatal("already-done issue was claimed")
 	}
 }
 

@@ -16,6 +16,13 @@ import (
 
 const clusterHealthCacheTTL = 30 * time.Second
 
+const (
+	clusterHealthUpgradeVersion = "v5.133.0"
+	clusterHealthUpgradeFixPR   = "#10567"
+	clusterHealthUpgradeFixSHA  = "db4d5c268291100fe0e067791346e88dc17fa04f"
+	semverCoreParts             = 3
+)
+
 // CPU and memory bar thresholds are NOT declared here. The hub serves the
 // cluster-health panel raw percentages and the panel colours them with its own
 // CLUSTER_CPU_WARN_PCT / CLUSTER_CPU_DANGER_PCT / CLUSTER_MEM_* constants, so a
@@ -128,12 +135,14 @@ type PerClusterHealth struct {
 	GPUSummary *GPUSummary          `json:"gpu_summary,omitempty"`
 	HiveCount  int                  `json:"hive_count"`
 	Error      string               `json:"error,omitempty"`
+	Status     string               `json:"status,omitempty"`
+	Note       string               `json:"note,omitempty"`
 	DataSource string               `json:"data_source,omitempty"` // "heartbeat" when data comes from spoke heartbeat instead of kubectl
 	DataStale  bool                 `json:"data_stale,omitempty"`  // true when heartbeat data is older than heartbeatHealthStaleness
 	DataAge    string               `json:"data_age,omitempty"`    // human-readable age or collection timestamp
 	// StuckPods reports hive-namespace pods stuck Terminating — the residue of
 	// nodes disappearing without draining (#5328 item 3). Nil means the hub
-	// could not determine it (unreachable cluster, pull-only pool, failed
+	// could not determine it (unreachable cluster, push-reported pool, failed
 	// listing); a non-nil report with Total 0 means it looked and the cluster
 	// is clean. Those must not render alike: 27 orphans accumulated for three
 	// weeks precisely because nothing distinguished "none" from "nobody
@@ -142,7 +151,7 @@ type PerClusterHealth struct {
 	// LeakedNamespaces reports hive-hosted-* namespaces the cluster holds that
 	// this hub has no hive record for — provisioning namespaces that were
 	// created and never torn down (#5768). Nil means the hub could not
-	// determine it (unreachable cluster, pull-only pool, failed listing, or an
+	// determine it (unreachable cluster, push-reported pool, failed listing, or an
 	// empty hive registry, which cannot be told apart from an unreadable one);
 	// a non-nil report with Total 0 means it looked and the cluster is clean.
 	// Those must not render alike, for the same reason StuckPods above draws
@@ -159,6 +168,13 @@ type PerClusterHealth struct {
 	// wildcard_tls_health.go.
 	WildcardTLS *WildcardTLSReport `json:"wildcard_tls,omitempty"`
 }
+
+const (
+	perClusterHealthStatusAwaitingHeartbeat = "awaiting_heartbeat"
+	perClusterHealthStatusMissingHealth     = "missing_heartbeat_health"
+	perClusterHealthStatusStaleHeartbeat    = "stale_heartbeat"
+	clusterHealthHoursPerDay                = 24
+)
 
 type ClusterHealthResponse struct {
 	// Flat fields for backward compatibility (aggregate across all clusters).
@@ -293,8 +309,9 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		select {
 		case res := <-query.ch:
 			if res.err != nil {
-				if errors.Is(res.err, errClusterPullOnly) {
-					s.logger.Info("cluster health: pull-only cluster, using the health its spokes report over the heartbeat", "cluster", cID)
+				isPullOnly := errors.Is(res.err, errClusterPullOnly)
+				if isPullOnly {
+					s.logger.Info("cluster health: push-reported cluster, using the health its spokes report over the heartbeat", "cluster", cID)
 				} else {
 					s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
 				}
@@ -311,10 +328,23 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 					s.logger.Info("cluster health: using heartbeat fallback", "cluster", cID)
 					continue
 				}
+				if !isPullOnly {
+					perCluster = append(perCluster, PerClusterHealth{
+						ID:    cID,
+						Name:  s.clusterNameForID(cID),
+						Error: res.err.Error(),
+					})
+					continue
+				}
 				perCluster = append(perCluster, PerClusterHealth{
-					ID:    cID,
-					Name:  s.clusterNameForID(cID),
-					Error: res.err.Error(),
+					ID:        cID,
+					Name:      s.clusterNameForID(cID),
+					HiveCount: hiveCounts[cID],
+					Summary: ClusterHealthSummary{
+						HiveCount: hiveCounts[cID],
+					},
+					Status: s.pushReportedNoHealthStatus(cID),
+					Note:   s.pushReportedNoHealthNote(cID),
 				})
 				continue
 			}
@@ -426,7 +456,7 @@ func clusterHealthQueryTimeoutFor(cluster *ClusterConfig) time.Duration {
 // errClusterPullOnly marks a health query skipped because the hub cannot reach
 // the cluster at all. It is an EXPECTED outcome, not a fault, so callers report
 // it as such and use the spokes' own heartbeat-reported health instead.
-var errClusterPullOnly = errors.New("cluster is pull-only: not reachable from the hub")
+var errClusterPullOnly = errors.New("cluster is push-reported: not reachable from the hub")
 
 // buildSingleClusterHealth queries a single cluster for node health data.
 // knownHostedNamespaces is the fleet-wide set of hosted namespace names the
@@ -438,7 +468,7 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, knownHosted
 		// Node-level health comes from kubectl, which cannot run here. This is
 		// not a new failure mode: the caller already falls back to the health
 		// the spokes THEMSELVES report over the heartbeat, which is exactly the
-		// right source for a pull-only pool. Returning the sentinel routes into
+		// right source for a push-reported pool. Returning the sentinel routes into
 		// that path and keeps it out of the "query failed" warning.
 		return PerClusterHealth{}, fmt.Errorf("%w: %s", errClusterPullOnly, cluster.ID)
 	}
@@ -804,6 +834,122 @@ func (s *HubServer) getHeartbeatHealthForCluster(clusterID string) *HeartbeatHea
 	return entry
 }
 
+func (s *HubServer) pushReportedNoHealthStatus(clusterID string) string {
+	if diag := s.pushReportedHeartbeatDiagnostic(clusterID); diag.heartbeatSeen {
+		return perClusterHealthStatusMissingHealth
+	}
+	return perClusterHealthStatusAwaitingHeartbeat
+}
+
+func (s *HubServer) pushReportedNoHealthNote(clusterID string) string {
+	diag := s.pushReportedHeartbeatDiagnostic(clusterID)
+	if !diag.heartbeatSeen {
+		return "push-reported · awaiting spoke heartbeat"
+	}
+	ageSuffix := ""
+	if diag.age != "" {
+		ageSuffix = " (last seen " + diag.age + ")"
+	}
+	if !diag.hasVersion {
+		return "push-reported · heartbeat carries no node health — spoke build/version not reported; upgrade spokes to ≥ " + clusterHealthUpgradeVersion + ageSuffix
+	}
+	if diag.predatesHealthFix {
+		return "push-reported · heartbeat carries no node health — spoke build predates " + clusterHealthUpgradeFixPR + "; upgrade spokes to ≥ " + clusterHealthUpgradeVersion + ageSuffix
+	}
+	return "push-reported · heartbeat carries no node health — check spoke node-metrics RBAC and metrics-server" + ageSuffix
+}
+
+type pushReportedHeartbeatDiagnostic struct {
+	heartbeatSeen     bool
+	age               string
+	hasVersion        bool
+	predatesHealthFix bool
+}
+
+func (s *HubServer) pushReportedHeartbeatDiagnostic(clusterID string) pushReportedHeartbeatDiagnostic {
+	diag := pushReportedHeartbeatDiagnostic{predatesHealthFix: true}
+	if s == nil {
+		return diag
+	}
+	var latest time.Time
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if h.ClusterID != clusterID || h.LastHeartbeat == "" {
+			continue
+		}
+		heartbeatAt, err := time.Parse(time.RFC3339, h.LastHeartbeat)
+		if err != nil {
+			continue
+		}
+		diag.heartbeatSeen = true
+		if latest.IsZero() || heartbeatAt.After(latest) {
+			latest = heartbeatAt
+		}
+		if h.Version == "" && h.GitHash == "" {
+			continue
+		}
+		diag.hasVersion = true
+		if spokeBuildAtOrAfterClusterHealthFix(h.Version, h.GitHash) {
+			diag.predatesHealthFix = false
+		}
+	}
+	s.mu.RUnlock()
+	if !latest.IsZero() {
+		diag.age = formatClusterHealthAge(time.Since(latest))
+	}
+	return diag
+}
+
+func spokeBuildAtOrAfterClusterHealthFix(version, gitHash string) bool {
+	if sameCommit(gitHash, clusterHealthUpgradeFixSHA) {
+		return true
+	}
+	major, minor, patch, ok := parseClusterHealthVersion(version)
+	if !ok {
+		return false
+	}
+	fixMajor, fixMinor, fixPatch, _ := parseClusterHealthVersion(clusterHealthUpgradeVersion)
+	if major != fixMajor {
+		return major > fixMajor
+	}
+	if minor != fixMinor {
+		return minor > fixMinor
+	}
+	return patch >= fixPatch
+}
+
+func parseClusterHealthVersion(version string) (int, int, int, bool) {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	base, _, _ := strings.Cut(version, "-")
+	parts := strings.Split(base, ".")
+	if len(parts) < semverCoreParts {
+		return 0, 0, 0, false
+	}
+	major, errMajor := strconv.Atoi(parts[0])
+	minor, errMinor := strconv.Atoi(parts[1])
+	patch, errPatch := strconv.Atoi(parts[2])
+	if errMajor != nil || errMinor != nil || errPatch != nil {
+		return 0, 0, 0, false
+	}
+	return major, minor, patch, true
+}
+
+func formatClusterHealthAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return "just now"
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm ago", int(age.Minutes()))
+	}
+	if age < clusterHealthHoursPerDay*time.Hour {
+		return fmt.Sprintf("%dh ago", int(age.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(age.Hours()/clusterHealthHoursPerDay))
+}
+
 // convertHeartbeatToPerClusterHealth converts heartbeat-reported health data
 // into the hub's PerClusterHealth format for display. If the data is older
 // than heartbeatHealthStaleness, it is marked with a staleness warning.
@@ -852,12 +998,19 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 		HiveCount:  hiveCount,
 		DataSource: "heartbeat",
 	}
+	if report.NodeHealthError != "" {
+		pch.Error = report.NodeHealthError
+		pch.Status = perClusterHealthStatusMissingHealth
+		pch.Note = "push-reported · node health partial — " + report.NodeHealthError
+	}
 
 	// Mark staleness if heartbeat data is too old.
 	age := time.Since(entry.ReceivedAt)
 	if age > heartbeatHealthStaleness {
 		pch.DataStale = true
 		pch.DataAge = fmt.Sprintf("%dm ago", int(age.Minutes()))
+		pch.Status = perClusterHealthStatusStaleHeartbeat
+		pch.Note = "heartbeat health is stale (" + pch.DataAge + ")"
 	} else if report.CollectedAt != "" {
 		pch.DataAge = report.CollectedAt
 	}

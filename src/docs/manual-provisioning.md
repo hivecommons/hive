@@ -929,9 +929,17 @@ Remove it and the hub falls back to synthesising `<hiveID>.<hub host>`, which
 under the manual path for the full rationale, the YAML, and the
 ServiceAccount-derivation caveat.
 
+The template also emits a read-only cluster-scoped `hive-node-health-reader-*`
+ClusterRole/ClusterRoleBinding so push-reported spokes can send node health in
+their outbound heartbeat. It grants `nodes get,list`, `nodes/proxy get`,
+`pods list`, and `metrics.k8s.io/nodes list`. If metrics-server is absent or
+that last rule is denied, the spoke still reports node count, vCPU, memory and
+disk capacity from the core Node API and carries the precise `node_health_error`
+reason to the hub.
+
 The template binds `hive-sa` on `RequiresSCC` (OpenShift) clusters and `default`
-elsewhere. Namespaces provisioned **before** this Role was added do not have it
-and need it applied retroactively.
+elsewhere. Namespaces provisioned **before** either reader was added do not have
+it and need it applied retroactively.
 
 ---
 
@@ -943,8 +951,9 @@ with `kubectl --context <heartbeat-only-cluster>`. The full set, in order:
 1. Namespace
 2. ServiceAccount (`hive-sa`)
 3. RBAC — three Roles (`hive-secrets-writer`, `hive-self-upgrade`,
-   `hive-route-reader`) and four RoleBindings (the three above **plus**
-   `hive-anyuid`)
+   `hive-route-reader`), one ClusterRole (`hive-node-health-reader-${NS}`),
+   four RoleBindings (the three above **plus** `hive-anyuid`), and one
+   ClusterRoleBinding (`hive-node-health-reader-${NS}`)
 4. PVC (`hive-data`, RWX cephfs, 50Gi)
 5. ConfigMap (`hive-config`) — the first-boot config **seed**
 6. Secret (`hive-secrets`) — dashboard token, GitHub App key, LiteLLM key
@@ -1038,6 +1047,30 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: hive-anyuid, namespace: ${NS} }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:openshift:scc:anyuid }
+subjects:
+- { kind: ServiceAccount, name: hive-sa, namespace: ${NS} }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: hive-node-health-reader-${NS} }
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get","list"]
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: hive-node-health-reader-${NS} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: hive-node-health-reader-${NS} }
 subjects:
 - { kind: ServiceAccount, name: hive-sa, namespace: ${NS} }
 YAML

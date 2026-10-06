@@ -5,7 +5,7 @@
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
 #     https://registry-1.docker.io/v2/library/golang/manifests/1.27-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
-FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -39,6 +39,8 @@ ARG GIT_BRANCH=unknown
 # checks out with fetch-depth: 0 so the tag history git describe needs is
 # present. See src/docs/releases.md, "The version constant".
 ARG VERSION=""
+ARG TARGETOS
+ARG TARGETARCH
 # Cache mounts for GOCACHE (/tmp/gobuild, matching the GOCACHE= below) and the
 # module cache. docker.yml's `no-cache-filters: builder,runtime` still forces
 # this RUN to re-execute on every build — that is the #3760 stale-binary
@@ -55,11 +57,11 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     RESOLVED_VERSION="$VERSION" && \
     if [ -z "$RESOLVED_VERSION" ]; then RESOLVED_VERSION=$(git -C /repo describe --tags --always 2>/dev/null || echo ""); fi && \
     if [ -n "$RESOLVED_VERSION" ]; then VERSION_LDFLAG="-X main.version=${RESOLVED_VERSION}"; fi && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-admin-mcp ./cmd/hive-admin-mcp
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-admin-mcp ./cmd/hive-admin-mcp
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -281,8 +283,8 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
     node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs && \
     claude --version
 
-# --- Layer 8: Goose CLI (official block/goose upstream) ---
-# Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
+# --- Layer 8: Goose CLI (canonical upstream after Goose's AAIF move) ---
+# Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
 ARG GOOSE_VERSION=1.53.0
@@ -294,7 +296,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
     esac && \
-    if curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
+    if curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
       echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c - && \
       tar xz -C /usr/local/bin -f /tmp/goose.tar.gz && \
       chmod +x /usr/local/bin/goose && \

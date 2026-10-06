@@ -339,11 +339,18 @@ func HasAttributionTrailer(body string) bool {
 	return strings.Contains(body, AttributionTrailerPrefix)
 }
 
+// attributionIdentityFooter matches only the terminal block emitted by
+// bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown.
+var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t\\n]*$")
+
 // ParseAttributionTrailer extracts the launch metadata from the final visible
-// `— hive:` line in a PR body. Mentions of the template earlier in the body are
-// deliberately ignored so docs and quoted examples do not count as agent PRs.
+// `— hive:` line in a PR body, optionally followed by Hive's identity footer.
+// Mentions of the template earlier in the body are deliberately ignored so
+// docs and quoted examples do not count as agent PRs.
 func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
-	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = attributionIdentityFooter.ReplaceAllString(body, "")
+	lines := strings.Split(body, "\n")
 	trailer := ""
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])

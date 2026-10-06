@@ -30,8 +30,10 @@ func ciRunnerDockerfile(t *testing.T) string {
 }
 
 // The entire point of the image. ci-install-tool.sh no-ops when the tool is
-// already present, so these three packages are what make every call site in
-// .github/workflows/* take the zero-network path.
+// already present, so the Ubuntu packages below make every call site in
+// .github/workflows/* take the zero-network path. The GitHub CLI is installed
+// from its official apt repository because issue/PR automation workflows call
+// `gh` directly.
 //
 // Checked against the apt-get install list specifically, not against the file
 // as a whole: every one of these names also appears in prose and in the
@@ -63,6 +65,15 @@ func TestCIRunnerDockerfileBakesCIToolchain(t *testing.T) {
 			t.Fatalf("ci-runners/Dockerfile must install %q as its own entry in the apt-get install list — without it that tool is still fetched from the Ubuntu mirrors at job time (#7206)", pkg)
 		}
 	}
+
+	if !strings.Contains(dockerfile, "\"gh=${GITHUB_CLI_VERSION}\"") {
+		t.Fatal("ci-runners/Dockerfile must install the GitHub CLI with the pinned GITHUB_CLI_VERSION ARG so gh-using workflows can move to the fleet after rollout")
+	}
+	if !strings.Contains(dockerfile, "githubcli-archive-keyring.gpg") ||
+		!strings.Contains(dockerfile, "sha256sum -c -") ||
+		!strings.Contains(dockerfile, "signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg") {
+		t.Fatal("ci-runners/Dockerfile must fetch the official GitHub CLI keyring, verify its checksum, and bind the apt source with Signed-By")
+	}
 }
 
 // A build that installs the packages but never exercises them can still ship an
@@ -70,7 +81,7 @@ func TestCIRunnerDockerfileBakesCIToolchain(t *testing.T) {
 // the only place this is cheap to catch.
 func TestCIRunnerDockerfileVerifiesToolchainDuringBuild(t *testing.T) {
 	dockerfile := ciRunnerDockerfile(t)
-	for _, want := range []string{"gcc --version", "tmux -V"} {
+	for _, want := range []string{"gcc --version", "tmux -V", "gh --version"} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("ci-runners/Dockerfile must verify the toolchain during the build (missing %q) so a stale base image or mirror fails the build instead of shipping (#7206)", want)
 		}

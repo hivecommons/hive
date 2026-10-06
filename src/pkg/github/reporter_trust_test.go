@@ -3,7 +3,10 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -111,6 +114,447 @@ func TestEnumerateActionable_ReporterTrustComposesWithRequireLabels(t *testing.T
 	}
 	if !nums[3] {
 		t.Error("the triaged stranger's issue satisfies both gates and must be actionable")
+	}
+}
+
+type reporterTrustWaitHarness struct {
+	t        *testing.T
+	org      string
+	repo     string
+	issue    wireIssue
+	comments []string
+	labels   map[string]bool
+}
+
+func newReporterTrustWaitHarness(t *testing.T, issue wireIssue) *reporterTrustWaitHarness {
+	t.Helper()
+	h := &reporterTrustWaitHarness{
+		t:      t,
+		org:    "testorg",
+		repo:   "testrepo",
+		issue:  issue,
+		labels: map[string]bool{},
+	}
+	for _, label := range issue.Labels {
+		h.labels[label.Name] = true
+	}
+	return h
+}
+
+func (h *reporterTrustWaitHarness) server() *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues", h.org, h.repo), func(w http.ResponseWriter, r *http.Request) {
+		h.issue.Labels = h.currentLabels()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mustMarshal(h.t, []wireIssue{h.issue}))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/pulls", h.org, h.repo), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/comments", h.org, h.repo, h.issue.Number), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			out := make([]map[string]string, 0, len(h.comments))
+			for _, body := range h.comments {
+				out = append(out, map[string]string{"body": body})
+			}
+			w.Write(mustMarshal(h.t, out))
+		case http.MethodPost:
+			var req struct {
+				Body string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				h.t.Fatalf("decode comment: %v", err)
+			}
+			h.comments = append(h.comments, req.Body)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"html_url":"https://example.test/comment"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/labels", h.org, h.repo, h.issue.Number), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		var labels []string
+		if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
+			h.t.Fatalf("decode labels: %v", err)
+		}
+		for _, label := range labels {
+			h.labels[label] = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/labels/", h.org, h.repo, h.issue.Number), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.NotFound(w, r)
+			return
+		}
+		label, err := url.PathUnescape(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/issues/%d/labels/", h.org, h.repo, h.issue.Number)))
+		if err != nil {
+			h.t.Fatalf("unescape label: %v", err)
+		}
+		delete(h.labels, label)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels", h.org, h.repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"name":"created"}`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels/", h.org, h.repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		label, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/labels/", h.org, h.repo)))
+		if h.labels[label] {
+			w.Write([]byte(`{"name":"` + label + `"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"not found"}`))
+	})
+	return httptest.NewServer(mux)
+}
+
+func (h *reporterTrustWaitHarness) currentLabels() []wireLabel {
+	out := make([]wireLabel, 0, len(h.labels))
+	for label := range h.labels {
+		out = append(out, wireLabel{Name: label})
+	}
+	return out
+}
+
+func TestEnumerateActionable_ReporterTrustWaitCommentAndLabel(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 101, Title: "stranger asks", User: wireUser{"stranger"}, AuthorAssociation: "NONE", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(enabledReporterTrust())
+	recs := captureAudit(c)
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 0 {
+		t.Fatalf("untrusted issue entered backlog before triage: %+v", result.Issues.Items)
+	}
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("comments = %d, want one reporter-trust wait comment", got)
+	}
+	if !strings.Contains(h.comments[0], reporterTrustWaitMarkerPrefix) || !strings.Contains(h.comments[0], "triage/accepted") || !strings.Contains(h.comments[0], "added-label=needs-triage") {
+		t.Fatalf("comment body missing marker/label: %q", h.comments[0])
+	}
+	if !h.labels["needs-triage"] {
+		t.Fatalf("awaiting-triage label not applied: %#v", h.labels)
+	}
+	if rec, ok := findAudit(*recs, AuditActionReporterTrustWaitNoticed); !ok {
+		t.Fatalf("missing %s audit; records=%#v", AuditActionReporterTrustWaitNoticed, *recs)
+	} else if rec.Repo != h.org+"/"+h.repo || rec.Target != h.issue.Number {
+		t.Fatalf("notice audit target = %s#%d", rec.Repo, rec.Target)
+	}
+	if rec, ok := findAudit(*recs, AuditActionHiveLabelApplied); !ok {
+		t.Fatalf("missing %s audit; records=%#v", AuditActionHiveLabelApplied, *recs)
+	} else if !strings.Contains(rec.Detail, "reason=reporter_trust_wait") {
+		t.Fatalf("label audit missing reporter-trust reason: %q", rec.Detail)
+	}
+
+	if _, err := c.EnumerateActionable(context.Background()); err != nil {
+		t.Fatalf("second EnumerateActionable: %v", err)
+	}
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("second sweep duplicated comment: got %d comments", got)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitNoticeBudget(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	issueCount := DefaultReporterTrustWaitMaxNotices + 1
+	issues := make([]wireIssue, 0, issueCount)
+	labels := map[int]map[string]bool{}
+	comments := map[int]int{}
+	for i := 1; i <= issueCount; i++ {
+		issues = append(issues, wireIssue{
+			Number: i, Title: fmt.Sprintf("stranger asks %d", i), User: wireUser{"stranger"},
+			AuthorAssociation: "NONE", CreatedAt: hoursAgo(1),
+		})
+		labels[i] = map[string]bool{}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		current := make([]wireIssue, 0, len(issues))
+		for _, issue := range issues {
+			for label := range labels[issue.Number] {
+				issue.Labels = append(issue.Labels, wireLabel{Name: label})
+			}
+			current = append(current, issue)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mustMarshal(t, current))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/pulls", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	})
+	for _, issue := range issues {
+		number := issue.Number
+		mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/comments", org, repo, number), func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				w.Write([]byte(`[]`))
+			case http.MethodPost:
+				comments[number]++
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"html_url":"https://example.test/comment"}`))
+			default:
+				http.NotFound(w, r)
+			}
+		})
+		mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/%d/labels", org, repo, number), func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.NotFound(w, r)
+				return
+			}
+			labels[number]["needs-triage"] = true
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[]`))
+		})
+	}
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"name":"needs-triage"}`))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels/", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"not found"}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetIssueFilter(enabledReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	var triage int
+	for _, r := range result.WorkBreakdownByRepo {
+		triage += r.Issues.ReporterTriage
+	}
+	if triage != issueCount {
+		t.Fatalf("reporter_triage = %d, want %d", triage, issueCount)
+	}
+	var commentTotal, labelTotal int
+	for i := 1; i <= issueCount; i++ {
+		commentTotal += comments[i]
+		if labels[i]["needs-triage"] {
+			labelTotal++
+		}
+	}
+	if commentTotal != DefaultReporterTrustWaitMaxNotices {
+		t.Fatalf("comments posted = %d, want cap %d", commentTotal, DefaultReporterTrustWaitMaxNotices)
+	}
+	if labelTotal != DefaultReporterTrustWaitMaxNotices {
+		t.Fatalf("labels applied = %d, want cap %d", labelTotal, DefaultReporterTrustWaitMaxNotices)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitClearsAfterTriage(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 102, Title: "stranger triaged", User: wireUser{"stranger"}, AuthorAssociation: "NONE",
+		Labels: []wireLabel{{Name: "needs-triage"}, {Name: "triage/accepted"}}, CreatedAt: hoursAgo(1),
+	})
+	h.comments = []string{reporterTrustWaitComment(h.repo, "needs-triage", enabledReporterTrust())}
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(enabledReporterTrust())
+	recs := captureAudit(c)
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 {
+		t.Fatalf("triaged issue count = %d, want 1", result.Issues.Count)
+	}
+	if h.labels["needs-triage"] {
+		t.Fatalf("awaiting label was not removed after triage: %#v", h.labels)
+	}
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("triaged issue should keep its existing wait comment only: %d", got)
+	}
+	if rec, ok := findAudit(*recs, AuditActionReporterTrustWaitCleared); !ok {
+		t.Fatalf("missing %s audit; records=%#v", AuditActionReporterTrustWaitCleared, *recs)
+	} else if rec.Repo != h.org+"/"+h.repo || rec.Target != h.issue.Number {
+		t.Fatalf("clear audit target = %s#%d", rec.Repo, rec.Target)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitDoesNotClearHumanTriageLabel(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 104, Title: "stranger triaged elsewhere", User: wireUser{"stranger"}, AuthorAssociation: "NONE",
+		Labels: []wireLabel{{Name: "needs-triage"}, {Name: "triage/accepted"}}, CreatedAt: hoursAgo(1),
+	})
+	h.comments = []string{reporterTrustWaitComment(h.repo, "", enabledReporterTrust())}
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(enabledReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 {
+		t.Fatalf("triaged issue count = %d, want 1", result.Issues.Count)
+	}
+	if !h.labels["needs-triage"] {
+		t.Fatalf("human/bot-owned needs-triage label was removed: %#v", h.labels)
+	}
+}
+
+func TestReporterTrustWaitMarkedAddedExact(t *testing.T) {
+	comments := []string{reporterTrustWaitMarker("repo", "needs-triage-old")}
+	if reporterTrustWaitMarkedAdded(comments, "needs-triage") {
+		t.Fatal("prefix match must not prove Hive added the current waiting label")
+	}
+	if !reporterTrustWaitMarkedAdded(comments, "needs-triage-old") {
+		t.Fatal("exact added-label marker was not recognized")
+	}
+}
+
+type reporterTrustBasicAdmitter struct{}
+
+func (reporterTrustBasicAdmitter) AdmitsReporter([]string, string, string) bool { return false }
+func (reporterTrustBasicAdmitter) ReporterTrustEnabled() bool                   { return true }
+
+type reporterTrustNoticeStub struct {
+	reporterTrustBasicAdmitter
+	trusted  []string
+	required []string
+	label    string
+	comment  bool
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustTrustedAssociationsForNotice() []string {
+	return s.trusted
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustRequiredLabelsForNotice() []string {
+	return s.required
+}
+
+func (s reporterTrustNoticeStub) ReporterTrustAwaitingLabel() string { return s.label }
+func (s reporterTrustNoticeStub) ReporterTrustCommentEnabled() bool  { return s.comment }
+
+func TestReporterTrustWaitNoticeConfigDefaultsAndFormatting(t *testing.T) {
+	basic := reporterTrustBasicAdmitter{}
+	if got := reporterTrustAwaitingLabel(basic); got != "needs-triage" {
+		t.Fatalf("default awaiting label = %q, want needs-triage", got)
+	}
+	if !reporterTrustCommentEnabled(basic) {
+		t.Fatal("basic reporter-trust admitter should comment by default")
+	}
+	if got := reporterTrustRequiredLabelsForNotice(basic); len(got) != 1 || got[0] != "triage/accepted" {
+		t.Fatalf("default required labels = %v", got)
+	}
+	if got := reporterTrustTrustedAssociationsForNotice(basic); strings.Join(got, ",") != "OWNER,MEMBER,COLLABORATOR" {
+		t.Fatalf("default trusted associations = %v", got)
+	}
+
+	custom := reporterTrustNoticeStub{
+		trusted:  []string{" ", "OWNER", "TRIAGER"},
+		required: []string{"", "triage/accepted", "security/accepted"},
+		label:    " custom-wait ",
+		comment:  false,
+	}
+	if got := reporterTrustAwaitingLabel(custom); got != "custom-wait" {
+		t.Fatalf("custom awaiting label = %q", got)
+	}
+	if reporterTrustCommentEnabled(custom) {
+		t.Fatal("custom comment toggle should be honored")
+	}
+	body := reporterTrustWaitComment("o/r", "custom wait/label", custom)
+	for _, want := range []string{"added-label=custom+wait%2Flabel", "OWNER, TRIAGER", "one of the labels `triage/accepted`, `security/accepted`"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("custom wait comment missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestReporterTrustLabelHelpers(t *testing.T) {
+	labels := []string{" Bug ", "needs-triage", "Area/Core"}
+	if !hasExactLabel(labels, "bug") || !hasExactLabel(labels, "NEEDS-TRIAGE") {
+		t.Fatalf("hasExactLabel failed case/space-insensitive match for %v", labels)
+	}
+	if hasExactLabel(labels, "needs-triage-old") {
+		t.Fatalf("hasExactLabel allowed a prefix match for %v", labels)
+	}
+	got := withoutExactLabel(append([]string(nil), labels...), " NEEDS-TRIAGE ")
+	if strings.Join(got, "|") != " Bug |Area/Core" {
+		t.Fatalf("withoutExactLabel = %q, want Bug and Area/Core only", strings.Join(got, "|"))
+	}
+}
+
+func TestReporterTrustWaitBudget(t *testing.T) {
+	var nilBudget *reporterTrustWaitBudget
+	if !nilBudget.reserve() {
+		t.Fatal("nil budget should fail open for direct helper callers")
+	}
+	budget := &reporterTrustWaitBudget{remaining: 2}
+	if !budget.reserve() || budget.remaining != 1 {
+		t.Fatalf("first reserve left remaining=%d, want 1", budget.remaining)
+	}
+	if !budget.reserve() || budget.remaining != 0 {
+		t.Fatalf("second reserve left remaining=%d, want 0", budget.remaining)
+	}
+	got := budget.reserve()
+	if got || budget.remaining != 0 {
+		t.Fatalf("exhausted budget reserve=%t remaining=%d, want false/0", got, budget.remaining)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitTrustedReporterNoop(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 103, Title: "maintainer asks", User: wireUser{"maintainer"}, AuthorAssociation: "MEMBER", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(enabledReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 {
+		t.Fatalf("trusted issue count = %d, want 1", result.Issues.Count)
+	}
+	if len(h.comments) != 0 || h.labels["needs-triage"] {
+		t.Fatalf("trusted reporter should not be marked: comments=%d labels=%#v", len(h.comments), h.labels)
 	}
 }
 

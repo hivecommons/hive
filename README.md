@@ -507,7 +507,7 @@ github:
 
 ## ACMM Levels
 
-Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
+Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
 
 | Level | Name | Agents | What agents can do |
 |-------|------|--------|-------------------|
@@ -599,11 +599,25 @@ just contribute-hive
 
 Supported CLIs: Claude Code, GitHub Copilot, Codex, Goose, Pi, Oh My Pi (`omp`), Bob, Aider, LiteLLM (via Claude Code), Antigravity (`agy`), opencode, Kilo, and Muse Code — the authoritative list is `KNOWN_BACKENDS` in [config/backends.conf](config/backends.conf), and [docs/backend-setup.md](docs/backend-setup.md) covers per-backend setup, auth, and confinement. Contributors start as newcomer (rate-limited), auto-promote to contributor after PR-backed work, and become trusted only when an operator grants it after about 20 PR tasks with the tier dropdown on the contributor card under **Operations → Connected clankers** (`PUT /api/contributors/{id}/trust`). Your credentials never leave your machine.
 
+Related project: [GitHub Agentic Workflows (gh-aw)](https://github.com/github/gh-aw)
+compiles Markdown-authored agentic jobs into GitHub Actions. Use the
+[Hive report-only triage on-ramp](src/deploy/gh-aw/README.md) alongside existing
+workflows, then adopt Hive when you need a continuous fleet rather than per-run
+Actions plumbing; see the [overlap/difference table](src/docs/landscape.md#github-agentic-workflows-gh-aw).
+
 External and additive work integrations include the [Flue](https://github.com/withastro/flue) report-only external-execution pilot (`runs.external.flue`, linked with the `extwork_flue` build tag) and the [Crustify](https://github.com/crustify-rs/crustify) / [Wavefront](https://github.com/crustify-rs/wavefront) C/C++→Rust migration graph work source (`governor.work_source.wavefront`, default disabled).
 
 A relay can subscribe to multiple hives — manage them as named profiles with `hivectl hives` (`add`, `use`, `list`, plus `export`/`import`/`session` for moving profiles between machines), which generates the `HIVE_HUB` / `HIVE_REGISTRATION_TOKEN` lists the relay reads so they stay aligned by construction. Operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to), [src/docs/contributor-relay.md](src/docs/contributor-relay.md), and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
 
 See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
+
+## Related projects
+
+- [Goose](https://github.com/aaif-goose/goose), an agent backend whose upstream
+  moved to the [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive integrates
+  Goose as an independent CNCF project; Hive does not join AAIF, seek AAIF
+  membership, or rely on AAIF to host or govern Hive. See [unattended Goose with Hive](docs/goose-at-scale.md)
+  and [Goose upstream tracking](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
 
 ## Repositories
 

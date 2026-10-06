@@ -186,6 +186,38 @@ func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
 	}
 }
 
+func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"function renderAuditCollapsedSummary(text, title)",
+		"renderSparkline(null, sparkValues",
+		"Audit entries per hour over the last 24h",
+		"audit-entry-rate-spark",
+		"audit-last-entry",
+		"audit-today-count",
+		"audit-sensitive-chip ${chipClass}",
+		"const chipClass = sensitive > 0 ? 'warning' : 'muted';",
+		"window._auditSummary = _auditSummary;",
+		"return renderAuditCollapsedSummary(text, title);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard audit collapsed summary missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		".audit-sensitive-chip.warning",
+		".audit-sensitive-chip.muted",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard audit sensitive chip CSS missing %q", want)
+		}
+	}
+}
+
 // TestStaticTerminalHostedApexWiring pins the two hosted-hive terminal defects
 // that shipped alongside the proxy's single-apex /terminal gate.
 //
@@ -276,6 +308,30 @@ func TestStaticDashboardPRAuthorUserMenuWiring(t *testing.T) {
 	}
 	if strings.Contains(html, `<div class="gov-stat" title="PR AUTHOR`) {
 		t.Fatal("governor strip still renders the PR AUTHOR tile")
+	}
+}
+
+func TestStaticPublicKnowledgeToggleWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`id="public-knowledge-header-control" data-public-knowledge-control="header"`,
+		`id="public-knowledge-settings-control" data-public-knowledge-control="settings"`,
+		`case 'Knowledge': return renderGovKnowledgeSharing();`,
+		`fetch('/api/knowledge/public')`,
+		`fetch('/api/knowledge/public', {`,
+		`data-action="publicKnowledgeRequestToggle"`,
+		`data-action="publicKnowledgeConfirmEnable"`,
+		`data-action="publicKnowledgeCopyURL"`,
+		`Anyone with the URL can read operational facts (types `,
+		`Only the hive owner can change this`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("public knowledge toggle wiring missing %q", want)
+		}
 	}
 }
 
@@ -509,6 +565,27 @@ func TestStaticIndexRepoTileReorderHandle(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("static dashboard repo tile reorder wiring missing %q", want)
+		}
+	}
+}
+
+func TestStaticVersionMenuEscapesSidebarClipping(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`.oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed;`,
+		`.avatar-menu.oc-version-menu { position: fixed;`,
+		`z-index: 10002`,
+		`function positionVersionMenu()`,
+		`const rect = chip.getBoundingClientRect`,
+		`window.addEventListener('resize', positionVersionMenuIfOpen);`,
+		`window.addEventListener('scroll', positionVersionMenuIfOpen, true);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard version menu clipping fix missing %q", want)
 		}
 	}
 }

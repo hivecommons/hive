@@ -23,36 +23,6 @@ func TestModelFamily(t *testing.T) {
 	}
 }
 
-func TestAuditRemoveMentionsLabel(t *testing.T) {
-	fields := map[string]string{"label": "Hive-Hold", "labels": "a, hive-hold:agent ,b"}
-	if !auditRemoveMentionsLabel(fields, "hive-hold") {
-		t.Fatal("case-insensitive single label not matched")
-	}
-	if !auditRemoveMentionsLabel(fields, "hive-hold:agent") {
-		t.Fatal("trimmed list item not matched")
-	}
-	if auditRemoveMentionsLabel(fields, "other") {
-		t.Fatal("unrelated label matched")
-	}
-	if auditRemoveMentionsLabel(map[string]string{}, "hive-hold") {
-		t.Fatal("empty fields matched")
-	}
-}
-
-func TestSafeMigrationFilePart(t *testing.T) {
-	cases := map[string]string{
-		" HiveCommons/Hive ": "hivecommons-hive",
-		"ok_name-1":          "ok_name-1",
-		"":                   "unknown",
-		"///":                "---",
-	}
-	for in, want := range cases {
-		if got := safeMigrationFilePart(in); got != want {
-			t.Errorf("safeMigrationFilePart(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestRemoveLabelAndGetPRStateNilClient(t *testing.T) {
 	var c *Client
 	if err := c.RemoveLabel(context.Background(), "o/r", 1, "x"); !errors.Is(err, ErrNoGitHubClient) {

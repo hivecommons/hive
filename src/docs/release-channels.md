@@ -19,7 +19,7 @@ a read-only badge.
 
 ## How channels are published
 
-Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds fast-moving channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v5` publish `candidate`; the separate stable-promotion workflow later retags `stable` by candidate digest after the soak gate passes. Builds of branch `v6` publish `edge`. All three images get their line's channels in both published orgs:
+Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds fast-moving channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v5` publish `candidate`; the separate stable-promotion workflow later retags `stable` to the digest for the newest build that crossed the 24-hour line after the soak gate passes. Builds of branch `v6` publish `edge`. All three images get their line's channels in both published orgs:
 
 - `ghcr.io/hivecommons/hive` and `ghcr.io/kubestellar/hive`
 - `ghcr.io/hivecommons/hive-contributor` and `ghcr.io/kubestellar/hive-contributor`

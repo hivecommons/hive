@@ -38,6 +38,18 @@ const (
 	// DefaultSpektacularHubExecutorMaxConcurrent bounds simultaneous hub-authored
 	// Spektacular stages.
 	DefaultSpektacularHubExecutorMaxConcurrent = 1
+	// DefaultSpektacularRecheckInterval is the default continuous convergence
+	// cadence for campaigns that opt in without a per-campaign override.
+	DefaultSpektacularRecheckInterval = 168 * time.Hour
+	// DefaultSpektacularMaxDeltaTasks caps how many changed/new plan tasks a
+	// recheck imports into the planner in one generation.
+	DefaultSpektacularMaxDeltaTasks = 50
+	// DefaultSpektacularDiscoveryTimeoutS bounds each outward discovery pass.
+	DefaultSpektacularDiscoveryTimeoutS = 30
+	// DefaultSpektacularDiscoveryMaxItems caps one configured discovery source.
+	DefaultSpektacularDiscoveryMaxItems = 20
+	// DefaultSpektacularDiscoveryMaxTotalItems caps all discovery evidence for a revision.
+	DefaultSpektacularDiscoveryMaxTotalItems = 100
 
 	// DefaultRunsWaitTimeoutSeconds is how long a run checkpoint may wait for
 	// owner approval before escalation. It also floors how far a held plan
@@ -170,6 +182,8 @@ type SpektacularConfig struct {
 	// "human" make the hub pause for dashboard answers; "auto" preserves the
 	// previous headless self-answering behavior.
 	Interview string `yaml:"interview,omitempty" json:"interview,omitempty"`
+	// Recheck configures continuous convergence revisions. Default off.
+	Recheck SpektacularRecheckConfig `yaml:"recheck,omitempty" json:"recheck,omitempty"`
 }
 
 // SpektacularHubExecutorConfig configures the hub-resident Spektacular executor.
@@ -180,6 +194,39 @@ type SpektacularHubExecutorConfig struct {
 	TimeoutSeconds int    `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 	Identity       string `yaml:"identity,omitempty" json:"identity,omitempty"`
 	MaxConcurrent  int    `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+}
+
+// SpektacularRecheckConfig controls cadence-driven Spek revision campaigns.
+type SpektacularRecheckConfig struct {
+	// Enabled turns scheduler-owned recheck cadence on. Manual recheck requires
+	// this too unless the request supplies force=true.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// DefaultInterval is the cadence for opted-in campaigns without their own
+	// interval. Zero means DefaultSpektacularRecheckInterval.
+	DefaultInterval time.Duration `yaml:"default_interval,omitempty" json:"default_interval,omitempty"`
+	// MaxDeltaTasks caps imported changed/new tasks. Zero or negative means
+	// DefaultSpektacularMaxDeltaTasks.
+	MaxDeltaTasks int `yaml:"max_delta_tasks,omitempty" json:"max_delta_tasks,omitempty"`
+	// Discovery configures opt-in outward evidence gathered before recheck spec.
+	Discovery SpektacularRecheckDiscoveryConfig `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+}
+
+// SpektacularRecheckDiscoveryConfig is the bounded, declared-source-only
+// outward discovery step for recheck spec revisions.
+type SpektacularRecheckDiscoveryConfig struct {
+	Enabled       bool                                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Sources       []SpektacularRecheckDiscoverySource `yaml:"sources,omitempty" json:"sources,omitempty"`
+	Timeout       time.Duration                       `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	MaxTotalItems int                                 `yaml:"max_total_items,omitempty" json:"max_total_items,omitempty"`
+}
+
+// SpektacularRecheckDiscoverySource declares one operator-approved source.
+type SpektacularRecheckDiscoverySource struct {
+	Kind            string `yaml:"kind,omitempty" json:"kind,omitempty"`
+	Name            string `yaml:"name,omitempty" json:"name,omitempty"`
+	URLOrRepo       string `yaml:"url_or_repo,omitempty" json:"url_or_repo,omitempty"`
+	AllowPrerelease bool   `yaml:"allow_prerelease,omitempty" json:"allow_prerelease,omitempty"`
+	MaxItems        int    `yaml:"max_items,omitempty" json:"max_items,omitempty"`
 }
 
 // RegisteredRunsEngines reports the planning engine names that are registered.
@@ -324,4 +371,41 @@ func (h SpektacularHubExecutorConfig) MaxConcurrentOrDefault() int {
 		return h.MaxConcurrent
 	}
 	return DefaultSpektacularHubExecutorMaxConcurrent
+}
+
+// DefaultRecheckInterval returns the configured continuous convergence cadence.
+func (s SpektacularConfig) DefaultRecheckInterval() time.Duration {
+	if s.Recheck.DefaultInterval <= 0 {
+		return DefaultSpektacularRecheckInterval
+	}
+	return s.Recheck.DefaultInterval
+}
+
+// MaxDeltaTasks returns the configured cap for new/changed recheck tasks.
+func (s SpektacularConfig) MaxDeltaTasks() int {
+	if s.Recheck.MaxDeltaTasks <= 0 {
+		return DefaultSpektacularMaxDeltaTasks
+	}
+	return s.Recheck.MaxDeltaTasks
+}
+
+func (s SpektacularConfig) DiscoveryTimeout() time.Duration {
+	if s.Recheck.Discovery.Timeout <= 0 {
+		return time.Duration(DefaultSpektacularDiscoveryTimeoutS) * time.Second
+	}
+	return s.Recheck.Discovery.Timeout
+}
+
+func (s SpektacularConfig) DiscoveryMaxTotalItems() int {
+	if s.Recheck.Discovery.MaxTotalItems <= 0 {
+		return DefaultSpektacularDiscoveryMaxTotalItems
+	}
+	return s.Recheck.Discovery.MaxTotalItems
+}
+
+func (s SpektacularRecheckDiscoverySource) EffectiveMaxItems() int {
+	if s.MaxItems <= 0 {
+		return DefaultSpektacularDiscoveryMaxItems
+	}
+	return s.MaxItems
 }

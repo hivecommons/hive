@@ -78,13 +78,13 @@ func TestCIRunnerImagePatchNamesAPublishedTag(t *testing.T) {
 	}
 
 	// The published tag is `<runner version>-<tag_suffix>`, e.g.
-	// v2.337.0-ubuntu-24.04-toolchain-1. Anything else is not something
+	// v2.337.0-ubuntu-24.04-toolchain-gh-1. Anything else is not something
 	// ci-runner-image.yml can have pushed.
 	if strings.Contains(image, ":") && !strings.Contains(image, "@sha256:") {
 		tag := image[strings.LastIndex(image, ":")+1:]
 		published := regexp.MustCompile(`^v\d+\.\d+\.\d+-ubuntu-\d+\.\d+-\S+-\d+$`)
 		if !published.MatchString(tag) {
-			t.Fatalf("runner-image-patch.yaml tag %q does not match the <runner version>-<tag_suffix> shape ci-runner-image.yml publishes (e.g. v2.337.0-ubuntu-24.04-toolchain-1) (#7398)", tag)
+			t.Fatalf("runner-image-patch.yaml tag %q does not match the <runner version>-<tag_suffix> shape ci-runner-image.yml publishes (e.g. v2.337.0-ubuntu-24.04-toolchain-gh-1) (#7398)", tag)
 		}
 	}
 }

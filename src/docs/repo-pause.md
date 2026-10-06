@@ -31,7 +31,7 @@ keeps its ACMM evaluation. Only agent activity stops.
 
 ### From the dashboard
 
-Each card in **REPOSITORIES** carries a **⏸ pause** / **▶ resume** button
+Each card in **PROJECTS** carries a **⏸ pause** / **▶ resume** button
 (owner role only). Pausing asks for a reason; the card then shows a **⏸ PAUSED**
 pill whose tooltip names who paused it, when, and why.
 

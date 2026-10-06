@@ -43,6 +43,26 @@ manager and has no contributor-relay wiring at all, so the local-path tiers do
 not apply to it. Adding it to the relay would go through this bar as a new
 backend.
 
+## GitHub Agentic Workflows: on-ramp, not a CLI backend
+
+[GitHub Agentic Workflows (gh-aw)](https://github.com/github/gh-aw) compiles
+Markdown jobs into Actions. It has **no T1/T2/T3 assignment**: it is not a new
+`KNOWN_BACKENDS` CLI. Engine overlap with Hive does not transfer confinement,
+authentication, or metering evidence. The
+[report-only sample](../deploy/gh-aw/README.md) lets an existing gh-aw repo use
+Hive's deterministic classifier before engine judgment, keeping its existing
+workflows while adopting Hive for continuous fleet work.
+
+Hive dispatch into gh-aw through `pkg/extwork` is a proposed external-host path,
+**not a supported adapter today**. As with external OMP, initial admission must
+be limited to report-only/shadow stages, with no repository-write credential or
+dashboard token held by the external worker. A future adapter must reject
+write-capable capabilities in code, implement the extwork lease/receipt and
+cancellation contracts, bind receipts to the dispatched run, and supply
+conformance tests proving refusal and verification. An Actions run's success is
+not a verified receipt or permission to merge. Do not promote the underlying
+CLI's tier or claim budget metering based on this sample.
+
 ## The acceptance bar
 
 A PR adding backend `<name>` states, in its body, the tier it claims per path
@@ -285,6 +305,7 @@ agent spend, and the `advisor_records` admin MCP tool.
 | `opencode` | No | n/a | Nothing; reported not active |
 | `kilo` | No | n/a | Nothing; reported not active |
 | `muse` | No | n/a | Nothing; reported not active |
+| `openhands` | No | n/a | Nothing; reported not active |
 | `vllm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `llm-d` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `litellm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |

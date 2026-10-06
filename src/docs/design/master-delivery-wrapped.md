@@ -1,4 +1,4 @@
-# Wrapped master delivery to pull-only spokes
+# Wrapped master delivery to push-reported spokes
 
 Status: DESIGN ONLY. No implementation. This document extends
 `master-key-rotation.md` and should be read after it.
@@ -31,7 +31,7 @@ regenerates the hub's *private* seed via `SSOSigningSeedFromMaster`
 
 The reconcile lane is therefore an optimisation, not a dependency. It
 pre-computes what the spoke would compute anyway. That is why the fleet ran
-normally while the lane was dead, and why the 44 pull-only spokes work today.
+normally while the lane was dead, and why the 44 push-reported spokes work today.
 
 **The master is the one value a spoke cannot self-derive.** Delivering a *new*
 master after rotation is the lane's only irreplaceable job, and on 44 of 66
@@ -41,7 +41,7 @@ spokes there is no delivery path.
 returns false unconditionally. Per the operator correction of 2026-08-14,
 `pull_only` is an **intentional architectural boundary on both clusters** — the
 hub is not meant to hold write credentials into the heartbeat-only clusters. The
-field's own doc comment already says this plainly: a pull-only cluster's spokes
+field's own doc comment already says this plainly: a push-reported cluster's spokes
 "connect outbound over the heartbeat and nothing here can kubectl into them"
 (`src/pkg/hub/saas_provision.go:255-256`).
 
@@ -308,7 +308,7 @@ heartbeat. For any hive that is not, there is no race at all — **the attacker
 pins by default, unopposed, with no timing requirement whatsoever.** The
 categories are not hypothetical:
 
-- **Not yet rolled to the new image.** Migration step 1 reaches pull-only
+- **Not yet rolled to the new image.** Migration step 1 reaches push-reported
   spokes via self-upgrade, which is not instantaneous or simultaneous. Between
   the hub gaining the pin store and the last spoke rolling, every unrolled hive
   is unopposed.
@@ -343,7 +343,7 @@ the estimate of how much of the fleet the rule protects on day one.
 **This is unavoidable given the constraints, and it should be stated as a
 residual rather than engineered around.** The hub cannot reach in to seed a
 key. There is no out-of-band channel from the hub. The only pre-existing shared
-secret with a pull-only spoke *is* the master. Bootstrapping trust from
+secret with a push-reported spoke *is* the master. Bootstrapping trust from
 something that is not the master requires something the spoke or the
 provisioning process supplies — which is §5.
 
@@ -358,7 +358,7 @@ This is the only candidate for a non-master anchor, since the hub cannot reach
 in and there is no out-of-band hub channel.
 
 Provisioning is the moment a spoke is created, and the hub controls the
-manifest even for pull-only clusters — the manifest is applied by an operator
+manifest even for push-reported clusters — the manifest is applied by an operator
 context, not by the hub. The template already injects per-hive secret material
 (`src/pkg/hub/saas_provision.go:2567-2589`: `HeartbeatKey`, `SessionPublicKey`, `SSOPublicKey`,
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
@@ -418,13 +418,13 @@ initiate a connection to a spoke.**
 | 6 | Enrolment value added to provisioning template for new hives (§5) | operator applies manifest | new hives only | **no** |
 
 Step 1 is the only one needing a spoke image roll, and it needs **no hub
-action at all** — which is precisely why it works for pull-only clusters. The
+action at all** — which is precisely why it works for push-reported clusters. The
 spoke's image is updated by its existing self-upgrade path
 (`HeartbeatResponse.SwitchToTag`, `src/pkg/hub/spoke/heartbeat.go:2133-2137` (field at `:1698`)), whose doc comment
 records that this exists for exactly this reason: "Used for branch switches on
 clusters the hub can't reach over kubectl — the spoke has in-cluster RBAC
 (hive-self-upgrade role) to patch its own deployment." The delivery mechanism
-for the fix is one the pull-only boundary already accommodates.
+for the fix is one the push-reported boundary already accommodates.
 
 Step 4's carrier has direct precedent. `HeartbeatResponse.PendingGateway`
 (`src/pkg/hub/spoke/heartbeat.go:2167-2172`) is a **secret** delivered on the heartbeat response,
@@ -459,7 +459,7 @@ SafeToRetirePrevious = hasPrevious
 ```
 
 One critical adjustment. `FleetFullyObserved` is defined in terms of
-*Deployment-read* observation, and pull-only spokes are unreachable by
+*Deployment-read* observation, and push-reported spokes are unreachable by
 definition — so under Option D the 44 must become observable by a different
 route: **their heartbeat publication is the observation.** A hive that is
 publishing a pinned wrapping key and receiving wrapped masters is converged,
@@ -475,7 +475,7 @@ here.
 
 The resolution is that the **denominator must stay registry-sourced** while
 only the **numerator** becomes heartbeat-sourced. A paused or vanished
-pull-only spoke then keeps its place in the denominator, never publishes, and
+push-reported spoke then keeps its place in the denominator, never publishes, and
 correctly blocks retirement. What must never be built is a denominator of
 "hives that heartbeated recently". → this is the single most likely place for
 a test to pass for the wrong reason; see §10.
@@ -607,7 +607,7 @@ anticipates:
 If `HIVE_HUB_SECRET` is stripped and `HIVE_HEARTBEAT_KEY` is present, the spoke
 authenticates on lane 1 (`src/pkg/hub/hub_keys.go:456-458`) and never needs the master —
 fine. But after a rotation, `HIVE_HEARTBEAT_KEY` is stale. On a reachable spoke
-the reconcile lane patches it. **On a pull-only spoke nothing patches it**, and
+the reconcile lane patches it. **On a push-reported spoke nothing patches it**, and
 the spoke cannot self-derive a fresh one without the master. So it must
 authenticate with the *old* bearer, which works only while the previous
 generation is still acceptable (`acceptableGenerations`,
@@ -615,7 +615,7 @@ generation is still acceptable (`acceptableGenerations`,
 
 This yields a workable but strictly bounded property:
 
-- **A pull-only spoke can have `HIVE_HUB_SECRET` stripped** once it holds a
+- **A push-reported spoke can have `HIVE_HUB_SECRET` stripped** once it holds a
   pinned wrapping key and a valid `HIVE_HEARTBEAT_KEY`.
 - **It must then receive and apply each wrapped master within
   `defaultVerifyWindow`** (7 days, `src/pkg/hub/hub_generations.go:118`), because after that
@@ -624,8 +624,8 @@ This yields a workable but strictly bounded property:
   verify window is permanently stranded** and requires operator intervention on
   its own cluster.
 
-That last bullet is the cost of closing RESIDUAL-1 on pull-only spokes, and it
-is not small. Today a stranded pull-only spoke self-heals the moment it comes
+That last bullet is the cost of closing RESIDUAL-1 on push-reported spokes, and it
+is not small. Today a stranded push-reported spoke self-heals the moment it comes
 back, because it holds the master and re-derives everything. After stripping,
 it does not.
 
@@ -994,7 +994,7 @@ access (§6). Steps 1–5 need nothing from them.
 
 1. F20 (fail closed on unreadable generations file) — independent, small.
 2. Spoke keypair generation + publication (§3, migration step 1). Ships in the
-   spoke image, needs no hub action, reaches pull-only clusters via
+   spoke image, needs no hub action, reaches push-reported clusters via
    self-upgrade.
 3. Hub-side pin store + coverage counter folded into `FleetFullyObserved` (§6).
 4. F19 (wire `provisionGenerationSet()` to the live set).

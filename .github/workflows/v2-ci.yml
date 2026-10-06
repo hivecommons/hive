@@ -1133,7 +1133,7 @@ jobs:
   # line docker.yml builds and publishes them anyway.
   docker:
     name: docker (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1158,9 +1158,15 @@ jobs:
         if: github.event_name != 'pull_request' && matrix.name != 'hive'
         run: echo "skip=true" >> "$GITHUB_ENV"
 
+      - name: Set up Docker Buildx
+        if: env.skip != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
+
       - name: Build Docker image
         if: env.skip != 'true'
-        run: docker build -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
+        run: docker buildx build --load --network host -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
         if: env.skip != 'true' && matrix.smoke == 'true'
@@ -1195,6 +1201,8 @@ jobs:
   # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
   # binary EPERMs here and the PR is blocked.
   overlayfs-exec-guard:
+    # Hosted on purpose: this asserts GitHub-hosted runner containerd/overlayfs
+    # semantics (systemd-managed containerd plus the default overlayfs snapshotter).
     runs-on: ubuntu-latest
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:

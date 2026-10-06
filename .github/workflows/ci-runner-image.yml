@@ -5,14 +5,16 @@
 #
 # #7206 baked gcc/libc6-dev/tmux into the ARC runner image so race shards stop
 # depending on apt egress from the cluster — the failure class behind #6648 →
-# #6870 → #6935 → #7124 → #7201 → #7289. The Dockerfile merged on 2026-09-16;
-# a day later the image still did not exist on GHCR, because publishing it was
-# left to "an operator with docker + GHCR write", and two more shards had died
-# at "Prepare cgo toolchain" in the meantime. This workflow removes the GHCR
-# half of that operator dependency: the build runs here, on a GitHub-hosted
-# runner, with the job's own GITHUB_TOKEN (packages: write). What remains for
-# an operator is the one thing CI cannot do — `kubectl patch` the
-# RunnerDeployment in `arc-systems` to the tag this run prints.
+# #6870 → #6935 → #7124 → #7201 → #7289. The image also carries GitHub CLI so
+# `gh`-driven automation can move off the hosted lane after this image is rolled
+# out. The Dockerfile merged on 2026-09-16; a day later the image still did not
+# exist on GHCR, because publishing it was left to "an operator with docker +
+# GHCR write", and two more shards had died at "Prepare cgo toolchain" in the
+# meantime. This workflow removes the GHCR half of that operator dependency:
+# the build runs here, on a GitHub-hosted runner, with the job's own
+# GITHUB_TOKEN (packages: write). What remains for an operator is the one thing
+# CI cannot do — `kubectl patch` the RunnerDeployment in `arc-systems` to the
+# tag this run prints.
 #
 # ── Where it runs ───────────────────────────────────────────────────────────
 #
@@ -28,7 +30,7 @@
 # workflow_dispatch  builds AND pushes. Inputs pick the base runner image and
 #                    the tag suffix; the pushed tag is
 #                    ghcr.io/<owner>/hive-ci-runner:<runner version>-<suffix>,
-#                    e.g. v2.337.0-ubuntu-24.04-toolchain-1 — immutable by
+#                    e.g. v2.337.0-ubuntu-24.04-toolchain-gh-1 — immutable by
 #                    construction, as runner-image-patch.yaml requires. A
 #                    re-run with the same suffix is refused rather than
 #                    overwriting: ARC does not re-pull an unchanged tag, so a
@@ -36,9 +38,10 @@
 #                    runners on?" unanswerable.
 # pull_request       builds only (no login, no push), path-filtered to the
 #                    Dockerfile and this file. The Dockerfile verifies
-#                    `gcc --version` / `tmux -V` during the build, so this is
-#                    the CI gate that keeps a Dockerfile change from shipping
-#                    an image that quietly sends shards back to the mirrors.
+#                    `gcc --version` / `tmux -V` / `gh --version` during the
+#                    build, so this is the CI gate that keeps a Dockerfile
+#                    change from shipping an image that quietly sends shards
+#                    back to the mirrors or lacks the CLI.
 #
 # No `push:` trigger, on purpose. A merged Dockerfile change must not roll a
 # new image tag on its own: the tag only matters once an operator patches the
@@ -73,7 +76,7 @@ on:
           (<runner version>-<suffix>). Bump it for every rebuild on the same
           base; an existing tag is never overwritten.
         required: true
-        default: toolchain-1
+        default: toolchain-gh-1
         type: string
   pull_request:
     paths:
@@ -108,7 +111,7 @@ jobs:
       #
       # The tag is <version part of the base image ref>-<suffix>: for
       # summerwind/actions-runner:v2.337.0-ubuntu-24.04 and suffix
-      # toolchain-1 that is v2.337.0-ubuntu-24.04-toolchain-1 — the exact
+      # toolchain-gh-1 that is v2.337.0-ubuntu-24.04-toolchain-gh-1 — the exact
       # example in README.md § "Baking the CI toolchain". Deriving it from the
       # base ref (rather than taking a free-form tag input) means the tag
       # always says which runner release it was built on, which is what the
@@ -201,7 +204,7 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.base.name=${{ steps.ref.outputs.base }}
-            org.opencontainers.image.description=hivecommons/hive self-hosted CI runner with gcc/libc6-dev/tmux baked in (#7206)
+            org.opencontainers.image.description=hivecommons/hive self-hosted CI runner with gcc/libc6-dev/tmux and gh baked in (#7206)
 
       # Hand the operator exactly what the README's "Apply" step needs: the
       # immutable reference (tag and digest) and the two commands. This is the
@@ -243,7 +246,7 @@ jobs:
             else
               echo "| built (not pushed) | \`$REF\` |"
               echo
-              echo "PR gate only: the Dockerfile built and its \`gcc --version\` / \`tmux -V\` verification"
-              echo "passed. Nothing was pushed. Dispatch this workflow from \`v4\` to publish."
+              echo "PR gate only: the Dockerfile built and its \`gcc --version\` / \`tmux -V\` / \`gh --version\` verification"
+              echo "passed. Nothing was pushed. Dispatch this workflow from \`v5\` to publish."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,6 +28,7 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 		IncludeDiagnostics: true,
 		Diagnostics:        &feedbackDiagnostics{HiveID: "hive-one", Page: "/?token=secret", Agents: []feedbackAgentDiagnostic{{Name: "scanner", Repo: "private/repo"}}},
 	}
+
 	if err := validateFeedbackRequest(&req); err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +42,228 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 	}
 	if !strings.Contains(feedbackFallbackURL(req), "github.com/hivecommons/hive/issues/new") {
 		t.Fatalf("fallback did not target hive repo")
+	}
+}
+
+func TestFeedbackIssueBodyAttributionShapes(t *testing.T) {
+	tests := []struct {
+		name            string
+		credentialLogin string
+		hubName         string
+		hiveID          string
+		submitter       feedbackSubmitterIdentity
+		wantLine        string
+		notWant         []string
+	}{
+		{
+			name:            "hub-linked app bot",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "https://hub.example",
+			hiveID:          "hive-linked",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-linked (https://hub.example)",
+		},
+		{
+			name:            "hub-less operator pat",
+			credentialLogin: "clubanderson",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @clubanderson on behalf of @alice from hive hive-solo (hub-less)",
+		},
+		{
+			name:            "hosted app bot",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "hosted-hub",
+			hiveID:          "hive-hosted",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-hosted (hosted-hub)",
+		},
+		{
+			name:            "same credential and submitter omits on behalf",
+			credentialLogin: "alice",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
+			wantLine:        "Opened by @alice from hive hive-solo (hub-less)",
+			notWant:         []string{"on behalf of @alice"},
+		},
+		{
+			name:            "missing identity",
+			credentialLogin: "clubanderson",
+			hubName:         "hub-less",
+			hiveID:          "hive-solo",
+			submitter:       feedbackSubmitterIdentity{Name: "an unidentified dashboard user", Source: "unidentified dashboard user"},
+			wantLine:        "Opened by @clubanderson on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
+			notWant:         []string{"/cc @"},
+		},
+		{
+			name:            "self-reported login is not mentioned",
+			credentialLogin: "hivecommons-hive[bot]",
+			hubName:         "https://hub.example",
+			hiveID:          "hive-linked",
+			submitter:       feedbackSubmitterIdentity{Name: "mallory", GitHubLogin: "mallory", Source: feedbackSourceEntered},
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of `mallory` (self-reported GitHub username, unverified) from hive hive-linked (https://hub.example)",
+			notWant:         []string{"/cc @", "@mallory"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := buildFeedbackIssueBody(feedbackReportRequest{
+				Title:           "Bug from dashboard",
+				Description:     "Something went wrong",
+				RequestType:     feedbackTypeBug,
+				TargetRepo:      feedbackTargetHive,
+				HiveID:          tt.hiveID,
+				HubName:         tt.hubName,
+				CredentialLogin: tt.credentialLogin,
+				Submitter:       tt.submitter,
+				OpenedByHive:    true,
+				Diagnostics:     &feedbackDiagnostics{HiveID: "hive-one", Channel: "edge"},
+			})
+			if !strings.HasPrefix(body, tt.wantLine+"\n\nSomething went wrong") {
+				t.Fatalf("feedback body prefix mismatch; want %q:\n%s", tt.wantLine, body)
+			}
+			if tt.submitter.GitHubLogin != "" {
+				wantRow := "| Submitted by | @" + tt.submitter.GitHubLogin + " (GitHub dashboard identity) |"
+				if tt.submitter.Source == feedbackSourceEntered {
+					wantRow = "| Submitted by | `" + tt.submitter.GitHubLogin + "` (self-reported GitHub username, unverified) (" + feedbackSourceEntered + ") |"
+				}
+				if !strings.Contains(body, wantRow) {
+					t.Fatalf("feedback body missing Submitted by row %q:\n%s", wantRow, body)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(body, notWant) {
+					t.Fatalf("feedback body unexpectedly contained %q:\n%s", notWant, body)
+				}
+			}
+			if !strings.Contains(body, "| Hive ID | hive-one |") || !strings.Contains(body, "| Channel | edge |") {
+				t.Fatalf("feedback body missing hive diagnostics:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestFeedbackSubmitterIdentitySources(t *testing.T) {
+	s := NewServer(0, dismissLogger())
+	sessionID := s.createUserSession("octocat", "owner")
+	oauthReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	oauthReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+	if got := s.feedbackSubmitterIdentity(oauthReq, ""); got.Name != "octocat" || got.GitHubLogin != "octocat" || got.Source != "GitHub dashboard identity" {
+		t.Fatalf("oauth identity = %+v", got)
+	}
+
+	// A verified session login must win over whatever the form sent: otherwise
+	// any signed-in user could attribute feedback to an arbitrary account.
+	if got := s.feedbackSubmitterIdentity(oauthReq, "mallory"); got.GitHubLogin != "octocat" || got.Source != "GitHub dashboard identity" {
+		t.Fatalf("entered login overrode verified identity = %+v", got)
+	}
+
+	enteredReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	if got := s.feedbackSubmitterIdentity(enteredReq, "alice"); got.Name != "alice" || got.GitHubLogin != "alice" || got.Source != feedbackSourceEntered {
+		t.Fatalf("entered identity = %+v", got)
+	}
+
+	headerReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	headerReq.Header.Set("X-Hive-User", "basic-user")
+	if got := s.feedbackSubmitterIdentity(headerReq, ""); got.Name != "basic-user" || got.GitHubLogin != "" || got.Source != "authenticated dashboard user" {
+		t.Fatalf("header identity = %+v", got)
+	}
+
+	anonReq := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
+	if got := s.feedbackSubmitterIdentity(anonReq, ""); got.Name != "an unidentified dashboard user" || got.GitHubLogin != "" {
+		t.Fatalf("anonymous identity = %+v", got)
+	}
+}
+
+func TestFeedbackStatusResolvesCredentialAndSubmitter(t *testing.T) {
+	oldTokenPath := userTokenPath
+	oldLookup := lookupFeedbackTokenLogin
+	t.Cleanup(func() {
+		userTokenPath = oldTokenPath
+		lookupFeedbackTokenLogin = oldLookup
+	})
+	userTokenPath = filepath.Join(t.TempDir(), "gh-user-token")
+	if err := os.WriteFile(userTokenPath, []byte("gho_operator"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lookupFeedbackTokenLogin = func(token string) string {
+		if token != "gho_operator" {
+			t.Fatalf("lookup token = %q", token)
+		}
+		return "clubanderson"
+	}
+	s := NewServer(0, dismissLogger())
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "hive-solo"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/feedback/status", nil)
+	req.Header.Set("X-Hive-User", "dashboard-user")
+	got := s.feedbackAttributionContext(req, "")
+	if got.CredentialLogin != "clubanderson" || got.SubmitterName != "dashboard-user" || got.SubmitterLogin != "" || !got.NeedsIdentity || got.HiveID != "hive-solo" || got.HubName != "hub-less" {
+		t.Fatalf("status = %+v", got)
+	}
+}
+
+func TestFeedbackStatusUsesResolvedCredentialByDeploymentShape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  config.Config
+		auth bool
+		want feedbackAttributionContext
+	}{
+		{
+			name: "hub linked",
+			cfg:  config.Config{HiveID: "hive-linked", Hub: config.HubConfig{Enabled: true, URL: "https://hub.example"}},
+			want: feedbackAttributionContext{HiveID: "hive-linked", HubLinked: true, HubName: "https://hub.example", NeedsIdentity: true, SubmitterName: "an unidentified dashboard user"},
+		},
+		{
+			name: "hosted app",
+			cfg:  config.Config{HiveID: "hive-hosted", Hub: config.HubConfig{HiveType: config.HiveTypeHosted}, GitHub: config.GitHubConfig{AppID: config.PublicGitHubAppID, InstallationID: 123}},
+			auth: true,
+			want: feedbackAttributionContext{CredentialLogin: "hivecommons-hive[bot]", HiveID: "hive-hosted", HubName: "hub-less", NeedsIdentity: true, SubmitterName: "an unidentified dashboard user"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewServer(0, dismissLogger())
+			s.deps = &Dependencies{Config: &tc.cfg}
+			if tc.auth {
+				s.deps.GHAppAuth = newSucceedingAppAuth(t, "ghs_status_token")
+			}
+			got := s.feedbackAttributionContext(httptest.NewRequest(http.MethodGet, "/api/feedback/status", nil), "")
+			if got.CredentialLogin != tc.want.CredentialLogin || got.HiveID != tc.want.HiveID || got.HubLinked != tc.want.HubLinked || got.HubName != tc.want.HubName || got.NeedsIdentity != tc.want.NeedsIdentity || got.SubmitterName != tc.want.SubmitterName {
+				t.Fatalf("status = %+v want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFeedbackIssueTokenHostedFallbackUsesActualTokenOwner(t *testing.T) {
+	oldTokenPath := userTokenPath
+	oldLookup := lookupFeedbackTokenLogin
+	t.Cleanup(func() {
+		userTokenPath = oldTokenPath
+		lookupFeedbackTokenLogin = oldLookup
+	})
+	userTokenPath = filepath.Join(t.TempDir(), "gh-user-token")
+	if err := os.WriteFile(userTokenPath, []byte("gho_operator"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lookupFeedbackTokenLogin = func(token string) string {
+		if token != "gho_operator" {
+			t.Fatalf("lookup token = %q", token)
+		}
+		return "clubanderson"
+	}
+
+	s := NewServer(0, dismissLogger())
+	s.deps = &Dependencies{
+		Config:    &config.Config{HiveID: "hive-hosted", Hub: config.HubConfig{HiveType: config.HiveTypeHosted}, GitHub: config.GitHubConfig{AppID: config.PublicGitHubAppID, InstallationID: 123}},
+		GHAppAuth: newFailingAppAuth(t),
+	}
+	req := feedbackReportRequest{CredentialLogin: "hivecommons-hive[bot]"}
+	token := s.feedbackIssueToken(context.Background(), httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil), &req)
+	if token != "gho_operator" || req.CredentialLogin != "clubanderson" || !req.OpenedByHive {
+		t.Fatalf("token=%q req=%+v", token, req)
 	}
 }
 
@@ -58,6 +283,13 @@ func TestFeedbackReportStandaloneReturnsFallback(t *testing.T) {
 	}
 	if !out.OK || !strings.Contains(out.FallbackURL, "github.com/hivecommons/docs/issues/new") {
 		t.Fatalf("unexpected response: %+v", out)
+	}
+	u, err := url.Parse(out.FallbackURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := u.Query().Get("body"); !strings.Contains(body, "Opened manually on GitHub") || strings.Contains(body, "Opened by the hive") {
+		t.Fatalf("fallback body attribution is wrong:\n%s", body)
 	}
 }
 
@@ -82,6 +314,7 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(`{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug","include_diagnostics":false}`))
 	markOwnerRequest(req)
+	req.Header.Set("X-Hive-User", "dashboard-user")
 	s.handleFeedbackReport(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -92,6 +325,12 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 	if got.Diagnostics != nil {
 		t.Fatalf("diagnostics should remain excluded, got %+v", got.Diagnostics)
 	}
+	if got.Submitter.Name != "dashboard-user" || got.Submitter.Source != "authenticated dashboard user" {
+		t.Fatalf("submitter = %+v", got.Submitter)
+	}
+	if !got.OpenedByHive {
+		t.Fatal("hub-relayed feedback should be marked as opened by hive")
+	}
 }
 
 func TestFeedbackStaticUIWiring(t *testing.T) {
@@ -100,7 +339,7 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(b)
-	for _, want := range []string{"data-action=\"openFeedbackModal\"", "id=\"feedback-bug-btn\"", "id=\"feedback-unread-pill\"", "installFeedbackCapture();", "FEEDBACK_DRAFT_KEY", "feedbackRedact", "/api/feedback/report"} {
+	for _, want := range []string{"data-action=\"openFeedbackModal\"", "id=\"feedback-bug-btn\"", "id=\"feedback-unread-pill\"", "installFeedbackCapture();", "FEEDBACK_DRAFT_KEY", "FEEDBACK_IDENTITY_KEY", "feedbackRedact", "/api/feedback/report", "/api/feedback/status"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
 		}
@@ -128,6 +367,9 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 		"class=\"feedback-footer\"",
 		"class=\"feedback-body\"",
 		"class=\"feedback-diagnostics-fieldset\"",
+		"id=\"feedback-github-username\"",
+		"id=\"feedback-attribution-line\"",
+		"Used to attribute and @-mention you on the issue.",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("feedback modal layout missing %q", want)
@@ -150,9 +392,69 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	if !strings.Contains(submit, "fetch('/api/feedback/report'") {
 		t.Fatal("feedback submit does not post to the feedback endpoint")
 	}
+	if !strings.Contains(submit, "feedbackGitHubLogin(rawUsername)") {
+		t.Fatal("feedback submit does not validate the entered GitHub username")
+	}
+	buildPayload := jsFunctionBody(t, html, "async function buildFeedbackPayload()")
+	if !strings.Contains(buildPayload, "submitter: { github_login: enteredLogin }") {
+		t.Fatal("feedback payload does not include the entered GitHub username")
+	}
 	unread := jsFunctionBody(t, html, "function feedbackUnreadCount(items)")
 	if !strings.Contains(unread, "updated_at > item.last_seen_updated_at") {
 		t.Fatal("feedback unread pill is not derived from updated_at > last_seen_updated_at")
+	}
+}
+
+func TestFeedbackAttributionLineTemplateNode(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: feedback attribution template was not executed")
+	}
+	b, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	script := `const assert = require('node:assert/strict');
+let nodes = {
+  'feedback-attribution-line': { textContent: '' },
+  'feedback-github-username': { value: '' }
+};
+global.window = { _feedbackStatus: {}, _lastStatus: {} };
+global.document = { getElementById(id) { return nodes[id] || null; } };
+function feedbackVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+function feedbackGitHubLogin(login) { login = String(login || '').trim().replace(/^@+/, ''); return /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/.test(login) ? login : ''; }
+function feedbackMention(login) { login = feedbackGitHubLogin(login); return login ? '@' + login : ''; }
+function feedbackHubLabel(status) { return status && status.hub_linked ? ('hub-linked: ' + (status.hub_name || 'hub')) : 'hub-less'; }
+` + jsFunctionBody(t, html, "function updateFeedbackAttributionLine()") + `
+window._feedbackStatus = { credential_login: '', submitter_login: 'alice', hive_id: 'hive-linked', hub_linked: true, hub_name: 'https://hub.example' };
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as the hub on behalf of @alice · hive hive-linked (hub-linked: https://hub.example)');
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+nodes['feedback-github-username'].value = 'bob';
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of @bob (self-reported, unverified) · hive hive-solo (hub-less)');
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: 'octocat', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of @octocat · hive hive-solo (hub-less)');
+nodes['feedback-github-username'].value = '';
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+nodes['feedback-github-username'].value = '';
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', submitter_name: 'basic-user', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of basic-user · hive hive-solo (hub-less)');
+window._feedbackStatus = { credential_login: 'clubanderson', submitter_login: '', submitter_name: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
+nodes['feedback-github-username'].value = 'alice!';
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
+nodes['feedback-github-username'].value = 'alice--bob';
+updateFeedbackAttributionLine();
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @clubanderson on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node feedback attribution template failed: %v\n%s", err, out)
 	}
 }
 

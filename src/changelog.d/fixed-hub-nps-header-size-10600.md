@@ -1,0 +1,1 @@
+- Fixed the hub admin NPS feedback header so it matched sibling section sizing and summary weight. (#10600)

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,6 +51,42 @@ func TestAggregateContributeEffectiveModelsThresholdRankingAndPrivacy(t *testing
 	contrib := aggregateContributeEffectiveModels(prs, runs, "7d", "contributor", 2, now)
 	if len(contrib.Ranked) != 0 || len(contrib.Insufficient) != 1 || contrib.Insufficient[0].PRs != 1 {
 		t.Fatalf("contributor filter = ranked %+v insufficient %+v, want only PR matched from run log", contrib.Ranked, contrib.Insufficient)
+	}
+}
+
+func TestAggregateContributeEffectiveModelsIdentityFooterAttribution(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	body := "Done\n\n— hive: backend=codex model=gpt-6-astra effort=medium\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `671737a3b`"
+	var prs []ghpkg.PullRequest
+	var runs []TaskRunRecord
+	for number := 1; number <= effectiveModelsDefaultMinMergedPRs; number++ {
+		meta, ok := ghpkg.ParseAttributionTrailer(body)
+		if !ok {
+			t.Fatal("production contributor PR body lost its attribution")
+		}
+		prs = append(prs, ghpkg.PullRequest{
+			Repo: "org/repo", Number: number, HiveAttributed: ok,
+			HiveBackend: meta.Backend, HiveModel: meta.Model,
+			CreatedAt: now, MergedAt: now, Rework: ghpkg.PRReworkStats{FirstPass: true},
+		})
+		runs = append(runs, TaskRunRecord{
+			TS: now.Format(time.RFC3339), Username: "contributor", Backend: "codex", Model: "gpt-6-astra",
+			Outcome: outcomeCompleted, PRVerified: true, PRURL: fmt.Sprintf("https://github.com/org/repo/pull/%d", number),
+		})
+	}
+	for _, filter := range []string{"all", "contributor"} {
+		below := aggregateContributeEffectiveModels(prs[:4], runs, "30d", filter, effectiveModelsDefaultMinMergedPRs, now)
+		if len(below.Ranked) != 0 || len(below.Insufficient) != 1 || below.Insufficient[0].MergedPRs != 4 {
+			t.Fatalf("%s below threshold = %+v", filter, below)
+		}
+		got := aggregateContributeEffectiveModels(prs, runs, "30d", filter, effectiveModelsDefaultMinMergedPRs, now)
+		if len(got.Ranked) != 1 || len(got.Insufficient) != 0 {
+			t.Fatalf("%s at threshold = %+v", filter, got)
+		}
+		row := got.Ranked[0]
+		if row.Model != "gpt-6-astra" || row.Backend != "codex" || row.MergedPRs != 5 || row.PRs != 5 || row.EffectivenessRank != 1 {
+			t.Fatalf("%s attribution/ranking = %+v", filter, row)
+		}
 	}
 }
 

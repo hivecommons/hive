@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestOverviewKPIValuesRenderFromChartSlices10139(t *testing.T) {
+func TestOverviewKPIValuesRenderFromRepoTotalsOrChartSlices10139(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node unavailable: Overview KPI render rule was not executed")
@@ -27,11 +27,21 @@ const window = { _lastStatus: {} };
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
 function renderSparkline(){ return '<svg></svg>'; }
+const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
+const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 ` + jsFunc(t, html, "esc") + `
-` + jsFunc(t, html, "overviewItemAgeMinutes") + `
-` + jsFunc(t, html, "overviewMedianAgeLabel") + `
-` + jsFunc(t, html, "overviewMedianAgeSeconds") + `
-` + jsFunc(t, html, "fmtDurationFromSeconds") + `
+` + jsFunc(t, html, "overviewBreakdownTotal") + `
+` + jsFunc(t, html, "overviewRepoForgeTotals") + `
+` + jsFunc(t, html, "overviewKPIForgeTotals") + `
+` + jsFunc(t, html, "overviewKPIBreakdownSubline") + `
+` + jsFunc(t, html, "overviewKPITerm") + `
+` + jsFunc(t, html, "overviewPartitionDocsLink") + `
+` + jsFunc(t, html, "overviewPartitionSettingsButton") + `
+` + jsFunc(t, html, "overviewPartitionTooltip") + `
+` + jsFunc(t, html, "overviewPartitionInfo") + `
+` + jsFunc(t, html, "overviewActionableTermHTML") + `
+` + jsFunc(t, html, "renderActionableEquationSubline") + `
+` + jsFunc(t, html, "overviewKPIEquation") + `
 ` + jsFunc(t, html, "overviewKPIRepoScope") + `
 ` + jsFunc(t, html, "overviewKPILocalKey") + `
 ` + jsFunc(t, html, "overviewKPILoadLocal") + `
@@ -42,9 +52,12 @@ function renderSparkline(){ return '<svg></svg>'; }
 ` + jsFunc(t, html, "overviewKPIWindowControls") + `
 ` + jsFunc(t, html, "overviewKPISparkTitle") + `
 ` + jsFunc(t, html, "overviewKPISpark") + `
+` + jsFunc(t, html, "overviewRepoNumber") + `
+` + jsFunc(t, html, "overviewRepoOpenIssueCount") + `
+` + jsFunc(t, html, "overviewRepoOpenPRCount") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
-const state = { showKPIs: true, timeBasis: 'updated' };
-const repos = [{ heldIssues: [{ number: 501 }], heldPrs: [] }];
+const state = { showKPIs: true };
+const repos = [{ issues: 100, prs: 7, heldIssues: [{ number: 501 }], heldPrs: [] }];
 _overviewLastRepos = repos;
 const issueSlices = [
   { key: 'ready', count: 93, items: [{ updated_at: new Date(Date.now() - 7 * 60000).toISOString() }] },
@@ -63,16 +76,24 @@ const prSlices = [
 ];
 const out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
 const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
-assert.equal(values.length, 6);
+assert.equal(values.length, 5);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
 assert.deepEqual(Object.fromEntries(values), {
-  'Total open issues': '99',
+  'Total open issues': '100',
   'Total open PRs': '7',
   'Actionable now (issues and PRs)': '103',
   'Held': '1',
   'Blocked / needs-human': '1',
-  'Median age': '7m',
 });
+assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ [\s\S]*1 held[\s\S]* \+ [\s\S]*1 blocked\/needs-human[\s\S]* \+ 2 confirm\/close</);
+
+repos[0].issues = 123;
+repos[0].prs = 45;
+const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
+const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
+assert.equal(rawValues['Total open issues'], '123');
+assert.equal(rawValues['Total open PRs'], '45');
+assert.doesNotMatch(out, /Median actionable age/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -84,8 +105,10 @@ func TestOverviewKPIRenderEscapesNumericValues10139(t *testing.T) {
 	html := indexHTML(t)
 	kpis := jsFunc(t, html, "renderOverviewKPIs")
 	for _, want := range []string{
-		"const openIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
-		"const openPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const trackedPRs = (prSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);",
+		"const openIssues = Number(forgeTotals?.issues?.forge ?? trackedIssues);",
+		"const openPRs = Number(forgeTotals?.prs?.forge ?? trackedPRs);",
 		"${esc(String(value ?? '—'))}",
 	} {
 		if !strings.Contains(kpis, want) {
