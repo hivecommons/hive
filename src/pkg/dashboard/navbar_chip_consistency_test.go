@@ -71,7 +71,7 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 	topbar := dashboardTopbarHTML(t)
 	for _, want := range []string{
 		`.oc-topbar {`,
-		`position: sticky; top: var(--sp-0);`,
+		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0);`,
 		`grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
 		`z-index: var(--navbar-sticky-z);`,
 		`scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5));`,

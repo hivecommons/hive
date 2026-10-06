@@ -100,6 +100,46 @@ func TestStablePromotionDefaultTruePublicGETAndMaintainedSummary(t *testing.T) {
 	if len(got.MaintainedHives) != 1 || !got.MaintainedHives[0].Healthy || got.MaintainedHives[0].ID != "candidate-hive" {
 		t.Fatalf("maintained candidate summary = %+v, want one healthy candidate hive", got.MaintainedHives)
 	}
+	if got.MaintainedHives[0].Generation != 200 {
+		t.Fatalf("maintained hive generation = %d, want 200 from its short-SHA tag", got.MaintainedHives[0].Generation)
+	}
+}
+
+// A candidate-channel hive that lags behind the current candidate is still
+// reported, with its own build generation, so the promotion script can use it
+// as smoke evidence for any older eligible build (#10042).
+func TestStablePromotionMaintainedSummaryKeepsLaggingCandidateHives(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	seedStablePromotionChannels(t)
+	origGen := ghcrTagGeneration
+	ghcrTagGeneration = func(repo, tag string, logger *slog.Logger) int {
+		if tag == "a1b2c3d" {
+			return 150
+		}
+		return origGen(repo, tag, logger)
+	}
+	t.Cleanup(func() { ghcrTagGeneration = origGen })
+	s := newHubServerForTest(t, withHubIdentity("hubsha", "v5"))
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "lagging-hive",
+		Online:        true,
+		ImageRef:      "ghcr.io/hivecommons/hive:candidate",
+		GitHash:       "a1b2c3d",
+		LastHeartbeat: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+		Agents:        []AgentSummary{{Name: "scanner"}},
+	}}
+	if err := saveSaaSHive(&SaaSHive{ID: "lagging-hive", Owner: "alice", Status: statusAssigned, TrackedChannel: ReleaseChannelCandidate}); err != nil {
+		t.Fatalf("save saas hive: %v", err)
+	}
+
+	got := s.stablePromotionStatus(getChannelTargets(getDisplaySHAs(), s.logger))
+	if len(got.MaintainedHives) != 1 || got.MaintainedHives[0].ID != "lagging-hive" {
+		t.Fatalf("maintained hives = %+v, want the lagging candidate hive to be reported", got.MaintainedHives)
+	}
+	if got.MaintainedHives[0].Generation != 150 || !got.MaintainedHives[0].Healthy {
+		t.Fatalf("lagging hive summary = %+v, want generation 150 and healthy", got.MaintainedHives[0])
+	}
 }
 
 func TestStablePromotionPUTAdminGatedAuditedAndPersists(t *testing.T) {
@@ -183,8 +223,9 @@ func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testi
 	if build.Generation != 200 || build.SHA != "old1234" {
 		t.Fatalf("eligible build = %+v, want superseded soaked generation 200", build)
 	}
-	if eligibleAt != now.Format(time.RFC3339) {
-		t.Fatalf("eligibleAt = %q, want now %q", eligibleAt, now.Format(time.RFC3339))
+	wantEligible := now.Add(-25 * time.Hour).Add(time.Duration(stablePromotionSoakHours) * time.Hour).Format(time.RFC3339)
+	if eligibleAt != wantEligible {
+		t.Fatalf("eligibleAt = %q, want soak-crossing time %q (not now, which would drift every poll)", eligibleAt, wantEligible)
 	}
 }
 

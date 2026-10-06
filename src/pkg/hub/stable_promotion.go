@@ -36,6 +36,10 @@ type MaintainedHiveSummary struct {
 	ID               string `json:"id"`
 	ImageRef         string `json:"image_ref,omitempty"`
 	GitHash          string `json:"git_hash,omitempty"`
+	// Generation is the docker.yml run number of the build the hive is
+	// running (0 when unknown), so the promotion gate can accept a hive on a
+	// later candidate as smoke evidence for an older eligible build.
+	Generation       int    `json:"generation,omitempty"`
 	LastHeartbeatAt  string `json:"last_heartbeat_at,omitempty"`
 	Healthy          bool   `json:"healthy"`
 	CrashRestarts24h int    `json:"crash_restarts_24h"`
@@ -234,7 +238,7 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 	sort.SliceStable(soaking, func(i, j int) bool { return soaking[i].eligible.Before(soaking[j].eligible) })
 
 	verified := 0
-	for i, group := range [][]pending{soaked, soaking} {
+	for _, group := range [][]pending{soaked, soaking} {
 		for _, p := range group {
 			if verified >= stablePromotionMaxVerifiedRuns {
 				return StablePromotionBuild{}, ""
@@ -246,9 +250,10 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 				continue
 			}
 			build := StablePromotionBuild{SHA: short, Digest: v.digest, Generation: p.run.RunNumber, BuiltAt: p.built.Format(time.RFC3339)}
-			if i == 0 {
-				return build, now.UTC().Format(time.RFC3339)
-			}
+			// Report when the build actually crossed the soak line, also for
+			// builds that already soaked. Returning now() made eligible_at
+			// drift forward on every poll and hid a stalled promotion
+			// workflow behind a perpetual "due now" (#10042, #10187).
 			return build, p.eligible.Format(time.RFC3339)
 		}
 	}
@@ -268,14 +273,20 @@ func stablePromotionEligibleAt(builtAt string) string {
 	return built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC().Format(time.RFC3339)
 }
 
-// stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same "stable chases candidate and is always
-// 24 hours behind it" rule the release-channel block's eligible_at uses, so
-// the spoke and the hub card cannot disagree. Returns "" (unknown) when stable
-// auto-promotion is paused, either channel is unresolved, or nothing is queued.
-func stableNextPromotionAt(targets []ChannelTarget) string {
+const (
+	stableNextUpdateStatusQueued  = "queued"
+	stableNextUpdateStatusNone    = "none"
+	stableNextUpdateStatusPaused  = "paused"
+	stableNextUpdateStatusUnknown = "unknown"
+)
+
+// stableNextPromotion is the hub's ETA for the next promotion into the stable
+// channel (#10256), from the same serialized per-build soak rule the
+// release-channel block's eligible_at uses, so the spoke and hub card cannot
+// disagree. The status distinguishes "none queued" from "unknown".
+func (s *HubServer) stableNextPromotion(targets []ChannelTarget) (string, string) {
 	if !loadStablePromotionState().AutoPromote {
-		return ""
+		return "", stableNextUpdateStatusPaused
 	}
 	var candidate, stable *ChannelTarget
 	for i := range targets {
@@ -287,12 +298,16 @@ func stableNextPromotionAt(targets []ChannelTarget) string {
 		}
 	}
 	if candidate == nil || stable == nil || candidate.Digest == "" || stable.Digest == "" {
-		return ""
+		return "", stableNextUpdateStatusUnknown
+	}
+	status := s.stablePromotionStatus(targets)
+	if status.EligibleAt != nil && *status.EligibleAt != "" {
+		return *status.EligibleAt, stableNextUpdateStatusQueued
 	}
 	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
-		return ""
+		return "", stableNextUpdateStatusNone
 	}
-	return stablePromotionEligibleAt(candidate.CommittedAt)
+	return "", stableNextUpdateStatusUnknown
 }
 
 func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) []ChannelTarget {
@@ -340,14 +355,24 @@ func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []M
 		if !resolved || channel != ReleaseChannelCandidate {
 			continue
 		}
-		if candidate.SHA != "" && h.GitHash != "" && !sameCommit(h.GitHash, candidate.SHA) {
-			continue
+		// Keep every candidate-channel hive, not only those on the exact
+		// current candidate: on a busy merge day candidate moves faster than
+		// spokes auto-update, so requiring an exact match left the smoke
+		// gate with no evidence at all (#10042). The hive's build generation
+		// lets the promotion script decide whether it is new enough.
+		generation := 0
+		if h.GitHash != "" {
+			generation = ghcrTagGeneration(ghcrRepoSpoke, shortSHA(h.GitHash), s.logger)
+		}
+		if generation == 0 && candidate.SHA != "" && h.GitHash != "" && sameCommit(h.GitHash, candidate.SHA) {
+			generation = candidate.Generation
 		}
 		crashRestarts := recentAgentRestarts(h.Agents)
 		out = append(out, MaintainedHiveSummary{
 			ID:               h.ID,
 			ImageRef:         h.ImageRef,
 			GitHash:          h.GitHash,
+			Generation:       generation,
 			LastHeartbeatAt:  h.LastHeartbeat,
 			Healthy:          stablePromotionHeartbeatHealthy(h, now) && crashRestarts == 0,
 			CrashRestarts24h: crashRestarts,

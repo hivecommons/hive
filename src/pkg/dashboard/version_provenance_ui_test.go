@@ -21,7 +21,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
 		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
-		"versionNavbarUpgradeHTML", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
+		"versionNavbarUpgradeHTML", "ensureVersionMenuPortal", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
 	} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
@@ -71,6 +71,41 @@ func cssKeyframesBody(t *testing.T, css, name string) string {
 	}
 	t.Fatalf("unbalanced @keyframes %s body", name)
 	return ""
+}
+
+func TestVersionPopoverEscapesSidebarClipping(t *testing.T) {
+	html := indexHTML(t)
+	mustContain := []string{
+		`function ensureVersionMenuPortal()`,
+		`document.body.appendChild(menu)`,
+		`const menu = ensureVersionMenuPortal();`,
+		`.oc-version-menu {`,
+		`position: fixed`,
+		`--oc-version-menu-min-width: min(420px, calc(100vw - 24px))`,
+		`document.querySelector('.oc-sidebar')`,
+		`placeBesideSidebar`,
+		`menu.contains(e.target)`,
+	}
+	for _, snippet := range mustContain {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("version popover portal/clipping guard missing %q", snippet)
+		}
+	}
+	sidebarStart := strings.Index(html, `.oc-sidebar {`)
+	if sidebarStart < 0 {
+		t.Fatalf("sidebar CSS rule missing")
+	}
+	sidebarEnd := strings.Index(html[sidebarStart:], `}`)
+	if sidebarEnd < 0 {
+		t.Fatalf("sidebar CSS rule is malformed")
+	}
+	sidebarRule := html[sidebarStart : sidebarStart+sidebarEnd]
+	if !strings.Contains(sidebarRule, `overflow-y: auto`) {
+		t.Fatalf("test fixture no longer covers sidebar overflow clipping risk: %s", sidebarRule)
+	}
+	if strings.Contains(html, `#oc-git-version #spoke-upgrade-btn`) {
+		t.Fatalf("upgrade action styling must not depend on the portaled menu staying under #oc-git-version")
+	}
 }
 
 const versionProvenanceAssertions = `
