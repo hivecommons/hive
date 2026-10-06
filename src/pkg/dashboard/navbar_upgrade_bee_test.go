@@ -90,6 +90,32 @@ func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
 	}
 }
 
+func TestNavbarUpgradePillCannotCoverCenterAgents(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`--topbar-grid-columns: auto minmax(0, 1fr) auto;`,
+		`.oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch;`,
+		`.oc-topbar-right { position: relative; z-index: 2;`,
+		`flex-wrap: nowrap;`,
+		`.oc-navbar-upgrade { --oc-version-bee-lane: 44px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw);`,
+		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
+		`@container navbar-center (max-width: 560px)`,
+		`.agent-navbar-tile .agent-tile-next { display: none; }`,
+		`@container navbar-center (max-width: 340px)`,
+		`.agent-navbar-upnext .agent-navbar-tile { display: none; }`,
+		`@media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }`,
+		`wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';`,
+		`const detail = versionUpgradeProgressStatus(v || {}, progress);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("navbar upgrade collision guard missing %q", want)
+		}
+	}
+	if strings.Contains(html, `@media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }`) {
+		t.Fatal("agent navbar strip must not disappear at 1280px; center container queries own collision handling")
+	}
+}
+
 func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{

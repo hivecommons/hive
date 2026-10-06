@@ -42,10 +42,10 @@ const (
 )
 
 const layoutGuardCSS = `/* hive dashboard theme layout guard: themes may skin tokens, not structural chrome */
-body #oc-topbar.oc-topbar{position:fixed!important;left:var(--sidebar-w)!important;right:auto!important;display:grid!important;grid-template-columns:var(--topbar-grid-columns)!important;width:100%!important;max-width:calc(100% - var(--sidebar-w))!important;box-sizing:border-box!important;}
+body #oc-topbar.oc-topbar{--topbar-grid-columns:auto minmax(0,1fr) auto!important;position:fixed!important;left:var(--sidebar-w)!important;right:auto!important;display:grid!important;grid-template-columns:var(--topbar-grid-columns)!important;width:100%!important;max-width:calc(100% - var(--sidebar-w))!important;box-sizing:border-box!important;}
 body #oc-topbar.oc-topbar>.oc-topbar-left{justify-self:start!important;justify-content:flex-start!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;}
-body #oc-topbar.oc-topbar>.oc-topbar-center{justify-self:center!important;justify-content:center!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;}
-body #oc-topbar.oc-topbar>.oc-topbar-right{justify-self:end!important;justify-content:flex-end!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;}
+body #oc-topbar.oc-topbar>.oc-topbar-center{justify-self:stretch!important;justify-content:center!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;z-index:1!important;}
+body #oc-topbar.oc-topbar>.oc-topbar-right{justify-self:end!important;justify-content:flex-end!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;flex-wrap:nowrap!important;z-index:2!important;}
 body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;justify-self:start!important;}
 body #repos.repo-grid .repo-card .repo-name{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto auto auto!important;align-items:center!important;justify-content:normal!important;justify-items:stretch!important;text-align:left!important;}
 body #repos.repo-grid .repo-card .repo-name>a{text-align:left!important;justify-self:start!important;}

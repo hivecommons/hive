@@ -53,9 +53,12 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 		`data-action="openAgentsUpNextPanel"`,
 		`.agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px);`,
 		`.agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }`,
+		`@container navbar-center (max-width: 560px)`,
+		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
+		`wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';`,
 		`renderAgentNavbarUpNext(agents, Date.now())`,
 		`refreshAgentNavbarUpNextCountdowns(now);`,
-		`@media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }`,
+		`@media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }`,
 		`@media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }`,
 	} {
 		if !strings.Contains(html, want) {
