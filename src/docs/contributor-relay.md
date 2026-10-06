@@ -728,6 +728,28 @@ Each trust tier can be toggled on/off and given its own rate limits (`0` = unlim
 - **Queue-time vs. connect-time.** Repo, label, title, author, and assignment filters, cooldown, and the hold/priority sets apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter and the effort floor apply at connect time, so tightening them affects the *next* connection, not agents already mid-task.
 - **Suspending vs. revoking.** Suspension idles everyone and is instant to undo; revocation is per-contributor and blocks reconnection.
 
+## Steering outside PRs to the relay (`clanker_requested`)
+
+Hives that take outside contributions only through ClankeR can turn on the opt-in `clanker_requested` policy. It is off by default and changes nothing until enabled. Set it in `hive.yaml`, or in the dashboard under **Settings → Labels → Reporter trust** (see [Dashboard](dashboard.md)):
+
+```yaml
+project:
+  issue_filter:
+    reporter_trust:
+      clanker_requested: true                       # default: false
+      clanker_requested_label: clanker-requested    # default: clanker-requested; must not be blank
+      clanker_requested_addendum: ""                # optional free text, max 1000 bytes
+```
+
+While it is on:
+
+- **Issues.** The one-shot reporter-trust wait comment on an untrusted reporter's issue gains a paragraph that links [Basic setup](#basic-setup) and says the issue will be offered to their relay once connected.
+- **PRs.** An open PR from an untrusted author that did not come through the relay (no contributor claim for that author, and not App-authored) gets the configured label within one scanner tick. The PR then shows as held, and Hive posts a one-shot notice saying it is parked until it is resubmitted through the relay or a maintainer removes the label. New parkings are capped per poll, so switching the policy on does not label a whole PR backlog at once.
+- **Human override.** Removing the label releases the PR permanently: once anyone other than the Hive App has removed it, Hive never re-applies it to that PR.
+- **Addendum.** `clanker_requested_addendum` is appended to both the issue comment and the PR notice.
+
+See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md#clanker-requested-policy-for-outside-prs) for how this relates to trust tiers.
+
 ## Kubernetes contributor workload
 
 `just contribute-k8s` emits a complete Kubernetes workload for a long-lived contributor relay: Namespace, ConfigMap, Secret, and Deployment. It prints YAML to stdout by default, or writes a file when an output path is supplied:
