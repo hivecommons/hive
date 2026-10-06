@@ -1199,7 +1199,12 @@ not "fix" an adapter back to a source that was deliberately rejected:
   specified. All returned windows (`primary`, `secondary`, and any
   `rateLimitsByLimitId` scoped windows) fold in, worst window binds
   ([#6952](https://github.com/hivecommons/hive/issues/6952),
-  [#6964](https://github.com/hivecommons/hive/issues/6964)).
+  [#6964](https://github.com/hivecommons/hive/issues/6964)). When
+  `AGENT_MODEL` names a model, a bucket whose `normalModelSlug` names a
+  different model is left out of both the published reading and the
+  banked-reset trigger; shared buckets (no `normalModelSlug`) and
+  `ordinaryUsageAllowed` always apply
+  ([#10865](https://github.com/hivecommons/hive/issues/10865)).
 
 - **Claude Code** — the HTTP `GET /api/oauth/usage` endpoint the Claude Code
   HUD polls, **not** the status-line JSON `rate_limits.five_hour` /

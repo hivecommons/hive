@@ -573,8 +573,14 @@ func claudeWindowDurationMins(kind string) int {
 // initialize handshake, then call `account/rateLimits/read`. The reply carries
 // rateLimits.primary (the binding window) with usedPercent + resetsAt. A probe
 // failure is fail-open: never evidence of exhaustion.
+//
+// Model is the model the contributor explicitly selected (AGENT_MODEL,
+// hivecommons/hive#10865). The account reply can carry buckets scoped to other
+// models (normalModelSlug); with Model set, only shared buckets and buckets
+// scoped to Model are read. Empty Model keeps every bucket.
 type CodexProber struct {
 	ThresholdPct int
+	Model        string
 }
 
 // codexRateLimitsResult mirrors the subset of `account/rateLimits/read` this
@@ -602,6 +608,49 @@ type codexRateLimitSnapshot struct {
 	RateLimitsByLimitID map[string]*codexRateLimitWindow `json:"rateLimitsByLimitId"`
 	PlanType            string                           `json:"planType"`
 	Credits             *codexCredits                    `json:"credits"`
+	// NormalModelSlug names the model a bucket is scoped to; null or absent
+	// means a shared account-wide bucket (hivecommons/hive#10865).
+	NormalModelSlug *string `json:"normalModelSlug"`
+}
+
+// modelSlug returns the bucket's model scope, "" for a shared bucket.
+func (s *codexRateLimitSnapshot) modelSlug() string {
+	if s == nil || s.NormalModelSlug == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s.NormalModelSlug)
+}
+
+// codexScopeModelKey is the LimitWindow.Scope key naming the model a window
+// is scoped to. A window without it is shared by every model.
+const codexScopeModelKey = "model"
+
+// normalizeCodexModel canonicalizes a model name for scope comparison:
+// case-insensitive, provider prefix dropped ("openai/gpt-5.6" -> "gpt-5.6"),
+// and '.', '_' and ' ' treated as '-' so "gpt-5.6-luna" matches "gpt-5-6-luna".
+func normalizeCodexModel(model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if i := strings.LastIndex(m, "/"); i >= 0 {
+		m = m[i+1:]
+	}
+	m = strings.NewReplacer(".", "-", "_", "-", " ", "-").Replace(m)
+	return strings.Trim(m, "-")
+}
+
+// codexLimitAppliesToModel is the single scope rule shared by work admission
+// (codexHeadroom) and banked-reset redemption (codexWeeklyExhaustedForModel),
+// hivecommons/hive#10865. With no selected model every window applies. A
+// window with no model scope (null, absent or empty normalModelSlug) is a
+// shared account window and always applies — missing scope is read
+// conservatively as shared, never as "someone else's". Only a window
+// explicitly scoped to a different model is excluded.
+func codexLimitAppliesToModel(scopeModel, selectedModel string) bool {
+	selected := normalizeCodexModel(selectedModel)
+	scope := normalizeCodexModel(scopeModel)
+	if selected == "" || scope == "" {
+		return true
+	}
+	return scope == selected
 }
 
 // codexResetCreditsAvailable reads availableCount from the reset-credits object
@@ -665,6 +714,9 @@ type codexRateLimitWindow struct {
 	// deduped; the name is surfaced (not acted on) for the terminal message.
 	LimitID   string `json:"limitId"`
 	LimitName string `json:"limitName"`
+	// modelSlug is the owning bucket's normalModelSlug, carried into
+	// LimitWindow.Scope so consumers can apply the same scope rule.
+	modelSlug string
 }
 
 // codexWindowKind derives the window kind from the provider-stated duration
@@ -705,6 +757,12 @@ func codexLimitWindow(id string, w *codexRateLimitWindow) LimitWindow {
 	if w.LimitName != "" {
 		lw.Scope = map[string]string{"limit_name": w.LimitName}
 	}
+	if w.modelSlug != "" {
+		if lw.Scope == nil {
+			lw.Scope = map[string]string{}
+		}
+		lw.Scope[codexScopeModelKey] = w.modelSlug
+	}
 	if w.ResetsAt > 0 {
 		lw.ResetAt = time.Unix(w.ResetsAt, 0).UTC()
 	}
@@ -723,7 +781,7 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	h, err := codexHeadroom(p.Provider(), p.ThresholdPct, result)
+	h, err := codexHeadroomForModel(p.Provider(), p.ThresholdPct, result, p.Model)
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
@@ -833,6 +891,16 @@ func codexAppServerRequest(ctx context.Context, method string, params any) (json
 // worse than no guard, because it manufactures confidence that Hive will stop
 // in time.
 func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (Headroom, error) {
+	return codexHeadroomForModel(provider, thresholdPct, result, "")
+}
+
+// codexHeadroomForModel is codexHeadroom scoped to the selected model
+// (hivecommons/hive#10865): buckets whose normalModelSlug names a different
+// model are left out of the windows, so another model's exhausted quota
+// neither holds work nor triggers a banked-reset redemption. Shared buckets
+// and account-wide signals (ordinaryUsageAllowed, plan, credits, reset
+// credits) are always kept. Empty model reads every bucket.
+func codexHeadroomForModel(provider string, thresholdPct int, result json.RawMessage, model string) (Headroom, error) {
 	var res codexRateLimitsResult
 	if err := json.Unmarshal(result, &res); err != nil {
 		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, err)
@@ -845,10 +913,14 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 	h.PaidCreditsAvailable = res.RateLimits.Credits.paidCreditsAvailable()
 	h.ResetCreditsAvailable = codexResetCreditsAvailable(result)
 	windows := map[string]*codexRateLimitWindow{}
-	if res.RateLimits.Primary != nil {
+	topSlug := res.RateLimits.modelSlug()
+	topApplies := codexLimitAppliesToModel(topSlug, model)
+	if res.RateLimits.Primary != nil && topApplies {
+		res.RateLimits.Primary.modelSlug = topSlug
 		windows["primary"] = res.RateLimits.Primary
 	}
-	if res.RateLimits.Secondary != nil {
+	if res.RateLimits.Secondary != nil && topApplies {
+		res.RateLimits.Secondary.modelSlug = topSlug
 		windows["secondary"] = res.RateLimits.Secondary
 	}
 	// Fold in every scoped limit from rateLimitsByLimitId (kubestellar/hive#6964)
@@ -866,9 +938,10 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 		positional[res.RateLimits.LimitID] = true
 	}
 	for id, w := range res.RateLimits.RateLimitsByLimitID {
-		if w == nil || positional[id] {
+		if w == nil || positional[id] || !topApplies {
 			continue
 		}
+		w.modelSlug = topSlug
 		windows[id] = w
 	}
 	for id, snap := range res.RateLimitsByLimitID {
@@ -888,7 +961,12 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 		if h.PaidCreditsAvailable == nil {
 			h.PaidCreditsAvailable = snap.Credits.paidCreditsAvailable()
 		}
+		slug := snap.modelSlug()
+		if !codexLimitAppliesToModel(slug, model) {
+			continue
+		}
 		if snap.Primary != nil {
+			snap.Primary.modelSlug = slug
 			if snap.Primary.LimitID == "" {
 				snap.Primary.LimitID = snapID
 			}
@@ -898,6 +976,7 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 			windows[snapID] = snap.Primary
 		}
 		if snap.Secondary != nil {
+			snap.Secondary.modelSlug = slug
 			secondaryID := snapID + ":secondary"
 			if snap.Secondary.LimitID != "" {
 				secondaryID = snap.Secondary.LimitID
@@ -910,6 +989,11 @@ func codexHeadroom(provider string, thresholdPct int, result json.RawMessage) (H
 	}
 	for id, w := range windows {
 		h.Limits = append(h.Limits, codexLimitWindow(id, w))
+	}
+	if len(h.Limits) == 0 {
+		// Every bucket was scoped to another model: there is no reading for
+		// the selected one, which is unknown — never "plenty of headroom".
+		return Headroom{}, fmt.Errorf("codex rateLimits: no window applies to model %q", model)
 	}
 	sort.Slice(h.Limits, func(i, j int) bool { return h.Limits[i].ID < h.Limits[j].ID })
 
@@ -1443,6 +1527,30 @@ type Manager struct {
 	// controller (hivecommons/hive#10598). Nil unless the contributor opted in
 	// locally; see EnableCodexResetRedeem.
 	codexResetRedeem *codexResetRedeemer
+	// codexModel is the explicitly selected Codex model (AGENT_MODEL); see
+	// SetCodexModel. Empty reads every bucket.
+	codexModel string
+}
+
+// SetCodexModel scopes the openai (Codex) reading and the banked-reset
+// redemption controller to the explicitly selected model
+// (hivecommons/hive#10865). Buckets scoped to a different model then neither
+// hold work nor trigger a redemption; shared buckets still apply. Call it
+// before Start/StartPublishing.
+func (m *Manager) SetCodexModel(model string) {
+	model = strings.TrimSpace(model)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.codexModel = model
+	for i, p := range m.probers {
+		if cp, ok := p.(CodexProber); ok {
+			cp.Model = model
+			m.probers[i] = cp
+		}
+	}
+	if m.codexResetRedeem != nil {
+		m.codexResetRedeem.model = model
+	}
 }
 
 // NewManager builds a Manager with the default prober set for every provider
