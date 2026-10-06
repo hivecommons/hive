@@ -263,6 +263,9 @@ func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, 
 		c.recordReporterTrustEscalation(repo, pr.GetNumber(), "")
 		return labels, ""
 	}
+	if strings.TrimSpace(c.appBotLogin) == "" {
+		return labels, ""
+	}
 	owner, name := c.splitRepo(repo)
 	comments, err := c.listIssueComments(ctx, owner, name, pr.GetNumber())
 	if err != nil {
@@ -334,6 +337,9 @@ func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin st
 }
 
 func (c *Client) reporterTrustHeldPRReason(ctx context.Context, owner, repo string, number int, labels []string) string {
+	if strings.TrimSpace(c.appBotLogin) == "" {
+		return ""
+	}
 	// Only held PRs call this helper. Holds using other labels need no comment
 	// fetch; old notices without needs-human remain eligible for enrichment.
 	candidate := false

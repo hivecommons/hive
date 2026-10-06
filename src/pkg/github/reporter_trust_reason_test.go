@@ -51,7 +51,7 @@ func TestFetchPRsReporterTrustReason(t *testing.T) {
 			if err != nil || len(actionable) != 0 || len(held) != 1 {
 				t.Fatalf("enumeration changed: actionable=%v held=%v err=%v", actionable, held, err)
 			}
-			want := finding.NeedsHumanReason()
+			want := finding.escalationReason()
 			if failComments {
 				want = ""
 			}
