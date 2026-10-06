@@ -1,0 +1,1 @@
+- docs: explain when a hive follows the `stable` channel after the tag moves, including hub refresh, heartbeat delivery, upgrade policy windows, UI signals, and self-hosted runtime behavior (#10187)

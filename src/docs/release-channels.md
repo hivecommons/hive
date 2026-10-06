@@ -101,6 +101,58 @@ The spoke UI keeps reported state and intent separate: after a selection it cont
 
 For self-hosted Podman Quadlet spokes the selector is intentionally unavailable even when `HIVE_SELF_IMAGE` resolves a channel, because there is no hub-managed Deployment image to patch. The panel says to change `Image=` in `hive.container`; after editing, reload/restart through the Podman lifecycle so `hive.env` carries the updated `HIVE_SELF_IMAGE` and tracking mode.
 
+## What happens to your hive after `stable` moves
+
+When the hub says that `stable` moved, that means the channel tag now points at
+a newer image. Your hive still has to notice that target and roll onto it. The
+normal path is:
+
+1. **A build becomes eligible for `stable`.** The stable-promotion workflow runs
+   about hourly and promotes the newest `v5` build that passed the
+   [24-hour stable soak](stable-soak-policy.md). Moving `stable` is a retag of an
+   already-built image, not a rebuild.
+2. **The hub refreshes its channel answer.** The hub caches channel resolution
+   for up to 5 minutes. After that refresh, `stable` resolves to the new commit
+   in the hub's release-channel block and in per-hive upgrade targeting. If the
+   row cannot resolve, the hub does not guess; check the hub log for
+   `channel resolve:` warnings.
+3. **Your hive's upgrade policy decides when the rollout may start.**
+   - **Hub-managed hosted spokes** are controlled by the hub. If upgrades are not
+     `paused`, the hub arms the target when the hive is behind and delivers the
+     instruction on the spoke's next heartbeat. Spokes heartbeat every 2 minutes.
+     Instant policies may still wait for the 5-minute auto-upgrade debounce
+     window, which collapses a burst of moving targets into one rollout. Daily
+     and weekly policies wait for their configured window (`schedule`,
+     `schedule_hour`, `schedule_timezone`, and, for weekly,
+     `schedule_weekday`).
+   - **Spoke-managed Kubernetes spokes** learn the `upgrade_to` target in their
+     heartbeat response and patch their own Deployment. A Deployment that tracks
+     `:stable` rolls by changing a pod-template annotation; with
+     `imagePullPolicy: Always`, the replacement pod re-pulls the moving tag.
+   - **Self-hosted Podman Quadlet spokes** follow the registry only when you opt
+     in to Podman's auto-update drop-in. That enables `podman-auto-update.timer`;
+     Podman's timer is daily by default.
+   - **Self-hosted Kubernetes deployments that are not receiving hub/spoke
+     upgrade instructions** do not roll just because a tag moved. The shipped
+     manifest uses `imagePullPolicy: Always`, so the next Deployment restart or
+     rollout re-pulls `:stable`.
+4. **What you see while waiting.** The spoke Version panel shows `Next update`,
+   `overdue since`, `none queued`, `paused`, or `unknown` from
+   `/api/version.autoUpdate.nextUpdateAt` and `nextUpdateStatus`. The navbar
+   version badge changes its short SHA only after the pod actually runs the new
+   image. If the hive is stuck, `/api/version` also exposes
+   `autoUpdate.state`; a retrying or failed upgrade includes the upgrade marker's
+   `attempts` and `lastError`.
+5. **Need it now?** Once `stable` itself points at the desired build,
+   **Upgrade now** skips the automatic-upgrade wait for that hive and arms the
+   rollout immediately. It does not promote `stable`; it only follows the channel
+   value that already exists.
+
+Typical worst case after a fix merges is approximately: **24 hours of soak + up
+to 1 hour for the promotion tick + up to 5 minutes for hub channel resolution +
+up to one 2-minute heartbeat + the 5-minute debounce**, plus any paused/daily/
+weekly policy window you configured.
+
 ## Known limitations
 
 - **Bulk actions cannot set a channel.** The bulk *Switch branch* action validates against real branches only and rejects channel names (`unknown branch`); it also never writes the tracked channel. Switching to a channel is per-hive.
