@@ -111,10 +111,14 @@ This file was called `hive.yaml.bak` until the rename. The old name implied
 "the restorable backup", which is true of only half its behaviour, and the
 ambiguity cost real debugging time.
 
-**On Kubernetes it is a snapshot.** The entrypoint *writes* it after the merge
-and *reads* it only when the ConfigMap is missing or empty — the disaster
-fallback. A minority of older hives run a `copy-config` init container variant
-that does restore from it first; that variant is not what new hives get.
+**On Kubernetes it is the boot input after the first boot.** Since #2392 the
+entrypoint boots from this file whenever it exists (`src/deploy/entrypoint.sh:836-847`).
+The ConfigMap seed is not used and the overlay merge does not run at that step.
+Only when the PVC has no runtime config yet does the entrypoint start from the
+seed, merge `/data/hive.yaml.dashboard` over it and write the result here
+(`entrypoint.sh:848-993`). `Config.Save()` rewrites the file on every save. Older
+hives whose `copy-config` init container still copies the seed on every boot get
+the same result, because the entrypoint copies this file over the seed.
 
 **Outside Kubernetes it is a live boot input, and the source of truth.** There is no
 ConfigMap and no overlay in that mode, so the entrypoint restores this file over
