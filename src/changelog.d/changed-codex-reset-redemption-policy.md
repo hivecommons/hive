@@ -1,0 +1,1 @@
+- Added ADR-0021 allowing opt-in, locally consented redemption of already-earned Codex resets (revises the #6833/#6964 no-consume rule); the spend/billing guard test now allow-lists a single controller file while `purchaseCredits` stays banned.
