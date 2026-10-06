@@ -91,6 +91,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateWritingGuide(c.Project.WritingGuide); err != nil {
 		return err
 	}
+	for _, rp := range c.Project.RepoPolicies {
+		if err := ValidateRepoMergeStrategy(rp.Repo, rp.MergeStrategy); err != nil {
+			return err
+		}
+	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().

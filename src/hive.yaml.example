@@ -78,6 +78,14 @@ project:
 #       self_authorization_hold: false
 #     - repo: sensitive-repo
 #       auto_merge: false  # PRs may be opened, but Hive will not merge them.
+#     - repo: serialized-repo
+#       # How Hive merges here: direct (default) or hive-serialized. It decides
+#       # how, never whether — auto-merge level, auto_merge, pauses and holds
+#       # still apply. An unrecognised value is a config error and Hive will
+#       # not merge into that repo. Unrelated to knowledge.primer.merge_strategy.
+#       # Downgrading to a Hive without this key silently ignores it, and the
+#       # repo goes back to direct.
+#       merge_strategy: hive-serialized
   # Optional: how the issues and PRs your agents file should read. Rendered as
   # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
   # before the body template the agent fills in — next to the template, which
