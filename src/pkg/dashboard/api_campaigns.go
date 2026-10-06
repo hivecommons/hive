@@ -39,8 +39,26 @@ type Campaign struct {
 	LeaseOwner     string             `json:"lease_owner,omitempty"`
 	RevisionOf     string             `json:"revision_of,omitempty"`
 	Revision       int                `json:"revision,omitempty"`
+	History        []CampaignGenEntry `json:"history,omitempty"`
 	Recheck        *CampaignRecheck   `json:"recheck,omitempty"`
 	Drift          *CampaignDrift     `json:"drift,omitempty"`
+
+	reviseLeaseHeld bool
+	closedGen       uint64
+}
+
+// CampaignGenEntry is one closed generation of a campaign's run, as recorded
+// in the archive's generation log when a recheck rewound it. Campaign.Revision
+// and Campaign.History are how clients follow a campaign across rechecks;
+// Campaign.RevisionOf is deprecated, never written on v6, and is removed in
+// the next release line (ADR 0020 v6 addendum, R4).
+type CampaignGenEntry struct {
+	Revision   int    `json:"revision"`
+	ArchivedAt string `json:"archived_at,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Actor      string `json:"actor,omitempty"`
+	RewoundAt  string `json:"rewound_at,omitempty"`
+	LastGen    uint64 `json:"last_gen,omitempty"`
 }
 
 type CampaignRecheck struct {
@@ -361,11 +379,15 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 				// revision and the independently releasable revise lease.
 				campaign.Revision = revision.Revision
 				campaign.RevisionOf = revision.RevisionOf
+				campaign.History = revision.History
 				campaign.Recheck = revision.Recheck
 				campaign.Drift = revision.Drift
+				campaign.reviseLeaseHeld = revision.reviseLeaseHeld
+				campaign.closedGen = revision.closedGen
 				if revision.Revision > 0 {
 					campaign.LeaseOwner = revision.LeaseOwner
 				}
+				s.settleRewoundGeneration(&campaign, run)
 			}
 			byID[campaign.ID] = campaign
 		}
@@ -376,6 +398,40 @@ func (s *Server) allCampaigns(r *http.Request) ([]Campaign, error) {
 		out = append(out, campaign)
 	}
 	return out, nil
+}
+
+// settleRewoundGeneration applies a recheck's Drift to the run-backed card. A
+// completion from a generation the rewind already closed never completes the
+// rewound one; the current generation's completion clears Drift (R1, R2).
+func (s *Server) settleRewoundGeneration(campaign *Campaign, run Run) {
+	if campaign.Drift == nil || campaign.CurrentStage != "completed" {
+		return
+	}
+	if run.Gen <= campaign.closedGen {
+		campaign.CurrentStage = StageSpec
+		campaign.Status = runCampaignStatus(Run{Stage: StageSpec})
+		return
+	}
+	campaign.Drift = nil
+	if s != nil && s.deps != nil && s.deps.Inception != nil {
+		if _, err := s.deps.Inception.SetCampaignDrift(campaign.ID, nil); err != nil && s.logger != nil {
+			s.logger.Warn("[spektacular] clearing converged campaign drift failed", "campaign", campaign.ID, "error", err)
+		}
+	}
+}
+
+func campaignGenerationLogFromArchive(history []knowledge.CampaignRevisionHistory) []CampaignGenEntry {
+	if len(history) == 0 {
+		return nil
+	}
+	out := make([]CampaignGenEntry, 0, len(history))
+	for _, entry := range history {
+		out = append(out, CampaignGenEntry{
+			Revision: entry.Revision, ArchivedAt: formatRunTime(entry.ArchivedAt), Reason: entry.Reason,
+			Actor: entry.Actor, RewoundAt: formatRunTime(entry.RewoundAt), LastGen: entry.LastGen,
+		})
+	}
+	return out
 }
 
 func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Campaign {
@@ -418,8 +474,14 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		}
 		contributors = nil
 	}
+	reviseLeaseHeld := false
 	if archive.Lease != nil && archive.Lease.Owner != "" && time.Now().Before(archive.Lease.ExpiresAt) {
 		leaseOwner = archive.Lease.Owner
+		reviseLeaseHeld = archive.Lease.Surface == "revise"
+	}
+	var closedGen uint64
+	if n := len(archive.History); n > 0 {
+		closedGen = archive.History[n-1].LastGen
 	}
 	artifacts := []CampaignArtifact{{Kind: "state", Label: "Inception state"}}
 	for _, file := range archive.WikiFiles {
@@ -430,7 +492,9 @@ func campaignFromInceptionArchive(archive knowledge.InceptionCampaignArchive) Ca
 		Artifacts: artifacts, LinkedIssues: linkedIssues, Contributors: contributors, LastActivity: formatRunTime(last),
 		Status: status, Engine: firstRunNonEmpty(archive.Engine, "Spec Kit"), Type: firstRunNonEmpty(archive.Type, "inception"),
 		RunKey: runKey, RunURL: runURL, LeaseOwner: leaseOwner, RevisionOf: archive.RevisionOf, Revision: archive.Revision,
+		History: campaignGenerationLogFromArchive(archive.History),
 		Recheck: campaignRecheckFromArchive(archive, false), Drift: campaignDriftFromArchive(archive),
+		reviseLeaseHeld: reviseLeaseHeld, closedGen: closedGen,
 	}
 	if campaign.Recheck != nil && campaign.Drift != nil {
 		campaign.Recheck.ExternalCount = campaign.Drift.ExternalCount
