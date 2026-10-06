@@ -24,6 +24,10 @@ import (
 // concrete extwork pieces to these (extworkwire.go).
 
 const (
+	// extExecEngineVibeKanban is the local board/workspace host.
+	extExecEngineVibeKanban = "vibe-kanban"
+	// capExtExecVibeKanban is the capability for vibe-kanban-bound work.
+	capExtExecVibeKanban = "ext-exec/vibe-kanban"
 	// extExecEngineFlue is the batch-engine pilot. It must equal flue.Engine;
 	// a test pins the two together.
 	extExecEngineFlue = "flue"
@@ -215,6 +219,8 @@ func extExecGate(engine string, cfg *config.Config) (capability string, enabled 
 	switch engine {
 	case extExecEngineFlue:
 		return capExtExecFlue, cfg.FlueBindingEnabled(), true
+	case extExecEngineVibeKanban:
+		return capExtExecVibeKanban, cfg.VibeKanbanBindingEnabled(), true
 	case extExecEngineOMP:
 		return capExtExecOMP, cfg.OMPBindingEnabled(), true
 	default:
@@ -229,6 +235,8 @@ func extExecMode(engine string, cfg *config.Config) string {
 	switch engine {
 	case extExecEngineFlue:
 		return cfg.FlueBindingMode()
+	case extExecEngineVibeKanban:
+		return cfg.VibeKanbanBindingMode()
 	case extExecEngineOMP:
 		return cfg.OMPBindingMode()
 	default:
@@ -243,6 +251,8 @@ func extExecWorkflowVersion(engine string, cfg *config.Config) string {
 	switch engine {
 	case extExecEngineFlue:
 		return strings.TrimSpace(cfg.Runs.External.Flue.WorkflowVersion)
+	case extExecEngineVibeKanban:
+		return strings.TrimSpace(cfg.Runs.External.VibeKanban.WorkflowVersion)
 	case extExecEngineOMP:
 		return strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion)
 	default:

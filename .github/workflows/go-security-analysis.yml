@@ -48,10 +48,12 @@ name: Go Security Analysis
 on:
   push:
     branches: [v4, v5, v6]
-    paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
+    # release PRs touch only these; the required contexts must report — #10795
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   pull_request:
     branches: [v4, v5, v6]
-    paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
+    # release PRs touch only these; the required contexts must report — #10795
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still
     # found. A push-only trigger cannot catch that: the vulnerability appears

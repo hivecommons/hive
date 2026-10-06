@@ -1,0 +1,1 @@
+- Fixed the dashboard navbar cascade so the scripted layout toggle no longer forces the topbar out of its three-zone grid.

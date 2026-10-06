@@ -12,8 +12,8 @@
 # Since #5318/#5324 that merge is `gh api -X PUT .../pulls/{n}/merge -f
 # sha=...` rather than `gh pr merge`. `gh pr merge` consults the PR's
 # AGGREGATE mergeStateStatus, which a pending NON-required status (`tide`)
-# forces to BLOCKED forever even with the only required context (`gate`)
-# green — so the retry window was burned waiting on a state that could not
+# forces to BLOCKED forever even when required contexts are healthy — so the
+# retry window was burned waiting on a state that could not
 # change. The API endpoint is evaluated against the required contexts for
 # that SHA instead. The step distinguishes three ways that merge can fail:
 #   not-yet-mergeable — HTTP 405: a required check has not landed / GitHub is
@@ -194,7 +194,7 @@ run_step() {
   st="$(mktemp -d "$tmp/state.XXXXXX")"
   : > "$st/out"
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
-    RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
+    RELEASE_MERGE_WAIT_SECONDS="${3:-120}" RELEASE_MERGE_POLL_SECONDS=8 \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
     RELEASE_LINE="v5" \
     ACTIONS_TOKEN="actions-token-for-test" \
@@ -447,7 +447,11 @@ else:
         if not status_at < pr_at < merge_at:
             bad("push_line must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
-        bad("push_line's commit status is not the required gate:success verdict (#5356)")
+        bad("push_v5's commit status is not the required gate:success verdict (#5356)")
+    if "RELEASE_MERGE_WAIT_SECONDS" not in code or ":-1800" not in code:
+        bad("push_v5 no longer waits up to the 30-minute release merge deadline (#10795)")
+    if "required_checks_state" not in code:
+        bad("push_v5 no longer polls the release PR's required checks before giving up (#10795)")
     # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
     # push event. Dispatch immediately after the SHA-keyed merge, before tag
     # retries widen the window in which a later v5 push could get an earlier

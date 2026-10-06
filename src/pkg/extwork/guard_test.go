@@ -10,10 +10,12 @@ const (
 	modulePrefix     = "github.com/hivecommons/hive/"
 	flueAdapterPkg   = modulePrefix + "pkg/extwork/flue"
 	ompAdapterPkg    = modulePrefix + "pkg/extwork/omp"
+	vibeAdapterPkg   = modulePrefix + "pkg/extwork/vibekanban"
 	extworkPkg       = modulePrefix + "pkg/extwork"
 	hiveBinary       = "./cmd/hive"
 	flueBuildTag     = "extwork_flue"
 	ompBuildTag      = "extwork_omp"
+	vibeBuildTag     = "extwork_vibekanban"
 	minClosurePkgs   = 50
 	moduleRootFromPk = "../.."
 )
@@ -87,5 +89,22 @@ func TestOMPAdapterNotLinkedUnlessEnabled(t *testing.T) {
 	flueOnly := goListDeps(t, flueBuildTag)
 	if flueOnly[ompAdapterPkg] {
 		t.Fatalf("-tags %s linked %s; the two host tags must be independent", flueBuildTag, ompAdapterPkg)
+	}
+}
+
+func TestVibeKanbanAdapterNotLinkedUnlessEnabled(t *testing.T) {
+	plain := goListDeps(t, "")
+	if plain[vibeAdapterPkg] {
+		t.Fatalf("%s is linked into %s without the %s build tag; the adapter must be opt-in at build time", vibeAdapterPkg, hiveBinary, vibeBuildTag)
+	}
+	if !plain[extworkPkg] {
+		t.Fatalf("%s is not reachable from %s; the engine-neutral seams must be wired regardless of engine", extworkPkg, hiveBinary)
+	}
+	tagged := goListDeps(t, vibeBuildTag)
+	if !tagged[vibeAdapterPkg] {
+		t.Fatalf("positive control failed: %s is not linked even with -tags %s", vibeAdapterPkg, vibeBuildTag)
+	}
+	if tagged[flueAdapterPkg] || tagged[ompAdapterPkg] {
+		t.Fatalf("-tags %s linked unrelated adapters: flue=%v omp=%v", vibeBuildTag, tagged[flueAdapterPkg], tagged[ompAdapterPkg])
 	}
 }

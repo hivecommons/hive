@@ -699,6 +699,118 @@ if [ "$_gh_author_scoped" = true ]; then
   fi
 fi
 
+_clanker_pr_create_autoclose() {
+  _contributor_mode || return 0
+  [[ "$subcmd" = "pr" && "$action" = "create" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  local task_file="${HIVE_TASK_FILE:-/tmp/contributor-task.json}"
+  [[ -r "$task_file" ]] || return 0
+
+  local repo="" base="" body="" body_file="" have_body=false next=""
+  local i arg
+  for ((i=0; i<${#args[@]}; i++)); do
+    arg="${args[$i]}"
+    if [[ -n "$next" ]]; then
+      case "$next" in
+        repo) repo="$arg" ;;
+        base) base="$arg" ;;
+        body) body="$arg"; have_body=true ;;
+        body_file) body_file="$arg" ;;
+      esac
+      next=""
+      continue
+    fi
+    case "$arg" in
+      --repo|-R) next="repo" ;;
+      --base|-B) next="base" ;;
+      --body|-b) next="body" ;;
+      --body-file|-F) next="body_file" ;;
+      --repo=*) repo="${arg#--repo=}" ;;
+      --base=*) base="${arg#--base=}" ;;
+      --body=*) body="${arg#--body=}"; have_body=true ;;
+      --body-file=*) body_file="${arg#--body-file=}" ;;
+    esac
+  done
+  [[ -n "$repo" ]] || return 0
+  if [[ -n "$body_file" ]]; then
+    $have_body && return 0
+    if [[ "$body_file" = "-" ]]; then
+      body="$(cat)"
+    elif [[ -r "$body_file" ]]; then
+      body="$(cat -- "$body_file")"
+    else
+      return 0
+    fi
+    have_body=true
+  fi
+  if [[ -n "$base" ]]; then
+    local default_branch
+    default_branch="$("$REAL_GH" repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+    [[ -n "$default_branch" && "$base" = "$default_branch" ]] || return 0
+  fi
+
+  local new_body
+  new_body="$(python3 - "$task_file" "$repo" "$body" <<'PY'
+import json
+import re
+import sys
+
+task_file, repo, body = sys.argv[1:4]
+try:
+    with open(task_file, encoding="utf-8") as f:
+        task = json.load(f)
+except Exception:
+    print(body, end="")
+    raise SystemExit
+if task.get("kind") != "issue" or str(task.get("repo", "")).strip().lower() != repo.strip().lower():
+    print(body, end="")
+    raise SystemExit
+try:
+    issue = int(task.get("number") or 0)
+except Exception:
+    issue = 0
+if issue <= 0:
+    print(body, end="")
+    raise SystemExit
+closing = re.compile(
+    r"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[^\n#]*(?:[\w.-]+/[\w.-]+)?#"
+    + re.escape(str(issue))
+    + r"\b"
+)
+if closing.search(body):
+    print(body, end="")
+    raise SystemExit
+trimmed = body.rstrip(" \t\r\n")
+line = f"Closes #{issue}"
+print((trimmed + "\n\n" + line) if trimmed else line, end="")
+PY
+)"
+  [[ "$new_body" != "$body" ]] || return 0
+
+  local -a new_args=()
+  next=""
+  for ((i=0; i<${#args[@]}; i++)); do
+    arg="${args[$i]}"
+    if [[ -n "$next" ]]; then
+      case "$next" in
+        body|body_file) ;;
+        *) new_args+=("$arg") ;;
+      esac
+      next=""
+      continue
+    fi
+    case "$arg" in
+      --body|-b) next="body" ;;
+      --body-file|-F) next="body_file" ;;
+      --body=*|--body-file=*) ;;
+      *) new_args+=("$arg") ;;
+    esac
+  done
+  new_args+=("--body" "$new_body")
+  args=("${new_args[@]}")
+}
+
 # ── Mode-based enforcement (hot-reloadable via mode file) ──
 # Read mode from file first (updated by Manager on mode change), fallback to env var.
 # -r as well as -f: this script runs under `set -e`, so a mode file that exists
@@ -724,6 +836,8 @@ ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 # SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
 # WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
 # their OWN identity by design, so their gh pr create must pass through unchanged.
+_clanker_pr_create_autoclose
+
 if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   if command -v hive-open-pr >/dev/null 2>&1; then
     # Pass the original gh-pr-create flags straight through — hive-open-pr accepts

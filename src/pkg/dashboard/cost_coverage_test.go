@@ -308,7 +308,7 @@ func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	s, deps := covServer(t)
 	deps.MetricsCollector = &MetricsCollector{
 		metrics:       make(map[string]any),
-		prIssueCounts: &ghpkg.PRIssueCounts{MergedPRs: 9, ClosedIssues: 4, UpdatedAt: "2026-08-18T00:00:00Z"},
+		prIssueCounts: &ghpkg.PRIssueCounts{MergedPRs: 9, ClosedIssues: 4, UpdatedAt: "2026-08-18T00:00:00Z", Author: "hive-bot[bot]", Basis: "hive-attributed"},
 	}
 
 	rec := doGet(s, "/api/cost")
@@ -324,6 +324,9 @@ func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	}
 	if resp.ClosedIssues != 4 {
 		t.Errorf("ClosedIssues = %d, want 4", resp.ClosedIssues)
+	}
+	if resp.CountAuthor != "hive-bot[bot]" || resp.CountBasis != "hive-attributed" {
+		t.Errorf("count metadata = (%q,%q), want hive author/basis", resp.CountAuthor, resp.CountBasis)
 	}
 }
 

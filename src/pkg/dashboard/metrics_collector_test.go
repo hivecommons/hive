@@ -404,6 +404,9 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
+		if !strings.Contains(q, "author:hive-bot[bot]") {
+			t.Fatalf("query missing hive author qualifier: %q", q)
+		}
 		total := 0
 		switch {
 		case strings.Contains(q, "type:pr"):
@@ -421,6 +424,7 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 		ghClient: ghpkg.NewClientForTest(srv.URL, "myorg", []string{"repo1"}, logger),
 		org:      "myorg",
 		repo:     "repo1",
+		aiAuthor: "hive-bot[bot]",
 		logger:   logger,
 		metrics:  make(map[string]any),
 	}

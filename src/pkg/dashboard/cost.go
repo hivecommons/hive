@@ -64,13 +64,16 @@ type costResponse struct {
 	// the estimate without hardcoding the date.
 	PriceTableDate string `json:"price_table_date"`
 	Disclaimer     string `json:"disclaimer"`
-	// MergedPRs / ClosedIssues are all-time counts for the primary repo,
-	// matching Estimated.TotalUSD's "all-time cumulative" scope. The UI divides
-	// TotalUSD by these to derive cost-per-PR / cost-per-issue (issue #4110).
-	// Zero means "no data yet" (collector hasn't run, or GitHub is unreachable);
-	// the UI shows "—" rather than treating it as a real zero denominator.
-	MergedPRs    int `json:"merged_prs"`
-	ClosedIssues int `json:"closed_issues"`
+	// MergedPRs / ClosedIssues are hive-attributed all-time counts for the
+	// primary repo. The UI divides the same Estimated.TotalUSD it displays by
+	// these counts to derive cost-per-PR / cost-per-issue (issue #4110).
+	// Zero means "no data yet" (collector hasn't run, GitHub is unreachable, or
+	// no configured hive author has outcomes); the UI shows "—" rather than
+	// treating it as a real zero denominator.
+	MergedPRs    int    `json:"merged_prs"`
+	ClosedIssues int    `json:"closed_issues"`
+	CountAuthor  string `json:"count_author,omitempty"`
+	CountBasis   string `json:"count_basis,omitempty"`
 	// AdvisorByAgent is each agent's advisor-lane spend over the retained
 	// advisor records (#9725), reported beside Estimated.ByAgent rather than
 	// folded into it: the advisor's cost is the lane's, not the agent's
@@ -161,6 +164,8 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); counts != nil {
 			resp.MergedPRs = counts.MergedPRs
 			resp.ClosedIssues = counts.ClosedIssues
+			resp.CountAuthor = counts.Author
+			resp.CountBasis = counts.Basis
 		}
 	}
 

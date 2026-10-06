@@ -26,7 +26,7 @@ func TestDashboardNavbarStaticMarkupAndReferences(t *testing.T) {
 		`id="oc-health"`,
 		`id="welcome-topbar-btn"`,
 		`id="oc-gh-avatar-wrap"`,
-		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0);`,
+		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: auto;`,
 		`padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));`,
 	} {
 		if !strings.Contains(html, want) {

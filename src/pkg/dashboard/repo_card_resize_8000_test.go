@@ -76,6 +76,29 @@ func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 	}
 }
 
+func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); min-height: 1.75rem; min-width: 0; text-align: left; }",
+		".repo-name a { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+		".repo-name .repo-automerge-toggle { margin-left: auto; }",
+		`<div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+	for _, gone := range []string{
+		"display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto;",
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: grid;",
+		".repo-name a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+	} {
+		if strings.Contains(html, gone) {
+			t.Errorf("repo card name can still be centred/clipped by the old header layout: %q", gone)
+		}
+	}
+}
+
 // The handle: on every card, focusable, reporting the width it controls, and
 // hidden on the phone layout where there is no width to trade.
 func TestRepoCardResizeHandleMarkup(t *testing.T) {

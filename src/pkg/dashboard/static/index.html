@@ -343,19 +343,21 @@
 
     /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
-      position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0); min-height: var(--navbar-sticky-height);
-      width: auto;
+      --topbar-grid-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: auto; min-height: var(--navbar-sticky-height);
+      width: 100%;
+      max-width: calc(100% - var(--sidebar-w));
       box-sizing: border-box;
       margin: var(--sp-0);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--line);
       box-shadow: var(--navbar-shadow);
-      display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center;
+      display: grid; grid-template-columns: var(--topbar-grid-columns); align-items: center;
       gap: var(--sp-5);
       padding: var(--sp-0) var(--sp-7); z-index: var(--navbar-sticky-z);
     }
-    .oc-topbar-left { font-size: var(--fs-base); color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; justify-content: flex-start; overflow: hidden; }
+    .oc-topbar-left { justify-self: start; max-width: 100%; font-size: var(--fs-base); color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; justify-content: flex-start; overflow: hidden; }
     .oc-project-title {
       min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: var(--text); font-size: 0.88rem; font-weight: 700; letter-spacing: -0.01em;
@@ -396,10 +398,13 @@
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
     .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
-    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: calc(var(--navbar-motion-duration, var(--overview-transition-duration, 600ms)) * 3.2); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: center; will-change: transform, opacity; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite; }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: calc(var(--navbar-motion-duration, var(--overview-transition-duration, 600ms)) * 3.2); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: center; will-change: transform, opacity; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite both; }
     .oc-version-bee:nth-child(2) { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
     .oc-version-bee:nth-child(3) { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
-    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); }
+    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); }
+    .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--terminal-bg); stroke-width: 1.7; }
+    .oc-version-bee-body { fill: var(--amber); stroke: var(--terminal-bg); stroke-width: 1.5; }
+    .oc-version-bee-stripe, .oc-version-bee-head, .oc-version-bee-stinger { fill: none; stroke: var(--terminal-bg); stroke-width: 2; stroke-linecap: round; }
     .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
     .oc-version-progress-copy { position: relative; z-index: 1; min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
     .oc-version-progress-title { color: var(--text); font-weight: 700; }
@@ -418,9 +423,8 @@
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      0% { opacity: 0.9; transform: translate(-50%, -50%) rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg) translateZ(0); }
-      50% { opacity: 1; transform: translate(-50%, -50%) rotate(180deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-180deg) translateZ(0); }
-      100% { opacity: 0.9; transform: translate(-50%, -50%) rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg) translateZ(0); }
+      0% { opacity: 0.96; transform: translate(-50%, -50%) rotate(0turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0); }
+      100% { opacity: 0.96; transform: translate(-50%, -50%) rotate(1turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -444,11 +448,11 @@
       margin-left: -10px;
     }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
+    .oc-topbar-center { justify-self: center; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
     .dashboard-custom-style-note { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
     .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
-    .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
+    .oc-topbar-right { justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
     .oc-health-badge { --nav-chip-color: var(--status-ok); }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
@@ -511,7 +515,7 @@
 
     @media (max-width: 1280px) {
       .oc-topbar {
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height);
+        height: auto; min-height: var(--navbar-sticky-height);
         align-content: center;
         column-gap: var(--sp-5); row-gap: var(--sp-2); padding-top: var(--sp-3); padding-bottom: var(--sp-3);
       }
@@ -850,7 +854,7 @@
         transition: opacity .22s ease;
       }
       #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
-      .oc-topbar { left: var(--sp-0); right: var(--sp-0); margin-left: var(--sp-0); }
+      .oc-topbar { left: var(--sp-0); right: auto; width: 100%; max-width: 100%; margin-left: var(--sp-0); }
       body { padding-left: var(--sp-6); }
     }
     @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
@@ -862,7 +866,7 @@
          grow, and drop low-value chrome. flex-shrink:0 makes the three
          groups wrap to a new row instead of squishing their contents off
          the right edge. */
-      .oc-topbar { grid-template-columns: minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height); padding: var(--sp-3) var(--sp-5); row-gap: var(--sp-2); }
+      .oc-topbar { --topbar-grid-columns: minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height); padding: var(--sp-3) var(--sp-5); row-gap: var(--sp-2); }
       /* center grows to fill row 1, so the health/right group always
          drops to its own row instead of half-fitting at the edge */
       .oc-topbar-left, .oc-topbar-center, .oc-topbar-right { justify-content: center; }
@@ -1582,8 +1586,8 @@
       outline: 2px solid var(--amber); outline-offset: -2px;
     }
     .repo-provider-label { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.08em; color:var(--muted); text-transform:uppercase; margin-bottom:var(--sp-2); }
-    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; column-gap: var(--sp-3); row-gap: var(--sp-2); min-height: 1.75rem; }
-    .repo-name a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); min-height: 1.75rem; min-width: 0; text-align: left; }
+    .repo-name a { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
     .repo-header-actions { justify-content: flex-end; }
     .repo-header-spacer { min-width: var(--sp-2); }
@@ -1599,6 +1603,7 @@
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-name .repo-automerge-toggle { margin-left: auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
@@ -2866,7 +2871,18 @@
       pointer-events: none;
     }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
-    .overview-partition-tooltip { width: min(46rem, calc(100vw - var(--sp-8))); pointer-events: auto; }
+    .overview-partition-tooltip {
+      width: min(24rem, calc(100vw - var(--sp-8)));
+      max-height: min(18rem, calc(100vh - var(--sp-8)));
+      overflow: hidden;
+      pointer-events: auto;
+    }
+    .overview-partition-tooltip .overview-partition-summary { display: block; margin-bottom: var(--sp-2); font-weight: 700; }
+    .overview-partition-tooltip .overview-partition-row { display: flex; justify-content: space-between; gap: var(--sp-4); white-space: nowrap; }
+    .overview-partition-tooltip .overview-partition-label { overflow: hidden; text-overflow: ellipsis; }
+    .overview-partition-tooltip .overview-partition-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .overview-partition-tooltip .overview-partition-more { display: block; margin-top: var(--sp-2); }
+    .overview-partition-tooltip .overview-partition-footer { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-2); border-top: 1px solid var(--border); }
     .overview-partition-tooltip .muted { opacity: .58; }
 
     .config-list { margin-bottom: 14px; }
@@ -3445,12 +3461,14 @@
     .agent-collapsed-tile.active, .repo-collapsed-tile.healthy { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
     .repo-collapsed-tile.blocked { border-color: color-mix(in srgb, var(--yellow) 65%, var(--line-subtle)); }
     .agent-collapsed-tile.up-next, .repo-collapsed-tile.working { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .agent-collapsed-tile.running-now { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 60%, transparent); }
     .agent-tile-name, .agent-tile-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-tile-name { font-weight: 800; color: var(--text); }
     .repo-collapsed-owner { color: var(--muted); font-weight: 700; }
     .repo-collapsed-icons { display: inline-flex; align-items: center; gap: var(--sp-1); justify-self: end; min-width: 0; }
     .repo-collapsed-am { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 0.8rem; padding: 0 var(--sp-1); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; line-height: 1; }
     .agent-up-next { justify-self: end; align-self: center; color: var(--accent); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+    .agent-up-next.running-now { color: var(--green); }
     .agent-tile-next { color: var(--muted); grid-column: 1 / -1; }
     .agent-tile-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 40%, transparent); }
     .agent-collapsed-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
@@ -3463,9 +3481,10 @@
       scrollbar-width: thin; mask-image: linear-gradient(90deg, var(--text) 0, var(--text) calc(100% - var(--sp-4)), transparent 100%);
     }
     .agent-navbar-upnext[hidden] { display: none; }
-    .agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px); min-width: 136px; height: calc(var(--nav-chip-h) + var(--sp-2)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; gap: 0 var(--sp-2); padding: var(--sp-1) var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
+    .agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px); min-width: 136px; min-height: calc(var(--nav-chip-h) + var(--sp-4)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: max-content max-content; align-content: center; align-items: center; gap: var(--sp-1) var(--sp-2); padding: var(--sp-2) var(--nav-chip-px); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.2; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+    .agent-navbar-tile.running-now { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 60%, transparent); }
     .agent-navbar-tile.up-next-pulse { animation: navbar-up-next-pulse var(--navbar-motion-duration) ease-out; }
     .agent-navbar-tile.entering { opacity: 0; transform: translateY(calc(-1 * var(--sp-3))); }
     .agent-navbar-tile.exiting { opacity: 0; transform: translateY(var(--sp-3)); pointer-events: none; }
@@ -3475,6 +3494,7 @@
     .agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .agent-navbar-tile .agent-tile-next { grid-column: 1; grid-row: 2; color: var(--muted); }
     .agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 2; color: var(--amber); }
+    .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     @keyframes navbar-up-next-pulse {
@@ -6275,15 +6295,23 @@
     }
     function agentCollapsedNextLabel(a, nowMs) {
       if (!a || agentIsDisabled(a)) return '—';
-      if (a.busy === 'working') return 'now';
+      if (agentTileIsRunning(a)) return 'now';
       const ms = agentCollapsedNextKickMs(a, nowMs);
       if (!Number.isFinite(ms)) return '—';
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
       return formatKickCountdown(ms - now);
     }
+    function agentTileIsRunning(a) {
+      if (!a || agentIsDisabled(a)) return false;
+      if (a.running === true) return true;
+      const busy = String(a.busy || a.activity || '').toLowerCase();
+      if (busy === 'working' || busy === 'running') return true;
+      const state = String(a.state || '').toLowerCase();
+      return state === 'working';
+    }
     function agentCollapsedSortKey(a, index, nowMs) {
       const disabled = !a || agentIsDisabled(a);
-      const active = !!a && !disabled && a.busy === 'working';
+      const active = agentTileIsRunning(a);
       const next = !disabled ? agentCollapsedNextKickMs(a, nowMs) : null;
       const continuous = !!a && !disabled && a.continuous === true;
       let group = 4;
@@ -6293,10 +6321,37 @@
       else if (!disabled) group = 3;
       return { group, next: Number.isFinite(next) ? next : Number.POSITIVE_INFINITY, index };
     }
+    function agentTileStates(agents, nowMs) {
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const rows = (Array.isArray(agents) ? agents : []).map((agent, index) => {
+        const name = (agent && (agent.name || agent.displayName)) || `agent-${index}`;
+        const disabled = !agent || agentIsDisabled(agent);
+        const running = agentTileIsRunning(agent);
+        const nextMs = !disabled ? agentCollapsedNextKickMs(agent, now) : null;
+        const continuous = !!agent && !disabled && agent.continuous === true;
+        const canBeNext = !running && !disabled && (Number.isFinite(nextMs) || continuous);
+        let group = 4;
+        if (running) group = 0;
+        else if (Number.isFinite(nextMs)) group = 1;
+        else if (continuous) group = 2;
+        else if (!disabled) group = 3;
+        return {
+          agent,
+          id: String(name),
+          label: running ? 'running' : null,
+          countdown: running ? 'now' : agentCollapsedNextLabel(agent, now),
+          nextMs: Number.isFinite(nextMs) ? nextMs : null,
+          running,
+          canBeNext,
+          sortKey: { group, next: Number.isFinite(nextMs) ? nextMs : Number.POSITIVE_INFINITY, index }
+        };
+      }).sort((a, b) => (a.sortKey.group - b.sortKey.group) || (a.sortKey.next - b.sortKey.next) || (a.sortKey.index - b.sortKey.index));
+      const next = rows.find(row => row.canBeNext);
+      if (next) next.label = 'next';
+      return rows;
+    }
     function sortAgentsForCollapsedTiles(agents, nowMs) {
-      return (Array.isArray(agents) ? agents : []).map((agent, index) => ({ agent, key: agentCollapsedSortKey(agent, index, nowMs) }))
-        .sort((a, b) => (a.key.group - b.key.group) || (a.key.next - b.key.next) || (a.key.index - b.key.index))
-        .map(item => item.agent);
+      return agentTileStates(agents, nowMs).map(item => item.agent);
     }
     function agentCollapsedAuthInfo(a, isDown) {
       const text = String((a && (a.backendAuthStatus || a.backendAuthLastError || a.statusEvidence)) || '').toLowerCase();
@@ -6332,23 +6387,42 @@
       if (isDown) return 'stopped';
       return '';
     }
-    function agentCollapsedTileHtml(a, nowMs, isUpNext) {
+    function agentTileLabelHtml(label) {
+      if (label === 'running') return '<span class="agent-up-next running-now">running now</span>';
+      if (label === 'next') return '<span class="agent-up-next">up next</span>';
+      return '<span class="agent-up-next" aria-hidden="true"></span>';
+    }
+    function setAgentTileLabel(tile, label) {
+      if (!tile) return;
+      tile.classList.toggle('running-now', label === 'running');
+      tile.classList.toggle('up-next', label === 'next');
+      tile.setAttribute('data-agent-tile-label', label || '');
+      const badge = tile.querySelector('.agent-up-next');
+      if (badge) {
+        badge.classList.toggle('running-now', label === 'running');
+        badge.textContent = label === 'running' ? 'running now' : (label === 'next' ? 'up next' : '');
+        badge.setAttribute('aria-hidden', label ? 'false' : 'true');
+      }
+    }
+    function agentCollapsedTileHtml(a, nowMs, tileState) {
+      tileState = tileState || {};
       const name = (a && (a.displayName || a.name)) || 'agent';
       const key = (a && a.name) || name;
       const disabled = agentIsDisabled(a);
       const isDown = a && a.state !== 'running';
-      const active = !!a && !disabled && a.busy === 'working';
+      const active = tileState.running === true || agentTileIsRunning(a);
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
-      const nextMs = agentCollapsedNextKickMs(a, nowMs);
-      const countdown = agentCollapsedNextLabel(a, nowMs);
+      const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
+      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
       const state = agentCollapsedStateLabel(disabled, isDown, auth);
-      const sortKey = agentCollapsedSortKey(a, 0, nowMs);
-      const classes = ['agent-collapsed-tile', active ? 'active' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', isUpNext ? 'up-next' : ''].filter(Boolean).join(' ');
+      const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
+      const label = tileState.label || null;
+      const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
-      const upNext = isUpNext ? '<span class="agent-up-next">up next</span>' : '<span class="agent-up-next" aria-hidden="true"></span>';
+      const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${upNext}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
@@ -6359,11 +6433,11 @@
       tiles.forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-active') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
-      tiles.sort((a, b) => {
+      const sortedTiles = tiles.sort((a, b) => {
         const ag = Number(a.getAttribute('data-agent-sort-group')) || 0;
         const bg = Number(b.getAttribute('data-agent-sort-group')) || 0;
         const ar = String(a.getAttribute('data-agent-next-kick-ms') || '').trim();
@@ -6371,14 +6445,13 @@
         const an = ar ? Number(ar) : NaN;
         const bn = br ? Number(br) : NaN;
         return (ag - bg) || ((Number.isFinite(an) ? an : Number.POSITIVE_INFINITY) - (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY));
-      }).forEach((tile, index) => {
+      });
+      let nextAssigned = false;
+      sortedTiles.forEach(tile => {
         strip.appendChild(tile);
-        tile.classList.toggle('up-next', index === 0);
-        const badge = tile.querySelector('.agent-up-next');
-        if (badge) {
-          badge.textContent = index === 0 ? 'up next' : '';
-          badge.setAttribute('aria-hidden', index === 0 ? 'false' : 'true');
-        }
+        const label = tile.getAttribute('data-agent-running') === '1' ? 'running' : (!nextAssigned && tile.getAttribute('data-agent-can-up-next') === '1' ? 'next' : null);
+        if (label === 'next') nextAssigned = true;
+        setAgentTileLabel(tile, label);
       });
     }
     function ensureAgentsCollapsedCountdownTicker() {
@@ -6386,36 +6459,29 @@
       window._agentsCollapsedCountdownInterval = setInterval(refreshAgentsCollapsedCountdowns, AGENTS_COLLAPSED_COUNTDOWN_TICK_MS);
     }
     function agentNavbarHasSchedule(a, nowMs) {
-      return !!a && !agentIsDisabled(a) && (a.busy === 'working' || Number.isFinite(agentCollapsedNextKickMs(a, nowMs)) || a.continuous === true);
+      return !!a && !agentIsDisabled(a) && (agentTileIsRunning(a) || Number.isFinite(agentCollapsedNextKickMs(a, nowMs)) || a.continuous === true);
     }
-    function agentNavbarTileHtml(a, nowMs, isUpNext) {
+    function agentNavbarTileHtml(a, nowMs, tileState) {
+      tileState = tileState || {};
       const name = (a && (a.displayName || a.name)) || 'agent';
       const key = (a && a.name) || name;
       const disabled = agentIsDisabled(a);
       const isDown = a && a.state !== 'running';
-      const active = !!a && !disabled && a.busy === 'working';
+      const active = tileState.running === true || agentTileIsRunning(a);
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
-      const nextMs = agentCollapsedNextKickMs(a, nowMs);
-      const countdown = agentCollapsedNextLabel(a, nowMs);
-      const classes = ['agent-navbar-tile', active ? 'active' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', isUpNext ? 'up-next' : ''].filter(Boolean).join(' ');
+      const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
+      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
+      const label = tileState.label || null;
+      const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = `${name}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
-      const upNext = isUpNext ? '<span class="agent-up-next">up next</span>' : '<span class="agent-up-next" aria-hidden="true"></span>';
-      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${upNext}</button>`;
+      const labelHtml = agentTileLabelHtml(label);
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
     }
     function agentNavbarTileFromHtml(html) {
       const template = document.createElement('template');
       template.innerHTML = html.trim();
       return template.content.firstElementChild;
-    }
-    function setAgentNavbarUpNext(tile, isUpNext) {
-      if (!tile) return;
-      tile.classList.toggle('up-next', !!isUpNext);
-      const badge = tile.querySelector('.agent-up-next');
-      if (badge) {
-        badge.textContent = isUpNext ? 'up next' : '';
-        badge.setAttribute('aria-hidden', isUpNext ? 'false' : 'true');
-      }
     }
     function animateAgentNavbarReorder(wrap, beforeRects) {
       if (!wrap || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -6438,7 +6504,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const key = tile.getAttribute('data-agent-key') || '';
         if (key) beforeRects.set(key, tile.getBoundingClientRect());
       });
-      const desired = new Set(list.map(a => String((a && a.name) || (a && a.displayName) || 'agent')));
+      const desired = new Set(list.map(item => item.id));
       Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
         const key = tile.getAttribute('data-agent-key') || '';
         if (desired.has(key)) return;
@@ -6446,9 +6512,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         window.setTimeout(() => tile.remove(), AGENT_NAVBAR_EXIT_MS);
       });
       const previousUpNext = wrap.dataset.upNextKey || '';
-      list.forEach((a, i) => {
-        const key = String((a && a.name) || (a && a.displayName) || 'agent');
-        const html = agentNavbarTileHtml(a, now, i === 0);
+      list.forEach((item, i) => {
+        const key = item.id;
+        const html = agentNavbarTileHtml(item.agent, now, item);
         let tile = Array.from(wrap.querySelectorAll('.agent-navbar-tile')).find(candidate => candidate.getAttribute('data-agent-key') === key);
         if (tile) {
           const nextTile = agentNavbarTileFromHtml(html);
@@ -6461,23 +6527,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         const currentAtIndex = wrap.children[i];
         if (currentAtIndex !== tile) wrap.insertBefore(tile, currentAtIndex || null);
-        if (i === 0 && previousUpNext && previousUpNext !== key) {
+        if (item.label === 'next' && previousUpNext && previousUpNext !== key) {
           tile.classList.add('up-next-pulse');
           window.setTimeout(() => tile.classList.remove('up-next-pulse'), AGENT_NAVBAR_PULSE_MS);
         }
-        setAgentNavbarUpNext(tile, i === 0);
+        setAgentTileLabel(tile, item.label);
         if (tile.classList.contains('entering')) {
           requestAnimationFrame(() => tile.classList.remove('entering'));
         }
       });
-      wrap.dataset.upNextKey = list.length ? String((list[0] && (list[0].name || list[0].displayName)) || 'agent') : '';
+      const nextItem = list.find(item => item.label === 'next');
+      wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3);
+      const list = agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
       wrap.hidden = list.length === 0;
       renderAgentNavbarTileDiff(wrap, list, now);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
@@ -6489,7 +6556,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-active') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
@@ -6501,10 +6568,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ocAfterNavLayoutSettles(['agents-section'], function() { ocScrollSectionIntoView('agents-section'); });
     }
     function agentsCollapsedTilesHtml(agents, nowMs) {
-      const list = sortAgentsForCollapsedTiles(agents, nowMs);
+      const list = agentTileStates(agents, nowMs);
       if (!list.length) return '';
       ensureAgentsCollapsedCountdownTicker();
-      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map((a, i) => agentCollapsedTileHtml(a, nowMs, i === 0)).join('')}</span>`;
+      return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(item => agentCollapsedTileHtml(item.agent, nowMs, item)).join('')}</span>`;
     }
     const REPOS_COLLAPSED_TILE_LIMIT = 6;
     function repoDisplayParts(repo) {
@@ -7096,7 +7163,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const h1 = document.querySelector('body > h1');
       if (h1) h1.style.display = 'none';
       const topbar = document.getElementById('oc-topbar');
-      if (topbar) topbar.style.display = 'flex';
+      if (topbar) topbar.style.display = '';
     }
     function toggleLayout() {
       const current = getLayout();
@@ -9028,11 +9095,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch { /* non-critical */ }
     }
     function costSparkSvg() {
-      const hist = costHist();
+      const total = costAllTimeEstimate(_lastCost && _lastCost.estimated);
+      const hist = total.series;
       const title = hist.length
-        ? `Estimated cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; recorded history samples`
+        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} lineage reset(s) preserved in the cumulative total` : 'recorded history samples'}`
         : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
-      return axisSparkSvg(_costHistory, e => e.usd, e => e.t ?? e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
+      return axisSparkSvg(hist, e => e.usd, e => e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
         title);
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
@@ -9173,6 +9241,65 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return (_costHistory || [])
         .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
         .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    const COST_LINEAGE_RESET_FLOOR_USD = 100;
+    const COST_LINEAGE_RESET_RATIO = 0.5;
+
+    function costHistWithCurrent(est) {
+      const hist = costHist();
+      const currentUSD = est && Number(est.total_usd);
+      if (Number.isFinite(currentUSD)) {
+        if (hist.length) {
+          const latest = hist[hist.length - 1];
+          if (Math.abs(Number(latest.usd) - currentUSD) > 0.000001) {
+            hist.push({ ...latest, timestamp: Date.now(), usd: currentUSD });
+          }
+        } else {
+          hist.push({ timestamp: Date.now(), usd: currentUSD });
+        }
+      }
+      return hist;
+    }
+
+    function costAllTimeEstimate(est) {
+      const hist = costHistWithCurrent(est);
+      const resets = [];
+      const series = [];
+      let offset = 0, prev = null, linePeak = 0, first = 0;
+      for (const e of hist) {
+        const cur = Number(e.usd);
+        if (!Number.isFinite(cur)) continue;
+        if (!first) first = e.timestamp;
+        if (prev != null && prev - cur > COST_LINEAGE_RESET_FLOOR_USD && cur < prev * COST_LINEAGE_RESET_RATIO) {
+          offset += linePeak;
+          resets.push({ timestamp: e.timestamp, previous: prev, next: cur, preserved: offset });
+          linePeak = 0;
+        }
+        if (cur > linePeak) linePeak = cur;
+        series.push({ ...e, usd: offset + linePeak });
+        prev = cur;
+      }
+      return {
+        usd: series.length ? series[series.length - 1].usd : 0,
+        firstTimestamp: first,
+        currentUSD: Number.isFinite(est && Number(est.total_usd)) ? Number(est.total_usd) : null,
+        currentStart: est && est.window_start ? est.window_start : 0,
+        resets,
+        series,
+      };
+    }
+
+    function costCurrentLineageHist(currentUSD) {
+      const hist = costHistWithCurrent({ total_usd: currentUSD });
+      if (!hist.length) return [];
+      let start = 0;
+      for (let i = 1; i < hist.length; i++) {
+        const prev = Number(hist[i - 1].usd);
+        const cur = Number(hist[i].usd);
+        if (Number.isFinite(prev) && Number.isFinite(cur) && prev - cur > COST_LINEAGE_RESET_FLOOR_USD && cur < prev * COST_LINEAGE_RESET_RATIO) start = i;
+      }
+      return hist.slice(start);
     }
 
     // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
@@ -14519,28 +14646,91 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
+      return href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
       const tab = row && row.settingsTab;
       // Not a <button>: this tooltip is rendered inside the <button class="overview-kpi"> card, and the HTML
       // parser force-closes an open <button> when it meets a nested one, spilling the tooltip inline.
-      return tab ? ` <span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</span>` : '';
+      return tab ? `<span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">Settings → ${esc(tab)}</span>` : '';
+    }
+
+    function overviewPartitionSummaryLine(term) {
+      switch (term?.key) {
+        case 'outside':
+        case 'other':
+          return 'Outside: items Hive is configured to leave alone.';
+        case 'held':
+          return 'Held: work intentionally paused for a maintainer.';
+        case 'blocked_needs_human':
+          return 'Blocked: work waiting on a person or dependency.';
+        default:
+          return `${term?.label || term?.key || 'Bucket'}: items in this bucket.`;
+      }
+    }
+
+    function overviewPartitionGloss(row) {
+      switch (row?.key) {
+        case 'needs-direction': return 'needs direction';
+        case 'needs-decision': return 'needs decision';
+        case 'needs-spec': return 'needs spec';
+        case 'exempt-labels':
+        case 'exempt-pr-labels': return 'exempt label match';
+        case 'reporter-triage': return 'untrusted reporter';
+        case 'project-issue-filter': return 'missing required label';
+        case 'standing-meta-advisory': return 'standing advisory';
+        case 'dependency-dashboard': return 'dependency control panel';
+        case 'draft-prs': return 'draft until ready';
+        case 'issue-hold-labels':
+        case 'pr-hold-labels': return 'hold label';
+        case 'needs-human': return 'needs human';
+        case 'issue-waiting-band': return 'waiting issue gate';
+        case 'pr-blocked-band': return 'blocked PR gate';
+        default: return 'fixed bucket';
+      }
+    }
+
+    function overviewPartitionPreferredDocs(term, rows) {
+      const found = (rows || []).find(row => row && row.docsHref);
+      if (found) return found;
+      if (term?.docsHref) return term;
+      return null;
+    }
+
+    function overviewPartitionPreferredSettings(rows) {
+      return (rows || []).find(row => row && row.settingsTab) || null;
+    }
+
+    function overviewPartitionRowHTML(row) {
+      const hasCount = row && Object.prototype.hasOwnProperty.call(row, 'count') && Number.isFinite(Number(row.count));
+      const value = hasCount ? esc(String(Number(row.count))) : esc(overviewPartitionGloss(row));
+      const zero = hasCount && Number(row.count) === 0 ? ' muted' : '';
+      return `<div class="overview-partition-row${zero}"><span class="overview-partition-label">${esc(row?.label || row?.key || 'other')}</span><span class="overview-partition-count">${value}</span></div>`;
     }
 
     function overviewPartitionTooltip(term, context) {
+      const MAX_TOOLTIP_ROWS = 8;
       const rows = Array.isArray(term?.breakdown) ? term.breakdown : [];
-      const body = rows.length ? rows.map(row => {
-        const zero = Number(row.count || 0) === 0 ? ' muted' : '';
-        const setting = row.settingPath ? ` — setting: <code>${esc(row.settingPath)}</code> = <code>${esc(row.settingValue || '')}</code>` : '';
-        const change = row.howToChange ? ` — change: ${esc(row.howToChange)}` : '';
-        return `<div class="${zero}">${esc(Number(row.count || 0))} · ${esc(row.label || row.key || '')} — ${esc(row.rule || '')}${setting}${change}${overviewPartitionSettingsButton(row)}${overviewPartitionDocsLink(row)}</div>`;
-      }).join('') : `<div>${esc(term?.rule || 'Server-side partition term.')}</div>`;
-      const footer = (term?.key === 'outside')
-        ? '<div class="mt-2 text-muted">These items are not actionable because this hive&apos;s filters exclude them; adjust the settings above to change what counts.</div>'
-        : '';
-      return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip">${body}${footer}</span>`;
+      const orderedRows = rows.slice().sort((a, b) => {
+        const ac = Number(a?.count || 0) > 0 ? 0 : 1;
+        const bc = Number(b?.count || 0) > 0 ? 0 : 1;
+        return ac - bc;
+      });
+      const visibleRows = orderedRows.slice(0, MAX_TOOLTIP_ROWS);
+      const hiddenCount = Math.max(0, orderedRows.length - visibleRows.length);
+      const body = visibleRows.length
+        ? visibleRows.map(overviewPartitionRowHTML).join('')
+        : overviewPartitionRowHTML({ label: term?.label || term?.key || 'items', count: term?.count || 0 });
+      const docsRow = overviewPartitionPreferredDocs(term, rows);
+      const settingsRow = overviewPartitionPreferredSettings(rows);
+      const fixed = rows.some(row => row && !row.settingsTab) ? '<span class="text-muted">fixed buckets</span>' : '';
+      const more = hiddenCount > 0 && docsRow?.docsHref
+        ? `<a class="overview-partition-more" href="${esc(docsRow.docsHref)}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
+        : (hiddenCount > 0 ? `<span class="overview-partition-more text-muted">+${esc(String(hiddenCount))} more</span>` : '');
+      const footerParts = [overviewPartitionSettingsButton(settingsRow), overviewPartitionDocsLink(docsRow), fixed].filter(Boolean).join('');
+      const footer = footerParts ? `<span class="overview-partition-footer">${footerParts}</span>` : '';
+      return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip"><span class="overview-partition-summary">${esc(overviewPartitionSummaryLine(term))}</span>${body}${more}${footer}</span>`;
     }
 
     function overviewPartitionInfo(term, context) {
@@ -17069,9 +17259,46 @@ function burnAreaChart() {
     function fmtUSD(n) {
       if (n == null || isNaN(n)) return '—';
       if (n === 0) return '$0.00';
-      if (n < 0.01) return '<$0.01';
+      if (n > 0 && n < 0.01) {
+        let s = Number(n).toPrecision(3);
+        if (s.includes('e')) s = Number(s).toFixed(Math.ceil(-Math.log10(Number(n))) + 3);
+        s = s.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+        return '$' + s;
+      }
       const frac = n < 100 ? 2 : 0;
       return '$' + n.toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
+    }
+
+    function costTotalLabel(total) {
+      if (total && total.firstTimestamp) {
+        return `estimated total — since ${fmtCostDateTime(total.firstTimestamp)} (persisted history × list price)`;
+      }
+      return 'estimated total — persisted history unavailable';
+    }
+
+    function costTotalTooltip(total) {
+      if (!total || !total.series.length) return 'no cost records yet';
+      const parts = [`Persisted all-time estimate ${fmtUSD(total.usd)} since ${fmtCostDateTime(total.firstTimestamp)}.`];
+      if (total.currentUSD != null) {
+        const since = total.currentStart ? ` since ${fmtCostDateTime(total.currentStart)}` : '';
+        parts.push(`Current token-summary lineage: ${fmtUSD(total.currentUSD)}${since}.`);
+      }
+      if (total.resets.length) {
+        parts.push(`Preserved ${total.resets.length} lineage reset(s): ` + total.resets.map(r => `${fmtCostDateTime(r.timestamp)} dropped ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ') + '.');
+      }
+      return parts.join(' ');
+    }
+
+    function costPerUnitDisplay(totalUSD, count, unitLabel) {
+      const total = Number(totalUSD) || 0;
+      const n = Number(count) || 0;
+      if (!(total > 0)) return { value: '—', title: 'no cost records yet' };
+      if (!(n > 0)) return { value: '—', title: `no ${unitLabel} yet` };
+      const value = total / n;
+      return {
+        value: fmtUSD(value),
+        title: `${fmtUSD(total)} ÷ ${n.toLocaleString('en-US')} ${unitLabel} = ${fmtUSD(value)}`,
+      };
     }
 
     // Last cost payload, so the range pills can re-render the trend chart
@@ -17423,14 +17650,20 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      const allTimeCost = costAllTimeEstimate(est);
+      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
+      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
+        ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
+        : '';
 
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
-            <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
-            <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
-            <div class="cost-stat"><div class="cval" title="${cost.closed_issues ? `${fmtUSD(est.total_usd)} ÷ ${cost.closed_issues} closed issues` : 'no closed issues yet'}">${cost.closed_issues ? fmtUSD(est.total_usd / cost.closed_issues) : '—'}</div><div class="clabel">cost / issue — all-time total ÷ closed issues</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
@@ -17443,7 +17676,7 @@ function burnAreaChart() {
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}`;
-      el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(est.total_usd), summaryTitle: 'Estimated all-time total', bodyId: 'cost-panel-body' }, costBody);
+      el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body' }, costBody);
       // Re-apply the persisted collapsed state so a poll re-render never resets it.
       applyCostCollapse();
       applyCostSubCollapse();
@@ -24710,10 +24943,17 @@ function burnAreaChart() {
       const tipW = tip.offsetWidth || 240;
       let left = rect.left + rect.width / 2 - tipW / 2;
       const EDGE_PAD = 8;
+      const TIP_GAP = 6;
       if (left < EDGE_PAD) left = EDGE_PAD;
       if (left + tipW > window.innerWidth - EDGE_PAD) left = window.innerWidth - EDGE_PAD - tipW;
-      tip.style.top = (rect.bottom + 6) + 'px';
+      const tipH = tip.offsetHeight || 0;
+      const below = rect.bottom + TIP_GAP;
+      const above = rect.top - TIP_GAP - tipH;
+      let top = below;
+      if (tipH && below + tipH > window.innerHeight - EDGE_PAD && above >= EDGE_PAD) top = above;
+      if (tipH && top + tipH > window.innerHeight - EDGE_PAD) top = Math.max(EDGE_PAD, window.innerHeight - EDGE_PAD - tipH);
       tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
     }
     document.addEventListener('mouseover', (e) => {
       const info = e.target.closest('.config-info');
@@ -27441,7 +27681,12 @@ function burnAreaChart() {
     }
 
     function versionBeeGlyphHTML() {
-      return '<svg class="oc-version-bee-glyph" viewBox="0 0 32 32" focusable="false" aria-hidden="true"><path d="M12 8c-2-4-6-5-8-2 0 3 3 5 7 5m9-3c2-4 6-5 8-2 0 3-3 5-7 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 17c0-5 4-9 10-9s10 4 10 9-4 9-10 9S6 22 6 17Z" fill="currentColor"/><path d="M12 9c-2 4-2 11 0 16m8-16c2 4 2 11 0 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.45"/><path d="M24 15h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      return '<svg class="oc-version-bee-glyph" viewBox="0 0 32 32" focusable="false" aria-hidden="true">' +
+        '<path class="oc-version-bee-wing" d="M12 9C9 4 4 3 3 7c1 4 5 5 9 4M20 9c3-5 8-6 9-2-1 4-5 5-9 4"/>' +
+        '<path class="oc-version-bee-body" d="M6 17c0-5.2 4.1-9 10-9s10 3.8 10 9-4.1 9-10 9S6 22.2 6 17Z"/>' +
+        '<path class="oc-version-bee-stripe" d="M12 9.4c-1.9 4.4-1.9 10.8 0 15.2M17 8.2c1.2 4.8 1.2 12.8 0 17.6M21 10c2.1 4.1 2.1 9.9 0 14"/>' +
+        '<path class="oc-version-bee-head" d="M24 15h3M24.5 19h2"/><path class="oc-version-bee-stinger" d="M5.6 17 3 15.6 3 18.4Z"/>' +
+        '</svg>';
     }
 
     function versionUpgradeHiveHTML(key) {
