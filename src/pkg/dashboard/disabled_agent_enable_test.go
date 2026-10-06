@@ -101,7 +101,7 @@ if (!summary.includes('1 on') || !summary.includes('1 disabled')) throw new Erro
 		`class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}"`,
 		`<span class="status-badge disabled"`,
 		`data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General"`,
-		`${isPoweredOff ? 'powered off'`,
+		"${agentStateText(a)}${pauseInfoIcon(a)}",
 		"${isDisabled ? '' : `<div class=\"agent-actions\">",
 	} {
 		if !strings.Contains(renderBody, snippet) {

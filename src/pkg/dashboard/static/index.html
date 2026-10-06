@@ -1253,6 +1253,16 @@
     .agent-now .an-lead { font-weight: 600; color: var(--text); }
     .agent-now.outdated { color: var(--yellow); }
     .oc-agent-detail .agent-now { text-align: left; }
+    /* Agent activity section (#10935): one row per agent. */
+    .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+    .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .agent-activity-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .agent-activity-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); vertical-align: top; }
+    .agent-activity-table td.aa-name { font-weight: 600; white-space: nowrap; }
+    .agent-activity-table td.aa-state, .agent-activity-table td.aa-since { color: var(--muted); white-space: nowrap; }
+    .agent-activity-table td.aa-reserved { color: var(--muted); font-size: var(--fs-xs); }
+    .agent-activity-table .agent-now { text-align: left; margin-top: 0; }
+    .agent-activity-empty { color: var(--muted); font-size: var(--fs-sm); }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -4388,6 +4398,7 @@
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
       <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
       <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Agent activity</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
@@ -4792,6 +4803,13 @@
     </div>
     <div class="section-body">
       <div class="agents" id="agents"></div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="agent-activity-section" data-dashboard-section="agent-activity-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Agent activity</h2>
+    <div class="section-body">
+      <div id="agent-activity-panel"></div>
     </div>
   </div>
 
@@ -5497,6 +5515,7 @@
       'debug-section': { title: '🔍 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
+      'agent-activity-section': { title: '📍 Agent activity', summary: '0 working / 0 total' },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -5531,6 +5550,7 @@
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
       'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
+      'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people most often ask when they start using Hive.' },
     });
     // The one place that decides where dashboard help lives: every help mark and
@@ -6887,7 +6907,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -10049,6 +10069,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel: isOnDemand ? 'on demand' : a.busy };
     }
 
+    // The state word on the agent card. The Agent activity row shows the same
+    // word, so the two never disagree.
+    function agentStateText(a) {
+      const { isPoweredOff, isPaused, isOff } = agentNowStateOf(a);
+      const isOnDemand = a.onDemand === true;
+      return isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy;
+    }
+
     function agentNowContext(localMs) {
       return {
         hiveNowMs: agentNowHiveMs(_agentNowClock, localMs),
@@ -10067,6 +10095,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
     // turns into "information may be out of date") without new data.
     function refreshAgentNowLines() {
+      renderAgentActivity();
       const agents = window._lastAgents || [];
       document.querySelectorAll('[data-agent-now]').forEach(el => {
         const a = agents.find(ag => ag.name === el.dataset.agentNow);
@@ -10096,6 +10125,74 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         || (_agentNowClock ? { hiveMs: agentNowHiveMs(_agentNowClock, localMs), localMs } : null);
       refreshAgentNowClaims(localMs);
       if (!DASHBOARD_INTERVALS.agentNow) dashboardSetInterval('agentNow', refreshAgentNowLines, AGENT_NOW_TICK_MS);
+    }
+
+    /* Agent activity section (#10935, part of #10925): one row per agent,
+       built from the same agent list as the cards and the same "Now:" helpers
+       (agentStateText, agentNowHtml, agentNowItem, agentNowReservations), so a
+       row and its card never disagree. It shows only agents the hive already
+       sends this viewer in the status payload. */
+    let _agentActivityAgents = [];
+
+    // Time since the agent's last action, or since it started when it is
+    // working with no issue or pull request yet. Empty when the item is not
+    // shown to this viewer or the information may be out of date.
+    function agentActivitySinceText(a, ctx) {
+      if (ctx.outdated) return '';
+      const la = a.lastAction || null;
+      if (a.busy === 'working' && !(la && la.current) && a.lastKickAt) {
+        return 'started ' + agentNowAgo(ctx.hiveNowMs - Date.parse(a.lastKickAt));
+      }
+      if (la && la.at && agentNowItem(la.repo, la.number, la.action, ctx)) {
+        return agentNowAgo(ctx.hiveNowMs - Date.parse(la.at));
+      }
+      return '';
+    }
+
+    // Every live reservation the agent holds, soonest end first.
+    function agentActivityReservationsHtml(a, ctx) {
+      return agentNowReservations(a, ctx)
+        .map(r => {
+          const item = agentNowItem(r.c.repo, r.c.issue, '', ctx);
+          return item ? agentNowItemHtml(item, false) + ' until ' + esc(agentNowClockTime(r.ends, ctx.hiveNowMs)) : '';
+        })
+        .filter(Boolean)
+        .join('<br>');
+    }
+
+    function agentActivityRowHtml(a, nowHtml, ctx) {
+      const since = agentActivitySinceText(a, ctx);
+      const reserved = agentActivityReservationsHtml(a, ctx);
+      return `<tr data-agent-activity="${esc(a.name)}">
+        <td class="aa-name">${a.emoji ? esc(a.emoji) + ' ' : ''}${esc(a.displayName || a.name)}</td>
+        <td class="aa-state">${esc(agentStateText(a))}</td>
+        <td class="aa-now">${nowHtml}</td>
+        <td class="aa-since">${since ? esc(since) : '—'}</td>
+        <td class="aa-reserved">${reserved || '—'}</td>
+      </tr>`;
+    }
+
+    // Called with the agent list the cards are built from, and with no
+    // argument on the "Now:" tick so the times keep counting up.
+    function renderAgentActivity(agents) {
+      if (Array.isArray(agents)) _agentActivityAgents = agents;
+      const el = document.getElementById('agent-activity-panel');
+      if (!el) return;
+      refreshSectionCardShell('agent-activity-section');
+      const live = window._lastAgents || [];
+      const list = _sortAgentsBySidebar(_agentActivityAgents).sorted
+        .map(a => live.find(ag => ag.name === a.name) || a);
+      setSectionSummary('agent-activity-section', `${list.filter(a => a.busy === 'working').length} working / ${list.length} total`);
+      if (list.length === 0) {
+        setIfChanged(el, '<div class="agent-activity-empty">No agents to show.</div>');
+        return;
+      }
+      const ctx = agentNowContext(Date.now());
+      const rows = list.map(a => agentActivityRowHtml(a, agentNowHtml(a), ctx)).join('');
+      setIfChanged(el, `<div class="agent-activity-scroll"><table class="agent-activity-table">
+        <thead><tr><th scope="col">Agent</th><th scope="col">State</th><th scope="col">Now</th><th scope="col">Since last action</th><th scope="col">Reserved</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`);
     }
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
@@ -10850,6 +10947,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
+      renderAgentActivity(agents);
       renderAgentNavbarUpNext(agents, Date.now());
       const el = document.getElementById('agents');
       // Preserve custom prompt input values across re-renders
@@ -10963,7 +11061,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
-          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
@@ -22971,7 +23069,7 @@ function burnAreaChart() {
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
-        'agents-section', 'faq-section'
+        'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);

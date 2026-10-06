@@ -407,7 +407,7 @@ func TestStaticDashboardDefaultLayoutOrder(t *testing.T) {
 	}
 	html := rec.Body.String()
 
-	defaultOrder := "'overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','faq-section'"
+	defaultOrder := "'overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section'"
 	if !strings.Contains(html, defaultOrder) {
 		t.Fatalf("dashboard default layout/reset order no longer matches sidebar nav; missing %q", defaultOrder)
 	}

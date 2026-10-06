@@ -136,8 +136,11 @@ func TestOffIsNamedByMode(t *testing.T) {
 	}
 	// The card's state line keeps a CSS class of 'off' (styling) while its TEXT
 	// names the mode — the class and the label are deliberately different here.
-	if !strings.Contains(html, "isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}") {
+	if !strings.Contains(jsFunc(t, html, "agentStateText"), "isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy;") {
 		t.Error("the card state line must render the mode-named label, not a bare 'off'")
+	}
+	if !strings.Contains(jsFunc(t, html, "renderAgents"), "${agentStateText(a)}${pauseInfoIcon(a)}") {
+		t.Error("the card state line must render its label through agentStateText")
 	}
 }
 
