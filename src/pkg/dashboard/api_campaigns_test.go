@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 func doOwnerPostAsUser(s *Server, path, user string, body interface{}) *httptest.ResponseRecorder {
@@ -322,8 +326,188 @@ func TestCampaignReviseSpektacularRunCreatesLinkedRevision(t *testing.T) {
 	}
 }
 
+const recheckTestRunKey = "myorg/repo1#8665"
+
+func recheckTestServer(t *testing.T) *Server {
+	t.Helper()
+	s, deps := runsTestServer(t)
+	deps.Config.Runs.Spektacular = config.SpektacularConfig{Enabled: true}
+	disableSpekHubExecutorForRelayTests(s)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	old := runReceiptsDir
+	runReceiptsDir = filepath.Join(t.TempDir(), "receipts")
+	t.Cleanup(func() { runReceiptsDir = old })
+	return s
+}
+
+func recordCompletedRecheckRun(s *Server, gen uint64, at time.Time) {
+	s.LifecycleTimeline().Record(timeline.Event{
+		IssueRef: recheckTestRunKey, Kind: timeline.KindStageCompleted, At: at.UnixMilli(),
+		Attrs: map[string]string{"stage_from": StageImplement, "stage_to": "completed", "gen": strconv.FormatUint(gen, 10), "title": "Converge widgets"},
+	})
+}
+
+func recheckSpecLeaseKey() string {
+	return leaseKey(runAdmissionIdentity, runAdmissionTaskPrefix+sanitizeReceiptSegment(recheckTestRunKey))
+}
+
+func recheckSpecLease(t *testing.T, s *Server) taskLease {
+	t.Helper()
+	s.contributeHub.leaseMu.Lock()
+	defer s.contributeHub.leaseMu.Unlock()
+	for _, l := range s.contributeHub.leases {
+		if l != nil && strings.HasPrefix(l.taskID, "spek-recheck-") {
+			t.Fatalf("recheck minted a second spek-recheck lease: %+v", *l)
+		}
+	}
+	l := s.contributeHub.leases[recheckSpecLeaseKey()]
+	if l == nil {
+		t.Fatal("rewound generation has no spec lease on the run's own admission key")
+	}
+	return *l
+}
+
+func dropRecheckSpecLease(s *Server) {
+	s.contributeHub.leaseMu.Lock()
+	defer s.contributeHub.leaseMu.Unlock()
+	delete(s.contributeHub.leases, recheckSpecLeaseKey())
+}
+
+func recheckCampaign(t *testing.T, s *Server) Campaign {
+	t.Helper()
+	list := doOwnerGet(s, "/api/campaigns")
+	if list.Code != http.StatusOK {
+		t.Fatalf("campaigns list = %d body=%s", list.Code, list.Body.String())
+	}
+	campaigns := decodeCampaignList(t, list.Body.Bytes())
+	if len(campaigns) != 1 || campaigns[0].ID != recheckTestRunKey {
+		t.Fatalf("campaigns = %+v, want one card for %q", campaigns, recheckTestRunKey)
+	}
+	return campaigns[0]
+}
+
 func TestCampaignRecheckManualForceAndConflict(t *testing.T) {
-	t.Skip("Spek continuous convergence recheck is disabled on v6 pending #10734")
+	s := recheckTestServer(t)
+	recordCompletedRecheckRun(s, 3, time.Now().Add(-time.Hour))
+	path := "/api/campaigns/" + url.PathEscape(recheckTestRunKey) + "/recheck"
+
+	disabled := doOwnerPostAsUser(s, path, "bob", map[string]string{})
+	if disabled.Code != http.StatusNotFound {
+		t.Fatalf("disabled recheck = %d body=%s, want 404", disabled.Code, disabled.Body.String())
+	}
+	before := recheckCampaign(t, s)
+	if before.CurrentStage != "completed" || before.Recheck == nil || before.Recheck.InFlight {
+		t.Fatalf("campaign before recheck = %+v", before)
+	}
+	forced := doOwnerPostAsUser(s, path+"?force=true", "bob", map[string]string{})
+	if forced.Code != http.StatusOK {
+		t.Fatalf("forced recheck = %d body=%s", forced.Code, forced.Body.String())
+	}
+	var resp campaignRecheckResponse
+	if err := json.Unmarshal(forced.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode forced recheck: %v", err)
+	}
+	if !resp.OK || resp.Campaign.ID != recheckTestRunKey || resp.Campaign.Revision != before.Revision+1 || resp.Campaign.RevisionOf != "" ||
+		resp.Campaign.CurrentStage != StageSpec || resp.Campaign.Drift == nil || resp.Campaign.Drift.RecheckReason != recheckReasonManual ||
+		resp.Campaign.Drift.PriorRevision != strconv.Itoa(before.Revision) || resp.Campaign.Recheck == nil || !resp.Campaign.Recheck.InFlight {
+		t.Fatalf("forced recheck campaign = %+v", resp.Campaign)
+	}
+	archive, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey)
+	if err != nil {
+		t.Fatalf("load archive: %v", err)
+	}
+	if archive.Revision != before.Revision+1 || archive.Lease != nil || archive.Source != recheckTestRunKey || len(archive.History) != 1 {
+		t.Fatalf("archive after rewind = %+v", archive)
+	}
+	if entry := archive.History[0]; entry.Revision != before.Revision || entry.LastGen != 3 || entry.Reason != recheckReasonManual || entry.Actor != "bob" || entry.Drift == nil {
+		t.Fatalf("generation log entry = %+v", entry)
+	}
+	lease := recheckSpecLease(t, s)
+	if lease.stage != StageSpec || lease.gen <= 3 || lease.key != "myorg/repo1!"+recheckTestRunKey+":"+StageSpec || runKeyOfLease(lease.key, lease.repo) != recheckTestRunKey {
+		t.Fatalf("rewound spec lease = %+v", lease)
+	}
+	listed := recheckCampaign(t, s)
+	if listed.Revision != before.Revision+1 || listed.CurrentStage != StageSpec || listed.Recheck == nil || !listed.Recheck.InFlight || len(listed.History) != 1 {
+		t.Fatalf("listed campaign after rewind = %+v", listed)
+	}
+
+	conflict := doOwnerPostAsUser(s, path+"?force=true", "bob", map[string]string{})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("second recheck = %d body=%s, want 409", conflict.Code, conflict.Body.String())
+	}
+
+	// The closed generation's completion never completes the rewound one.
+	dropRecheckSpecLease(s)
+	stale := recheckCampaign(t, s)
+	if stale.CurrentStage != StageSpec || stale.Drift == nil || !stale.Recheck.InFlight {
+		t.Fatalf("prior generation completion leaked into rewound generation: %+v", stale)
+	}
+	if again := doOwnerPostAsUser(s, path+"?force=true", "bob", map[string]string{}); again.Code != http.StatusConflict {
+		t.Fatalf("recheck while drift in flight = %d body=%s, want 409", again.Code, again.Body.String())
+	}
+	if archive, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey); err != nil || archive.Revision != before.Revision+1 || len(archive.History) != 1 {
+		t.Fatalf("refused recheck changed archive = %+v err=%v", archive, err)
+	}
+}
+
+func TestCampaignRecheckRefusesLiveStageLease(t *testing.T) {
+	s := recheckTestServer(t)
+	if err := s.AdmitTriagedRun("myorg/repo1", 8665, "Converge widgets", "spec", "feature", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec := doOwnerPostAsUser(s, "/api/campaigns/"+url.PathEscape(recheckTestRunKey)+"/recheck?force=true", "bob", map[string]string{})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("recheck during live stage = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey); err == nil {
+		t.Fatal("refused recheck wrote a campaign archive")
+	}
+}
+
+func TestCampaignRecheckCadenceTicksWithInjectedClock(t *testing.T) {
+	s := recheckTestServer(t)
+	s.deps.Config.Runs.Spektacular.Recheck.Enabled = true
+	s.deps.Config.Runs.Spektacular.Recheck.DefaultInterval = time.Hour
+	completedAt := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
+	recordCompletedRecheckRun(s, 3, completedAt)
+
+	s.TickCampaignRechecks(context.Background(), completedAt.Add(30*time.Minute))
+	if _, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey); err == nil {
+		t.Fatal("tick before next_at rewound the campaign")
+	}
+
+	first := completedAt.Add(2 * time.Hour)
+	s.TickCampaignRechecks(context.Background(), first)
+	archive, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey)
+	if err != nil || archive.Revision != 1 || archive.Drift == nil || archive.Drift.RecheckReason != recheckReasonCadence || len(archive.History) != 1 || archive.History[0].Actor != "system" {
+		t.Fatalf("archive after cadence tick = %+v err=%v", archive, err)
+	}
+	lease := recheckSpecLease(t, s)
+
+	s.TickCampaignRechecks(context.Background(), first.Add(3*time.Hour))
+	if archive, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey); err != nil || archive.Revision != 1 {
+		t.Fatalf("tick while in flight rewound again: %+v err=%v", archive, err)
+	}
+
+	// The rewound generation completes: Drift clears and in-flight ends.
+	dropRecheckSpecLease(s)
+	recordCompletedRecheckRun(s, lease.gen, completedAt.Add(time.Minute))
+	converged := recheckCampaign(t, s)
+	if converged.CurrentStage != "completed" || converged.Drift != nil || converged.Recheck == nil || converged.Recheck.InFlight || converged.Revision != 1 {
+		t.Fatalf("converged campaign = %+v", converged)
+	}
+	if archive, err := s.deps.Inception.LoadCampaignArchive(recheckTestRunKey); err != nil || archive.Drift != nil {
+		t.Fatalf("converged archive kept drift: %+v err=%v", archive, err)
+	}
+
+	s.TickCampaignRechecks(context.Background(), first.Add(2*time.Hour))
+	archive, err = s.deps.Inception.LoadCampaignArchive(recheckTestRunKey)
+	if err != nil || archive.Revision != 2 || len(archive.History) != 2 || archive.History[1].LastGen != lease.gen || archive.Drift == nil || archive.Drift.PriorRevision != "1" {
+		t.Fatalf("archive after second cadence tick = %+v err=%v", archive, err)
+	}
+	if next := recheckSpecLease(t, s); next.gen <= lease.gen {
+		t.Fatalf("second generation gen = %d, want past %d", next.gen, lease.gen)
+	}
 }
 
 func TestCampaignReleasePreservesSpektacularRunLease(t *testing.T) {

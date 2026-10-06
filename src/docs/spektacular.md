@@ -728,11 +728,20 @@ retained campaign record carries `recheck.interval`, and imported delta tasks
 are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
 
 When a completed `implement` campaign is due, or an owner posts
-`POST /api/campaigns/{id}/recheck`, Hive creates a linked Spektacular revision
-(`revision_of`, `revision`) and starts that revision at the `spec` stage. The
-original campaign is never overwritten; the revision is a new generation with
-the prior final spec/plan treated as prior artifacts by convention. Manual
-requests return `409 Conflict` when another revision is already in flight and
+`POST /api/campaigns/{id}/recheck`, Hive rewinds the campaign's existing run
+to a new generation in place (ADR 0020, v6 addendum): the same campaign ID and
+run key get `revision` N+1, `current_stage` resets to `spec`, and the spec
+stage is admitted on the run's own lease key (`<repo>!<run key>:spec`) with a
+higher `gen` than any earlier generation, so prior receipts stay intact. No
+sibling `-rN` campaign or second lease is created. Each rewind appends one
+entry to the campaign's `history` generation log (closed revision, reason,
+actor, rewind time, last `gen`, and the triggering drift). `revision_of` is
+deprecated and never written on v6.
+
+A recheck is in flight while the campaign's revise lease is held, or while
+`drift` is set and the rewound generation has not completed; `drift` clears
+when the current generation completes. Manual requests return `409 Conflict`
+while a recheck is in flight or any stage of the run is still leased, and
 `404 Not Found` when recheck is disabled unless `?force=true` is supplied.
 
 The recheck follows the same human checkpoints as any Spek run. A final spec
@@ -745,8 +754,10 @@ codebase and prior plan are unchanged, the delta is empty and Hive creates no
 new planner tasks or issues. If the delta exceeds `max_delta_tasks`, Hive
 imports the first capped set and records `campaign_recheck_delta_capped`.
 
-Each revision carries a `drift` evidence block with `codebase_changed`,
-`prior_revision`, `delta_count`, and `recheck_reason` (`cadence` or `manual`).
+Each rewound generation carries a `drift` evidence block with
+`codebase_changed`, `prior_revision` (the closed generation's revision number,
+for example `"3"`), `delta_count`, and `recheck_reason` (`cadence` or
+`manual`).
 The codebase signal compares the prior recorded head SHA with the current Git
 HEAD when available.
 
@@ -803,8 +814,8 @@ checkpoints remain the only approval gates.
 
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
-external_count, sources_failed}`; recheck revisions also include the `drift`
-block above. The dashboard Campaigns panel renders the cadence, shows
+external_count, sources_failed}`; a rewound generation also includes the
+`drift` block above and the `history` generation log. The dashboard Campaigns panel renders the cadence, shows
 `N external signals` with an expandable list, and provides an owner-only
 Recheck action.
 
