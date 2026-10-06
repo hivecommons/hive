@@ -532,6 +532,35 @@ Each worker Hive runs, what it is doing now, and buttons to pause, restart or co
 
 **Settings that change it.** Each card's ⚙️ button opens its settings: schedule, model, tools and permissions. See [Agent configuration](agent-configuration.md).
 
+## Agent activity
+
+One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.
+
+**What it tells you.** A worker is one of Hive's AI agents. This section puts every worker on one screen, one row each, so you can see what all of them are doing without opening each card. Each row shows:
+
+- **Agent:** the worker's name.
+- **State:** the same word as on the worker's card, for example working, idle, paused or powered off.
+- **Now:** the same "Now:" line as on the worker's card. It names the issue or pull request the worker is on, or says "Idle", "Paused", "Off", "Stopped" or "Not started yet".
+- **Since last action:** how long ago the worker last commented on, labelled, opened, reviewed or merged an issue or pull request. A worker that is working but has not touched an issue or pull request yet shows how long ago it started instead.
+- **Reserved:** every issue the worker has reserved, with the time each reservation ends. A reservation stops other workers picking the same issue. It is not proof the worker is still busy with it.
+
+**How the numbers are worked out.**
+
+- The rows use the same information and the same wording as the worker cards in the **Agents** section, so a row and its card always agree.
+- The header counts working workers and all workers.
+- Times are measured on the hive's clock, so a wrong clock on your computer does not change them. They keep counting up between updates.
+- Hive only sees what a worker does through Hive. Work done another way, such as a direct `git push`, does not show here.
+- If the dashboard misses three updates in a row, the times stop showing and the **Now** line says "information may be out of date".
+- Reservations show only when issue reservations are turned on.
+
+**What it is good for.** Look here to answer "what is everyone doing?" at a glance. A worker that has said "working — no issue or pull request yet" for a long time, or one that holds many reservations, is worth a look on its card or in **Agent Logs**.
+
+**Example.** The row for `scanner` says "working", "Now: console#123 — Fix the login redirect · 2 min ago", "2 min ago", and "console#123 until 14:30". The `scanner` card says the same.
+
+**When it appears.** Always. It lists the same workers as the **Agents** section, so you see only the workers you can already see there. Issue and pull request titles appear only for projects the dashboard already shows you. Like other sections, you can collapse it with its title, move it with its `⠿` grip, or hide it with the eye-off control on its row in the left menu. The dashboard remembers these choices in this browser.
+
+**Settings that change it.** None of its own. A worker's settings (its ⚙️ button on the card) change what it does, and so what its row shows.
+
 ## FAQ
 
 Short answers to the questions people most often ask when they start using Hive.
