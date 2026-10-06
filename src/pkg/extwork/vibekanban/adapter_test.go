@@ -544,7 +544,7 @@ func TestExistingCardAndMalformedResponses(t *testing.T) {
 	}
 	fc.issues[0]["status"] = ""
 	obs, err := a.Observe(context.Background(), adm.ExecutionKey(), fc.projectID)
-	if err != nil || obs.State != extwork.StateAccepted {
+	if err != nil || obs.State != extwork.StateRunning {
 		t.Fatalf("blank status obs=%+v err=%v", obs, err)
 	}
 

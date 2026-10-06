@@ -52,7 +52,7 @@ func (c *StdioClient) CallTool(ctx context.Context, name string, args map[string
 	if err != nil {
 		return nil, err
 	}
-	var stderr bytes.Buffer
+	var stderr lockedBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -204,6 +204,23 @@ func decodeToolResult(name string, raw json.RawMessage) (map[string]any, error) 
 		out = map[string]any{}
 	}
 	return out, nil
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }
 
 func splitCommand(command string) ([]string, error) {
