@@ -18552,18 +18552,20 @@ function burnAreaChart() {
       const core = (ghRateLimits && ghRateLimits.core) || {};
       const now = Math.floor(Date.now() / 1000);
 
-      const RATE_LIMIT_WARN_THRESHOLD = 100;
-      if (core.remaining !== undefined && core.remaining <= RATE_LIMIT_WARN_THRESHOLD && core.reset) {
+      maybeRefreshGhRateLimits(ghRateLimits);
+      const coreStatus = debugGhRateLimitStatus(core);
+      if (coreStatus.limit > 0 && !coreStatus.resetPassed && coreStatus.remainingPct <= GH_RATE_CRITICAL_REMAINING_PCT && core.reset) {
         const resetDate = new Date(core.reset);
-        const resetStr = resetDate.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
-        const coreAlert = {
-          agent: 'github-api',
-          message: 'Core API: ' + core.remaining + '/' + (core.limit || '?') + ' remaining — resets ' + resetStr,
-          detected_epoch: now,
-          api_reset_epoch: Math.floor(resetDate.getTime() / 1000),
-        };
-        const hasCoreAlert = alerts.some(a => a.agent === 'github-api');
-        if (!hasCoreAlert) alerts.unshift(coreAlert);
+        if (!Number.isNaN(resetDate.getTime()) && resetDate.getTime() > Date.now()) {
+          const coreAlert = {
+            agent: 'github-api',
+            message: 'Core API: ' + coreStatus.remaining + '/' + coreStatus.limit + ' remaining (' + coreStatus.remainingPct + '% free) — ' + coreStatus.resetText,
+            detected_epoch: now,
+            api_reset_epoch: Math.floor(resetDate.getTime() / 1000),
+          };
+          const hasCoreAlert = alerts.some(a => a.agent === 'github-api');
+          if (!hasCoreAlert) alerts.unshift(coreAlert);
+        }
       }
       const GH_RATE_DEFAULT_TTL = 3600;
       const SECONDS_PER_MINUTE = 60;
@@ -18609,6 +18611,33 @@ function burnAreaChart() {
         </div>`;
       }).join('');
       setIfChanged(el, `<div class="gh-rate-alert-title">GitHub API Rate Limit (${active.length} agent${active.length > 1 ? 's' : ''})</div>${items}${pullbackHtml}`);
+    }
+
+    const GH_RATE_LIMIT_POLL_MS = 5 * 60 * 1000;
+    let _ghRateLimitPollInFlight = false;
+    let _ghRateLimitLastPollMs = 0;
+    async function maybeRefreshGhRateLimits(ghRateLimits) {
+      const core = (ghRateLimits && ghRateLimits.core) || {};
+      const status = debugGhRateLimitStatus(core);
+      if (!status.limit || _ghRateLimitPollInFlight) return;
+      const nowMs = Date.now();
+      const dueForPeriodicRefresh = nowMs - _ghRateLimitLastPollMs >= GH_RATE_LIMIT_POLL_MS;
+      if (!status.resetPassed && !dueForPeriodicRefresh) return;
+      _ghRateLimitPollInFlight = true;
+      _ghRateLimitLastPollMs = nowMs;
+      try {
+        const res = await fetch('/api/gh-rate-limits', { cache: 'no-store' });
+        if (!res.ok) return;
+        const fresh = await res.json();
+        if (!fresh || !fresh.core || !window._lastStatus) return;
+        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core });
+        renderGhRateLimits(window._lastStatus.ghRateLimits);
+        renderDebugSection();
+      } catch (_) {
+        // The cached /api/status payload will continue rendering safely.
+      } finally {
+        _ghRateLimitPollInFlight = false;
+      }
     }
 
     // Guard: skip agent re-render while a dropdown is focused/open
@@ -23826,6 +23855,20 @@ function burnAreaChart() {
 
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;
+    const GH_RATE_CRITICAL_REMAINING_PCT = 10;
+    const GH_RATE_WARN_REMAINING_PCT = 25;
+    function debugGhRateClassFromRemainingPct(pct) {
+      const n = Number.isFinite(Number(pct)) ? Number(pct) : 100;
+      if (n <= GH_RATE_CRITICAL_REMAINING_PCT) return 'debug-quota-bad';
+      if (n <= GH_RATE_WARN_REMAINING_PCT) return 'debug-quota-warn';
+      return 'debug-quota-ok';
+    }
+    function debugGhRateChipClassFromRemainingPct(pct) {
+      const cls = debugGhRateClassFromRemainingPct(pct);
+      if (cls === 'debug-quota-bad') return 'bad';
+      if (cls === 'debug-quota-warn') return 'warn';
+      return 'ok';
+    }
     function debugQuotaClass(pct) {
       const n = Number(pct) || 0;
       if (n > 85) return 'debug-quota-bad';
@@ -23851,6 +23894,35 @@ function burnAreaChart() {
       const d = new Date(typeof raw === 'number' ? raw * 1000 : raw);
       if (Number.isNaN(d.getTime())) return '—';
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    function debugGhRateLimitStatus(core, nowMs) {
+      core = core || {};
+      const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+      const limit = Math.max(0, Number(core.limit) || 0);
+      const resetRaw = core.reset;
+      const resetDate = resetRaw ? new Date(typeof resetRaw === 'number' ? resetRaw * 1000 : resetRaw) : null;
+      const resetMs = resetDate && !Number.isNaN(resetDate.getTime()) ? resetDate.getTime() : 0;
+      const resetPassed = !!(resetMs && resetMs <= now);
+      const rawRemaining = Number(core.remaining);
+      const clampedRemaining = limit > 0 && Number.isFinite(rawRemaining) ? Math.max(0, Math.min(limit, rawRemaining)) : 0;
+      const remaining = limit > 0 && resetPassed ? limit : clampedRemaining;
+      const used = limit > 0 ? Math.max(0, limit - remaining) : 0;
+      const remainingPct = limit > 0 ? Math.round((remaining / limit) * 100) : 100;
+      const resetAt = resetMs ? resetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const resetText = resetPassed ? 'reset passed; refreshing' : `resets ${resetAt}`;
+      const headline = `GitHub API ${remaining}/${limit || '—'} remaining (${remainingPct}% free) · ${resetText}`;
+      return {
+        limit,
+        remaining,
+        used,
+        remainingPct,
+        resetAt,
+        resetText,
+        resetPassed,
+        headline,
+        headlineClass: debugGhRateClassFromRemainingPct(remainingPct),
+        chipClass: debugGhRateChipClassFromRemainingPct(remainingPct),
+      };
     }
     function debugQuotaNormalize(source, quota, fallbackLabel) {
       quota = quota || {};
@@ -23892,21 +23964,37 @@ function burnAreaChart() {
         return v && typeof v === 'object' && Number(v.limit || v.max || v.quota || 0) > 0;
       });
       return buckets.map(k => {
-        const quota = Object.assign({ bucket: buckets.length === 1 && k === 'core' ? 'API' : k }, ghRate[k]);
-        return debugQuotaNormalize('GitHub', quota, 'GitHub');
+        const core = ghRate[k] || {};
+        const status = debugGhRateLimitStatus(core);
+        if (status.limit <= 0) return null;
+        return {
+          label: 'GitHub',
+          bucket: buckets.length === 1 && k === 'core' ? 'API' : k,
+          limit: status.limit,
+          used: status.used,
+          remaining: status.remaining,
+          pct: status.remainingPct,
+          resetAt: status.resetText,
+          semantics: 'remaining',
+          cls: status.chipClass,
+        };
       }).filter(Boolean);
     }
     function debugQuotaWidgetHtml(data) {
       const quotas = debugQuotaFromWorkSources(data || {}).concat(debugGitHubQuotaSources(data || {}));
       if (!quotas.length) return '';
       const chips = quotas.map(q => {
-        const cls = debugQuotaChipClass(q.pct);
+        const cls = q.cls || debugQuotaChipClass(q.pct);
         const label = q.bucket ? `${q.label} ${q.bucket}` : q.label;
-        const title = `${label}: ${q.used}/${q.limit} used (${q.pct}%). Resets ${q.resetAt}`;
+        const remainingMode = q.semantics === 'remaining';
+        const frac = remainingMode ? `${q.remaining}/${q.limit}` : `${q.used}/${q.limit}`;
+        const title = remainingMode
+          ? `${label}: ${q.remaining}/${q.limit} remaining (${q.pct}% free). ${q.resetAt}`
+          : `${label}: ${q.used}/${q.limit} used (${q.pct}%). Resets ${q.resetAt}`;
         const fill = Math.max(0, Math.min(50, Math.round(q.pct / 2)));
-        return `<span class="debug-quota-chip ${cls}" title="${escapeHtml(title)}"><span class="debug-quota-label">${escapeHtml(label)}</span><svg class="debug-quota-gauge" width="54" height="10" viewBox="0 0 54 10" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect class="debug-quota-gauge-track" x="1" y="2" width="50" height="6" rx="3"/><rect class="debug-quota-gauge-fill" x="1" y="2" width="${fill}" height="6" rx="3"/></svg><span class="debug-quota-frac">${q.used}/${q.limit}</span></span>`;
+        return `<span class="debug-quota-chip ${cls}" title="${escapeHtml(title)}"><span class="debug-quota-label">${escapeHtml(label)}</span><svg class="debug-quota-gauge" width="54" height="10" viewBox="0 0 54 10" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect class="debug-quota-gauge-track" x="1" y="2" width="50" height="6" rx="3"/><rect class="debug-quota-gauge-fill" x="1" y="2" width="${fill}" height="6" rx="3"/></svg><span class="debug-quota-frac">${frac}</span></span>`;
       }).join('');
-      const label = quotas.map(q => `${q.label} ${q.used}/${q.limit}`).join(', ');
+      const label = quotas.map(q => q.semantics === 'remaining' ? `${q.label} ${q.remaining}/${q.limit} remaining` : `${q.label} ${q.used}/${q.limit} used`).join(', ');
       return `<span class="mini-summary-strip debug-quota-strip" role="group" aria-label="${escapeHtml(label)}">${chips}</span>`;
     }
     function debugDiagnosticsHeadlineHtml(data, summaryText) {
@@ -23914,17 +24002,12 @@ function burnAreaChart() {
       const ghRate = status.ghRateLimits || {};
       const tokens = status.tokens || {};
       const core = ghRate.core || {};
-      const limit = Number(core.limit) || 0;
-      const remaining = Number(core.remaining) || 0;
-      const used = limit > 0 ? Math.max(0, limit - remaining) : 0;
-      const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
-      const resetRaw = core.reset;
-      const resetAt = resetRaw ? new Date(typeof resetRaw === 'number' ? resetRaw * 1000 : resetRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const rate = debugGhRateLimitStatus(core);
       const totals = tokens.totals || {};
-      const apiText = `GitHub API ${used}/${limit || '—'} (${pct}%) · resets ${resetAt}`;
+      const apiText = rate.headline;
       const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
       const mini = debugQuotaWidgetHtml(status);
-      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${debugQuotaClass(pct)}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     function renderDebugSection() {
       refreshSectionCardShell('debug-section');
@@ -23954,12 +24037,11 @@ function burnAreaChart() {
         agentRows += `<div style="${rowStyle}"><span>${esc(a.name)}</span><span style="color:${stateColor};font-weight:600">${a.state}</span></div>`;
       }
 
-      const ghCoreLimit = ghRate.core?.limit || 0;
-      const ghCoreRemaining = ghRate.core?.remaining || 0;
-      const ghCoreUsed = ghCoreLimit > 0 ? ghCoreLimit - ghCoreRemaining : 0;
-      const ghCorePct = ghCoreLimit > 0 ? Math.round((ghCoreUsed / ghCoreLimit) * 100) : 0;
-      const ghResetRaw = ghRate.core?.reset;
-      const ghResetAt = ghResetRaw ? new Date(typeof ghResetRaw === 'number' ? ghResetRaw * 1000 : ghResetRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const ghCoreRate = debugGhRateLimitStatus(ghRate.core || {});
+      const ghCoreLimit = ghCoreRate.limit;
+      const ghCoreRemaining = ghCoreRate.remaining;
+      const ghCorePct = ghCoreRate.remainingPct;
+      const ghResetAt = ghCoreRate.resetText;
       // How old is this reading? (#5733) The card used to show only `reset`,
       // which moves independently of when the sample was taken — so a value
       // that had stopped updating looked exactly like a fresh one. A reading
@@ -24013,11 +24095,11 @@ function burnAreaChart() {
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>
           <div style="${rowStyle}"><span>Identity</span><span>${ghIdentityBadge} ${esc(ghIdentityLabel)}</span></div>
-          <div style="${rowStyle}"><span>Core API</span><span style="font-weight:600">${ghCoreUsed} / ${ghCoreLimit} (${ghCorePct}%)</span></div>
-          <div style="${rowStyle}"><span>Resets at</span><span>${ghResetAt}</span></div>
+          <div style="${rowStyle}"><span>Core API</span><span style="font-weight:600">${ghCoreRemaining} / ${ghCoreLimit} remaining (${ghCorePct}% free)</span></div>
+          <div style="${rowStyle}"><span>Reset</span><span>${ghResetAt}</span></div>
           ${ghObservedHtml}
           <div style="margin-top:var(--sp-3);height:6px;background:var(--line);border-radius:3px;overflow:hidden">
-            <div style="height:100%;width:${ghCorePct}%;background:${ghCorePct > 80 ? 'var(--red)' : ghCorePct > 50 ? 'var(--yellow)' : 'var(--green)'};border-radius:3px;transition:width 0.3s"></div>
+            <div style="height:100%;width:${ghCorePct}%;background:${ghCorePct <= GH_RATE_CRITICAL_REMAINING_PCT ? 'var(--red)' : ghCorePct <= GH_RATE_WARN_REMAINING_PCT ? 'var(--yellow)' : 'var(--green)'};border-radius:3px;transition:width 0.3s"></div>
           </div>
         </div>
         <div style="${cardStyle}">
