@@ -457,3 +457,146 @@ func TestCorruptRecordReportsError(t *testing.T) {
 		t.Fatalf("loadByExecutionKey corrupt = %v", err)
 	}
 }
+
+func TestSmallHelpersAndValidationEdges(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	if a.WorkflowVersion() != "vibe-kanban/phase2" {
+		t.Fatalf("WorkflowVersion = %q", a.WorkflowVersion())
+	}
+	if inc, err := a.Incarnation(context.Background()); err != nil || inc != fc.projectID {
+		t.Fatalf("Incarnation = %q %v", inc, err)
+	}
+	if _, err := a.Start(context.Background(), extwork.StartRequest{}); !errors.Is(err, extwork.ErrInvalidAdmission) {
+		t.Fatalf("invalid admission = %v", err)
+	}
+	adm, payload := admissionAndPayload(t)
+	adm.Authority.Capability = "wrong"
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); !errors.Is(err, extwork.ErrRefused) {
+		t.Fatalf("admit failure = %v", err)
+	}
+	if got := stringField(nil, "x"); got != "" {
+		t.Fatalf("stringField nil = %q", got)
+	}
+	if got := firstString(map[string]any{"a": ""}, "a", "b"); got != "" {
+		t.Fatalf("firstString miss = %q", got)
+	}
+	if got := sliceField(nil, "x"); got != nil {
+		t.Fatalf("sliceField nil = %v", got)
+	}
+	if err := a.saveRecord(dispatchRecord{}); err == nil {
+		t.Fatal("saveRecord without work key succeeded")
+	}
+	missingDir := filepath.Join("teststate", "does-not-exist", t.Name())
+	missingAdapter, err := New(Config{ProjectID: fc.projectID, StateDir: missingDir, WorkflowVersion: a.version, Client: fc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := missingAdapter.loadByExecutionKey(adm.ExecutionKey()); err != nil || ok {
+		t.Fatalf("missing loadByExecutionKey ok=%v err=%v", ok, err)
+	}
+}
+
+func TestAdapterFileAndTransportErrorEdges(t *testing.T) {
+	fc := newFakeClient()
+	dir := testStateDir(t)
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(Config{ProjectID: fc.projectID, StateDir: blocker, WorkflowVersion: "vibe-kanban/phase2", Client: fc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adm, payload := admissionAndPayload(t)
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err == nil {
+		t.Fatal("Start with file state dir succeeded")
+	}
+	if _, err := a.Observe(context.Background(), adm.ExecutionKey(), ""); err == nil {
+		t.Fatal("Observe with file state dir succeeded")
+	}
+	if _, err := a.Cancel(context.Background(), adm.ExecutionKey(), ""); err == nil {
+		t.Fatal("Cancel with file state dir succeeded")
+	}
+
+	fc2 := newFakeClient()
+	a2 := newAdapterForTest(t, fc2)
+	if _, err := a2.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	fc2.projectID = "different"
+	if _, err := a2.Observe(context.Background(), adm.ExecutionKey(), ""); !errors.Is(err, extwork.ErrTransport) {
+		t.Fatalf("observe transport = %v", err)
+	}
+}
+
+func TestExistingCardAndMalformedResponses(t *testing.T) {
+	fc := newFakeClient()
+	adm, payload := admissionAndPayload(t)
+	fc.issues = append(fc.issues, map[string]any{"id": "existing-card", "title": "Existing", "description": trailer(adm.WorkKey), "status": defaultTodoStatus})
+	a := newAdapterForTest(t, fc)
+	res, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RemoteRunID != "workspace-1" || len(fc.issues) != 1 {
+		t.Fatalf("existing result=%+v issues=%d", res, len(fc.issues))
+	}
+	fc.issues[0]["status"] = ""
+	obs, err := a.Observe(context.Background(), adm.ExecutionKey(), fc.projectID)
+	if err != nil || obs.State != extwork.StateAccepted {
+		t.Fatalf("blank status obs=%+v err=%v", obs, err)
+	}
+
+	bad := &staticClient{reply: map[string]any{"issues": []any{"not a map"}}}
+	badAdapter, err := New(Config{ProjectID: "project-1", StateDir: testStateDir(t), WorkflowVersion: "v", Client: bad})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := badAdapter.findCard(context.Background(), "k"); !errors.Is(err, extwork.ErrTransport) {
+		t.Fatalf("malformed findCard = %v", err)
+	}
+	missingID := &staticClient{reply: map[string]any{"issue": map[string]any{}}}
+	missingAdapter, err := New(Config{ProjectID: "project-1", StateDir: testStateDir(t), WorkflowVersion: "v", Client: missingID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := missingAdapter.ensureCard(context.Background(), adm, payload); !errors.Is(err, extwork.ErrRefused) {
+		t.Fatalf("missing issue id = %v", err)
+	}
+}
+
+func TestCancelProjectMismatchAndUpdateFailure(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, payload := admissionAndPayload(t)
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	movedClient := newFakeClient()
+	movedClient.projectID = "project-2"
+	moved, err := New(Config{ProjectID: movedClient.projectID, StateDir: a.stateDir, WorkflowVersion: a.version, Client: movedClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := moved.Cancel(context.Background(), adm.ExecutionKey(), ""); !errors.Is(err, extwork.ErrIncarnationMismatch) {
+		t.Fatalf("cancel project mismatch = %v", err)
+	}
+	fc.issues = nil
+	facts, err := a.Cancel(context.Background(), adm.ExecutionKey(), fc.projectID)
+	if err == nil || !facts.Requested {
+		t.Fatalf("cancel update failure facts=%+v err=%v", facts, err)
+	}
+}
+
+type staticClient struct {
+	reply map[string]any
+	err   error
+}
+
+func (s *staticClient) CallTool(context.Context, string, map[string]any) (map[string]any, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.reply, nil
+}
