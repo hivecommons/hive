@@ -359,3 +359,31 @@ func TestStartPublisher_BankedResetRedeemRunsAndStops(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// #10865: an explicitly selected codex model flows into the plan so the
+// reading and redemption are scoped to it; other backends never carry it.
+func TestResolvePlan_CodexModelScope(t *testing.T) {
+	p := resolvePlan(envMap(map[string]string{"AGENT_BACKEND": "codex", "AGENT_MODEL": " gpt-6-astra "}), fixedPoolDir("/pool"))
+	if !p.publish || p.model != "gpt-6-astra" {
+		t.Fatalf("plan = %+v, want codex publishing scoped to gpt-6-astra", p)
+	}
+	p = resolvePlan(envMap(map[string]string{"AGENT_BACKEND": "codex"}), fixedPoolDir("/pool"))
+	if !p.publish || p.model != "" {
+		t.Fatalf("plan = %+v, want no model scope when AGENT_MODEL is unset", p)
+	}
+	p = resolvePlan(envMap(map[string]string{"AGENT_BACKEND": "claude", "AGENT_MODEL": "claude-opus-4.8"}), fixedPoolDir("/pool"))
+	if p.model != "" {
+		t.Fatalf("plan = %+v, want the model scope applied to codex only", p)
+	}
+}
+
+func TestStartPublisher_CodexModelRunsAndStops(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	done, ok := startPublisher(ctx, plan{backend: "codex", poolDir: t.TempDir(), model: "gpt-6-astra", redeemBankedReset: true})
+	if !ok {
+		t.Fatal("codex must get a publisher")
+	}
+	cancel()
+	<-done
+}
