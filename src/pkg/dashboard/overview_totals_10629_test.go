@@ -113,7 +113,7 @@ func TestOverviewActionableEquationSurfacesWaitingOnReporter(t *testing.T) {
 	}
 	for _, row := range blocked.Breakdown {
 		if row.Key == "waiting-on-reporter" {
-			if row.Count != 1 || row.Label != "waiting on reporter" || !strings.Contains(row.DocsHref, "label%3Aneeds-reporter-confirmation") {
+			if row.Count != 1 || row.Label != "waiting on reporter" || !strings.Contains(row.DocsHref, "label%3Aneeds-reporter-confirmation") || !strings.Contains(row.DocsHref, "repo%3Ahivecommons%2Fhive") || strings.Contains(row.DocsHref, "github.com/hivecommons/hive/issues") {
 				t.Fatalf("waiting-on-reporter row = %+v", row)
 			}
 			return

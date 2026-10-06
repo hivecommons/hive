@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -134,18 +135,19 @@ func TestContributeOperationsEffectiveModelsPanelCollapsiblePersists(t *testing.
 	}
 	page := string(raw)
 	for _, want := range []string{
-		`id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body"`,
-		`data-ops-section="effective-models-card"`,
-		`<span class="section-chevron" aria-hidden="true">▼</span>`,
-		`<div class="section-body" id="effective-models-body">`,
+		`id="effective-models-toggle" aria-expanded="false" aria-controls="effective-models-body" data-ops-section="effective-models-card" data-ops-default-collapsed title="Expand panel"`,
+		`<span class="section-chevron collapsed" aria-hidden="true">▼</span>`,
+		`<div class="section-body collapsed" id="effective-models-body">`,
 		`.section-body{overflow:visible;transition:opacity 200ms ease;max-height:none;opacity:1}`,
 		`.section-body.collapsed{max-height:0!important;overflow:hidden;opacity:0;pointer-events:none}`,
 		`hive-section-collapsed-`,
 		`function initOpsCollapsiblePanels`,
 		`localStorage.getItem(OPS_SECTION_LS_PREFIX+sectionId)`,
 		`localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'1')`,
+		`localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'0')`,
 		`localStorage.removeItem(OPS_SECTION_LS_PREFIX+sectionId)`,
 		`ccApplySectionCollapse(sectionId);`,
+		`try{loadEffectiveModelsIfOpen();}catch`,
 		`try{initOpsCollapsiblePanels();}catch`,
 	} {
 		if !strings.Contains(page, want) {
@@ -162,6 +164,134 @@ func TestContributeOperationsEffectiveModelsPanelCollapsiblePersists(t *testing.
 	}
 	if strings.Contains(page, `.section-body{overflow:hidden`) || strings.Contains(page, `max-height:5000px`) {
 		t.Fatal("expanded effective models body must not clip long ranked/insufficient tables")
+	}
+}
+
+// TestContributeOperationsEffectiveModelsDefaultCollapsedBehaviour runs the
+// shipped collapse/persist helpers in node (#10919): the models panel starts
+// collapsed without a stored key, remembers being opened ('0') and closed ('1'),
+// fetches only on first open, and a section without data-ops-default-collapsed
+// keeps the original '1'/missing-key contract.
+func TestContributeOperationsEffectiveModelsDefaultCollapsedBehaviour(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; the presence assertions above still ran")
+	}
+	page := renderContributePage(t)
+	var src strings.Builder
+	for _, decl := range []string{
+		"function ccOpsSectionDefaultCollapsed(sectionId){",
+		"function ccOpsSectionRead(sectionId){",
+		"function ccOpsSectionWrite(sectionId,collapsed){",
+		"function ccApplySectionCollapse(sectionId){",
+		"function ccToggleOpsSection(sectionId){",
+		"function loadEffectiveModelsIfOpen(){",
+		"function loadEffectiveModels(){",
+	} {
+		src.WriteString(extractJSFunc(t, page, decl))
+		src.WriteString("\n")
+	}
+	script := `
+var OPS_SECTION_LS_PREFIX='hive-section-collapsed-';
+var effectiveModelsWindow='7d',effectiveModelsFilter='all',effectiveModelsRequested=false;
+var fetches=0;function fetch(){fetches++;return new Promise(function(){});}
+var store={},lsThrows=false;
+var localStorage={
+  getItem:function(k){if(lsThrows)throw new Error('blocked');return Object.prototype.hasOwnProperty.call(store,k)?store[k]:null;},
+  setItem:function(k,v){if(lsThrows)throw new Error('blocked');store[k]=String(v);},
+  removeItem:function(k){if(lsThrows)throw new Error('blocked');delete store[k];}
+};
+function El(attrs){this.attrs=attrs||{};this.cls={};var self=this;this.classList={toggle:function(c,on){self.cls[c]=!!on;}};}
+El.prototype.getAttribute=function(k){return Object.prototype.hasOwnProperty.call(this.attrs,k)?this.attrs[k]:null;};
+El.prototype.setAttribute=function(k,v){this.attrs[k]=String(v);};
+El.prototype.hasAttribute=function(k){return Object.prototype.hasOwnProperty.call(this.attrs,k);};
+function section(id,defaultCollapsed){
+  var btnAttrs={'data-ops-section':id};if(defaultCollapsed)btnAttrs['data-ops-default-collapsed']='';
+  var parts={btn:new El(btnAttrs),body:new El(),chevron:new El()};
+  parts.root={querySelector:function(sel){if(sel==='.section-body')return parts.body;if(sel==='.section-chevron')return parts.chevron;if(sel==='[data-ops-section="'+id+'"]')return parts.btn;return null;}};
+  return parts;
+}
+var secs={'effective-models-card':section('effective-models-card',true),'other-card':section('other-card',false)};
+var mount=new El();
+var document={
+  getElementById:function(id){if(id==='effective-models-ranked')return mount;return secs[id]?secs[id].root:null;},
+  querySelector:function(sel){for(var id in secs){if(sel==='[data-ops-section="'+id+'"]')return secs[id].btn;}return null;}
+};
+` + src.String() + `
+var M='effective-models-card',KEY='hive-section-collapsed-'+M,OK='hive-section-collapsed-other-card';
+function view(id){var s=secs[id];ccApplySectionCollapse(id);return {collapsed:ccOpsSectionRead(id),body:!!s.body.cls.collapsed,chevron:!!s.chevron.cls.collapsed,aria:s.btn.attrs['aria-expanded'],title:s.btn.attrs.title};}
+var out={};
+out.first=view(M);
+loadEffectiveModelsIfOpen();out.fetchesWhileCollapsed=fetches;
+ccToggleOpsSection(M);out.opened=view(M);out.storedOpen=store[KEY];out.fetchesAfterOpen=fetches;
+ccToggleOpsSection(M);out.closed=view(M);out.storedClosed=store[KEY];
+ccToggleOpsSection(M);out.fetchesAfterReopen=fetches;
+effectiveModelsRequested=false;fetches=0;store[KEY]='0';
+out.reloadOpen=view(M);loadEffectiveModelsIfOpen();out.reloadOpenFetches=fetches;
+out.otherFirst=view('other-card');
+ccToggleOpsSection('other-card');out.otherStoredClosed=store[OK];
+ccToggleOpsSection('other-card');out.otherKeyAfterOpen=Object.prototype.hasOwnProperty.call(store,OK);out.otherOpen=view('other-card');
+lsThrows=true;out.blockedDefault=ccOpsSectionRead(M);out.blockedOther=ccOpsSectionRead('other-card');
+console.log(JSON.stringify(out));
+`
+	cmd := exec.Command(node, "-e", script)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node failed: %v\n%s", err, raw)
+	}
+	type state struct {
+		Collapsed bool   `json:"collapsed"`
+		Body      bool   `json:"body"`
+		Chevron   bool   `json:"chevron"`
+		Aria      string `json:"aria"`
+		Title     string `json:"title"`
+	}
+	var got struct {
+		First                 state  `json:"first"`
+		FetchesWhileCollapsed int    `json:"fetchesWhileCollapsed"`
+		Opened                state  `json:"opened"`
+		StoredOpen            string `json:"storedOpen"`
+		FetchesAfterOpen      int    `json:"fetchesAfterOpen"`
+		Closed                state  `json:"closed"`
+		StoredClosed          string `json:"storedClosed"`
+		FetchesAfterReopen    int    `json:"fetchesAfterReopen"`
+		ReloadOpen            state  `json:"reloadOpen"`
+		ReloadOpenFetches     int    `json:"reloadOpenFetches"`
+		OtherFirst            state  `json:"otherFirst"`
+		OtherStoredClosed     string `json:"otherStoredClosed"`
+		OtherKeyAfterOpen     bool   `json:"otherKeyAfterOpen"`
+		OtherOpen             state  `json:"otherOpen"`
+		BlockedDefault        bool   `json:"blockedDefault"`
+		BlockedOther          bool   `json:"blockedOther"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &got); err != nil {
+		t.Fatalf("decode node output %q: %v", raw, err)
+	}
+	collapsed := state{Collapsed: true, Body: true, Chevron: true, Aria: "false", Title: "Expand panel"}
+	expanded := state{Collapsed: false, Body: false, Chevron: false, Aria: "true", Title: "Collapse panel"}
+	if got.First != collapsed {
+		t.Errorf("no stored key: models panel = %+v, want collapsed %+v", got.First, collapsed)
+	}
+	if got.FetchesWhileCollapsed != 0 {
+		t.Errorf("collapsed panel fetched %d times on load, want 0", got.FetchesWhileCollapsed)
+	}
+	if got.Opened != expanded || got.StoredOpen != "0" || got.FetchesAfterOpen != 1 {
+		t.Errorf("first open: state=%+v stored=%q fetches=%d, want expanded, '0', 1 fetch", got.Opened, got.StoredOpen, got.FetchesAfterOpen)
+	}
+	if got.Closed != collapsed || got.StoredClosed != "1" {
+		t.Errorf("close: state=%+v stored=%q, want collapsed, '1'", got.Closed, got.StoredClosed)
+	}
+	if got.FetchesAfterReopen != 1 {
+		t.Errorf("reopen fetched again: total fetches=%d, want 1", got.FetchesAfterReopen)
+	}
+	if got.ReloadOpen != expanded || got.ReloadOpenFetches != 1 {
+		t.Errorf("reload with stored '0': state=%+v fetches=%d, want expanded and 1 fetch", got.ReloadOpen, got.ReloadOpenFetches)
+	}
+	if got.OtherFirst != expanded || got.OtherStoredClosed != "1" || got.OtherKeyAfterOpen || got.OtherOpen != expanded {
+		t.Errorf("non-default section changed contract: first=%+v storedClosed=%q keyAfterOpen=%v open=%+v", got.OtherFirst, got.OtherStoredClosed, got.OtherKeyAfterOpen, got.OtherOpen)
+	}
+	if !got.BlockedDefault || got.BlockedOther {
+		t.Errorf("blocked localStorage: models collapsed=%v (want true), other collapsed=%v (want false)", got.BlockedDefault, got.BlockedOther)
 	}
 }
 

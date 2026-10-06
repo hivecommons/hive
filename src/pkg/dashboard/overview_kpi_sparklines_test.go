@@ -174,3 +174,29 @@ for (const key of ['open-issues','open-prs','actionable-now','held','blocked-nee
 		t.Fatalf("overview KPI renderer failed: %v\n%s", err, out)
 	}
 }
+
+func TestOverviewKPISampleCountsBlockedLikeTile(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	status := &StatusPayload{Repos: []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		Issues: 3,
+		ActionableIssues: []any{
+			github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "confirm", Labels: []string{"hive/likely-done"}},
+		},
+		WorkBreakdown: &github.RepoWorkBreakdown{
+			Issues: github.RepoIssueBreakdown{Actionable: 1, Filtered: 2, NeedsHuman: 1, ReporterConfirmation: 1},
+		},
+	}}}
+	s := &Server{}
+	tile := s.statusWithOverviewBands(status, now).ActionableNow
+	blocked := overviewTerm(tile.Equation, "blocked_needs_human")
+	outside := overviewTerm(tile.Equation, "outside")
+	if blocked == nil || outside == nil {
+		t.Fatalf("missing tile terms: %+v", tile.Equation)
+	}
+	var e TrendHistoryEntry
+	s.attachOverviewKPI(&e, status, now)
+	if e.OverviewBlockedHuman != blocked.Count || e.OverviewOutside != outside.Count {
+		t.Fatalf("sample blocked/outside = %d/%d, tile = %d/%d", e.OverviewBlockedHuman, e.OverviewOutside, blocked.Count, outside.Count)
+	}
+}

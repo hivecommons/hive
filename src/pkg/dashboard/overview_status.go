@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -104,7 +105,13 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	if s.deps != nil {
 		fullCfg = s.deps.Config
 	}
-	out.ActionableNow = overviewActionableNow(&out, overviewPartitionMetadataFromConfig(fullCfg, status.HiveID))
+	meta := overviewPartitionMetadataFromConfig(fullCfg, status.HiveID)
+	for _, repo := range out.Repos {
+		if name := overviewRepoName(repo); strings.Contains(name, "/") {
+			meta.Repos = append(meta.Repos, name)
+		}
+	}
+	out.ActionableNow = overviewActionableNow(&out, meta)
 	return &out
 }
 
@@ -371,6 +378,7 @@ func overviewEquationTitle(eq *FrontendActionableEquation, _ FrontendOverviewTot
 }
 
 type overviewPartitionMeta struct {
+	Repos                       []string
 	ExemptLabels                []string
 	RequireLabels               []string
 	ReporterTrustEnabled        bool
@@ -469,13 +477,26 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 		},
 		IssueBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label after the person finishes.", "Labels", "/docs/dashboard-sections.md#overview"),
-			overviewBreakdownTerm("waiting-on-reporter", "waiting on reporter", totals.Issues.Breakdown["reporter_confirmation"], "Issue carries needs-reporter-confirmation, so Hive is waiting for confirmation before closing.", "label:needs-reporter-confirmation", "is:open label:needs-reporter-confirmation", "Use the linked GitHub search, then reply /fixed or add new evidence.", "", "https://github.com/hivecommons/hive/issues?q=is%3Aopen%20label%3Aneeds-reporter-confirmation"),
+			overviewBreakdownTerm("waiting-on-reporter", "waiting on reporter", totals.Issues.Breakdown["reporter_confirmation"], "Issue carries needs-reporter-confirmation, so Hive is waiting for confirmation before closing.", "label:needs-reporter-confirmation", "is:open label:needs-reporter-confirmation", "Use the linked GitHub search, then reply /fixed or add new evidence.", "", overviewReporterSearchHref(meta.Repos)),
 			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]-totals.Issues.Breakdown["reporter_confirmation"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard-sections.md#overview"),
 		},
 		PRBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("pr-blocked-band", "blocked/waiting PR band", prBlocked, "Overview PR blocked/waiting bands cover merge conflicts, requested human review, needs-human, or other PR gates.", "overview PR band specs", "server-provided overview_bands.prs", "Resolve mergeability/review gates or clear the needs-human signal shown on the PR pill.", "", "/docs/dashboard-sections.md#overview"),
 		},
 	}
+}
+
+// overviewReporterSearchHref searches the hive's watched repos; without any it
+// points at the docs instead of another project's issues.
+func overviewReporterSearchHref(repos []string) string {
+	if len(repos) == 0 {
+		return "/docs/dashboard.md#outside-buckets"
+	}
+	q := "is:open label:needs-reporter-confirmation"
+	for _, r := range repos {
+		q += " repo:" + r
+	}
+	return "https://github.com/issues?q=" + url.QueryEscape(q)
 }
 
 func overviewBreakdownTerm(key, label string, count int, rule, settingPath, settingValue, how, tab, docs string) FrontendActionableBreakdownTerm {
