@@ -931,11 +931,12 @@ ServiceAccount-derivation caveat.
 
 The template also emits a read-only cluster-scoped `hive-node-health-reader-*`
 ClusterRole/ClusterRoleBinding so push-reported spokes can send node health in
-their outbound heartbeat. It grants `nodes get,list`, `nodes/proxy get`,
-`pods list`, and `metrics.k8s.io/nodes list`. If metrics-server is absent or
-that last rule is denied, the spoke still reports node count, vCPU, memory and
-disk capacity from the core Node API and carries the precise `node_health_error`
-reason to the hub.
+their outbound heartbeat. It grants `nodes get,list`, `pods list`, and
+`metrics.k8s.io/nodes list` — never `nodes/proxy`, which would expose every
+kubelet's `/exec`, `/attach` and `/pods` endpoints to the tenant. If
+metrics-server is absent or that last rule is denied, the spoke still reports
+node count, vCPU, memory and disk capacity from the core Node API and carries
+the precise `node_health_error` reason to the hub.
 
 The template binds `hive-sa` on `RequiresSCC` (OpenShift) clusters and `default`
 elsewhere. Namespaces provisioned **before** either reader was added do not have
@@ -1057,9 +1058,6 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get","list"]
-- apiGroups: [""]
-  resources: ["nodes/proxy"]
-  verbs: ["get"]
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["list"]

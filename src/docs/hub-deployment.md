@@ -108,9 +108,10 @@ A push-reported entry still needs its stable identity (for example `id`, `name`,
 Heartbeat node health needs read-only cluster-scoped RBAC for:
 
 - core `nodes` `get,list` (capacity, allocatable, readiness, GPU labels)
-- core `nodes/proxy` `get` (best-effort kubelet `stats/summary` disk usage)
 - core `pods` `list` (per-node pod and hosted-hive counts)
 - `metrics.k8s.io` `nodes` `list` (live CPU/memory usage from metrics-server)
+
+Do not grant `nodes/proxy` to a tenant ServiceAccount: it reaches every kubelet's `/exec`, `/attach` and `/pods` endpoints through the API server. The spoke's kubelet `stats/summary` disk-usage read is best-effort; without it the Node card shows disk capacity but no live usage percentage.
 
 When `metrics.k8s.io` is unavailable or forbidden, spokes still report node count, vCPU, memory and disk capacity from the core Node API. The hub marks only the live-usage data partial and carries the precise `node_health_error` reason, such as `metrics API failed: ... HTTP 403` or a missing metrics API, instead of the generic "check RBAC and metrics-server" note.
 
