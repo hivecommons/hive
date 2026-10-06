@@ -1,1 +1,0 @@
-- Reporter-trust-held PRs now show the original issue and reporter in dashboard held-pill tooltips and Overview hold reasons instead of claiming automated fix attempts were exhausted ([#10818](https://github.com/hivecommons/hive/issues/10818)).
