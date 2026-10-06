@@ -119,8 +119,11 @@ func TestHeartbeatDeliversClaimWhileVanityRepairBlocked(t *testing.T) {
 func TestVanityRepairKickDedupesInFlightAttempts(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	t.Setenv(vanityRepairFailureBackoffEnv, "1ms")
+	const backoff = time.Hour
+	t.Setenv(vanityRepairFailureBackoffEnv, backoff.String())
 	s, entered, release := newBlockedVanityHub(t)
+	// Release before cleanup drains provisionWG, even if an assertion fails.
+	defer release()
 
 	const id = "hosted-available-vllmd-15"
 	if err := saveSaaSHive(assignedVllmdHive(id)); err != nil {
@@ -140,25 +143,30 @@ func TestVanityRepairKickDedupesInFlightAttempts(t *testing.T) {
 	// Beats keep arriving while the attempt is stuck — none may stack.
 	s.kickVanityURLRepairAsync(id)
 	s.kickVanityURLRepairAsync(id)
-	time.Sleep(50 * time.Millisecond)
+	// Drain every accepted kick before counting, so a wrongly stacked worker
+	// cannot escape the assertion merely because it has not been scheduled yet.
+	release()
+	provisionWG.Wait()
 	if got := entered.Load(); got != 1 {
 		t.Fatalf("in-flight dedupe failed: seam entered %d times, want 1", got)
 	}
+	if _, inFlight := s.vanityRepairInFlight.Load(id); inFlight {
+		t.Fatal("completed repair left its in-flight marker set")
+	}
 
-	// Release the stuck attempt; once it drains, a new kick may run again.
-	release()
-	deadline = time.Now().Add(waitTimeout)
-	for time.Now().Before(deadline) {
-		if _, inFlight := s.vanityRepairInFlight.Load(id); !inFlight {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Completion clears the in-flight marker, but does not expire the failure
+	// backoff. Age the persisted failure explicitly instead of racing a 1ms
+	// timer with the next kick (which is dropped, not queued, during backoff).
+	h := loadSaaSHive(id)
+	if h == nil || h.LastVanityRepairFailureAt.IsZero() {
+		t.Fatal("completed repair did not persist its failure")
+	}
+	h.LastVanityRepairFailureAt = time.Now().Add(-2 * backoff)
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
 	}
 	s.kickVanityURLRepairAsync(id)
-	deadline = time.Now().Add(waitTimeout)
-	for entered.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	provisionWG.Wait()
 	if got := entered.Load(); got != 2 {
 		t.Fatalf("post-release kick: seam entered %d times, want 2", got)
 	}
