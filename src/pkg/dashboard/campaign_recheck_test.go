@@ -474,10 +474,18 @@ func TestTickCampaignRechecksCadence(t *testing.T) {
 	if got := countArchives(); got != 6 {
 		t.Fatalf("repeat tick created archives: %d", got)
 	}
-	// Advancing past the next cadence still waits on the in-flight revision.
+	// Advancing past the next cadence still waits on the in-flight revision:
+	// shipped-later (last_at=now, 1h) becomes due and is revised, but
+	// shipped-due gets no rev-3 while shipped-due-rev-2 is open.
 	s.TickCampaignRechecks(context.Background(), now.Add(3*time.Hour))
-	if got := countArchives(); got != 6 {
-		t.Fatalf("in-flight base was rechecked again: %d", got)
+	if got := countArchives(); got != 7 {
+		t.Fatalf("archives after later tick = %d, want shipped-later revised once", got)
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive("shipped-later-rev-2"); err != nil {
+		t.Fatalf("shipped-later was not revised once due: %v", err)
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive("shipped-due-rev-3"); err == nil {
+		t.Fatal("in-flight base was rechecked again")
 	}
 }
 
@@ -715,6 +723,7 @@ func TestCurrentGitHeadAndEvidence(t *testing.T) {
 	// when the temp directory happens to live inside a checkout.
 	t.Setenv("GIT_DIR", filepath.Join(dir, "no-such-repo"))
 	// Outside a repository the head is unknown and never reported as drift.
+	//nolint:staticcheck // SA1012: the nil-ctx fallback branch is the subject under test.
 	if head := currentGitHead(nil); head != "" {
 		t.Fatalf("head outside repo = %q", head)
 	}
