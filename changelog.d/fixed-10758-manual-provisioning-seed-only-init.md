@@ -1,0 +1,1 @@
+- The heartbeat-only Deployment example in `src/docs/manual-provisioning.md` now uses the seed-only `copy-config` init container from the provisioning template, which copies the ConfigMap only on first boot ([#10758](https://github.com/hivecommons/hive/issues/10758)). Hand-provisioned hives got the old copy-every-boot variant.
