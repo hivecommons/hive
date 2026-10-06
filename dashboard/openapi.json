@@ -21628,6 +21628,130 @@
         }
       }
     },
+    "/api/repos/merge-strategy": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Read one repository's merge strategy",
+        "description": "Returns the effective project.repo_policies[].merge_strategy for one watched repository: direct (the default when unset) or hive-serialized. The strategy decides how Hive merges, never whether.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Merge strategy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "merge_strategy": {
+                      "type": "string",
+                      "enum": [
+                        "direct",
+                        "hive-serialized"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo, or a repo not listed in project.repos"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Set one repository's merge strategy",
+        "description": "Persists project.repo_policies[].merge_strategy for one watched repository and audits the change. Switching to hive-serialized needs owner or repository write permission; switching back to direct is owner-only. An unrecognised value is refused with 400. The strategy never enables merging where it is off today.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "merge_strategy"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name or owner/repo."
+                  },
+                  "merge_strategy": {
+                    "type": "string",
+                    "enum": [
+                      "direct",
+                      "hive-serialized"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Merge strategy result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "merge_strategy": {
+                      "type": "string"
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    },
+                    "persisted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid repo or merge_strategy, or a repo not listed in project.repos"
+          },
+          "403": {
+            "description": "Owner (to direct) or repository write permission (to hive-serialized) required"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/hold-permission": {
       "get": {
         "tags": [

@@ -322,3 +322,55 @@ func TestRepoCards_UnpausedCarryNoPauseFields(t *testing.T) {
 		t.Errorf("pause fields are not omitempty in the status payload: %s", raw)
 	}
 }
+
+// #10886: switching to hive-serialized needs the repo-write tier; switching
+// back to direct is owner-only; unknown values are a client error; every
+// change is audited.
+func TestRepoMergeStrategyEndpointAsymmetricPermission(t *testing.T) {
+	srv := newFullServer(t)
+	post := func(body string, owner bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/repos/merge-strategy", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if owner {
+			markOwnerRequest(req)
+		} else {
+			req.Header.Set("X-Hive-User", "testorg")
+		}
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w
+	}
+
+	cases := []struct {
+		name  string
+		body  string
+		owner bool
+		code  int
+		want  string
+	}{
+		{"writer to unrecognised", `{"repo":"testrepo","merge_strategy":"hive-serialised"}`, false, http.StatusBadRequest, "direct"},
+		{"writer to hive-serialized", `{"repo":"testrepo","merge_strategy":"hive-serialized"}`, false, http.StatusOK, "hive-serialized"},
+		{"writer back to direct", `{"repo":"testrepo","merge_strategy":"direct"}`, false, http.StatusForbidden, "hive-serialized"},
+		{"owner back to direct", `{"repo":"testrepo","merge_strategy":"direct"}`, true, http.StatusOK, "direct"},
+		{"owner to hive-serialized", `{"repo":"testrepo","merge_strategy":"hive-serialized"}`, true, http.StatusOK, "hive-serialized"},
+		{"unwatched repo", `{"repo":"nope","merge_strategy":"hive-serialized"}`, true, http.StatusBadRequest, "hive-serialized"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := post(tc.body, tc.owner)
+			if w.Code != tc.code {
+				t.Fatalf("code = %d, want %d; body = %s", w.Code, tc.code, w.Body.String())
+			}
+			if got := srv.deps.Config.RepoMergeStrategy("testrepo"); got != tc.want {
+				t.Fatalf("strategy = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/merge-strategy?repo=testrepo", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"merge_strategy":"hive-serialized"`) {
+		t.Fatalf("GET = %d %s, want current strategy", w.Code, w.Body.String())
+	}
+}

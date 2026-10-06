@@ -14,10 +14,20 @@ type RepoPolicy struct {
 	ReporterTrustHold     *bool                `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
 	AutoMerge             *bool                `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	LabelDriven           bool                 `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
+	MergeStrategy         string               `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
 	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
 	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
 	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
 }
+
+// Per-repo merge strategies (hivecommons/hive#10886). The strategy decides how
+// Hive merges into a repo, never whether: auto-merge level, the per-repo
+// auto_merge switch, pauses and holds still gate merging. Unrelated to
+// knowledge.primer.merge_strategy.
+const (
+	MergeStrategyDirect         = "direct"
+	MergeStrategyHiveSerialized = "hive-serialized"
+)
 
 type AutonomyLevelChange struct {
 	At          time.Time `yaml:"at" json:"at"`
@@ -251,7 +261,98 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && rp.MergeStrategy == ""
+}
+
+// ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
+// "hive-serialized"; anything else is an error naming the repo and value.
+func ValidateRepoMergeStrategy(repo, value string) error {
+	switch value {
+	case "", MergeStrategyDirect, MergeStrategyHiveSerialized:
+		return nil
+	}
+	return fmt.Errorf("project.repo_policies: repo %q has invalid merge_strategy %q (must be %s or %s)", repo, value, MergeStrategyDirect, MergeStrategyHiveSerialized)
+}
+
+// RepoMergeStrategyError reports the configuration error for repo's stored
+// merge_strategy, or nil when it is unset or valid.
+func (c *Config) RepoMergeStrategyError(repo string) error {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok {
+		return nil
+	}
+	return ValidateRepoMergeStrategy(rp.Repo, rp.MergeStrategy)
+}
+
+// RepoMergeStrategy returns repo's effective merge strategy: unset means
+// direct. An invalid stored value is returned verbatim, never mapped to
+// direct; RepoAutoMergeEnabled reports such a repo as off. Deciding direct
+// needs no GitHub call.
+func (c *Config) RepoMergeStrategy(repo string) string {
+	if c == nil {
+		return MergeStrategyDirect
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok && rp.MergeStrategy != "" {
+		return rp.MergeStrategy
+	}
+	return MergeStrategyDirect
+}
+
+// SetRepoMergeStrategyForRepoAndSave persists one repo's merge strategy.
+// direct clears the key, since unset already means direct. Unknown values are
+// refused.
+func (c *Config) SetRepoMergeStrategyForRepoAndSave(repo, strategy string) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("no config loaded")
+	}
+	name := strings.TrimSpace(repo)
+	if name == "" {
+		return false, fmt.Errorf("repo is required")
+	}
+	strategy = strings.TrimSpace(strategy)
+	if strategy == "" {
+		return false, fmt.Errorf("merge_strategy is required")
+	}
+	if err := ValidateRepoMergeStrategy(name, strategy); err != nil {
+		return false, err
+	}
+	name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+	stored := strategy
+	if stored == MergeStrategyDirect {
+		stored = ""
+	}
+
+	saveMu.Lock()
+	defer saveMu.Unlock()
+
+	key := repoPauseKey(c.Project.Org, name)
+	repoPauseMu.Lock()
+	idx := -1
+	for i, rp := range c.Project.RepoPolicies {
+		if repoPauseKey(c.Project.Org, rp.Repo) == key {
+			idx = i
+			break
+		}
+	}
+	changed := false
+	if idx >= 0 {
+		if c.Project.RepoPolicies[idx].MergeStrategy != stored {
+			c.Project.RepoPolicies[idx].MergeStrategy = stored
+			if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+				c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+			}
+			changed = true
+		}
+	} else if stored != "" {
+		c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, MergeStrategy: stored})
+		changed = true
+	}
+	repoPauseMu.Unlock()
+
+	if !changed {
+		return false, nil
+	}
+	return true, c.saveLocked()
 }
 
 // ReporterTrustHoldEnabledForRepo resolves the #9665 reporter-trust hold for
@@ -319,7 +420,16 @@ func (c *Config) RepoAutoMergeEnabled(repo string) bool {
 	if c == nil || c.ACMMLevelOrZero() < SelfMergeMinACMMLevel {
 		return false
 	}
-	if rp, ok := c.RepoPolicyFor(repo); ok && rp.AutoMerge != nil {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok {
+		return true
+	}
+	// An unrecognised merge_strategy is a config error: stop every merge path
+	// here rather than fall back to direct (#10886).
+	if ValidateRepoMergeStrategy(rp.Repo, rp.MergeStrategy) != nil {
+		return false
+	}
+	if rp.AutoMerge != nil {
 		return *rp.AutoMerge
 	}
 	return true
