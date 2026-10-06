@@ -1,0 +1,1 @@
+- The `RuntimeConfigFile` comment in `src/pkg/config/config.go` now says the file is the Kubernetes boot input after the first boot, as it has been since #2392 ([#10756](https://github.com/hivecommons/hive/issues/10756)).
