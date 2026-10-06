@@ -36,6 +36,8 @@ on:
       - 'Justfile'
       - 'dashboard/openapi.json'
       - '.github/workflows/v2-tests.yml'
+      # coverage-hourly gates protected-branch state, so its PRs must run required CI to remain mergeable under branch protection.
+      - '.github/workflows/coverage-hourly.yml'
       - '.github/scripts/slowest-tests.sh'
       - '.github/scripts/ci-gotestsum-flake-summary.sh'
       - '.github/scripts/ci-gotestsum-preserve-coverprofile.sh'
@@ -57,6 +59,8 @@ on:
       - 'Justfile'
       - 'dashboard/openapi.json'
       - '.github/workflows/v2-tests.yml'
+      # coverage-hourly gates protected-branch state, so its PRs must run required CI to remain mergeable under branch protection.
+      - '.github/workflows/coverage-hourly.yml'
       # The slowest-tests reporter runs in every shard; an edit to it must run
       # the job that executes it (same rule dashboard-lint applies to its
       # checker, #5388).
