@@ -2369,6 +2369,52 @@ func buildHold(actionable *github.ActionableResult) FrontendHold {
 	}
 }
 
+const (
+	ghRateLimitCriticalRemainingFraction = 0.10
+	ghRateLimitWarnRemainingFraction     = 0.25
+)
+
+func ghRateLimitResetPassed(reset, now time.Time) bool {
+	return !reset.IsZero() && !now.Before(reset)
+}
+
+func ghRateLimitRemainingFraction(limit, remaining int) float64 {
+	if limit <= 0 {
+		return 1
+	}
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > limit {
+		remaining = limit
+	}
+	return float64(remaining) / float64(limit)
+}
+
+func ghRateLimitStatus(limit, remaining int, reset, now time.Time) string {
+	if limit <= 0 {
+		return "unknown"
+	}
+	if ghRateLimitResetPassed(reset, now) {
+		remaining = limit
+	}
+	fraction := ghRateLimitRemainingFraction(limit, remaining)
+	if fraction <= ghRateLimitCriticalRemainingFraction {
+		return "critical"
+	}
+	if fraction <= ghRateLimitWarnRemainingFraction {
+		return "warning"
+	}
+	return "ok"
+}
+
+func normalizeGHRateLimitForDisplay(entry github.RateLimitEntry, now time.Time) github.RateLimitEntry {
+	if entry.Limit > 0 && ghRateLimitResetPassed(entry.Reset, now) {
+		entry.Remaining = entry.Limit
+	}
+	return entry
+}
+
 func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config.Config) map[string]any {
 	result := map[string]any{
 		"core":      map[string]any{},
@@ -2396,10 +2442,17 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 	if ghClient != nil && ctx != nil {
 		limits, err := ghClient.RateLimits(ctx)
 		if err == nil && limits != nil {
+			now := time.Now()
+			coreEntry := normalizeGHRateLimitForDisplay(limits.Core, now)
 			core := map[string]any{
-				"limit":     limits.Core.Limit,
-				"remaining": limits.Core.Remaining,
-				"reset":     limits.Core.Reset.Format(time.RFC3339),
+				"limit":              coreEntry.Limit,
+				"remaining":          coreEntry.Remaining,
+				"reset":              coreEntry.Reset.Format(time.RFC3339),
+				"remaining_fraction": ghRateLimitRemainingFraction(coreEntry.Limit, coreEntry.Remaining),
+				"status":             ghRateLimitStatus(coreEntry.Limit, coreEntry.Remaining, coreEntry.Reset, now),
+			}
+			if ghRateLimitResetPassed(coreEntry.Reset, now) {
+				core["reset_passed"] = true
 			}
 			// observed_at is when this reading was actually taken
 			// (kubestellar/hive#5733). reset cannot answer that — it moves
@@ -2407,8 +2460,8 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 			// reality while the card sat pinned at the full limit. Emitted
 			// only when known, so a client that has never observed a bucket
 			// does not publish a zero timestamp that renders as 1970.
-			if !limits.Core.ObservedAt.IsZero() {
-				core["observed_at"] = limits.Core.ObservedAt.Format(time.RFC3339)
+			if !coreEntry.ObservedAt.IsZero() {
+				core["observed_at"] = coreEntry.ObservedAt.Format(time.RFC3339)
 			}
 			result["core"] = core
 		}
