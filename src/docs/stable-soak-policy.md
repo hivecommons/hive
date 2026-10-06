@@ -85,6 +85,10 @@ manual retag). If the re-read fails, the run exits successfully without moving
 The release captain records the promoted digest, selected build, stable tag, soak
 start/end time, and smoke evidence in the workflow summary or promotion PR.
 
+Promotion moves the `stable` tag; see
+[What happens to your hive after `stable` moves](release-channels.md#what-happens-to-your-hive-after-stable-moves)
+for when an individual hive follows that tag.
+
 ## CI enforcement
 
 The existing release build continues to publish immutable short-SHA tags and move
