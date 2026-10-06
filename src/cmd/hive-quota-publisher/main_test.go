@@ -290,3 +290,72 @@ func TestResolvePlan_PiNamesSelectedProviderWithoutProbingAnotherCLI(t *testing.
 		}
 	}
 }
+
+// #10598: the banked-reset redemption controller is default off, only the
+// local opt-in enables it, only for codex, and an external reading source
+// (which stands the publisher down) never gets a competing controller.
+func TestResolvePlan_BankedResetRedeemOptIn(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      map[string]string
+		publish  bool
+		redeem   bool
+		wantNote bool
+	}{
+		{"default off", map[string]string{"AGENT_BACKEND": "codex"}, true, false, false},
+		{"explicit off", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: "false"}, true, false, false},
+		{"opt in", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: "1"}, true, true, false},
+		{"opt in word", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: " Yes "}, true, true, false},
+		{"invalid value", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: "maybe"}, true, false, true},
+		{"non-codex backend", map[string]string{"AGENT_BACKEND": "claude", envAutoUseBankedReset: "on"}, true, false, true},
+		{"external reading source", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: "1", envReadingFile: "/r.json"}, false, false, false},
+		{"publisher opted out", map[string]string{"AGENT_BACKEND": "codex", envAutoUseBankedReset: "1", envPublish: "off"}, false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := resolvePlan(envMap(tc.env), fixedPoolDir("/pool"))
+			if p.publish != tc.publish || p.redeemBankedReset != tc.redeem || (p.redeemNote != "") != tc.wantNote {
+				t.Fatalf("plan = %+v, want publish=%v redeem=%v note=%v", p, tc.publish, tc.redeem, tc.wantNote)
+			}
+		})
+	}
+}
+
+func TestRun_AnnouncesBankedResetRedeem(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	var got plan
+	code := run(
+		envMap(map[string]string{"AGENT_BACKEND": "codex", "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR": "/pool", envAutoUseBankedReset: "1"}),
+		&stdout, &stderr, cancelledCtx,
+		func(_ context.Context, p plan) (<-chan struct{}, bool) { got = p; return closedDone(), true },
+	)
+	if code != 0 || !got.redeemBankedReset {
+		t.Fatalf("code=%d plan=%+v, want redemption enabled", code, got)
+	}
+	if !strings.Contains(stdout.String(), envAutoUseBankedReset+" is on") {
+		t.Fatalf("stdout %q must announce the opt-in", stdout.String())
+	}
+}
+
+func TestRun_ReportsIgnoredBankedResetOptIn(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		envMap(map[string]string{"AGENT_BACKEND": "codex", "HIVE_CONTRIBUTOR_QUOTA_POOL_DIR": "/pool", envAutoUseBankedReset: "nope"}),
+		&stdout, &stderr, cancelledCtx,
+		func(context.Context, plan) (<-chan struct{}, bool) { return closedDone(), true },
+	)
+	if code != 0 || !strings.Contains(stderr.String(), "must be true or false") {
+		t.Fatalf("code=%d stderr=%q, want the invalid opt-in reported", code, stderr.String())
+	}
+}
+
+func TestStartPublisher_BankedResetRedeemRunsAndStops(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	done, ok := startPublisher(ctx, plan{backend: "codex", poolDir: t.TempDir(), redeemBankedReset: true})
+	if !ok {
+		t.Fatal("codex must get a publisher")
+	}
+	cancel()
+	<-done
+}
