@@ -8,8 +8,9 @@ import "strings"
 // is the second, interactive host behind the same adapter (#8361 step 9,
 // answering #6899). Both default off and are independent of each other.
 type ExternalRunsConfig struct {
-	Flue FlueBindingConfig `yaml:"flue,omitempty" json:"flue,omitempty"`
-	OMP  OMPBindingConfig  `yaml:"omp,omitempty" json:"omp,omitempty"`
+	Flue       FlueBindingConfig       `yaml:"flue,omitempty" json:"flue,omitempty"`
+	OMP        OMPBindingConfig        `yaml:"omp,omitempty" json:"omp,omitempty"`
+	VibeKanban VibeKanbanBindingConfig `yaml:"vibe_kanban,omitempty" json:"vibe_kanban,omitempty"`
 }
 
 // OMPBindingConfig is the operator toggle for the report-only OMP workbench
@@ -25,6 +26,19 @@ type OMPBindingConfig struct {
 	// Mode is "shadow" (default when enabled) or "report-only".
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// WorkflowVersion pins the workbench workflow version a peer must declare.
+	WorkflowVersion string `yaml:"workflow_version,omitempty" json:"workflow_version,omitempty"`
+}
+
+// VibeKanbanBindingConfig is the operator toggle for the local vibe-kanban
+// host adapter. It is default off, shadow when enabled with no mode, and
+// dispatches only in report-only mode. The MCP command is local and is split
+// into argv without a shell by the adapter; it is never a credential.
+type VibeKanbanBindingConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`
+	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	MCPCommand      string `yaml:"mcp_command,omitempty" json:"mcp_command,omitempty"`
+	ProjectID       string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	StateDir        string `yaml:"state_dir,omitempty" json:"state_dir,omitempty"`
 	WorkflowVersion string `yaml:"workflow_version,omitempty" json:"workflow_version,omitempty"`
 }
 
@@ -107,6 +121,24 @@ func (f FlueBindingConfig) EffectiveMode() string {
 // EffectiveMode resolves the mode in force for the OMP host.
 func (o OMPBindingConfig) EffectiveMode() string {
 	return effectiveBindingMode(o.Enabled, o.Mode)
+}
+
+// EffectiveMode resolves the mode in force for the vibe-kanban host.
+func (v VibeKanbanBindingConfig) EffectiveMode() string {
+	return effectiveBindingMode(v.Enabled, v.Mode)
+}
+
+// VibeKanbanBindingMode is the nil-safe accessor for the vibe-kanban host.
+func (c *Config) VibeKanbanBindingMode() string {
+	if c == nil {
+		return FlueBindingModeOff
+	}
+	return c.Runs.External.VibeKanban.EffectiveMode()
+}
+
+// VibeKanbanBindingEnabled reports whether the vibe-kanban host is on.
+func (c *Config) VibeKanbanBindingEnabled() bool {
+	return c.VibeKanbanBindingMode() != FlueBindingModeOff
 }
 
 // OMPBindingMode is the nil-safe accessor for the OMP host's effective mode.

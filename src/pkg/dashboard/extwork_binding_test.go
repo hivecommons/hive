@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/extwork/flue"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
+	"github.com/hivecommons/hive/pkg/extwork/vibekanban"
 )
 
 const (
@@ -46,11 +47,17 @@ func TestCapabilityTokenMatchesAdapter(t *testing.T) {
 	if extExecEngineOMP != omp.Engine {
 		t.Fatalf("dashboard engine %q must equal omp.Engine %q", extExecEngineOMP, omp.Engine)
 	}
+	if capExtExecVibeKanban != vibekanban.Capability {
+		t.Fatalf("dashboard token %q must equal vibekanban.Capability %q", capExtExecVibeKanban, vibekanban.Capability)
+	}
+	if extExecEngineVibeKanban != vibekanban.Engine {
+		t.Fatalf("dashboard engine %q must equal vibekanban.Engine %q", extExecEngineVibeKanban, vibekanban.Engine)
+	}
 	advertised := map[string]bool{}
 	for _, c := range serverCapabilities() {
 		advertised[c] = true
 	}
-	for _, want := range []string{capExtExecFlue, capExtExecOMP} {
+	for _, want := range []string{capExtExecFlue, capExtExecOMP, capExtExecVibeKanban} {
 		if !advertised[want] {
 			t.Fatalf("hub must advertise the %s token", want)
 		}
@@ -154,7 +161,7 @@ func TestExternalExecSeam(t *testing.T) {
 
 func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 	s := covApiServer(t)
-	s.deps.ExternalExec = &fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true, extExecEngineOMP: true}}
+	s.deps.ExternalExec = &fakeExternalExec{engines: map[string]bool{extExecEngineFlue: true, extExecEngineOMP: true, extExecEngineVibeKanban: true}}
 	h := &ContributeWSHub{logger: covBLogger(), server: s}
 	if got := extExecEngineFromIssueMap(map[string]any{"title": "x"}); got != "" {
 		t.Fatalf("plain issue engine = %q", got)
@@ -222,5 +229,21 @@ func TestExtExecAdmissibleRefusesNeverDowngrades(t *testing.T) {
 	}
 	if ok, _ := h.extExecAdmissible(extExecEngineOMP, ompCap); !ok {
 		t.Fatal("turning flue off must not turn omp off")
+	}
+
+	vkCap := &ContributorConnection{capabilities: &ContributorCapabilities{RelayCapabilities: []string{capExtExecVibeKanban}}}
+	if ok, reason := h.extExecAdmissible(extExecEngineVibeKanban, vkCap); ok || !strings.Contains(reason, "disabled") {
+		t.Fatalf("vibe-kanban disabled = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.VibeKanban.Enabled = true
+	if ok, reason := h.extExecAdmissible(extExecEngineVibeKanban, vkCap); ok || !strings.Contains(reason, "does not dispatch") {
+		t.Fatalf("vibe-kanban shadow = %v %q", ok, reason)
+	}
+	s.deps.Config.Runs.External.VibeKanban.Mode = config.FlueBindingModeReportOnly
+	if ok, reason := h.extExecAdmissible(extExecEngineVibeKanban, withCap); ok || !strings.Contains(reason, capExtExecVibeKanban) {
+		t.Fatalf("vibe-kanban item to flue-only relay = %v %q", ok, reason)
+	}
+	if ok, reason := h.extExecAdmissible(extExecEngineVibeKanban, vkCap); !ok {
+		t.Fatalf("vibe-kanban positive control refused: %q", reason)
 	}
 }
