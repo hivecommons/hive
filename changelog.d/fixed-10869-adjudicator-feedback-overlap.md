@@ -1,0 +1,1 @@
+- Dashboard: the navbar's upcoming-agent cards (e.g. the adjudicator) no longer get cut off and run into the bug-report button — the right-hand chip column now keeps its full width and the cards shrink instead (#10869).
