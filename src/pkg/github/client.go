@@ -1185,6 +1185,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Exempt++
 			continue
 		}
+		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
+			breakdown.Filtered++
+			breakdown.ReporterConfirmation++
+			continue
+		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
@@ -3172,16 +3177,17 @@ type RepoWorkBreakdown struct {
 }
 
 type RepoIssueBreakdown struct {
-	Actionable          int `json:"actionable"`
-	Hold                int `json:"hold"`
-	HiveAdvisory        int `json:"hive_advisory"`
-	DependencyDashboard int `json:"dependency_dashboard"`
-	Filtered            int `json:"filtered"`
-	NeedsHuman          int `json:"needs_human,omitempty"`
-	NeedsDirection      int `json:"needs_direction,omitempty"`
-	NeedsDecision       int `json:"needs_decision,omitempty"`
-	NeedsSpec           int `json:"needs_spec,omitempty"`
-	Exempt              int `json:"exempt,omitempty"`
+	Actionable           int `json:"actionable"`
+	Hold                 int `json:"hold"`
+	HiveAdvisory         int `json:"hive_advisory"`
+	DependencyDashboard  int `json:"dependency_dashboard"`
+	Filtered             int `json:"filtered"`
+	NeedsHuman           int `json:"needs_human,omitempty"`
+	NeedsDirection       int `json:"needs_direction,omitempty"`
+	NeedsDecision        int `json:"needs_decision,omitempty"`
+	NeedsSpec            int `json:"needs_spec,omitempty"`
+	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
+	Exempt               int `json:"exempt,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter

@@ -17,8 +17,8 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 | `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human`, `needs-decision`, or `needs-direction`; pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `needs-human`, `needs-decision`, and `needs-direction` when present; adds `approved-direction`; never removes `hold`. |
 | `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human`, `needs-decision`, or `needs-direction`; pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `needs-human`, `needs-decision`, and `needs-direction` when present; adds `approved-direction`; never removes `hold`. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
-| `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` when present. |
-| `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | None. |
+| `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` and `needs-reporter-confirmation` when present. |
+| `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | Removes `needs-reporter-confirmation` when present. |
 | `/help-wanted` | Adds the `help wanted` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `help wanted`. |
 | `/good-first-issue` | Adds the `good first issue` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `good first issue`. |
 | `/hacktober-fest` | Adds the `hacktober-fest` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `hacktober-fest`. |
@@ -67,8 +67,10 @@ posting, so reruns and sweep/action overlap do not duplicate replies or repeat
 label changes.
 
 The `/fixed` workflow uses the reporter-confirmation labels and comments
-described above. `/reopen`, label-helper, and assignment-helper commands are
-single-comment workflows; repeat comments can repeat their documented action.
+described above. While Hive waits, issues carry `needs-reporter-confirmation`
+(and may also carry `needs-human` when the reporter is a maintainer). `/reopen`,
+label-helper, and assignment-helper commands are single-comment workflows;
+repeat comments can repeat their documented action.
 
 ## Label-driven repositories
 

@@ -35,6 +35,7 @@ DRY_RUN="${DRY_RUN:-0}"
 
 LIKELY_DONE_LABEL="hive/likely-done"
 CONFIRMED_LABEL="hive: reporter-confirmed"
+REPORTER_CONFIRMATION_LABEL="needs-reporter-confirmation"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -179,7 +180,7 @@ marker = sys.argv[1]
 print("1" if any(marker in (c.get("body") or "") for c in json.load(sys.stdin)) else "0")' "$sweep_marker" <<<"$comments_json")
 
 waiting=0
-if grep -qxF "$LIKELY_DONE_LABEL" <<<"$labels" || [ "$sweep_asked" = "1" ]; then
+if grep -qxF "$LIKELY_DONE_LABEL" <<<"$labels" || grep -qxF "$REPORTER_CONFIRMATION_LABEL" <<<"$labels" || [ "$sweep_asked" = "1" ]; then
   waiting=1
 fi
 
@@ -241,6 +242,9 @@ write -X POST "repos/${REPO}/labels" -f "name=${CONFIRMED_LABEL}" -f "color=0e8a
 write -X POST "repos/${REPO}/issues/${ISSUE}/labels" -f "labels[]=${CONFIRMED_LABEL}" >/dev/null
 if grep -qxF "$LIKELY_DONE_LABEL" <<<"$labels"; then
   write -X DELETE "repos/${REPO}/issues/${ISSUE}/labels/hive%2Flikely-done" >/dev/null || true
+fi
+if grep -qxF "$REPORTER_CONFIRMATION_LABEL" <<<"$labels"; then
+  write -X DELETE "repos/${REPO}/issues/${ISSUE}/labels/${REPORTER_CONFIRMATION_LABEL}" >/dev/null || true
 fi
 post_comment "$close_body"
 write -X PATCH "repos/${REPO}/issues/${ISSUE}" -f state=closed -f state_reason=completed >/dev/null
