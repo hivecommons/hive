@@ -227,3 +227,54 @@ func TestVersionReportsPodmanRegistryTracking(t *testing.T) {
 		t.Fatalf("channel response = %q release=%+v, want candidate resolved", out.Channel, out.ReleaseStatus.Channel)
 	}
 }
+
+// TestVersionReleaseStatusRootlessPodmanWithoutSelfImage pins #10812: a
+// standalone Podman spoke whose hive.env lacks HIVE_SELF_IMAGE and which has no
+// hub configured must not be told its hub is unreachable, must carry the
+// built-from branch the version menu shows, and must explain how to restore
+// the missing image reference.
+func TestVersionReleaseStatusRootlessPodmanWithoutSelfImage(t *testing.T) {
+	oldVersionSource := versionImageSource
+	oldImageSource := selfDeploymentImageSourceForDashboard
+	origBranch := versionBranch
+	versionImageSource = func() string { return "" }
+	selfDeploymentImageSourceForDashboard = func() string { return "unknown" }
+	versionBranch = "v6"
+	t.Setenv("HIVE_DEPLOYMENT_RUNTIME", "podman-quadlet")
+	t.Setenv("HIVE_DEPLOYMENT_PODMAN_MODE", "rootless")
+	t.Setenv("HIVE_SELF_IMAGE", "")
+	t.Cleanup(func() {
+		versionImageSource = oldVersionSource
+		selfDeploymentImageSourceForDashboard = oldImageSource
+		versionBranch = origBranch
+	})
+
+	srv := NewServerWithAuth(0, "token", slog.Default())
+	srv.RegisterAPI(&Dependencies{Config: &config.Config{}, Logger: slog.Default()})
+	rec := doGet(srv, "/api/version")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/version status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ReleaseStatus map[string]json.RawMessage `json:"releaseStatus"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := out.ReleaseStatus["hubReachable"]; ok {
+		t.Fatalf("hubReachable present with no hub heartbeat: %s", rec.Body.String())
+	}
+	var ch ReleaseChannelStatus
+	if err := json.Unmarshal(out.ReleaseStatus["channel"], &ch); err != nil {
+		t.Fatalf("decode channel: %v", err)
+	}
+	if ch.Branch != "v6" {
+		t.Fatalf("channel.branch = %q, want v6", ch.Branch)
+	}
+	if ch.Resolved || ch.Channel != "" {
+		t.Fatalf("branch must not be presented as a resolved release channel: %+v", ch)
+	}
+	if ch.SelectorReason != "podman-self-hosted" || !strings.Contains(ch.SelectorDetail, "HIVE_SELF_IMAGE") {
+		t.Fatalf("selector = %q / %q, want podman guidance naming HIVE_SELF_IMAGE", ch.SelectorReason, ch.SelectorDetail)
+	}
+}
