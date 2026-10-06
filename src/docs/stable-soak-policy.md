@@ -69,7 +69,10 @@ later hourly run, `stable` moves again whenever another newer build crosses the
 Two promotion runs never execute at the same time: `promote-stable.yml` declares
 a GitHub Actions `concurrency` group (`stable-promotion-v5`,
 `cancel-in-progress: false`), so a scheduled or manually dispatched run waits
-for any in-progress run to finish before it starts. GitHub serialises the
+for any in-progress run to finish before it starts. Because repository-wide
+`schedule:` delivery is starved, the workflow also triggers on completion of
+`Tagged Release` (`workflow_run`, v5 only); a `gate` job skips the run when
+another ran within the last 30 minutes. GitHub serialises the
 runs; the workflow itself does not need an atomic primitive. As a second,
 independent guard, immediately before publishing the run re-reads each image's
 current `stable` generation and requires it to be unchanged from the decision
