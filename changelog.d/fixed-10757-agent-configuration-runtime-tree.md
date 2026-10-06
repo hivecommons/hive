@@ -1,0 +1,1 @@
+- The directory tree in `src/docs/agent-configuration.md` now says `/data/hive.yaml.runtime` is the boot-time source of truth on Kubernetes too, with the ConfigMap only seeding the first boot ([#10757](https://github.com/hivecommons/hive/issues/10757)).
