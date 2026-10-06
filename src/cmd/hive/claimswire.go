@@ -20,8 +20,9 @@ import (
 // The ledger itself lives in pkg/claims; the dashboard owns the relay seam
 // (auto-claim on lease, exclusion in selectTask, takeover → yank). This file
 // wires the two remaining producers and consumers that only cmd/hive can see:
-//   - the scheduler: withhold claimed issues from kicks, and record an agent
-//     claim for every issue a kick hands one of the hive's own agents; and
+//   - the scheduler: withhold claimed and kick-listed issues from kicks, list
+//     every issue a kick hands one of the hive's own agents, and record the
+//     agent claim on its first start signal (#10527); and
 //   - GitHub: post the claim / takeover / release comments and labels so a
 //     human, a clanker polling the issue, or another hive can see the hold.
 
@@ -136,9 +137,10 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an
-// issue with a live claim held by anyone is withheld from kicks. Agent claims
-// are included on purpose — the agent that holds it already has the kick, and
-// a second agent must not be handed the same issue.
+// issue with a live claim held by anyone, or a live kick listing (#10527), is
+// withheld from kicks. Agent claims and listings are included on purpose — the
+// agent that holds it already has the kick, and a second agent must not be
+// handed the same issue.
 func claimsInflightLookup(ledger *claims.Ledger, org string) scheduler.InflightLookup {
 	if ledger == nil {
 		return nil
@@ -151,10 +153,17 @@ func claimsInflightLookup(ledger *claims.Ledger, org string) scheduler.InflightL
 		if !ok && org != "" && !strings.Contains(issue.Repo, "/") {
 			c, ok = ledger.Lookup(org+"/"+issue.Repo, issue.Number)
 		}
-		if !ok {
-			return "", false
+		if ok {
+			return fmt.Sprintf("claimed by %s (%s) until %s", c.Holder, c.Kind, c.ExpiresAt.UTC().Format(time.RFC3339)), true
 		}
-		return fmt.Sprintf("claimed by %s (%s) until %s", c.Holder, c.Kind, c.ExpiresAt.UTC().Format(time.RFC3339)), true
+		li, ok := ledger.Listed(issue.Repo, issue.Number)
+		if !ok && org != "" && !strings.Contains(issue.Repo, "/") {
+			li, ok = ledger.Listed(org+"/"+issue.Repo, issue.Number)
+		}
+		if ok {
+			return fmt.Sprintf("listed in a live kick to %s until %s", li.Holder, li.ExpiresAt.UTC().Format(time.RFC3339)), true
+		}
+		return "", false
 	}
 }
 
@@ -179,16 +188,19 @@ func composeInflight(lookups ...scheduler.InflightLookup) scheduler.InflightLook
 	}
 }
 
-// recordAgentKickClaims records an agent claim for every issue a delivered
-// kick named. The agent's own earlier claim renews; a lower-ranked holder
-// (contributor / external) is taken over and told to stop; a human's claim
-// is left alone — the scheduler already withheld it, so a ref reaching here
-// under a human claim is the rare race, logged and not escalated.
+// recordAgentKickListings records a kick listing for every issue a delivered
+// kick named (#10527). A listing posts nothing on GitHub and is not a claim
+// attempt: a kick names up to governor.kick_limits.max_issues issues and the
+// agent starts on few of them, so claiming the whole list put a 🔒 comment on
+// every listed issue every agent TTL and made the escalation gate count
+// issues nobody started. The listing holds the issue back from other agents
+// and relay contributors while the kick is live; the agent's first start
+// signal on it (recordAgentStart) records the real claim.
 //
 // Kick refs carry github.Issue.Repo, which is the bare project.repos entry on
 // a default config; the relay keys claims on owner/repo, so the repo is
 // qualified with org here or the two sides would never see each other.
-func recordAgentKickClaims(dashSrv *dashboard.Server, org, agentName string, issueRefs []string, logger *slog.Logger) {
+func recordAgentKickListings(dashSrv *dashboard.Server, org, agentName string, issueRefs []string, logger *slog.Logger) {
 	ledger := dashSrv.IssueClaims()
 	if ledger == nil || agentName == "" {
 		return
@@ -198,21 +210,44 @@ func recordAgentKickClaims(dashSrv *dashboard.Server, org, agentName string, iss
 		if !ok || !ref.IsGitHubIssue() {
 			continue
 		}
-		repo := ref.Repo
-		if org != "" && !strings.Contains(repo, "/") {
-			repo = org + "/" + repo
-		}
-		res, err := ledger.Claim(claims.Request{
-			Repo: repo, Issue: ref.Number,
-			Holder: agentName, HolderID: agentName, Kind: claims.KindAgent,
-		})
-		if err != nil && logger != nil {
-			logger.Warn("issue-claims: agent claim not recorded", "agent", agentName, "issue", raw, "error", err)
-			continue
-		}
-		if res.Outcome == claims.OutcomeRefused && logger != nil {
-			logger.Warn("issue-claims: kick named an issue a higher-ranked holder claims",
-				"agent", agentName, "issue", raw, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
+		if _, listed := ledger.MarkListed(qualifyClaimRepo(org, ref.Repo), ref.Number, agentName); !listed && logger != nil {
+			logger.Debug("issue-claims: kick named an issue someone else holds; not listed", "agent", agentName, "issue", raw)
 		}
 	}
+}
+
+// recordAgentStart is the start-signal seam (#10527): the agent's own request
+// shows it working the issue — a comment, label or claim request, or a
+// pull-request request naming it. The first such signal on an issue a kick
+// listed to the agent records the agent claim (comment and label included)
+// that the escalation gate counts; a later one renews it. A signal on an
+// issue no kick listed to the agent records nothing.
+func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue int, signal string, logger *slog.Logger) {
+	if ledger == nil || agentName == "" || issue <= 0 {
+		return
+	}
+	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName)
+	if logger == nil || !started {
+		return
+	}
+	if err != nil {
+		logger.Warn("issue-claims: agent claim not recorded", "agent", agentName, "repo", repo, "issue", issue, "signal", signal, "error", err)
+		return
+	}
+	switch res.Outcome {
+	case claims.OutcomeRefused, claims.OutcomeHeld:
+		logger.Warn("issue-claims: agent started an issue another holder claims",
+			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
+	case claims.OutcomeClaimed, claims.OutcomeTakenOver:
+		logger.Info("issue-claims: agent claim recorded on start signal", "agent", agentName, "issue", res.Claim.Key(), "signal", signal)
+	}
+}
+
+// qualifyClaimRepo qualifies a bare repo name with org.
+func qualifyClaimRepo(org, repo string) string {
+	repo = strings.TrimSpace(repo)
+	if org != "" && repo != "" && !strings.Contains(repo, "/") {
+		return org + "/" + repo
+	}
+	return repo
 }

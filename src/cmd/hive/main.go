@@ -3347,8 +3347,14 @@ func (b *boot) bootSupervision() {
 	// the pr-request watcher narrates opened PRs into the session.
 	// #8380: the worker-claim ledger is a second in-flight source — an issue a
 	// human, contributor or another agent holds is withheld from kicks too.
+	// #10527: a free issue an agent already claimed escalate_after_claims
+	// times with nothing moving is withheld and escalated instead of
+	// re-claimed, and a likely-done issue an agent already verified after the
+	// merge is withheld until the reporter or a maintainer acts.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
-		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)))
+		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org),
+		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
+		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -6745,9 +6751,11 @@ func runEvalCycle(
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
 				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-				// #8380: the kicked agent now holds these issues; record the
-				// claims so contributors and other hives back off.
-				recordAgentKickClaims(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+				// #8380/#10527: list these issues for the kicked agent so
+				// contributors and other agents back off while the kick is
+				// live; the claim itself is recorded on the agent's first
+				// start signal (recordAgentStart), not here.
+				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
 
 				// Log token state at time of kick for cost attribution
 				if tokenCollector != nil {

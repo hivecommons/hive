@@ -40,8 +40,8 @@ const (
 	// KindHuman is a person acting directly: dashboard, hivectl, an `/claim`
 	// comment, or their own IDE/CLI session running under their login.
 	KindHuman Kind = "human"
-	// KindAgent is one of this hive's own agents, claimed by the hub when the
-	// scheduler kicks it with the issue in IssueRefs.
+	// KindAgent is one of this hive's own agents, claimed by the hub on the
+	// agent's first start signal on an issue a kick listed to it (#10527).
 	KindAgent Kind = "agent"
 	// KindContributor is a relay contributor ("clanker") the hub dispatched
 	// the issue to over the contribute WebSocket.
@@ -122,6 +122,75 @@ func (c Claim) Expired(now time.Time) bool { return !now.Before(c.ExpiresAt) }
 
 // Key builds the canonical work-item key.
 func Key(repo string, issue int) string { return repo + "#" + fmt.Sprint(issue) }
+
+// Attempt is one agent claim on an issue, remembered after the claim itself
+// ends so the escalation gate (#10527) can tell an agent re-claiming an issue
+// it already held, with nothing moving in between, from a healthy long fix.
+type Attempt struct {
+	// Holder is the agent that claimed.
+	Holder string `json:"holder"`
+	// ClaimedAt is when the claim was taken.
+	ClaimedAt time.Time `json:"claimed_at"`
+	// EndedAt is when the claim ended; zero while it is live.
+	EndedAt time.Time `json:"ended_at,omitempty"`
+	// Ended is how it ended: "expired", a release reason, or "taken over by
+	// <holder>".
+	Ended string `json:"ended,omitempty"`
+}
+
+// AttemptRetention is how long an agent's claim attempts are remembered. A
+// run of claims spread over more than this is not treated as one stall.
+const AttemptRetention = 7 * 24 * time.Hour
+
+// Stall is the most recent run of claims one agent made on an issue that is
+// free again — the shape the escalation gate (#10527) checks for progress.
+type Stall struct {
+	Repo   string
+	Issue  int
+	Holder string
+	// Attempts are the holder's trailing claims on the issue, oldest first.
+	Attempts []Attempt
+}
+
+// Key is the canonical "owner/repo#N" key of the stalled issue.
+func (s Stall) Key() string { return Key(s.Repo, s.Issue) }
+
+// Since is when the run began. Progress on the issue after it breaks the run.
+func (s Stall) Since() time.Time {
+	if len(s.Attempts) == 0 {
+		return time.Time{}
+	}
+	return s.Attempts[0].ClaimedAt
+}
+
+// Listing is a kick naming an issue to one of the hive's agents (#10527).
+//
+// A kick lists up to governor.kick_limits.max_issues issues, and the agent
+// starts on at most a few of them, so a listing is not a claim: it posts no
+// GitHub comment and is not an Attempt. It holds the issue back from other
+// agents and relay contributors for DefaultListedTTL, and lets the agent's
+// first start signal on the issue (a comment, a label or claim request, a
+// pull-request request) turn into a real claim for as long as the agent's
+// claim TTL after the kick.
+type Listing struct {
+	Repo   string `json:"repo"`
+	Issue  int    `json:"issue"`
+	Holder string `json:"holder"`
+	// ListedAt is when the kick was delivered.
+	ListedAt time.Time `json:"listed_at"`
+	// ExpiresAt is when the hold on other workers lapses.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Key is the canonical "owner/repo#N" key of the listed issue.
+func (li Listing) Key() string { return Key(li.Repo, li.Issue) }
+
+// Expired reports whether the listing's hold has lapsed at now.
+func (li Listing) Expired(now time.Time) bool { return !now.Before(li.ExpiresAt) }
+
+// DefaultListedTTL is how long a kick listing holds an issue back from other
+// workers. Short on purpose: it covers the kick being live, not the work.
+const DefaultListedTTL = 30 * time.Minute
 
 // Request is one attempt to claim an issue.
 type Request struct {
@@ -264,6 +333,14 @@ func (p Policy) ttlFor(k Kind, requested time.Duration) time.Duration {
 type Ledger struct {
 	mu     sync.Mutex
 	claims map[string]Claim
+	// attempts holds every agent claim per issue key, oldest first, pruned
+	// after AttemptRetention.
+	attempts map[string][]Attempt
+	// escalated maps an issue key to the Since of the last stall escalated
+	// on it, so one run is escalated once however often it is observed.
+	escalated map[string]time.Time
+	// listed holds the kick listings (#10527) by issue key.
+	listed map[string]Listing
 	path   string
 	policy Policy
 	hooks  Hooks
@@ -282,11 +359,14 @@ func New(path string, policy Policy, hooks Hooks) (*Ledger, error) {
 		policy = DefaultPolicy()
 	}
 	l := &Ledger{
-		claims: map[string]Claim{},
-		path:   path,
-		policy: policy,
-		hooks:  hooks,
-		now:    time.Now,
+		claims:    map[string]Claim{},
+		attempts:  map[string][]Attempt{},
+		escalated: map[string]time.Time{},
+		listed:    map[string]Listing{},
+		path:      path,
+		policy:    policy,
+		hooks:     hooks,
+		now:       time.Now,
 	}
 	err := l.load()
 	return l, err
@@ -340,6 +420,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 	case !held:
 		l.claims[key] = next
 		res = Result{Outcome: OutcomeClaimed, Claim: next}
+		l.recordAttemptLocked(next)
 	case sameHolder(prev, req):
 		prev.ExpiresAt = now.Add(ttl)
 		l.claims[key] = prev
@@ -350,12 +431,17 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		l.claims[key] = next
 		p := prev
 		res = Result{Outcome: OutcomeTakenOver, Claim: next, Previous: &p}
+		l.endAttemptLocked(prev, "taken over by "+req.Holder, now)
+		l.recordAttemptLocked(next)
 	case req.Kind.rank() == prev.Kind.rank():
 		p := prev
 		res = Result{Outcome: OutcomeHeld, Claim: prev, Previous: &p}
 	default:
 		p := prev
 		res = Result{Outcome: OutcomeRefused, Claim: prev, Previous: &p}
+	}
+	if res.Outcome.Changed() {
+		delete(l.listed, key)
 	}
 	var saveErr error
 	if res.Outcome.Changed() || len(expired) > 0 {
@@ -412,7 +498,8 @@ func (l *Ledger) Release(repo string, issue int, by string, byKind Kind, reason 
 		return Claim{}, false, nil
 	}
 	l.mu.Lock()
-	expired := l.expireLocked(l.now())
+	now := l.now()
+	expired := l.expireLocked(now)
 	key := Key(strings.TrimSpace(repo), issue)
 	c, ok := l.claims[key]
 	if !ok {
@@ -431,6 +518,7 @@ func (l *Ledger) Release(repo string, issue int, by string, byKind Kind, reason 
 		return c, false, fmt.Errorf("claims: %s is held by %s (%s)", key, c.Holder, c.Kind)
 	}
 	delete(l.claims, key)
+	l.endAttemptLocked(c, reason, now)
 	err := l.saveLocked()
 	hooks := l.hooks
 	l.mu.Unlock()
@@ -452,6 +540,7 @@ func (l *Ledger) ForceRelease(repo string, issue int, reason string) (Claim, boo
 	c, ok := l.claims[key]
 	if ok {
 		delete(l.claims, key)
+		l.endAttemptLocked(c, reason, l.now())
 		_ = l.saveLocked()
 	}
 	hooks := l.hooks
@@ -471,6 +560,7 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 		return nil
 	}
 	l.mu.Lock()
+	now := l.now()
 	var out []Claim
 	for k, c := range l.claims {
 		if c.HolderID != holderID {
@@ -481,6 +571,7 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 		}
 		out = append(out, c)
 		delete(l.claims, k)
+		l.endAttemptLocked(c, reason, now)
 	}
 	if len(out) > 0 {
 		_ = l.saveLocked()
@@ -532,6 +623,12 @@ func (l *Ledger) HeldKeys(exceptHolderID string) map[string]bool {
 			continue
 		}
 		if exceptHolderID != "" && c.HolderID == exceptHolderID {
+			continue
+		}
+		out[k] = true
+	}
+	for k, li := range l.listed {
+		if li.Expired(now) || (exceptHolderID != "" && li.Holder == exceptHolderID) {
 			continue
 		}
 		out[k] = true
@@ -596,9 +693,228 @@ func (l *Ledger) expireLocked(now time.Time) []Claim {
 		if c.Expired(now) {
 			dropped = append(dropped, c)
 			delete(l.claims, k)
+			l.endAttemptLocked(c, "expired", c.ExpiresAt)
 		}
 	}
+	l.pruneLocked(now)
 	return dropped
+}
+
+// ---- attempt history (#10527) ----
+
+// recordAttemptLocked remembers a new agent claim. Only agent claims are
+// counted: the gate exists to stop the hive's own agents spinning on an issue,
+// and a person's claim is never second-guessed.
+func (l *Ledger) recordAttemptLocked(c Claim) {
+	if c.Kind != KindAgent {
+		return
+	}
+	key := c.Key()
+	l.attempts[key] = append(l.attempts[key], Attempt{Holder: c.Holder, ClaimedAt: c.ClaimedAt})
+}
+
+// endAttemptLocked records how an agent claim ended on its attempt entry.
+func (l *Ledger) endAttemptLocked(c Claim, reason string, at time.Time) {
+	if c.Kind != KindAgent {
+		return
+	}
+	list := l.attempts[c.Key()]
+	for i := len(list) - 1; i >= 0; i-- {
+		if list[i].Holder == c.Holder && list[i].ClaimedAt.Equal(c.ClaimedAt) {
+			if list[i].EndedAt.IsZero() {
+				list[i].EndedAt, list[i].Ended = at, reason
+			}
+			return
+		}
+	}
+}
+
+// pruneLocked forgets attempts and escalations older than AttemptRetention.
+func (l *Ledger) pruneLocked(now time.Time) {
+	cutoff := now.Add(-AttemptRetention)
+	for k, list := range l.attempts {
+		keep := list[:0]
+		for _, a := range list {
+			if a.ClaimedAt.After(cutoff) {
+				keep = append(keep, a)
+			}
+		}
+		if len(keep) == 0 {
+			delete(l.attempts, k)
+			continue
+		}
+		l.attempts[k] = keep
+	}
+	for k, since := range l.escalated {
+		if !since.After(cutoff) {
+			delete(l.escalated, k)
+		}
+	}
+	window := l.listingWindow()
+	for k, li := range l.listed {
+		if li.Expired(now) && !now.Before(li.ListedAt.Add(window)) {
+			delete(l.listed, k)
+		}
+	}
+}
+
+// ---- kick listings (#10527) ----
+
+// listingWindow is how long after a kick the listed agent's first start
+// signal still becomes a claim: the agent claim TTL, the hold a kick used to
+// take on every issue it named.
+func (l *Ledger) listingWindow() time.Duration {
+	return l.policy.ttlFor(KindAgent, 0)
+}
+
+// MarkListed records that a delivered kick named the issue to the agent
+// holder. It posts nothing and counts as no claim. An issue under a live claim
+// or a live listing for another agent is left alone and reports false.
+func (l *Ledger) MarkListed(repo string, issue int, holder string) (Listing, bool) {
+	repo, holder = strings.TrimSpace(repo), strings.TrimSpace(holder)
+	if l == nil || repo == "" || issue <= 0 || holder == "" {
+		return Listing{}, false
+	}
+	l.mu.Lock()
+	now := l.now()
+	expired := l.expireLocked(now)
+	key := Key(repo, issue)
+	_, held := l.claims[key]
+	prev, listed := l.listed[key]
+	var li Listing
+	ok := !held && (!listed || prev.Expired(now) || prev.Holder == holder)
+	if ok {
+		li = Listing{Repo: repo, Issue: issue, Holder: holder, ListedAt: now, ExpiresAt: now.Add(DefaultListedTTL)}
+		l.listed[key] = li
+	}
+	if ok || len(expired) > 0 {
+		_ = l.saveLocked()
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	fireExpired(hooks, expired)
+	return li, ok
+}
+
+// Listed returns the live kick listing on an issue, if any.
+func (l *Ledger) Listed(repo string, issue int) (Listing, bool) {
+	if l == nil {
+		return Listing{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	li, ok := l.listed[Key(strings.TrimSpace(repo), issue)]
+	if !ok || li.Expired(l.now()) {
+		return Listing{}, false
+	}
+	return li, true
+}
+
+// ClaimOnStart turns the agent's first start signal on an issue into a real
+// agent claim — comment, label and Attempt included — when a kick listed the
+// issue to that agent within the listing window, or renews the agent's own
+// live claim. Any other start signal (a comment on an issue nobody kicked the
+// agent with, a request about its own pull request) reports false and
+// changes nothing.
+func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, bool, error) {
+	repo, agent = strings.TrimSpace(repo), strings.TrimSpace(agent)
+	if l == nil || repo == "" || issue <= 0 || agent == "" {
+		return Result{}, false, nil
+	}
+	l.mu.Lock()
+	now := l.now()
+	key := Key(repo, issue)
+	c, held := l.claims[key]
+	li, listed := l.listed[key]
+	ok := (held && !c.Expired(now) && c.Kind == KindAgent && c.Holder == agent) ||
+		(listed && li.Holder == agent && now.Before(li.ListedAt.Add(l.listingWindow())))
+	l.mu.Unlock()
+	if !ok {
+		return Result{}, false, nil
+	}
+	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent})
+	return res, true, err
+}
+
+// LastAttempt returns the most recent agent claim recorded on the issue, by
+// any agent, within AttemptRetention.
+func (l *Ledger) LastAttempt(repo string, issue int) (Attempt, bool) {
+	if l == nil {
+		return Attempt{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	list := l.attempts[Key(strings.TrimSpace(repo), issue)]
+	if len(list) == 0 {
+		return Attempt{}, false
+	}
+	return list[len(list)-1], true
+}
+
+// Stall reports the most recent run of threshold claims one agent made on the
+// issue, when the issue has no live claim. Of several agents with such a run
+// it returns the one whose run began last: if anything moved since that run
+// began, it moved during every other agent's run too. threshold <= 0, a live
+// claim, or no agent with threshold remembered claims reports false. Lapsed
+// claims are expired first, so the run's last attempt carries its end.
+func (l *Ledger) Stall(repo string, issue, threshold int) (Stall, bool) {
+	if l == nil || threshold <= 0 {
+		return Stall{}, false
+	}
+	repo = strings.TrimSpace(repo)
+	key := Key(repo, issue)
+	l.mu.Lock()
+	expired := l.expireLocked(l.now())
+	if len(expired) > 0 {
+		_ = l.saveLocked()
+	}
+	var best Stall
+	if _, held := l.claims[key]; !held {
+		best = l.stallLocked(repo, issue, threshold)
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	fireExpired(hooks, expired)
+	return best, best.Attempts != nil
+}
+
+func (l *Ledger) stallLocked(repo string, issue, threshold int) Stall {
+	byHolder := map[string][]Attempt{}
+	for _, a := range l.attempts[Key(repo, issue)] {
+		byHolder[a.Holder] = append(byHolder[a.Holder], a)
+	}
+	var best Stall
+	for holder, list := range byHolder {
+		if len(list) < threshold {
+			continue
+		}
+		run := append([]Attempt(nil), list[len(list)-threshold:]...)
+		if best.Attempts == nil || run[0].ClaimedAt.After(best.Since()) ||
+			(run[0].ClaimedAt.Equal(best.Since()) && holder < best.Holder) {
+			best = Stall{Repo: repo, Issue: issue, Holder: holder, Attempts: run}
+		}
+	}
+	return best
+}
+
+// MarkEscalated records that the stall s was escalated and reports whether
+// this call was the first for that run, so the escalation fires once per run
+// however many times the gate observes it. A later run on the same issue (it
+// began after s) escalates again.
+func (l *Ledger) MarkEscalated(s Stall) bool {
+	if l == nil || len(s.Attempts) == 0 {
+		return false
+	}
+	key := s.Key()
+	since := s.Since()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if prev, ok := l.escalated[key]; ok && prev.Equal(since) {
+		return false
+	}
+	l.escalated[key] = since
+	_ = l.saveLocked()
+	return true
 }
 
 // ---- persistence ----
@@ -606,6 +922,12 @@ func (l *Ledger) expireLocked(now time.Time) []Claim {
 type persisted struct {
 	Version int     `json:"version"`
 	Claims  []Claim `json:"claims"`
+	// Attempts and Escalated carry the #10527 escalation history; both are
+	// absent from files written before it, which load as no history.
+	Attempts  map[string][]Attempt `json:"attempts,omitempty"`
+	Escalated map[string]time.Time `json:"escalated,omitempty"`
+	// Listed carries the kick listings (#10527).
+	Listed []Listing `json:"listed,omitempty"`
 }
 
 const persistVersion = 1
@@ -631,6 +953,21 @@ func (l *Ledger) load() error {
 		}
 		l.claims[c.Key()] = c
 	}
+	for k, list := range p.Attempts {
+		for _, a := range list {
+			if a.Holder != "" && !a.ClaimedAt.IsZero() {
+				l.attempts[k] = append(l.attempts[k], a)
+			}
+		}
+	}
+	for k, since := range p.Escalated {
+		l.escalated[k] = since
+	}
+	for _, li := range p.Listed {
+		if li.Repo != "" && li.Issue > 0 && li.Holder != "" {
+			l.listed[li.Key()] = li
+		}
+	}
 	return nil
 }
 
@@ -646,6 +983,16 @@ func (l *Ledger) saveLocked() error {
 		p.Claims = append(p.Claims, c)
 	}
 	sort.Slice(p.Claims, func(i, j int) bool { return p.Claims[i].Key() < p.Claims[j].Key() })
+	if len(l.attempts) > 0 {
+		p.Attempts = l.attempts
+	}
+	if len(l.escalated) > 0 {
+		p.Escalated = l.escalated
+	}
+	for _, li := range l.listed {
+		p.Listed = append(p.Listed, li)
+	}
+	sort.Slice(p.Listed, func(i, j int) bool { return p.Listed[i].Key() < p.Listed[j].Key() })
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err

@@ -38,6 +38,29 @@ type ClaimsConfig struct {
 	// Label adds/removes the claimed and preempted labels. Nil defaults to on
 	// when claims are enabled.
 	Label *bool `yaml:"label,omitempty" json:"label,omitempty"`
+	// EscalateAfterClaims is how many claims one agent may make on an issue
+	// with nothing moving in between (no linked PR, referencing commit,
+	// label/assignee change or close/reopen) before the next is refused and
+	// the issue is labelled needs-human with one summary comment
+	// (hivecommons/hive#10527). 0 uses DefaultClaimEscalateAfter; negative
+	// turns the gate off.
+	EscalateAfterClaims int `yaml:"escalate_after_claims,omitempty" json:"escalate_after_claims,omitempty"`
+}
+
+// DefaultClaimEscalateAfter is the escalate_after_claims default: an agent's
+// third claim on an issue its first two moved nothing on is refused.
+const DefaultClaimEscalateAfter = 2
+
+// EscalationThreshold returns escalate_after_claims with the default applied;
+// 0 means the gate is off.
+func (c ClaimsConfig) EscalationThreshold() int {
+	switch {
+	case c.EscalateAfterClaims < 0:
+		return 0
+	case c.EscalateAfterClaims == 0:
+		return DefaultClaimEscalateAfter
+	}
+	return c.EscalateAfterClaims
 }
 
 // IsEnabled reports whether issue claims are enabled. The governor feature is
