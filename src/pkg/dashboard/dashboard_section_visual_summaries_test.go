@@ -157,3 +157,91 @@ if (restored.length !== 2 || restored[0] !== 10 || restored[1] !== 12) throw new
 		t.Fatalf("visual summary JS failed: %v\n%s", err, out)
 	}
 }
+
+func TestDashboardCostTileMathFormatting(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: cost tile math behavior was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "    function fmtUSD(n) {")
+	if start < 0 {
+		t.Fatal("cost formatting helper block not found")
+	}
+	end := strings.Index(html[start:], "    // Last cost payload")
+	if end < 0 {
+		t.Fatal("cost formatting helper block end not found")
+	}
+	block := html[start : start+end]
+
+	script := `
+const assert = require('node:assert/strict');
+function fmtCostDateTime(ms) { return new Date(ms).toISOString(); }
+` + block + `
+assert.equal(fmtUSD(0), '$0.00');
+assert.equal(fmtUSD(0.004321), '$0.00432');
+assert.equal(fmtUSD(0.00999), '$0.00999');
+assert.equal(fmtUSD(5.48), '$5.48');
+
+let pr = costPerUnitDisplay(5.48, 937, 'hive-attributed merged PRs');
+assert.equal(pr.value, '$0.00585');
+assert.equal(pr.title, '$5.48 ÷ 937 hive-attributed merged PRs = $0.00585');
+
+let none = costPerUnitDisplay(0, 937, 'hive-attributed merged PRs');
+assert.equal(none.value, '—');
+assert.equal(none.title, 'no cost records yet');
+
+let div0 = costPerUnitDisplay(5.48, 0, 'hive-attributed closed issues');
+assert.equal(div0.value, '—');
+assert.equal(div0.title, 'no hive-attributed closed issues yet');
+`
+
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost tile JS failed: %v\n%s", err, out)
+	}
+}
+
+func TestDashboardCostSparklineUsesCurrentLineage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: cost lineage behavior was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "    function costHist() {")
+	if start < 0 {
+		t.Fatal("cost history helper block not found")
+	}
+	end := strings.Index(html[start:], "    // Tiny inline sparkline")
+	if end < 0 {
+		t.Fatal("cost history helper block end not found")
+	}
+	block := html[start : start+end]
+
+	script := `
+const assert = require('node:assert/strict');
+let _costHistory = [
+  { t: 1, usd: 1000 },
+  { t: 2, usd: 14000 },
+  { t: 3, usd: 5.40 },
+  { t: 4, usd: 5.48 }
+];
+` + block + `
+const lineage = costCurrentLineageHist(5.48);
+assert.deepEqual(lineage.map(e => e.usd), [5.40, 5.48]);
+assert.equal(Math.max(...lineage.map(e => e.usd)), 5.48);
+`
+
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost lineage JS failed: %v\n%s", err, out)
+	}
+}

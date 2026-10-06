@@ -8790,11 +8790,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch { /* non-critical */ }
     }
     function costSparkSvg() {
-      const hist = costHist();
+      const hist = costCurrentLineageHist(_lastCost && _lastCost.estimated && _lastCost.estimated.total_usd);
       const title = hist.length
         ? `Estimated cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; recorded history samples`
         : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
-      return axisSparkSvg(_costHistory, e => e.usd, e => e.t ?? e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
+      return axisSparkSvg(hist, e => e.usd, e => e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
         title);
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
@@ -8935,6 +8935,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return (_costHistory || [])
         .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
         .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    // The headline total is the current token summary. Persisted history can
+    // legitimately contain an older counter lineage (for example before a pod
+    // restart, retention reset, or price-table repair). The headline sparkline
+    // should describe the same current lineage as the headline number, not let
+    // a stale $14k-era point dominate the axis beside a $5.48 total.
+    function costCurrentLineageHist(currentUSD) {
+      const hist = costHist();
+      if (!hist.length) return [];
+      let start = 0;
+      for (let i = 1; i < hist.length; i++) {
+        const prev = Number(hist[i - 1].usd);
+        const cur = Number(hist[i].usd);
+        if (Number.isFinite(prev) && Number.isFinite(cur) && prev - cur > 100 && cur < prev * 0.5) start = i;
+      }
+      const out = hist.slice(start);
+      if (Number.isFinite(Number(currentUSD)) && out.length) {
+        const latest = out[out.length - 1];
+        if (Math.abs(Number(latest.usd) - Number(currentUSD)) > 0.000001) {
+          out.push({ ...latest, timestamp: Date.now(), usd: Number(currentUSD) });
+        }
+      }
+      return out;
     }
 
     // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
@@ -16320,9 +16344,33 @@ function burnAreaChart() {
     function fmtUSD(n) {
       if (n == null || isNaN(n)) return '—';
       if (n === 0) return '$0.00';
-      if (n < 0.01) return '<$0.01';
+      if (n > 0 && n < 0.01) {
+        let s = Number(n).toPrecision(3);
+        if (s.includes('e')) s = Number(s).toFixed(Math.ceil(-Math.log10(Number(n))) + 3);
+        s = s.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+        return '$' + s;
+      }
       const frac = n < 100 ? 2 : 0;
       return '$' + n.toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
+    }
+
+    function costTotalLabel(est) {
+      if (est && est.window_start) {
+        return `estimated total — since ${fmtCostDateTime(est.window_start)} (token × list price)`;
+      }
+      return 'estimated total — current token summary (token × list price)';
+    }
+
+    function costPerUnitDisplay(totalUSD, count, unitLabel) {
+      const total = Number(totalUSD) || 0;
+      const n = Number(count) || 0;
+      if (!(total > 0)) return { value: '—', title: 'no cost records yet' };
+      if (!(n > 0)) return { value: '—', title: `no ${unitLabel} yet` };
+      const value = total / n;
+      return {
+        value: fmtUSD(value),
+        title: `${fmtUSD(total)} ÷ ${n.toLocaleString('en-US')} ${unitLabel} = ${fmtUSD(value)}`,
+      };
     }
 
     // Last cost payload, so the range pills can re-render the trend chart
@@ -16674,14 +16722,16 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      const prUnit = costPerUnitDisplay(est.total_usd, cost.merged_prs, 'hive-attributed merged PRs');
+      const issueUnit = costPerUnitDisplay(est.total_usd, cost.closed_issues, 'hive-attributed closed issues');
 
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
-            <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
-            <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
-            <div class="cost-stat"><div class="cval" title="${cost.closed_issues ? `${fmtUSD(est.total_usd)} ÷ ${cost.closed_issues} closed issues` : 'no closed issues yet'}">${cost.closed_issues ? fmtUSD(est.total_usd / cost.closed_issues) : '—'}</div><div class="clabel">cost / issue — all-time total ÷ closed issues</div></div>
+            <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(est))}</div>${costSparkSvg()}</div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
