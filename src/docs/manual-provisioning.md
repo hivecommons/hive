@@ -1540,11 +1540,12 @@ if it does not exist.
 
 ## Config precedence — the PVC overlay is authoritative
 
-At runtime the effective config is **not** the ConfigMap. The entrypoint:
+At runtime the effective config is **not** the ConfigMap. On first boot, when
+the PVC has no runtime config yet, the entrypoint:
 
-1. seeds `/etc/hive/hive.yaml` from the `hive-config` ConfigMap on boot, then
+1. seeds `/etc/hive/hive.yaml` from the `hive-config` ConfigMap, then
 2. merges the PVC dashboard overlay `/data/hive.yaml.dashboard` **over** it, and
-3. writes `/data/hive.yaml.runtime`.
+3. writes `/data/hive.yaml.runtime` (`src/deploy/entrypoint.sh:848-993`).
 
 The dashboard's `Config.Save()` writes the overlay. Therefore:
 
