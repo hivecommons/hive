@@ -38,6 +38,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Spoke dashboard](dashboard.md) — the static dashboard FAQ panel contract: not ACMM-gated, no JS/fetch, grouped L1-L6/runs/contributors/claims/cost help, and guarded config-key references.
 - [Dashboard feedback](feedback.md) — reporting bugs and requesting features from the spoke dashboard, including diagnostics, screenshot handling, hub relay, user-auth, and fallback issue paths.
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
+- [Dashboard glossary and sidebar IA](dashboard-glossary.md) — the operator-facing names used by the dashboard and the ADR-0018 sidebar information architecture.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
 - [Kubernetes deployment](../../README.md#kubernetes-deployment) — the operator path for Kubernetes: prerequisites, namespace, secret, ConfigMap, PVC, Deployment, Service, Ingress, and published ports. Lives in the root README alongside the Compose and Podman quick starts; the manifests it applies are [`src/deploy/k8s/`](../deploy/k8s/). See also [dashboard route and health checks](health-checks.md) and the Kubernetes CronJob in [backup and restore](backup-restore.md).
@@ -102,6 +103,8 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CLI pins and the automated pin bump](cli-pins.md) — where each agent CLI's version and per-arch digest are pinned in the two Dockerfiles, why they are pinned rather than self-updating, and how `cli-pin-bump.yml` resolves the latest release, recomputes the digests, smokes the image, and opens one labelled PR per CLI.
 - [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](credly-badges.md) — planned integration design; currently a placeholder mapping only.
+- [Battle Log and Hive of the Week](hive-of-the-week.md) — the public showpiece feed for leaderboard pages: scrubbed activity feed, the featured project with embed snippets, and the Gource log.
+- [Contributor social cards](social-cards.md) — public cacheable 1200×630 SVG cards and share landing pages for players, achievements, and leaderboards.
 
 ## Configuration and agents
 
