@@ -1080,14 +1080,14 @@ func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Requ
 		applyExternalWorkSourcePatch(&candidate, body.External)
 		if err := validateExternalWorkSourcePatch(candidate, effectiveWorkSourceType(cfg, body.Type)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		if body.Wavefront != nil {
-			candidate := cfg.Governor.WorkSource.Wavefront
-			applyWavefrontWorkSourcePatch(&candidate, body.Wavefront.Enabled, body.Wavefront.Path, body.Wavefront.URL, body.Wavefront.Repo, body.Wavefront.ReceiptsDir)
-			if msg := validateWavefrontWorkSource(candidate); msg != "" {
-				jsonError(w, msg, http.StatusBadRequest)
-				return
-			}
+	}
+	if body.Wavefront != nil {
+		candidate := cfg.Governor.WorkSource.Wavefront
+		applyWavefrontWorkSourcePatch(&candidate, body.Wavefront.Enabled, body.Wavefront.Path, body.Wavefront.URL, body.Wavefront.Repo, body.Wavefront.ReceiptsDir)
+		if msg := validateWavefrontWorkSource(candidate); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
 			return
 		}
 	}

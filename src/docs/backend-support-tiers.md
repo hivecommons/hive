@@ -305,6 +305,7 @@ agent spend, and the `advisor_records` admin MCP tool.
 | `opencode` | No | n/a | Nothing; reported not active |
 | `kilo` | No | n/a | Nothing; reported not active |
 | `muse` | No | n/a | Nothing; reported not active |
+| `openhands` | No | n/a | Nothing; reported not active |
 | `vllm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `llm-d` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `litellm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |

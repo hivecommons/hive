@@ -4534,10 +4534,14 @@
       <span class="nav-chip-group" aria-label="Hive status">
         <button type="button" id="acmm-badge" class="nav-chip nav-chip--level nav-chip--gold" data-action="openACMMDialog" aria-haspopup="dialog" aria-controls="acmm-overlay" title="Change the current ACMM autonomy level" aria-label="Change ACMM autonomy level"></button>
         <span id="background-activity" class="background-activity" role="status" aria-live="polite" aria-label="No background Spek activity"><span class="run-live-dot" aria-hidden="true"></span><span id="background-activity-text">idle</span></span>
-      <!-- Fleet breaker status chip. Kept in .oc-topbar-left, the shortest group,
-           so it cannot wrap the topbar to a third row. State + owner-gating are
-           rendered by _renderFleetBreaker; read-only viewers see the disabled
-           status chip while owners can toggle it. -->      <span id="fleet-breaker-wrap" style="display:none">
+      </span>
+    </div>
+    <div class="oc-topbar-center">
+      <!-- Fleet breaker status chip. Centered with the upcoming-agent cards so
+           the active run state stays visually anchored between balanced sides.
+           State + owner-gating are rendered by _renderFleetBreaker; read-only
+           viewers see the disabled status chip while owners can toggle it. -->
+      <span id="fleet-breaker-wrap" style="display:none">
         <button type="button" id="fleet-breaker-btn2" class="nav-chip nav-chip--status nav-chip--ok fleet-breaker-chip"
                 data-action="toggleFleetBreaker" data-status="ok" aria-pressed="false"
                 title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."
@@ -4836,7 +4840,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="inception-section" data-dashboard-section="inception-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inception section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Inception · powered by Spektacular</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Project Inception section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Project Inception · powered by Spektacular</h2>
     <div class="section-body">
       <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
     </div>
@@ -5603,7 +5607,7 @@
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review Queue', summary: '0 PRs' },
       'nous-section': { title: '🧪 Strategy Lab', summary: '—' },
-      'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
+      'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
       'debug-section': { title: '🔍 Diagnostics', summary: 'health' },
@@ -35453,7 +35457,7 @@ function burnAreaChart() {
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
-            <span class="config-toggle-label">Issue claims <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the hub recognises a claim on an issue itself (a hive-claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.</span></span></span>
+            <span class="config-toggle-label">Issue claims <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Claims expire after ${Math.round(Number(f.claimsTtlS || 0) / 60)} minutes.</p>
         </div>
