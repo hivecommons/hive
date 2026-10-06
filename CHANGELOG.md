@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.139.0)
+
+### Added
+
+- Every dashboard section title now has a small **?** help mark ([#10915](https://github.com/hivecommons/hive/issues/10915)). Hovering or focusing it shows one plain-language sentence about what the section shows; clicking it (or pressing Enter) opens the section's entry in the new [Dashboard sections explained](src/docs/dashboard-sections.md) page, which explains what each section tells you, how its numbers are worked out, what to do about them, when it appears and which settings change it — including why the Overview band charts, tiles and trend lines can disagree. Help opens on the operator's own release line (`v6` builds open the `v6` page, everything else `v5`), and the Overview tiles' "Learn more" links, which used to lead to a "not found" page, now open the same help.
+- dashboard: every agent card, in the full and compact layouts, and the agent's detail panel now show a "Now:" line under the agent's state saying what it is on: "Now: console#123 — title · 2 min ago", "Now: working — no issue or pull request yet · started 12 min ago", "Idle · last: console#123, 40 min ago", or "Paused", "Off", "Stopped — see the agent's log", "Not started yet". It is built from the last issue or pull request the agent itself acted on through the hive, counts up on the hive's clock without reloading, says "information may be out of date" after three missed updates, and, when issue reservations are on, adds "reserved until HH:MM" or "still reserved: …" in the viewer's local time. The "Working on / PR open / merged" rows, which nothing had filled since the move to the Go dashboard, are gone ([#10934](https://github.com/hivecommons/hive/issues/10934), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+
+### Changed
+
+- Agent kicks now state that governor-supplied PR/issue lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery only wastes an agent turn ([#10913](https://github.com/hivecommons/hive/issues/10913)).
+- docs: explain when a hive follows the `stable` channel after the tag moves, including hub refresh, heartbeat delivery, upgrade policy windows, UI signals, and self-hosted runtime behavior (#10187)
+
+### Fixed
+
+- dashboard: an agent card's "this agent may be stuck" warning and "updated N min ago" badge can now appear. They read two agent fields, `doing` and `summaryUpdated`, that nothing in Hive ever set, so a working agent that had stopped making progress looked exactly like a healthy one ([#10927](https://github.com/hivecommons/hive/issues/10927)). Hive now keeps, in memory, the last issue or pull request each agent itself acted on through the hive (comments, labels and claims it requested, opened, reviewed or closed pull requests; never the hive's own reservation comments, automatic labels or governor merges), and sends it on the per-agent status update as `lastAction`. While an agent is working, `doing` names that item (`repo#N`) and `summaryUpdated` is the time of its last action this round, or the round's start when it has not acted yet; the chat summary's agent list shows the item too. This is the data layer for the agent cards' upcoming "Now:" line ([#10933](https://github.com/hivecommons/hive/issues/10933), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+- Issue claims: the `🔒` claim comment no longer prints a fixed "until HH:MM UTC" time that went stale as soon as the claim was renewed (so a maintainer would read a still-held claim as lapsed); it now states how long a claim lasts without activity and that it renews while the work continues. Hive's own record keeps the live expiry ([#10926](https://github.com/hivecommons/hive/issues/10926)).
+
 ## 2026-10-06 (v5.138.2)
 
 ### Changed
