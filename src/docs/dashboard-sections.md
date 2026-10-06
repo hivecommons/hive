@@ -516,21 +516,69 @@ The raw text output of each worker, for following what it is doing line by line.
 
 Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.
 
-**What it tells you.** A worker is one of Hive's AI agents. Each card shows a worker's state, model, schedule and repositories.
+**What it tells you.** A worker is one of Hive's AI agents. Each card shows a worker's state, model, schedule and repositories. Under the state, a **Now:** line says which issue or pull request the worker is on, or that it is idle.
 
 **How the numbers are worked out.**
 
 - The header counts running workers and all workers.
 - A worker's state comes from the hive, for example running, idle, paused or needs login.
 - A worker outside your autonomy level's usual set still shows when it is running or turned on.
+- The **Now:** line is on every card, in the full and the compact layout, and in the worker's detail panel. The next part explains its words.
 
-**What it is good for.** Use it to pause a worker, restart a stuck one, or change its settings. Fix any card that says it needs a login.
+**The "Now:" line.** Hive starts a worker on a round of work, then the worker stops until Hive starts it again. The line shows the last issue or pull request the worker itself changed through the hive during its current round of work. These count:
 
-**Example.** A card says "needs login". You click **Login** and sign in again.
+- a comment it posted,
+- a label it asked for,
+- an issue it reserved, opened or closed,
+- a pull request it opened, reviewed, closed or merged,
+- a review it asked someone for.
+
+These do not count:
+
+- an issue that was only in the list of work Hive gave the worker,
+- changes the hive makes on its own, such as the reservation comment and label it posts, labels it adds by itself, and the Governor's own approvals and merges,
+- a branch push on its own, because it has no issue or pull request number. The pull request the worker then opens does count.
+
+| The line says | What it means |
+| --- | --- |
+| `Now: console#123 — Fix the login redirect · 2 min ago` | The worker is working. The last item it changed this round is number 123 in the `console` repository, 2 minutes ago. The number links to the issue or pull request on GitHub. |
+| `Now: console#123 · 2 min ago` | The same, but Hive does not have the item's title, so only the number shows. |
+| `Now: acme/console#123 …` | The repository is written in full when Hive does not watch it, or when two watched repositories share the short name. |
+| `just now`, `5 min ago`, `3 hours ago`, `2 days ago` | How long ago the worker last changed the item. Under a minute reads "just now". The time keeps counting up between updates, without a reload. |
+| `Now: working — no issue or pull request yet · started 12 min ago` | The worker is working, but it has not changed any issue or pull request through the hive since this round started, 12 minutes ago. It may be reading its list of work, or writing code it has not pushed yet. It does not mean the worker is doing nothing. A long time here is a reason to open its log. |
+| `Idle` | The round of work has ended. The worker waits until Hive starts it again. |
+| `Idle · last: console#123, 40 min ago` | Idle. The last item it changed since the hive last started was `console#123`, 40 minutes ago. An item after "last:" is past work, not current work. |
+| `Paused` | Someone paused the worker. No item is shown. |
+| `Off` | The worker is switched off, or the Governor's current mode does not run it. No item is shown. |
+| `Stopped — see the agent's log` | The worker's program is not running, and nobody paused it or switched it off. For example, it crashed or failed to start. Open its log to find out why. No item is shown. |
+| `Not started yet` | The worker is starting, or Hive has not started it on any work since the hive came up. No item is shown. |
+| Another word, such as `on demand` | The card's own state, repeated. No item is shown. |
+| `reserved until 14:30` | Hive has reserved the item shown for this worker until 14:30. |
+| `still reserved: console#7 until 14:30` | The worker holds a reservation on an issue other than the one shown, or holds one while it is idle. |
+| `and 2 more` | The worker holds more reservations than the card has room for. The card shows the one that ends first. |
+| `information may be out of date` | The dashboard missed three updates in a row, so the times stop counting. Check that the hive is running, then reload the page. |
+
+More about the line:
+
+- **It only sees what happens through the hive.** If a worker pushes with `git` directly, or runs a command outside the hive, the line does not see it. So "no issue or pull request yet" means "nothing seen through the hive yet", not "doing nothing".
+- **A reservation is not proof the worker is still working.** Hive can reserve an issue for a worker so that others leave it alone. Hive calls this a claim. A reservation lasts until its end time, even after the worker has moved on. Hive renews it each time it starts the worker on that issue again. So "reserved until" and "still reserved" only say that the issue is held. What the worker is doing is the item after "Now:".
+- **Reservation times** come from the hive's own record of reservations. The reservation comment on GitHub is not updated when Hive renews a reservation, so the dashboard can show a later time than the comment. Times are in your local time, with the date when it is not today. A reservation disappears from the line as soon as it ends.
+- **Nothing from before is shown as current.** An item from an earlier round of work only appears after "last:". Hive keeps this record in memory only, so after the hive restarts no card shows an item until its worker changes one again.
+- **Times use the hive's clock**, not your computer's. They are right even when your computer's clock is wrong, and they are never negative.
+- **Updates.** The line updates with each worker update, every 10 seconds by default, so a change shows within about 15 seconds.
+- **Privacy.** Titles come only from the issue and pull request lists the dashboard already shows you. If it shows you no repositories' issues, the line shows no item numbers either.
+
+**What it is good for.** Use it to pause a worker, restart a stuck one, or change its settings. Fix any card that says it needs a login. Read the **Now:** lines to see what each worker is on without opening its log.
+
+**Example.** A card says "needs login". You click **Login** and sign in again. Another card says `Now: working — no issue or pull request yet · started 50 min ago`. That worker has changed nothing through the hive for 50 minutes, so you open its log to see what it is doing.
 
 **When it appears.** Always.
 
-**Settings that change it.** Each card's ⚙️ button opens its settings: schedule, model, tools and permissions. See [Agent configuration](agent-configuration.md).
+**Settings that change it.**
+
+- Each card's ⚙️ button opens its settings: schedule, model, tools and permissions. See [Agent configuration](agent-configuration.md).
+- `governor.claims.enabled` turns reservations on. When it is off, which is the default, the line shows nothing about reservations.
+- `dashboard.agent_poll_interval_s` sets how often worker updates are sent. The default is 10 seconds.
 
 ## FAQ
 
