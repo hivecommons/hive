@@ -64,7 +64,8 @@ import (
 // share one Codex account; across that boundary the provider-side
 // idempotency key is the only protection, which is why each pool keeps its
 // own persisted key. A lock left behind by a crashed holder is taken over
-// once it is older than codexResetRedeemLockStale.
+// once it is older than codexResetRedeemLockStale; the takeover renames the
+// stale file aside so only one taker can win it.
 
 const (
 	codexResetRedeemStateSuffix = ".reset-redeem.json"
@@ -406,7 +407,21 @@ func (r *codexResetRedeemer) lock() (func(), bool) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, fs.ErrExist) {
 		if fi, statErr := os.Stat(path); statErr == nil && time.Since(fi.ModTime()) > codexResetRedeemLockStale {
-			_ = os.Remove(path)
+			// Rename, never Remove: of several takers that all saw the same
+			// stale lock exactly one rename succeeds, so no taker can delete a
+			// fresh lock that another taker just created.
+			aside := path + ".stale-" + uuid.NewString()
+			if os.Rename(path, aside) != nil {
+				return nil, false
+			}
+			if fi2, err2 := os.Stat(aside); err2 == nil && time.Since(fi2.ModTime()) <= codexResetRedeemLockStale {
+				// We moved a fresh lock that was created after our Stat; put it
+				// back (Link fails if the path is taken) and treat it as held.
+				_ = os.Link(aside, path)
+				_ = os.Remove(aside)
+				return nil, false
+			}
+			_ = os.Remove(aside)
 			f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		}
 	}
