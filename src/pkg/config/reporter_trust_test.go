@@ -236,7 +236,7 @@ func TestReporterTrust_ClankerRequestedDefaultsAndEqual(t *testing.T) {
 	if r.ClankerRequestedOn() {
 		t.Error("clanker_requested must default off")
 	}
-	if got := r.EffectiveClankerRequestedLabel(); got != DefaultClankerRequestedLabel || got != "clanker-requested" {
+	if got := r.EffectiveClankerRequestedLabel(); got != DefaultClankerRequestedLabel || DefaultClankerRequestedLabel != "clanker-requested" {
 		t.Errorf("default label = %q", got)
 	}
 	on, lbl := true, "  needs-bot "
