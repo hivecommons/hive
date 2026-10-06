@@ -413,6 +413,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 		// that has it (#6681).
 		message = s.addWorkflowPushCeiling(agentName, message)
 		message = s.addQuestionAnswerContract(agentName, message, issues)
+		message = addGovernorWorkSourceRule(message)
 		message = addConcreteKickClosingInstruction(message)
 	}()
 
@@ -520,6 +521,18 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	default:
 		return s.buildGenericMessage(agentName, issues, actionable)
 	}
+}
+
+const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers."
+
+func addGovernorWorkSourceRule(message string) string {
+	if message == "" || strings.Contains(message, governorWorkSourceRule) {
+		return message
+	}
+	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
+		return message[:newline+1] + "\n" + governorWorkSourceRule + "\n" + message[newline+1:]
+	}
+	return governorWorkSourceRule + "\n" + message
 }
 
 const concreteKickClosingInstruction = "Begin now: pick the authorized repo you covered least recently and do your role's work there this session, filing issues/PRs through the hive relays as documented above. Do not ask for clarification — no human is attached to this session; if something is ambiguous, make the conservative choice and note it in your output."
