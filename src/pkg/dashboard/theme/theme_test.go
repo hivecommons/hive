@@ -199,7 +199,10 @@ func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
 	}
 	for _, want := range []string{
 		`display:grid!important`,
+		`--topbar-grid-columns:auto minmax(0,1fr) auto!important`,
 		`grid-template-columns:var(--topbar-grid-columns)!important`,
+		`>.oc-topbar-center{justify-self:stretch!important;`,
+		`>.oc-topbar-right{justify-self:end!important;`,
 		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
 		`body #repos.repo-grid .repo-card .repo-name{display:grid!important;`,
 		`body #repos.repo-grid .repo-card .repo-name>a{text-align:left!important;`,
