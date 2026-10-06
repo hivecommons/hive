@@ -27395,17 +27395,16 @@ function burnAreaChart() {
     function renderVersionDetails(v, ctx) {
       ctx = ctx || {};
       const fullHash = String(v && v.hash || 'unknown');
-      const shortHash = (typeof versionShortSHA === 'function' ? versionShortSHA(v && (v.short || v.hash)) : String(v && (v.short || v.hash) || '').slice(0, 7)) || 'unknown';
+      const shortHash = versionShortSHA(v && (v.short || v.hash)) || 'unknown';
       const deliveryLabel = ctx.deliveryLabel || versionDeliveryLabel(v || {}) || 'unknown';
       const targetHash = ctx.offeredUpgradeHash || (v && v.latestHash) || '';
-      const targetShort = ctx.offeredUpgradeShort || (typeof versionShortSHA === 'function' ? versionShortSHA(targetHash) : String(targetHash || '').slice(0, 7)) || '';
+      const targetShort = ctx.offeredUpgradeShort || versionShortSHA(targetHash) || '';
       const compareURL = versionCompareURL(fullHash, targetHash);
       const lastUpgrade = versionLastUpgradeText(v);
       const commitURL = 'https://github.com/hivecommons/hive/commit/' + encodeURIComponent(fullHash);
-      const trackingText = versionTrackingLabel(v || {});
-      const statusText = ctx.statusText || (typeof versionStatusSummary === 'function' ? versionStatusSummary(v || {}, targetShort) : versionStatusText(v || {}, targetShort));
-      const cadence = typeof versionCadenceLabel === 'function' ? versionCadenceLabel(v || {}) : '';
-      const dashHTML = function(reason) { return typeof versionDashHTML === 'function' ? versionDashHTML(reason) : '<strong title="' + escapeHtml(reason || 'unavailable') + '">—</strong>'; };
+      const trackingText = versionTrackingSummary(v || {}, deliveryLabel);
+      const statusText = ctx.statusText || versionStatusSummary(v || {}, targetShort);
+      const cadence = versionCadenceLabel(v || {});
       const au = (v && v.autoUpdate) || {};
       const currentHTML = fullHash && fullHash !== 'unknown'
         ? '<strong><a href="' + escapeHtml(commitURL) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(fullHash) + '">' + escapeHtml(shortHash) + '</a></strong>'
@@ -27433,7 +27432,7 @@ function burnAreaChart() {
       }
       html += '<a class="avatar-menu-item" href="https://github.com/hivecommons/hive/releases" target="_blank" rel="noopener noreferrer">Changelog / release notes ↗</a>';
       html += '<div class="avatar-menu-divider"></div>';
-      html += '<div class="oc-version-actions">' + (ctx.manualUpdateHTML || '') + (ctx.upgradeHTML || upgradeActionHTML) + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyVersionHashFromMenu">Copy SHA</button><button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyVersionFromMenu">Copy version details</button></div>';
+      html += '<div class="oc-version-actions">' + upgradeActionHTML + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyVersionHashFromMenu">Copy SHA</button><button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyVersionFromMenu">Copy version details</button></div>';
       return html;
     }
 
@@ -27455,7 +27454,7 @@ function burnAreaChart() {
       const chip = document.getElementById('oc-version-chip');
       if (!chip) return;
       const fullHash = String(v.hash || '');
-      const shortHash = (typeof versionShortSHA === 'function' ? versionShortSHA(v.short || fullHash) : String(v.short || fullHash || '').slice(0, 7)) || 'unknown';
+      const shortHash = versionShortSHA(v.short || fullHash) || 'unknown';
       const channel = ctx.deliveryLabel || (v.branch && v.branch !== 'unknown' ? String(v.branch) : 'unknown');
       const progress = ctx.upgradeProgress || null;
       const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
