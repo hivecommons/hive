@@ -1,1 +1,0 @@
-- Stable promotion accepts a healthy maintained hive on any later `candidate` build as smoke evidence for an older eligible build, instead of only the exact current candidate; on busy merge days the exact-match rule left the gate with no evidence and `stable` never advanced (#10042).

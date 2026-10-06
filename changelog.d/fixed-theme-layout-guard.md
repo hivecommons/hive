@@ -1,1 +1,0 @@
-- Fixed dashboard theme CSS so custom theme rules cannot override navbar zone placement or center project names.
