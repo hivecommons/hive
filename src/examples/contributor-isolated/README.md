@@ -138,6 +138,14 @@ sets a hard CPU ceiling; raise it to use more spare cores. Memory and total
 memory-plus-swap both default to 4 GiB. Rootless resource limits require runtime
 and cgroup-controller support; check runtime warnings and `podman stats`.
 
+`HIVE_CODEX_AUTO_USE_BANKED_RESET` is set to `"false"` in `compose.yaml` and stays
+off unless you edit it. Set it to `"true"` only if you consent to Hive redeeming one
+already-earned Codex rate-limit reset when the weekly window hits 0% and a reset is
+banked. It acts only on exhaustion (the guard may still pause at the weekly reserve
+first), a reset applies account-wide, and it never buys credits, upgrades plans or
+enables overage. Unsupported Codex versions simply fall back to the normal hold, and
+tasks can still fail if quota runs out mid-run. See `src/docs/contributor-relay.md`.
+
 Codex uses `HIVE_CODEX_SANDBOX_MODE=danger-full-access` **inside this container**:
 the container is the isolation boundary. This avoids nested Bubblewrap/user
 namespace/devpts failures. Keep the runtime's default seccomp profile and the

@@ -22,6 +22,9 @@ services:
       CONTRIBUTOR_MODE: headless
       HIVE_CODEX_SANDBOX_MODE: danger-full-access
       HIVE_CONTRIBUTOR_NICE: ${HIVE_CONTRIBUTOR_NICE:-10}
+      # Opt-in to redeeming an already-earned Codex reset at 0% weekly quota.
+      # Kept explicitly "false"; change it only if you consent (see README).
+      HIVE_CODEX_AUTO_USE_BANKED_RESET: "false"
     # $$ defers expansion to the container. Never forward host GH_TOKEN or
     # provider credentials: use only the logins saved in contributor-home.
     entrypoint:
