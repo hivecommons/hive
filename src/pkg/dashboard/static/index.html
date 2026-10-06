@@ -26456,7 +26456,7 @@ function burnAreaChart() {
       3: 'PR acceptance metrics, review rubrics, quality dashboards, and safety model enforcement are in place.',
       4: 'Self-tuning QA, nightly compliance, automated review application, AI-fix workflows, and session continuity.',
       5: 'GitHub Actions AI integration, auto-QA self-tuning, public metrics, policy-as-code, and reflection logs.',
-      6: 'Auto issue generation, multi-agent orchestration, strategic dashboards, merge queues, and full governance.'
+      6: 'Auto issue generation, multi-agent orchestration, strategic dashboards, a merge queue or equivalent serialized merging, and full governance.'
     };
     const ACMM_CRITERION_TIPS = {
       'acmm:prereq-test-suite': 'A test framework (Jest, Vitest, pytest, Go test) so agents can validate their changes before submitting.',
@@ -26500,7 +26500,7 @@ function burnAreaChart() {
       'acmm:auto-issue-gen': 'Automated issue generation — agents create issues from detected problems or improvements.',
       'acmm:multi-agent-orchestration': 'Multi-agent orchestration — a dispatcher coordinates multiple specialized agents.',
       'acmm:strategic-dashboard': 'A strategic dashboard showing ACMM progress, agent health, and maturity trends.',
-      'acmm:merge-queue': 'A merge queue that serializes and validates agent PRs before merging to main.',
+      'acmm:merge-queue': 'A merge queue or equivalent serialized merging that validates agent PRs against the current base before they land on the default branch.',
       'acmm:risk-assessment-config': 'Risk assessment config that gates high-risk changes for human review.',
       'acmm:observability-runbook': 'An observability runbook documenting how to monitor and debug agent operations.',
       'aef:task-traceability': 'Task traceability — every agent action is linked back to a tracked issue or task.',
@@ -26615,6 +26615,71 @@ function burnAreaChart() {
         '</div>';
     }
 
+    // acmmCreditChip names what satisfied a criterion when it was not a plain
+    // file detection: Hive-verified evidence (satisfied_by, which counts toward
+    // the level) or a marker file Hive could not verify (file_only).
+    function acmmCreditChip(c) {
+      if (!c || !c.passed) return '';
+      if (c.satisfied_by) {
+        return '<span style="font-size:var(--fs-2xs);padding:1px 6px;border-radius:9px;border:1px solid var(--green);color:var(--green);white-space:nowrap"' +
+          ' title="' + escapeHtml(c.satisfied_reason || ('Satisfied by ' + c.satisfied_by)) + '">✓ satisfied by ' + escapeHtml(c.satisfied_by) + '</span>';
+      }
+      if (c.file_only) {
+        return '<span style="font-size:var(--fs-2xs);padding:1px 6px;border-radius:9px;border:1px solid var(--border);color:var(--muted);white-space:nowrap"' +
+          ' title="Passes because a marker file exists; Hive could not verify the capability on the default branch">file only, not verified</span>';
+      }
+      return '';
+    }
+
+    // acmmMergeLaneAction offers an owner the serialized merge lane on a
+    // failing acmm:merge-queue row (POST /api/repos/merge-strategy). When the
+    // lane is already on, the row says what is still missing instead.
+    function acmmMergeLaneAction(c, repo) {
+      if (!c || c.passed || c.id !== 'acmm:merge-queue' || !repo) return '';
+      if (window._hiveRole !== 'owner') return '';
+      const rr = ((_acmmEvalData && _acmmEvalData.repo_results) || []).find(r => r.repo === repo);
+      if (rr && rr.merge_strategy === 'hive-serialized') {
+        return '<span class="muted-xs" style="white-space:nowrap" title="The serialized merge lane is on; the default branch also needs at least one required status check">Lane on — needs required checks</span>';
+      }
+      return '<button data-action="acmmUseSerializedLane" data-arg0="' + escapeHtml(repo) + '" data-arg-types="s,t" data-stop="1" ' +
+        'style="padding:3px 10px;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer;color:var(--muted);white-space:nowrap" ' +
+        'title="Set this repository\'s merge strategy to hive-serialized. With required checks on the default branch this satisfies the check.">🔀 Use serialized merge lane</button>';
+    }
+
+    // acmmLabelNote describes the labels a created GitHub issue carries, from
+    // the server's response when it reports them.
+    function acmmLabelNote(labels, fallback) {
+      if (!Array.isArray(labels)) return fallback;
+      if (!labels.length) return '.';
+      return ' with ' + labels.map(l => '<code>' + escapeHtml(l) + '</code>').join(' + ') + (labels.length === 1 ? ' label.' : ' labels.');
+    }
+
+    async function acmmUseSerializedLane(repo, btn) {
+      const origText = btn.textContent;
+      btn.textContent = '⏳ Saving...';
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/repos/merge-strategy', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({repo: repo, merge_strategy: 'hive-serialized'})
+        });
+        if (!r.ok) {
+          btn.textContent = '⚠ Failed';
+          btn.title = (await r.text()).trim();
+          setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+          return;
+        }
+        const rr = ((_acmmEvalData && _acmmEvalData.repo_results) || []).find(x => x.repo === repo);
+        if (rr) rr.merge_strategy = 'hive-serialized';
+        btn.textContent = '✅ Serialized merge lane on';
+        btn.title = 'Re-evaluate once the default branch has required checks';
+      } catch (e) {
+        btn.textContent = '⚠ Error';
+        setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+      }
+    }
+
     function acmmCriterionRow(c, repoName) {
       const icon = c.passed ? '✅' : '❌';
       const tip = ACMM_CRITERION_TIPS[c.id] || '';
@@ -26649,11 +26714,14 @@ function burnAreaChart() {
         '<span style="font-size:0.9rem">' + icon + '</span>' +
         '<span style="font-size:var(--fs-base);font-weight:500;flex:1">' + escapeHtml(c.name) + '</span>' +
         waivedChip +
+        acmmCreditChip(c) +
+        acmmMergeLaneAction(c, repoName || _acmmSelectedRepo || ((_acmmEvalData && (_acmmEvalData.repo_results || []).length === 1) ? _acmmEvalData.repo_results[0].repo : '')) +
         issueBtn +
         '</div>' +
         '<div id="' + rowId + '" style="display:none;margin-top:var(--sp-3);padding-top:var(--sp-3);border-top:1px solid var(--border)">' +
         (tip ? '<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-3);font-style:italic">' + escapeHtml(tip) + '</div>' : '') +
         acmmWaiverDetail(c) +
+        (c.passed && c.satisfied_by ? '<div style="font-size:0.72rem;color:var(--green);margin-bottom:var(--sp-4)">✓ Satisfied by ' + escapeHtml(c.satisfied_by) + (c.satisfied_reason ? ' — ' + escapeHtml(c.satisfied_reason) : '') + '</div>' : '') +
         '<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:3px">Looks for any of:</div>' +
         '<div style="line-height:1.6">' + patternItems + '</div>' +
         '</div></div>';
@@ -26735,7 +26803,7 @@ function burnAreaChart() {
         const opened = acmmRememberIssue(repo + ':' + criterionId, data);
         const where = opened.tracker === 'linear'
           ? ' in Linear (team <code>' + escapeHtml(data.team || '') + '</code>) for <strong>' + escapeHtml(repo) + '</strong>.'
-          : ' created on <strong>' + escapeHtml(repo) + '</strong> with <code>acmm</code> and <code>ai-fix-requested</code> labels.';
+          : ' created on <strong>' + escapeHtml(repo) + '</strong>' + acmmLabelNote(data.labels, ' with <code>acmm</code> and <code>ai-fix-requested</code> labels.');
         acmmShowDialog('Issue Created', '<p class="text-base">Issue <a class="text-info" href="' + escapeHtml(data.issue_url) + '" target="_blank">' + escapeHtml(acmmIssueRef(opened)) + '</a>' + where + '</p>');
       } catch (e) {
         acmmShowDialog('Issue Creation Failed', '<p class="error-note">Network error: ' + escapeHtml(e.message) + '</p>');
@@ -26796,6 +26864,10 @@ function burnAreaChart() {
       // per failing repo:criterion instead, deduped, exactly as the
       // single-issue path already shows it.
       const failures = new Map(); // reason -> [repo:criterion, ...]
+      // Labels the server actually applied: a personal-account merge-queue
+      // ticket carries acmm without ai-fix-requested.
+      const batchLabels = new Set();
+      const noteLabels = (data) => { (data && data.labels || []).forEach(l => batchLabels.add(l)); return data; };
       const recordFailure = async (where, r) => {
         failed++;
         let reason;
@@ -26820,7 +26892,7 @@ function burnAreaChart() {
               body: JSON.stringify(acmmIssuePayload(targetRepo, c.id, level))
             });
             if (r.ok) {
-              acmmRememberIssue(issueKey, await r.json());
+              acmmRememberIssue(issueKey, noteLabels(await r.json()));
               created++;
             } else { await recordFailure(issueKey, r); }
           } catch (e) { await recordFailure(targetRepo + ':' + c.id, e); }
@@ -26836,7 +26908,7 @@ function burnAreaChart() {
                   body: JSON.stringify(acmmIssuePayload(rr.repo, c.id, level))
                 });
                 if (r.ok) {
-                  acmmRememberIssue(issueKey, await r.json());
+                  acmmRememberIssue(issueKey, noteLabels(await r.json()));
                   created++;
                 } else { await recordFailure(issueKey, r); }
               } catch (e) { await recordFailure(issueKey, e); }
@@ -26848,7 +26920,7 @@ function burnAreaChart() {
       }
       // The label note is a description of what a SUCCESSFUL create did, not a
       // diagnosis — show it only when something was actually created (#5873).
-      const labelNote = acmmEffectiveTracker() === 'linear' ? ' in Linear.' : ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.';
+      const labelNote = acmmEffectiveTracker() === 'linear' ? ' in Linear.' : acmmLabelNote(batchLabels.size ? Array.from(batchLabels) : null, ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.');
       let html = '<p class="text-base">' + created + ' issue(s) created' + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + (created > 0 ? labelNote : '.') + '</p>';
       if (failed > 0) {
         html += '<p class="text-base mt-4">' + failed + ' failed:</p>';

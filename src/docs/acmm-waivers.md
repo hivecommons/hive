@@ -114,6 +114,31 @@ In the multi-repo aggregate a criterion is marked waived only when *no* repo
 detected the real thing — one repo holding the file makes the fleet-wide claim
 true on its own.
 
+## Hive-verified credit is not a waiver
+
+Some criteria Hive can verify itself, from evidence a repository cannot
+author. That credit lands in the result's `satisfied_by` field (not
+`waiver_satisfied_by`), the row reads "satisfied by …", and unlike a waiver it
+**does** count toward the level:
+
+- `acmm:github-actions-ai` — a managed repo with Hive agent activity in the
+  last 30 days ("satisfied by Hive agent loop").
+- `acmm:merge-queue` — tested as a capability on the default branch, not a
+  file name: GitHub's merge queue is on ("satisfied by GitHub merge queue"),
+  or the repo's `merge_strategy` is `hive-serialized` and the branch has a
+  known, non-empty set of required checks ("satisfied by Hive serialized
+  merge lane"). A repo that passes only because one of the marker files
+  exists keeps passing and keeps scoring, but the row is labelled
+  "file only, not verified". On a failing row the dashboard offers an owner
+  the action to use the serialized merge lane (it sets the repo's
+  `merge_strategy` to `hive-serialized`). For a repository owned by a personal account,
+  where GitHub's merge queue is unavailable, the gap ticket explains the
+  serialized merge lane and required checks instead of asking for a file, and
+  carries only the `acmm` label (no `ai-fix-requested`: the fix is an owner
+  setting). Organization repositories get the same ticket as before. The
+  check costs three read-only calls per repo per evaluation (the repository,
+  classic branch protection and the branch's rules).
+
 ## Cost
 
 Effectively zero for repos that do not use it. `prefetchDirectories` already
