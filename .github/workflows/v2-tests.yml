@@ -189,6 +189,7 @@ jobs:
   # hub floor. Adding a hub test no longer moves the gate's wall clock by its
   # full duration — only by 1/H of it.
   test-hub:
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (hub ${{ matrix.idx }}/4)
     strategy:
       fail-fast: false
@@ -362,6 +363,7 @@ jobs:
   # job below merges them by summing per-block counts before scoring, so the
   # agent floor is applied to the union, never to a partial run.
   test-agent:
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (agent ${{ matrix.idx }}/5)
     strategy:
       fail-fast: false
@@ -520,6 +522,7 @@ jobs:
   # 3s — they are all ≤ 8s). The hints only affect BALANCE, never MEMBERSHIP:
   # a stale weight makes a bucket slower, not a package untested.
   list-packages:
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
@@ -668,6 +671,7 @@ jobs:
           echo "matrix={\"include\":[$INCLUDE]}" >> "$GITHUB_OUTPUT"
 
   test-rest:
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (rest ${{ matrix.idx }}/${{ matrix.total }})
     needs: list-packages
     strategy:
@@ -844,6 +848,7 @@ jobs:
   # No -coverprofile here: pkg/dashboard's coverage floor is scored from the
   # rest-bucket profile; this lane exists only to vary the execution order.
   test-dashboard-shuffle:
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (dashboard shuffle ${{ matrix.idx }}/2)
     strategy:
       fail-fast: false
@@ -1009,9 +1014,10 @@ jobs:
   # tests ran in that shard, so it is not evidence of a code defect, and the
   # summary says it is not complete green test evidence.
   test:
+    # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
+    if: ${{ !cancelled() && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     # Do not run this aggregate in concurrency-cancelled twin runs (#6293);
     # the surviving run still fail-closes on any non-success shard result.
-    if: ${{ !cancelled() }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
@@ -1113,7 +1119,7 @@ jobs:
   # still parsed for the two states a profile cannot express: FAIL and
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     needs: [test-hub, test-agent, test-rest]
     steps:

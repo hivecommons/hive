@@ -47,6 +47,54 @@ func issueLabels(primary string, extra []string) []map[string]string {
 	return labels
 }
 
+func TestReleaseHoldActiveReadsTipStatus(t *testing.T) {
+	now := time.Date(2026, 10, 6, 15, 45, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		state     string
+		updatedAt time.Time
+		wantHeld  bool
+	}{
+		{name: "pending fresh hold blocks", state: "pending", updatedAt: now.Add(-time.Minute), wantHeld: true},
+		{name: "success clears hold", state: "success", updatedAt: now.Add(-time.Minute)},
+		{name: "stale pending hold is ignored", state: "pending", updatedAt: now.Add(-releaseInProgressMaxAge - time.Minute)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, nil, &[]int{}, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/v5":
+					json.NewEncoder(w).Encode(map[string]any{"name": "v5", "commit": map[string]string{"sha": "tipsha"}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/tipsha/status":
+					json.NewEncoder(w).Encode(map[string]any{
+						"state":       tc.state,
+						"total_count": 1,
+						"statuses": []map[string]string{{
+							"context":    releaseInProgressStatusContext,
+							"state":      tc.state,
+							"updated_at": tc.updatedAt.Format(time.RFC3339),
+						}},
+					})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+			})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.now = func() time.Time { return now }
+			held, reason, err := c.releaseHoldActive(context.Background(), "acme", "widget", "v5")
+			if err != nil {
+				t.Fatalf("releaseHoldActive returned error: %v", err)
+			}
+			if held != tc.wantHeld {
+				t.Fatalf("held = %v, want %v", held, tc.wantHeld)
+			}
+			if held && reason != releaseInProgressStatusContext {
+				t.Fatalf("reason = %q, want %q", reason, releaseInProgressStatusContext)
+			}
+		})
+	}
+}
+
 func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	var audits []AutoMergeSweepEvent
 	var merged []int
@@ -2134,7 +2182,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"head":            map[string]string{"sha": headSHA},
 				"labels":          prLabels,
 			})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status") && hasShaNumber(r.URL.Path):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
 			json.NewEncoder(w).Encode(map[string]any{
@@ -2142,7 +2190,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"total_count": 1,
 				"statuses":    []map[string]string{{"context": "ci/build", "state": pr.statusState}},
 			})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs") && hasShaNumber(r.URL.Path):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
 			json.NewEncoder(w).Encode(map[string]any{
@@ -2178,6 +2226,18 @@ func pathNumber(t *testing.T, path, prefix, suffix string) int {
 		t.Fatalf("parse number from %q: %v", path, err)
 	}
 	return number
+}
+
+// hasShaNumber reports whether the path carries a synthetic "sha<N>" commit
+// produced by the sweep fixtures; other SHAs fall through to per-test handlers.
+func hasShaNumber(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		if strings.HasPrefix(part, "sha") {
+			_, err := strconv.Atoi(strings.TrimPrefix(part, "sha"))
+			return err == nil
+		}
+	}
+	return false
 }
 
 func shaNumber(t *testing.T, path string) int {

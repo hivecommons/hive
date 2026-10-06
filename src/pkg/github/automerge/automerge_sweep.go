@@ -182,6 +182,9 @@ const SelfMergeMinACMMLevel = selfMergeMinACMMLevel
 const DefaultAutoMergeSweepMaxMerges = 3
 const selfAuthoredSweepMaxBranchUpdates = 5
 
+const releaseInProgressStatusContext = "release-in-progress"
+const releaseInProgressMaxAge = 10 * time.Minute
+
 // selfAuthoredAutoMergeSweepInterval is how often
 // StartSelfAuthoredAutoMergeSweep re-scans the App's own open PRs. Matches
 // the human-queue merge-request watcher's cadence (mergeRequestPollInterval):
@@ -963,6 +966,40 @@ func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 // evaluated-then-re-verified-at-merge-time safety property trySweepQueuedPR
 // gets from the queue approval's recorded HeadSHA, just without a stored
 // approval record to compare against (there is no queue step in this path).
+
+func (c *Engine) releaseHoldActive(ctx context.Context, owner, repo, branch string) (bool, string, error) {
+	branch = strings.TrimSpace(branch)
+	if c == nil || c.gh == nil || branch == "" {
+		return false, "", nil
+	}
+	br, _, err := c.gh.Repositories.GetBranch(ctx, owner, repo, branch, 3)
+	if err != nil {
+		return false, "release-hold-check", err
+	}
+	sha := br.GetCommit().GetSHA()
+	if sha == "" {
+		return false, "", nil
+	}
+	statuses, _, err := c.gh.Repositories.GetCombinedStatus(ctx, owner, repo, sha, &gh.ListOptions{PerPage: 100})
+	if err != nil {
+		return false, "release-hold-check", err
+	}
+	for _, st := range statuses.Statuses {
+		if st == nil || !strings.EqualFold(st.GetContext(), releaseInProgressStatusContext) {
+			continue
+		}
+		if !strings.EqualFold(st.GetState(), "pending") {
+			return false, "", nil
+		}
+		updated := st.GetUpdatedAt().Time
+		if updated.IsZero() || c.now().Sub(updated) <= releaseInProgressMaxAge {
+			return true, releaseInProgressStatusContext, nil
+		}
+		return false, "", nil
+	}
+	return false, "", nil
+}
+
 func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
 	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
@@ -1021,6 +1058,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	baseBranch := ""
 	if pr.GetBase() != nil {
 		baseBranch = pr.GetBase().GetRef()
+	}
+	if held, reason, err := c.releaseHoldActive(ctx, owner, repo, baseBranch); err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	} else if held {
+		return AutoMergeSweepEvent{}, reason, nil
 	}
 	var headPushedAt time.Time
 	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
@@ -1322,6 +1364,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	baseBranch := ""
 	if pr.GetBase() != nil {
 		baseBranch = pr.GetBase().GetRef()
+	}
+	if held, reason, err := c.releaseHoldActive(ctx, owner, repo, baseBranch); err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	} else if held {
+		return AutoMergeSweepEvent{}, reason, nil
 	}
 	var headPushedAt time.Time
 	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {

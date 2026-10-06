@@ -72,6 +72,13 @@ name: Tagged Release
 #     consulting a status the repo does not require. This is the same
 #     "trust the SHA lookup, not the aggregate or branch-scoped view"
 #     reasoning as the wait-for-gate step, extended one step further.
+#   - RELEASE PRS ARE THE FALLBACK, NOT THE FAST PATH (#10863). The release
+#     commit is first pushed directly to v5 with the job's GITHUB_TOKEN after
+#     the exact-SHA gate succeeds. If branch protection still rejects that push
+#     (the current state until a maintainer grants the GitHub Actions app a
+#     bypass), the workflow falls back to the release-gate PR path. The required
+#     heavyweight workflows skip release-gate/* PRs, so the fallback reports the
+#     expanded 11 contexts in seconds instead of waiting for full suites.
 #   - THE PR ROLLUP NEEDS A SHA-SCOPED `gate` STATUS (#5356). The scratch
 #     workflow_dispatch run proves the release commit by producing a green
 #     `gate` check-run, but that check-run has `pull_requests: []`. Opening a
@@ -116,14 +123,26 @@ name: Tagged Release
 #     on the reasoning that the successor releases instead. That reasoning is
 #     sound per-run but has no terminating condition: under sustained merges
 #     every successor applies the same test and defers again.
+# #10863 adds a short post-publish merge hold: once precheck proves v5 is still
+# at the SHA whose docker.yml images are published, it posts a pending
+# `release-in-progress` status on that tip and temporarily adds
+# `do-not-merge/hold` to open v5 PRs. Hive's automerge sweep treats the status
+# as a short-lived repo-level hold; Tide and hive both respect the hold label.
+# This job clears both signals when the tag is pushed (or in cleanup on failure).
+# This keeps the race-safety checks below:
+# if v5 still advances during the hold, the release defers rather than tagging
+# images from the wrong tree.
 # Neither is a bug in the deferral itself — a superseded run genuinely must
 # not release, because its images were built from the old tree (see RACES).
 # The gap is that nothing ever comes back for the work left behind. The
 # schedule below is that "come back": it runs against v5's CURRENT tip. If
 # that exact tip's images are not published yet, it explicitly starts docker.yml
 # for v5 and exits green; the resulting workflow_run is then allowed to enter
-# this workflow and release if v5 is still at that published SHA. On a healthy
-# repo it is a no-op (Unreleased is empty => release=false).
+# this workflow and release if v5 is still at that published SHA. When a
+# workflow_run still defers because the branch moved, precheck re-arms the same
+# backstop by dispatching docker.yml for the new tip if no such run exists, so
+# recovery does not depend on GitHub delivering the next hourly cron. On a
+# healthy repo it is a no-op (Unreleased is empty => release=false).
 #
 # DUAL-PUBLISH (kubestellar -> hivecommons org transfer): during the transfer
 # window every publish targets BOTH ghcr.io/kubestellar and
@@ -161,6 +180,8 @@ permissions:
   # on the identical SHA. The release therefore enters through a protected PR
   # merge, using the mirrored status described immediately below.
   pull-requests: write
+  statuses: write
+  issues: write
 
 jobs:
   decide:
@@ -284,6 +305,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
+      hold_sha: ${{ steps.tip.outputs.hold_sha }}
+      held_prs: ${{ steps.tip.outputs.held_prs }}
     steps:
       - name: Defer to the successor run if v5 already advanced
         id: tip
@@ -295,9 +318,31 @@ jobs:
           tip="$(gh api "repos/${{ github.repository }}/branches/v5" --jq .commit.sha)"
           if [ "$tip" = "$sha" ]; then
             echo "v5 is still at ${sha} — proceeding with the release."
+            gh api --method POST "repos/${{ github.repository }}/statuses/${sha}" \
+              -f state=pending \
+              -f context=release-in-progress \
+              -f description="Tagged Release is holding v5 merges for up to ${{ vars.RELEASE_MERGE_HOLD_SECONDS || '300' }}s"
+            gh label create "do-not-merge/hold" --color bfdadc --description "Temporarily blocks Tide/hive automerge" >/dev/null 2>&1 || true
+            held_prs=""
+            while IFS= read -r pr; do
+              [ -n "$pr" ] || continue
+              gh pr edit "$pr" --add-label "do-not-merge/hold"
+              held_prs="${held_prs}${held_prs:+,}${pr}"
+            done < <(gh pr list --base v5 --state open --limit 200 --json number,labels --jq '.[] | select(([.labels[].name] | index("do-not-merge/hold")) | not) | .number')
+            echo "Temporarily applied do-not-merge/hold to PRs: ${held_prs:-<none>}."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "hold_sha=${sha}" >> "$GITHUB_OUTPUT"
+            echo "held_prs=${held_prs}" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::Release opportunity skipped for ${sha}: v5 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
+            existing="$(gh api "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${tip}&per_page=20" --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5"))] | length')"
+            if [ "${existing:-0}" -eq 0 ]; then
+              gh workflow run docker.yml --ref v5 \
+                && echo "Re-armed docker.yml for current v5 tip ${tip}." \
+                || echo "::warning::could not dispatch docker.yml for ${tip}; waiting for the next scheduled tick."
+            else
+              echo "docker.yml already has ${existing} run(s) for current v5 tip ${tip}; not re-dispatching."
+            fi
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -306,19 +351,21 @@ jobs:
     if: needs.decide.outputs.release == 'true' && needs.precheck.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     # Job-level permissions replace the workflow defaults. Repeat the release
-    # job's existing scopes and add statuses:write only here, so decide and
-    # precheck cannot manufacture a required context (#5356).
+    # job's existing scopes and add statuses:write for the gate/hold statuses
+    # plus issues:write to remove the short-lived Tide hold labels (#5356/#10863).
     permissions:
       contents: write
       packages: write
       actions: write
       pull-requests: write
       statuses: write
+      issues: write
     env:
       VERSION: ${{ needs.decide.outputs.version }}
       SHA: ${{ needs.decide.outputs.sha }}
-      RELEASE_MERGE_WAIT_SECONDS: ${{ vars.RELEASE_MERGE_WAIT_SECONDS || '1800' }}
+      RELEASE_MERGE_WAIT_SECONDS: ${{ vars.RELEASE_MERGE_WAIT_SECONDS || '300' }}
       RELEASE_MERGE_POLL_SECONDS: ${{ vars.RELEASE_MERGE_POLL_SECONDS || '30' }}
+      RELEASE_MERGE_HOLD_SECONDS: ${{ vars.RELEASE_MERGE_HOLD_SECONDS || '300' }}
       # Dual-publish (see the DUAL-PUBLISH note in this file's header): the
       # NATIVE org is wherever this repo lives — the only org GITHUB_TOKEN
       # can write packages to — and the CROSS org is the other side of the
@@ -738,6 +785,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HELD_PRS: ${{ needs.precheck.outputs.held_prs }}
         run: |
           set -euo pipefail
           scratch="release-gate/v${VERSION}"
@@ -843,17 +891,51 @@ jobs:
             -f context=gate \
             -f description="docker.yml gate verified for automated release"
 
-          echo "Opening a PR from ${scratch} into v5..."
-          if ! pr_url="$(gh pr create \
+          echo "Trying direct v5 push first (#10863); falling back to the release PR path if branch protection rejects it..."
+          git fetch origin v5
+          current_tip="$(git rev-parse origin/v5)"
+          if [ "$current_tip" != "$SHA" ]; then
+            echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced to ${current_tip} before the direct push. Nothing was pushed; Unreleased is untouched."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if direct_out="$(git push origin "HEAD:refs/heads/v5" 2>&1)"; then
+            echo "$direct_out"
+            release_sha="$commit_sha"
+            merged=true
+            echo "Direct push landed release commit ${release_sha} on v5; dispatching docker.yml for the release commit (#6380)..."
+            GH_TOKEN="$ACTIONS_TOKEN" gh workflow run docker.yml --ref v5 \
+              -f "release_sha=${release_sha}" \
+              -f "release_version=v${VERSION}"
+          else
+            echo "$direct_out"
+            if grep -qiE 'non-fast-forward|fetch first|stale info' <<<"$direct_out"; then
+              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced during the direct push. Nothing was pushed; Unreleased is untouched."
+              echo "pushed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git fetch origin v5
+            current_tip="$(git rev-parse origin/v5)"
+            if [ "$current_tip" != "$SHA" ]; then
+              echo "::warning::Release opportunity skipped for ${SHA}: v5 advanced to ${current_tip} while branch protection rejected the direct push. Nothing was pushed; Unreleased is untouched."
+              echo "pushed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Direct push was rejected by branch protection (expected until the GitHub Actions app has a v5 bypass); falling back to the release PR path."
+          fi
+
+          if [ "$merged" != true ]; then
+            echo "Opening a PR from ${scratch} into v5..."
+            if ! pr_url="$(gh pr create \
               --base v5 \
               --head "${scratch}" \
               --title "release: v${VERSION}" \
               --body "Automated release PR (#5222/#5356). Merges the release commit for v${VERSION}, carrying a successful gate check and mirrored status on ${commit_sha}." 2>&1)"; then
             echo "::error::gh pr create failed: ${pr_url:-<no output captured>}" >&2
             exit 1
-          fi
-          pr_number="$(grep -oE '[0-9]+$' <<<"$pr_url")"
-          echo "Opened PR #${pr_number}: ${pr_url}"
+            fi
+            pr_number="$(grep -oE '[0-9]+$' <<<"$pr_url")"
+            echo "Opened PR #${pr_number}: ${pr_url}"
 
           # #5318/#5324 (5th recurrence): this loop called `gh pr merge`, which
           # refuses to act on a PR whose aggregate `mergeStateStatus` is
@@ -906,12 +988,12 @@ jobs:
           #   object either.
           #
           #   anything else: hard-fail.
-          # RELEASE_MERGE_WAIT_SECONDS is a production knob (default 30m);
+          # RELEASE_MERGE_WAIT_SECONDS is a production knob (default 5m);
           # RELEASE_PUSH_GH006_WINDOW remains as a legacy test seam for
           # test-release-push-retry.sh's exhaustion path.
-          merge_wait_seconds="${RELEASE_MERGE_WAIT_SECONDS:-${RELEASE_PUSH_GH006_WINDOW:-1800}}"
+          merge_wait_seconds="${RELEASE_MERGE_WAIT_SECONDS:-${RELEASE_PUSH_GH006_WINDOW:-300}}"
           merge_poll_seconds="${RELEASE_MERGE_POLL_SECONDS:-30}"
-          case "$merge_wait_seconds" in ''|*[!0-9]*) merge_wait_seconds=1800 ;; esac
+          case "$merge_wait_seconds" in ''|*[!0-9]*) merge_wait_seconds=300 ;; esac
           case "$merge_poll_seconds" in ''|*[!0-9]*) merge_poll_seconds=30 ;; esac
           deadline=$((SECONDS + merge_wait_seconds))
 
@@ -1077,6 +1159,7 @@ jobs:
             echo "::error::merging PR #${pr_number} failed for an unrecognized reason (see the API response above) — not retrying." >&2
             exit 1
           done
+          fi
 
           # The merge landed a NEW commit on v5 (a merge commit, or the same
           # tree via fast-forward depending on PR mergeability). Fetch it so
@@ -1097,6 +1180,15 @@ jobs:
             fi
             [ "$attempt" -eq 3 ] && { echo "::error::tag push failed after 3 attempts" >&2; exit 1; }
             sleep 5
+          done
+          GH_TOKEN="$ACTIONS_TOKEN" gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state=success \
+            -f context=release-in-progress \
+            -f description="Tagged Release v${VERSION} pushed; merge hold cleared" || true
+          IFS=',' read -ra held <<< "${HELD_PRS:-}"
+          for pr in "${held[@]}"; do
+            [ -n "$pr" ] || continue
+            gh pr edit "$pr" --remove-label "do-not-merge/hold" || true
           done
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
@@ -1137,3 +1229,30 @@ jobs:
             "hive-contributor-v${VERSION}-sbom.spdx.json" \
             "hive-hub-v${VERSION}-sbom.spdx.json" \
             "hive-v${VERSION}-NOTICE"
+
+  release-hold-cleanup:
+    needs: [precheck, release]
+    if: ${{ always() && needs.precheck.outputs.hold_sha != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Clear any leftover release merge hold
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOLD_SHA: ${{ needs.precheck.outputs.hold_sha }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+          HELD_PRS: ${{ needs.precheck.outputs.held_prs }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${{ github.repository }}/statuses/${HOLD_SHA}" \
+            -f state=success \
+            -f context=release-in-progress \
+            -f description="Tagged Release hold cleanup (${RELEASE_RESULT})"
+          IFS=',' read -ra held <<< "${HELD_PRS:-}"
+          for pr in "${held[@]}"; do
+            [ -n "$pr" ] || continue
+            gh pr edit "$pr" --remove-label "do-not-merge/hold" || true
+          done

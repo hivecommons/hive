@@ -87,7 +87,7 @@ case "$1 $2 ${3:-}" in
   "rev-parse HEAD ")
     echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
   "rev-parse origin/v5 ")
-    echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
+    echo "deadbeefcafe"; exit 0 ;;
   "fetch origin "*)
     exit 0 ;;
   "tag "*)
@@ -95,6 +95,10 @@ case "$1 $2 ${3:-}" in
     exit 0 ;;
   "push origin --delete"*)
     exit 0 ;;
+  "push origin HEAD:refs/heads/v5"*)
+    echo "remote: error: GH006: Protected branch update failed for refs/heads/v5." >&2
+    echo "error: failed to push some refs to 'https://github.com/hivecommons/hive'" >&2
+    exit 1 ;;
   "push origin refs/tags/"*)
     n=$(( $(cat "$state/tag" 2>/dev/null || echo 0) + 1 ))
     echo "$n" > "$state/tag"
@@ -212,8 +216,8 @@ grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHU
 [ "$(cat "$st/tag_target" 2>/dev/null)" = feedfacefeedfacefeedfacefeedfacefeedface ] \
   && note_ok "version tag targets merge API's exact release SHA" \
   || note_fail "version tag did not target merge API SHA: $(cat "$st/tag_target" 2>/dev/null)"
-[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch " ] \
-  && note_ok "gate, PR, merge and exact-SHA dispatch are ordered" \
+[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch status " ] \
+  && note_ok "gate, PR, merge, exact-SHA dispatch, and hold-clear status are ordered" \
   || note_fail "unexpected status/PR/merge order: $(tr '\n' ' ' < "$st/timeline")"
 
 echo "case: gate status publication failure stops before opening the PR"
@@ -450,8 +454,8 @@ else:
             bad("push_v5 must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
         bad("push_v5's commit status is not the required gate:success verdict (#5356)")
-    if "RELEASE_MERGE_WAIT_SECONDS" not in code or ":-1800" not in code:
-        bad("push_v5 no longer waits up to the 30-minute release merge deadline (#10795)")
+    if "RELEASE_MERGE_WAIT_SECONDS" not in code or ":-300" not in code:
+        bad("push_v5 no longer waits up to the 5-minute release merge deadline (#10863)")
     if "required_checks_state" not in code:
         bad("push_v5 no longer polls the release PR's required checks before giving up (#10795)")
     # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
@@ -463,7 +467,7 @@ else:
     if dispatch_call not in code:
         bad("push_v5 no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
     else:
-        dispatch_at = code.index(dispatch_call)
+        dispatch_at = code.rindex(dispatch_call)
         tag_at = code.index('git tag "v${VERSION}"')
         if not merge_at < dispatch_at < tag_at:
             bad("release-image dispatch must occur after merge succeeds and before tag publication")
