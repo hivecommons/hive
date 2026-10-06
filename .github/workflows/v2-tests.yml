@@ -37,6 +37,7 @@ on:
       - 'dashboard/openapi.json'
       - '.github/workflows/v2-tests.yml'
       # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
+      - '.github/workflows/coverage-hourly.yml'
       - '.github/workflows/dco-post-merge.yml'
       - '.github/scripts/slowest-tests.sh'
       - '.github/scripts/ci-gotestsum-flake-summary.sh'
@@ -60,6 +61,7 @@ on:
       - 'dashboard/openapi.json'
       - '.github/workflows/v2-tests.yml'
       # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
+      - '.github/workflows/coverage-hourly.yml'
       - '.github/workflows/dco-post-merge.yml'
       # The slowest-tests reporter runs in every shard; an edit to it must run
       # the job that executes it (same rule dashboard-lint applies to its
