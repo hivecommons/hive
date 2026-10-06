@@ -1,0 +1,1 @@
+- Added the owner-gated `review.contributor_prs.base_sync` setting so Hive can use GitHub update-branch to unstick hive-authored fork lane PRs that are behind the base branch, with dirty/stale heads routed back to the lane for repair.

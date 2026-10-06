@@ -233,10 +233,10 @@ func setPendingHandoffs(env *turn.SessionEnvelope, items []pendingHandoff) {
 	env.Variables[varPending] = string(data)
 }
 
-// queueHandoffs hands human feedback and base-repair events to the agent's
-// next fresh kick, within the per-PR follow-up budget. Other event kinds
-// already have a fresh-dispatch route (the fix-before-new blocks). It
-// returns how many were queued.
+// queueHandoffs hands human feedback, base-repair, and stale-head repair
+// events to the agent's next fresh kick, within the per-PR follow-up budget.
+// Other event kinds already have a fresh-dispatch route (the fix-before-new
+// blocks). It returns how many were queued.
 func queueHandoffs(env *turn.SessionEnvelope, events []Event, r Resumer, now time.Time) int {
 	session := ""
 	if r != nil {
@@ -245,7 +245,7 @@ func queueHandoffs(env *turn.SessionEnvelope, events []Event, r Resumer, now tim
 	items := pendingHandoffs(env)
 	queued := 0
 	for _, ev := range events {
-		if ev.Kind != EventHumanComment && ev.Kind != EventBaseMoved {
+		if ev.Kind != EventHumanComment && ev.Kind != EventBaseMoved && ev.Kind != EventStaleHeadPush {
 			continue
 		}
 		if followUpsUsed(env) >= MaxFollowUpsPerPR {

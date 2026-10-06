@@ -352,7 +352,7 @@ func TestRoute_ReviewEventsAndThreads(t *testing.T) {
 
 func TestDetectEvents_ChangesRequestedWithoutReviewers(t *testing.T) {
 	pr := github.PullRequest{Protection: &github.ProtectionFacts{ReviewDecision: github.ReviewDecisionChangesRequested}}
-	ev := detectEvents(&pr, nil, nil, time.Time{})
+	ev := detectEvents(&turn.SessionEnvelope{Variables: map[string]string{}}, &pr, nil, nil, time.Time{})
 	if len(ev) != 1 || ev[0].Detail != "A reviewer requested changes." {
 		t.Fatalf("events = %+v", ev)
 	}
@@ -371,12 +371,12 @@ func TestDetectEvents_ChangesRequestedUsesSharedAddressedRule(t *testing.T) {
 		},
 		ReviewAddressingCommits: []github.PRCommit{{SHA: "merge", AuthoredAt: reviewAt.Add(time.Minute), ParentCount: 2}},
 	}
-	ev := detectEvents(&pr, nil, nil, time.Time{})
+	ev := detectEvents(&turn.SessionEnvelope{Variables: map[string]string{}}, &pr, nil, nil, time.Time{})
 	if len(ev) != 1 || !strings.Contains(ev[0].Key, reviewAt.Format(time.RFC3339Nano)) {
 		t.Fatalf("events = %+v, want unaddressed review key with submitted_at", ev)
 	}
 	pr.ReviewAddressingCommits = append(pr.ReviewAddressingCommits, github.PRCommit{SHA: "fix", AuthoredAt: reviewAt.Add(2 * time.Minute), ParentCount: 1})
-	if ev := detectEvents(&pr, nil, nil, time.Time{}); len(ev) != 0 {
+	if ev := detectEvents(&turn.SessionEnvelope{Variables: map[string]string{}}, &pr, nil, nil, time.Time{}); len(ev) != 0 {
 		t.Fatalf("addressed review routed: %+v", ev)
 	}
 }

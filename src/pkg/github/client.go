@@ -599,6 +599,10 @@ type PullRequest struct {
 	HeadRef  string `json:"head_ref,omitempty"`
 	HeadRepo string `json:"head_repo,omitempty"`
 	FromFork bool   `json:"from_fork,omitempty"`
+	// MaintainerCanModify mirrors GitHub's "allow edits by maintainers"
+	// switch. It is what lets the update-branch API sync a fork PR without
+	// giving Hive direct push access to the contributor's branch.
+	MaintainerCanModify bool `json:"maintainer_can_modify,omitempty"`
 	// BaseRef is the branch the PR targets. Display only: the merge-verdict
 	// reason names it ("has merge conflicts with v4 — needs a rebase") so a
 	// blocked pill says what to do rather than GitHub's enum
@@ -1436,6 +1440,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 					HeadRef:             headRef,
 					HeadRepo:            headRepo,
 					FromFork:            fromFork,
+					MaintainerCanModify: pr.GetMaintainerCanModify(),
 					BaseRef:             prBaseRef(pr),
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
@@ -1761,6 +1766,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	} else {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
+		pr.MaintainerCanModify = full.GetMaintainerCanModify()
 	}
 
 	checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
