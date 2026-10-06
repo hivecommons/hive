@@ -95,14 +95,16 @@ func TestDashboardSectionHelpCoverage(t *testing.T) {
 			t.Errorf("section %q has no entry in DASHBOARD_SECTION_HELP", m[1])
 		}
 	}
-	for _, id := range []string{"governor", "token-panel", "cost-panel", "advisory-digest-section", "governor-pr-models-section", "runs-section", "platform-section"} {
+	for _, id := range []string{"governor", "token-panel", "cost-panel", "advisory-digest-section", "governor-pr-models-section"} {
 		if _, ok := byID[id]; !ok {
 			t.Errorf("section %q has no entry in DASHBOARD_SECTION_HELP", id)
 		}
 	}
 
+	// Runs and Platform are documented for the v6 line but are not v5 sections.
+	v6Only := map[string]bool{"Runs": true, "Platform": true}
 	for heading := range docEntries {
-		if heading != "Words used on this page" && !headings[heading] {
+		if heading != "Words used on this page" && !v6Only[heading] && !headings[heading] {
 			t.Errorf("help page entry %q has no matching section in DASHBOARD_SECTION_HELP", heading)
 		}
 	}
