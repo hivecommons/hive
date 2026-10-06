@@ -90,7 +90,7 @@ func TestBuildCIFailingList_SplitsForkPRs(t *testing.T) {
 		"#839 projectbluefin/testsuite by @alice [fork: alice/testsuite:sec-check-dashboard — comment/check-report only]",
 		"#841 projectbluefin/testsuite by @bob [fork: (fork deleted):gone — comment/check-report only]",
 		"same-named branch on the base repo",
-		"owner-enabled contributor_prs gate",
+		"review.contributor_prs.base_sync",
 	} {
 		if !strings.Contains(forks, want) {
 			t.Errorf("fork section missing %q:\n%s", want, forks)
