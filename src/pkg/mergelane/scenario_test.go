@@ -129,6 +129,92 @@ func TestStalePRIsUpdatedWhateverGitHubReports(t *testing.T) {
 	if want := []string{"1:h1"}; fmt.Sprint(h.f.updates) != fmt.Sprint(want) {
 		t.Fatalf("updates = %v, want %v", h.f.updates, want)
 	}
+	if h.f.count("ViewerCanUpdateBranch") != 0 || h.f.count("IssueCommentsContain") != 0 {
+		t.Fatalf("same-repo update made fork-only calls: %v", h.f.calls)
+	}
+}
+
+// AC24, R20, R21: stale fork PRs are updated only when GitHub says this token
+// can update the branch and the owner enabled contributor base-sync. Otherwise
+// the author gets one durable comment and the next PR reaches the front.
+func TestForkPRWithoutBothUpdateGatesLeavesFrontWithOneAuthorComment(t *testing.T) {
+	h := newHarness(t)
+	p := h.f.addPR(1, "h1")
+	p.FromFork = true
+	h.f.contained["h1"] = "old-tip"
+	h.f.canUpdate[1] = true
+	h.f.setRun("h1", "build", "completed", "action_required")
+	h.f.addPR(2, "h2")
+	h.acquire(1)
+	h.acquire(2)
+
+	expectOutcome(t, h.advance(1), OutcomeLeft, "review.contributor_prs.base_sync is disabled")
+	if h.frontPR() != 2 {
+		t.Fatalf("front = #%d, want #2 after the fork leaves", h.frontPR())
+	}
+	if len(h.f.updates) != 0 {
+		t.Fatalf("fork branch must not be updated without both gates, got %v", h.f.updates)
+	}
+	if got := len(h.f.comments[1]); got != 1 || !strings.Contains(h.f.comments[1][0], forkWaitCommentMarker) {
+		t.Fatalf("comments = %#v, want one durable fork-wait marker", h.f.comments[1])
+	}
+
+	h.acquire(1)
+	expectOutcome(t, h.advance(2), OutcomeMerged, "")
+	expectOutcome(t, h.advance(1), OutcomeLeft, "review.contributor_prs.base_sync is disabled")
+	if got := len(h.f.comments[1]); got != 1 {
+		t.Fatalf("fork-wait comment repeated across turns: %#v", h.f.comments[1])
+	}
+
+	h.f.contained["h1"] = h.f.tip
+	h.f.pass("h1")
+	h.acquire(1)
+	expectOutcome(t, h.advance(1), OutcomeMerged, "")
+	if want := []string{"2:h2", "1:h1"}; fmt.Sprint(h.f.merges) != fmt.Sprint(want) {
+		t.Fatalf("merges = %v, want %v", h.f.merges, want)
+	}
+}
+
+// R20, AC25: when both fork gates allow it, the lane uses the same pinned
+// merge-update path as same-repository PRs.
+func TestForkPRWithBothUpdateGatesGetsPinnedMergeUpdate(t *testing.T) {
+	h := newHarness(t)
+	h.baseSync = true
+	p := h.f.addPR(1, "h1")
+	p.FromFork = true
+	h.f.contained["h1"] = "old-tip"
+	h.f.canUpdate[1] = true
+	h.acquire(1)
+
+	expectOutcome(t, h.advance(1), OutcomeUpdated, "pinned to head h1")
+	if want := []string{"1:h1"}; fmt.Sprint(h.f.updates) != fmt.Sprint(want) {
+		t.Fatalf("updates = %v, want %v", h.f.updates, want)
+	}
+	if h.f.count("ViewerCanUpdateBranch") != 1 {
+		t.Fatalf("ViewerCanUpdateBranch calls = %d, want 1", h.f.count("ViewerCanUpdateBranch"))
+	}
+	if len(h.f.comments[1]) != 0 {
+		t.Fatalf("allowed fork update should not comment, got %#v", h.f.comments[1])
+	}
+}
+
+// AC24: an up-to-date fork PR whose required workflow is action_required is not
+// merged; after the author gets it passing, the same head can merge normally.
+func TestForkPRActionRequiredDoesNotMergeUntilChecksPass(t *testing.T) {
+	h := newHarness(t)
+	p := h.f.addPR(1, "h1")
+	p.FromFork = true
+	h.f.setRun("h1", "build", "completed", "action_required")
+	h.acquire(1)
+
+	expectOutcome(t, h.advance(1), OutcomeLeft, "action_required")
+	if len(h.f.merges) != 0 || len(h.f.updates) != 0 || len(h.f.comments[1]) != 0 {
+		t.Fatalf("merges=%v updates=%v comments=%#v, want no lane mutation except leaving", h.f.merges, h.f.updates, h.f.comments[1])
+	}
+
+	h.f.pass("h1")
+	h.acquire(1)
+	expectOutcome(t, h.advance(1), OutcomeMerged, "")
 }
 
 // AC9: if the head changed since it was evaluated, the update is not made;

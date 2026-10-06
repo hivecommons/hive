@@ -170,6 +170,10 @@ type ReviewConfig struct {
 	// false is never overwritten. Read via FixHumanPRsEnabled(), never
 	// dereferenced raw.
 	FixHumanPRs *bool `yaml:"fix_human_prs,omitempty" json:"fix_human_prs,omitempty"`
+	// ContributorPRs gates owner-authorized maintenance actions on contributor
+	// PRs. Zero value is deliberately off: only an owner who opts in may let
+	// Hive ask GitHub to sync a fork PR branch with the base branch.
+	ContributorPRs ContributorPRsConfig `yaml:"contributor_prs,omitempty" json:"contributor_prs,omitempty"`
 	// AcknowledgeNoFindings makes a clean review leave a one-line record
 	// instead of nothing. Silence keeps a PR uncluttered but is
 	// indistinguishable from a reviewer that never ran, so where review
@@ -249,6 +253,13 @@ type ReviewConfig struct {
 	// (hivecommons/hive#8317), which scores a PR against the approved plan
 	// wave its Hive-Run / Hive-Plan trailers name.
 	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+}
+
+// ContributorPRsConfig is the owner-only gate for contributor PR maintenance.
+type ContributorPRsConfig struct {
+	// BaseSync enables automatic update-branch attempts for fork PRs that are
+	// behind and have "allow edits by maintainers" on. Default off.
+	BaseSync bool `yaml:"base_sync,omitempty" json:"base_sync,omitempty"`
 }
 
 // PlanMatchConfig is the switch for the plan_match review perspective

@@ -1,0 +1,1 @@
+- Add merge-lane fork PR handling that gates branch updates on GitHub capability plus contributor base-sync and leaves one durable author comment when the author must update.

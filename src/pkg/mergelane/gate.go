@@ -131,6 +131,7 @@ func (g *RESTGitHub) PullRequest(ctx context.Context, repo string, number int) (
 		Number:         number,
 		Head:           pr.GetHead().GetSHA(),
 		Base:           pr.GetBase().GetRef(),
+		FromFork:       pullRequestFromFork(pr),
 		Open:           strings.EqualFold(pr.GetState(), "open"),
 		Merged:         pr.GetMerged(),
 		Draft:          pr.GetDraft(),
@@ -138,6 +139,18 @@ func (g *RESTGitHub) PullRequest(ctx context.Context, repo string, number int) (
 		Mergeable:      pr.Mergeable,
 		Labels:         ghub.ExtractPRLabels(pr.Labels),
 	}, nil
+}
+
+func pullRequestFromFork(pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	base := strings.TrimSpace(pr.GetBase().GetRepo().GetFullName())
+	head := strings.TrimSpace(pr.GetHead().GetRepo().GetFullName())
+	if head == "" {
+		return true
+	}
+	return base != "" && !strings.EqualFold(base, head)
 }
 
 // BranchTip reads the target branch's current tip.
@@ -253,6 +266,30 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 		return ErrHeadMoved
 	}
 	return err
+}
+
+func (g *RESTGitHub) ViewerCanUpdateBranch(ctx context.Context, repo string, number int) (bool, error) {
+	c, _, _, _, err := g.rest(repo)
+	if err != nil {
+		return false, err
+	}
+	return c.ViewerCanUpdateBranch(ctx, repo, number)
+}
+
+func (g *RESTGitHub) IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error) {
+	c, _, _, _, err := g.rest(repo)
+	if err != nil {
+		return false, err
+	}
+	return c.IssueCommentsContain(ctx, repo, number, needle)
+}
+
+func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	c, _, _, _, err := g.rest(repo)
+	if err != nil {
+		return err
+	}
+	return c.CreateIssueComment(ctx, repo, number, body)
 }
 
 // Merge is the REST merge with head pinned. The method is the calling path's;
