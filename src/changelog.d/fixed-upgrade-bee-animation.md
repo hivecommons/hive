@@ -1,0 +1,1 @@
+- Smooth the dashboard upgrade bee animation by preserving its DOM across status refreshes and keeping motion composite-only.
