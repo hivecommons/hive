@@ -770,7 +770,8 @@ each source's `max_items` (default `20`), and `max_total_items` (default
 websites, never applies findings automatically, and rejects any configured
 host that is not listed in `variables.security.http_allowlist`. GitHub-backed
 sources use the existing authenticated GitHub client; feed sources use GET
-through the normal proxy/egress path.
+through `runs.spektacular.recheck.discovery_proxy` when one is configured, and
+otherwise through the normal proxy/egress path.
 
 Supported source kinds are:
 
@@ -798,6 +799,12 @@ runs:
           - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
           - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
           - {kind: landscape, name: project-landscape, max_items: 20}
+      discovery_proxy: http://relay:18443
+      egress_allowlist: [api.github.com, www.ietf.org]
+      sources:
+        - name: upstream-release-doc
+          kind: release
+          url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest
 variables:
   security:
     http_allowlist: [api.github.com, www.ietf.org]
@@ -811,6 +818,35 @@ the typed reason and continues with the rest. The same evidence is included in
 the `spec` stage assignment prompt as context so the spec generator can decide
 what, if anything, belongs in the revised spec; the spec and plan human
 checkpoints remain the only approval gates.
+
+#### Exact-document sources (proxy-only)
+
+Exact document sources use `runs.spektacular.recheck.sources`.
+`discovery_proxy` must be the operator's existing relay egress proxy (an
+`http` or `https` URL without credentials, path, query or fragment), with its
+normal network policy and trust roots installed. It is required when exact
+sources are configured; discovery never falls back to direct access, including
+when `NO_PROXY` matches. `egress_allowlist` contains exact DNS hostnames, with
+no wildcards or IP literals. Config validation rejects a source outside that
+list, or a missing or malformed proxy, at load even when cadence is disabled,
+because forced manual rechecks use the same policy. The same validation runs
+again at use, so a configuration overlay cannot inject an undeclared
+destination or a direct fallback; a rejection is recorded as a
+`sources_failed[]` entry named `config` and no source is read.
+
+Each exact source declares a unique `name`, a `kind` (`release`, `changelog`,
+`repo`, `standards`, or `landscape`), and an exact HTTPS `url`. Source kind
+labels provenance; it does not enable crawling or additional API calls. A pass
+makes one GET per declared document, at most 16 sources, with a 10-second
+request timeout, the discovery `timeout` as the total deadline, and a 32 KiB
+UTF-8 response cap. Redirects are refused. No links are followed and no writes
+are issued. Each successful read is recorded in `drift.external[]` with the
+source `name` as `source` and `title`, its `kind` and `url`, a `summary` capped
+at 280 characters and the body's `sha256`; a failed read is recorded in
+`sources_failed[]` instead of claiming no drift. Both count toward the rewound
+generation's `external_count`/`sources_failed` exactly like typed findings.
+This exact-document path does not invoke `upstreamwatch`'s multi-page PR and
+release scanner.
 
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,

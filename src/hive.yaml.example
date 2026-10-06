@@ -667,6 +667,12 @@ governor:
 #           - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
 #           - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
 #           - {kind: landscape, name: project-landscape, max_items: 20}
+#       # Exact-document sources are read only through discovery_proxy (no direct
+#       # or NO_PROXY fallback) and must be hosts in egress_allowlist.
+#       discovery_proxy: http://relay:18443
+#       egress_allowlist: [api.github.com]
+#       sources:
+#         - {name: upstream-release-doc, kind: release, url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest}
 #   checkpoints:
 #     spec: true        # false records finalized spec checkpoints as auto-approved by actor "auto".
 #     plan: true        # false auto-approves imported plans and records config_source in audit/timeline history.

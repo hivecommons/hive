@@ -17,7 +17,6 @@ import (
 )
 
 func TestRecheckDiscoveryFeedFiltersSinceAndCaps(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
 		_, _ = w.Write([]byte(`<feed>
@@ -41,7 +40,6 @@ func TestRecheckDiscoveryFeedFiltersSinceAndCaps(t *testing.T) {
 }
 
 func TestRecheckDiscoveryCollectRecordsFailureNotFatal(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	cfg := config.SpektacularConfig{}
 	cfg.Recheck.Discovery.MaxTotalItems = 1
 	cfg.Recheck.Discovery.Sources = []config.SpektacularRecheckDiscoverySource{
@@ -72,7 +70,6 @@ func TestRecheckDiscoveryCollectRecordsFailureNotFatal(t *testing.T) {
 }
 
 func TestRecheckDiscoveryGitHubReleasesFiltersSincePrereleaseAndCaps(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	const releasesPath = "/repos/owner/repo/releases"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != releasesPath {
@@ -100,7 +97,6 @@ func TestRecheckDiscoveryGitHubReleasesFiltersSincePrereleaseAndCaps(t *testing.
 }
 
 func TestRecheckDiscoveryRepoActivityIncludesMergedPR(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/owner/repo/releases":
@@ -127,7 +123,6 @@ func TestRecheckDiscoveryRepoActivityIncludesMergedPR(t *testing.T) {
 }
 
 func TestRecheckDiscoveryLandscapeExtractsGitHubRepos(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	repos := githubReposFromMarkdown(`[one](https://github.com/owner/repo) and [dup](https://github.com/owner/repo) plus https://github.com/other/project/releases`)
 	if len(repos) != 2 || repos[0] != "owner/repo" || repos[1] != "other/project" {
 		t.Fatalf("repos = %#v, want stable unique GitHub repos", repos)
@@ -135,7 +130,6 @@ func TestRecheckDiscoveryLandscapeExtractsGitHubRepos(t *testing.T) {
 }
 
 func TestRecheckSpecPromptTitleIncludesExternalEvidence(t *testing.T) {
-	t.Skip("recheck discovery evidence on the rewound generation lands with #10801")
 	drift := campaignDriftFromArchive(knowledge.InceptionCampaignArchive{Drift: &knowledge.CampaignDrift{
 		ExternalCount: 1,
 		External: []knowledge.CampaignExternalEvidence{{

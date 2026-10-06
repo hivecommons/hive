@@ -961,6 +961,7 @@ type CampaignExternalEvidence struct {
 	URL         string    `json:"url,omitempty"`
 	PublishedAt time.Time `json:"published_at,omitempty"`
 	Summary     string    `json:"summary,omitempty"`
+	SHA256      string    `json:"sha256,omitempty"`
 }
 
 type CampaignSourceFailure struct {

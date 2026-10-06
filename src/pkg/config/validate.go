@@ -154,7 +154,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateUpstreamWatch(); err != nil {
 		return err
 	}
-	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
+	if err := c.ValidateRecheckDiscovery(); err != nil {
 		return err
 	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
