@@ -111,6 +111,8 @@ func TestCloseIssueForConfiguredLinePRPostsAuditCommentAndCloses(t *testing.T) {
 		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/9140":
 			closed = true
 			_, _ = w.Write([]byte(`{"number":9140,"state":"closed"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/hivecommons/hive/issues/9140/labels/needs-reporter-confirmation":
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}

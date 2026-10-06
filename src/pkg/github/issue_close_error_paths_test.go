@@ -69,12 +69,20 @@ func closeGateMux(t *testing.T, issue *gh.Issue, listComments, createComment, ed
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 			_ = json.NewEncoder(w).Encode(issue)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/labels/"+issueNeedsReporterConfirmationLabel:
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": issueNeedsReporterConfirmationLabel})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/collaborators/human/permission":
+			_ = json.NewEncoder(w).Encode(map[string]any{"permission": "read"})
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			listComments(w, r)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			createComment(w, r)
 		case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
 			edit(w, r)
+		case r.Method == "DELETE" && r.URL.Path == "/repos/o/r/issues/7/labels/"+issueNeedsReporterConfirmationLabel:
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

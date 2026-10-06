@@ -97,6 +97,31 @@ func TestOverviewActionableEquationPartitionsOpenWork(t *testing.T) {
 	}
 }
 
+func TestOverviewActionableEquationSurfacesWaitingOnReporter(t *testing.T) {
+	status := &StatusPayload{Repos: []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		ActionableIssues: []any{github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "ready"}},
+		WorkBreakdown: &github.RepoWorkBreakdown{
+			Issues: github.RepoIssueBreakdown{Actionable: 1, Filtered: 1, ReporterConfirmation: 1},
+		},
+	}}}
+
+	got := (&Server{}).statusWithOverviewBands(status, time.Now()).ActionableNow
+	blocked := overviewTerm(got.IssueEquation, "blocked_needs_human")
+	if blocked == nil || blocked.Count != 1 {
+		t.Fatalf("blocked term = %+v, want one waiting reporter issue", blocked)
+	}
+	for _, row := range blocked.Breakdown {
+		if row.Key == "waiting-on-reporter" {
+			if row.Count != 1 || row.Label != "waiting on reporter" || !strings.Contains(row.DocsHref, "label%3Aneeds-reporter-confirmation") {
+				t.Fatalf("waiting-on-reporter row = %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing waiting-on-reporter row in %+v", blocked.Breakdown)
+}
+
 func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 	reporterTrustEnabled := true
 	status := &StatusPayload{HiveID: "hive-test", Repos: []FrontendRepo{{
@@ -110,8 +135,8 @@ func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 		HeldPrs:    []any{github.PullRequest{Repo: "hivecommons/hive", Number: 11, Title: "held PR", Labels: []string{"hold"}}},
 		WorkBreakdown: &github.RepoWorkBreakdown{
 			Issues: github.RepoIssueBreakdown{
-				Actionable: 2, Hold: 1, Filtered: 21,
-				NeedsHuman: 1, NeedsDirection: 2, NeedsDecision: 3, NeedsSpec: 4, Exempt: 5,
+				Actionable: 2, Hold: 1, Filtered: 27,
+				NeedsHuman: 1, NeedsDirection: 2, NeedsDecision: 3, NeedsSpec: 4, ReporterConfirmation: 6, Exempt: 5,
 				ReporterTriage: 7, HiveAdvisory: 8, DependencyDashboard: 9, Other: 10,
 			},
 			PRs: github.RepoPRBreakdown{Actionable: 1, Hold: 1, Draft: 11, Filtered: 12, Other: 13},
@@ -294,6 +319,8 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"overview-kpi-outside",
 		"Triage buckets: what counts as outside",
 		"project.issue_filter.hard_suppress_labels.needs_direction",
+		"waiting on reporter",
+		"label:needs-reporter-confirmation",
 		"Fixed scanner rule",
 	} {
 		if !strings.Contains(html, want) {
