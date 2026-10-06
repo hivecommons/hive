@@ -275,16 +275,10 @@ const (
 	stableNextUpdateStatusUnknown = "unknown"
 )
 
-// stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same serialized per-build soak rule the
-// release-channel block's eligible_at uses, so the spoke and the hub card cannot
-// disagree. Returns "" when no ETA is currently knowable; callers that need to
-// distinguish "none queued" from "unknown" should use stableNextPromotion.
-func stableNextPromotionAt(targets []ChannelTarget) string {
-	at, _ := (&HubServer{logger: slog.Default()}).stableNextPromotion(targets)
-	return at
-}
-
+// stableNextPromotion is the hub's ETA for the next promotion into the stable
+// channel (#10256), from the same serialized per-build soak rule the
+// release-channel block's eligible_at uses, so the spoke and hub card cannot
+// disagree. The status distinguishes "none queued" from "unknown".
 func (s *HubServer) stableNextPromotion(targets []ChannelTarget) (string, string) {
 	if !loadStablePromotionState().AutoPromote {
 		return "", stableNextUpdateStatusPaused
