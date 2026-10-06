@@ -228,7 +228,7 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"overview-kpi-subline",
 		"overviewPartitionTooltip(term, context)",
 		"aria-describedby",
-		"data-action=\"openConfigDialog\" data-arg0=\"governor\" data-arg2",
+		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
 		"These items are not actionable because this hive&apos;s filters exclude them",
 	} {
 		if !strings.Contains(html, want) {
@@ -240,6 +240,9 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"window.alert(",
 		"window.prompt(",
 		"window.confirm(",
+		// The tooltip renders inside <button class="overview-kpi">; a nested <button> makes the HTML
+		// parser close the card early and the tooltip spills inline (oke-11 screenshot, 2026-10-05).
+		`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2`,
 	} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("static/index.html uses forbidden native/dialog tooltip pattern %q", forbidden)

@@ -13726,7 +13726,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionSettingsButton(row) {
       const tab = row && row.settingsTab;
-      return tab ? ` <button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</button>` : '';
+      // Not a <button>: this tooltip is rendered inside the <button class="overview-kpi"> card, and the HTML
+      // parser force-closes an open <button> when it meets a nested one, spilling the tooltip inline.
+      return tab ? ` <span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</span>` : '';
     }
 
     function overviewPartitionTooltip(term, context) {
