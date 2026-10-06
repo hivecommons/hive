@@ -159,8 +159,8 @@ func TestAgentCardModeUnscheduledStructure(t *testing.T) {
 	if strings.Contains(html, "const isOff = a.offByCadence === true && !isPaused && !isOnDemand;") {
 		t.Error("an isOff site still reads offByCadence alone; it must go through agentHeldByMode(a) or the unscheduled auditor renders green-idle there")
 	}
-	if n := strings.Count(html, "const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;"); n != 3 {
-		t.Errorf("expected the card grid, the ops-center nav and the detail panel (3 sites) to derive isOff from agentHeldByMode, found %d", n)
+	if n := strings.Count(html, "const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;"); n != 4 {
+		t.Errorf("expected the card grid, the ops-center nav, the detail panel and the Now-line state helper (4 sites) to derive isOff from agentHeldByMode, found %d", n)
 	}
 	if strings.Contains(html, "title=\"${esc(OFF_HEALTHY_TITLE)}\"") {
 		t.Error("an off-healthy dot still uses the paused-only OFF_HEALTHY_TITLE; it must use agentOffTitle(a), which says WHICH gap holds the agent")

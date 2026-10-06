@@ -22815,7 +22815,6 @@ function burnAreaChart() {
     function noteStatusPayloadTimestamp(data) {
       const payloadAt = new Date(data && data.timestamp).getTime();
       _lastStatusPayloadAtMs = Number.isFinite(payloadAt) ? payloadAt : Date.now();
-      noteAgentNowUpdate(data && data.timestamp);
     }
 
     function formatNavbarClock(now, timeZone) {
@@ -22903,6 +22902,7 @@ function burnAreaChart() {
       const scrollY = window.scrollY;
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
+      noteAgentNowUpdate(data && data.timestamp);
       tickNavbarClock();
       currentAgentMetrics = data.agentMetrics || {};
       window._healthData = data.health || {};
