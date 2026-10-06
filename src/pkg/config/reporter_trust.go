@@ -25,7 +25,7 @@ import (
 // idle every existing hive whose repos take issues from the public.
 //
 // The merge-side half of the same idea — a PR whose rationale traces to an
-// untrusted reporter's issue is held at every level — lives on
+// unaccepted untrusted reporter's issue is held at every level — lives on
 // GitHubConfig.ReporterTrustHold and follows Enabled unless set explicitly.
 type ReporterTrustConfig struct {
 	// Enabled turns the reporter gate on. Pointer so an omitted key reads as

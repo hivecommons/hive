@@ -1,0 +1,1 @@
+- Reporter-trust PR holds now honor configured acceptance labels on rationale issues, avoiding a second maintainer sign-off for accepted requests; hold notices explicitly identify the source issue reporter rather than the PR author ([#10771](https://github.com/hivecommons/hive/issues/10771)).

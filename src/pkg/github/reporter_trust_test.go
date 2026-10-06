@@ -585,6 +585,19 @@ func TestEvaluateReporterTrust(t *testing.T) {
 		body:     "Closes #581",
 		wantHeld: true, wantWhy: "not a trusted reporter",
 	}, {
+		name:     "a maintainer accepted a stranger's issue: no hold",
+		issues:   map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE", Labels: []string{"triage/accepted"}}},
+		body:     "Closes #581",
+		wantHeld: false,
+	}, {
+		name: "an accepted stranger does not exempt another unaccepted citation",
+		issues: map[int]*selfAuthIssue{
+			581: {Author: "stranger", Association: "NONE", Labels: []string{"triage/accepted"}},
+			590: {Author: "another-stranger", Association: "NONE"},
+		},
+		body:     "Closes #581\nRefs #590",
+		wantHeld: true,
+	}, {
 		name:     "a maintainer asked: no hold",
 		issues:   map[int]*selfAuthIssue{581: {Author: "maintainer", Association: "MEMBER"}},
 		body:     "Closes #581",
@@ -678,7 +691,7 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -696,6 +709,58 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	}
 	if resp.SelfAuthorized {
 		t.Error("a human-filed issue is not a #5117 hold; the two gates must not be confused")
+	}
+}
+
+func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
+	cases := []struct {
+		name     string
+		labels   []string
+		required []string
+		gateOff  bool
+		wantHeld bool
+	}{
+		{name: "accepted", labels: []string{"triage/accepted"}},
+		{name: "unaccepted", wantHeld: true},
+		{name: "case insensitive", labels: []string{"TRIAGE/ACCEPTED"}},
+		{name: "not a prefix match", labels: []string{"triage/accepted-later"}, wantHeld: true},
+		{name: "any configured label", labels: []string{"SECURITY/ACCEPTED"}, required: []string{"ok-to-work", " security/accepted "}},
+		{name: "custom labels replace default", labels: []string{"triage/accepted"}, required: []string{"ok-to-work"}, wantHeld: true},
+		{name: "explicit PR hold with admission off", labels: []string{"ok-to-work"}, required: []string{"ok-to-work"}, gateOff: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "CONTRIBUTOR", Labels: tc.labels}}}
+			c := reporterTrustTestClient(t, srv, true)
+			filter := enabledReporterTrust()
+			filter.ReporterTrust.UntrustedRequireLabels = tc.required
+			filter.ReporterTrust.Enabled = gh.Ptr(!tc.gateOff)
+			c.SetIssueFilter(filter)
+			c.prHoldLabel = func(string) bool { return false }
+			// The watcher creates an App-authored PR; only its rationale's
+			// reporter and acceptance labels should decide this hold.
+			reqPath := runReporterTrustWatcher(t, c)
+			labels := srv.applied()
+			comments := srv.postedComments()
+			if tc.wantHeld {
+				if len(labels) != 1 || labels[0] != "hold" || len(comments) != 1 || !IsReporterTrustHoldNotice(comments[0]) {
+					t.Fatalf("want reporter hold and notice, got labels=%v comments=%v", labels, comments)
+				}
+			} else if len(labels) != 0 || len(comments) != 0 {
+				t.Fatalf("accepted issue should not hold its PR: labels=%v comments=%v", labels, comments)
+			}
+			raw, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resp PRResponse
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				t.Fatal(err)
+			}
+			if !resp.OK || resp.ReporterTrustHeld != tc.wantHeld || resp.SelfAuthorized {
+				t.Fatalf("unexpected PR result: %+v", resp)
+			}
+		})
 	}
 }
 
