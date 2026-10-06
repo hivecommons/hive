@@ -85,24 +85,31 @@ const prSlices = [
   { key: 'draft', count: 0, items: [] },
 ];
 const out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
-const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
-assert.equal(values.length, 5);
+const values = [...out.matchAll(/data-overview-kpi-key="([^"]+)" data-overview-kpi-value="([^"]+)"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)/g)].map(m => [m[4], m[3]]);
+assert.equal(values.length, 6);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
+const renderedValues = Object.fromEntries(values.map(([label, value]) => [label, Number(value)]));
 assert.deepEqual(Object.fromEntries(values), {
   'Total open issues': '100',
   'Total open PRs': '7',
-  'Actionable now (issues and PRs)': '103',
+  'Actionable now': '103',
   'Held': '1',
   'Blocked / needs-human': '3',
+  'Outside': '0',
 });
-assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ [\s\S]*1 held[\s\S]* \+ [\s\S]*3 blocked\/needs-human</);
+assert.equal(
+  renderedValues['Total open issues'] + renderedValues['Total open PRs'],
+  renderedValues['Actionable now'] + renderedValues.Held + renderedValues['Blocked / needs-human'] + renderedValues.Outside
+);
+assert.match(out, /aria-label="100 total open issues \+ 7 total open PRs = 103 actionable now \+ 1 held \+ 3 blocked or needs-human \+ 0 outside"/);
 
 repos[0].issues = 123;
 repos[0].prs = 45;
 const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
-const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
+const rawValues = Object.fromEntries([...rawOut.matchAll(/data-overview-kpi-key="([^"]+)" data-overview-kpi-value="([^"]+)"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)/g)].map(m => [m[4], m[3]]));
 assert.equal(rawValues['Total open issues'], '123');
 assert.equal(rawValues['Total open PRs'], '45');
+assert.equal(rawValues['Outside'], '61');
 assert.doesNotMatch(out, /Median actionable age/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()

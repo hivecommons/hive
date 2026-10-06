@@ -276,9 +276,7 @@ func overviewActionableCombinedEquation(totals FrontendOverviewTotals, actionabl
 		{Key: "held", Label: "held", Count: held, Rule: "Open issues and PRs paused by hold labels.", Breakdown: heldBreakdown},
 		{Key: "blocked_needs_human", Label: "blocked/needs-human", Count: blockedHuman, Rule: "Open work waiting on a person, dependency, or mergeability.", Breakdown: blockedBreakdown},
 	}
-	if outside > 0 {
-		terms = append(terms, FrontendActionableEquationTerm{Key: "outside", Label: "outside", Count: outside, Rule: "Open items excluded before they enter Overview bands by this hive's scanner settings.", Breakdown: outsideBreakdown})
-	}
+	terms = append(terms, FrontendActionableEquationTerm{Key: "outside", Label: "outside", Count: outside, Rule: "Open items excluded before they enter Overview bands by this hive's scanner settings.", Breakdown: outsideBreakdown})
 	if other > 0 {
 		terms = append(terms, FrontendActionableEquationTerm{Key: "other", Label: "other", Count: other})
 	}
