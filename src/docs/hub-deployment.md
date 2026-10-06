@@ -110,6 +110,8 @@ Heartbeat node health needs read-only cluster-scoped RBAC for:
 - core `nodes` `get,list` (capacity, allocatable, readiness, GPU labels)
 - `metrics.k8s.io` `nodes` `list` (live CPU/memory usage from metrics-server)
 
+Do not grant `nodes/proxy` to a tenant ServiceAccount: it reaches every kubelet's `/exec`, `/attach` and `/pods` endpoints through the API server. The spoke's kubelet `stats/summary` disk-usage read is best-effort; without it the Node card shows disk capacity but no live usage percentage.
+
 When `metrics.k8s.io` is unavailable or forbidden, spokes still report node count, vCPU, memory and disk capacity from the core Node API. The hub marks only the live-usage data partial and carries the precise `node_health_error` reason, such as `metrics API failed: ... HTTP 403` or a missing metrics API, instead of the generic "check RBAC and metrics-server" note.
 
 Tenant roles deliberately omit `nodes/proxy` (which permits cross-tenant kubelet exec) and cluster-wide `pods list` (which exposes other tenants' pod specs). Push-reported tenant health therefore has no live disk percentage, pod/hive counts or request-based remaining hive capacity; the collector reports partial health (`pods API failed: ... HTTP 403`) while retaining node capacity and available CPU/memory metrics. Do not restore those grants to suppress the partial-health warning.
