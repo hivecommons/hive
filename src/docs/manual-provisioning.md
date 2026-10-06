@@ -931,15 +931,37 @@ ServiceAccount-derivation caveat.
 
 The template also emits a read-only cluster-scoped `hive-node-health-reader-*`
 ClusterRole/ClusterRoleBinding so push-reported spokes can send node health in
-their outbound heartbeat. It grants `nodes get,list`, `nodes/proxy get`,
-`pods list`, and `metrics.k8s.io/nodes list`. If metrics-server is absent or
+their outbound heartbeat. It grants only `nodes get,list` and
+`metrics.k8s.io/nodes list`. It must not grant `nodes/proxy` (cross-tenant
+kubelet exec) or cluster-wide `pods list` (other tenants' pod specs).
+Live disk usage, pod/hive counts and request-based remaining hive capacity
+are unavailable with this safe tenant role; a pods-API 403 is expected partial
+health, not a reason to broaden access. If metrics-server is absent or
 that last rule is denied, the spoke still reports node count, vCPU, memory and
 disk capacity from the core Node API and carries the precise `node_health_error`
 reason to the hub.
 
 The template binds `hive-sa` on `RequiresSCC` (OpenShift) clusters and `default`
 elsewhere. Namespaces provisioned **before** either reader was added do not have
-it and need it applied retroactively.
+it and need it applied retroactively. Existing overbroad node-health roles are
+narrowed by the hub's startup/15-minute reconciliation on kubectl-reachable
+clusters. On push-reported clusters, a cluster administrator must replace the
+role's entire `rules` list with the safe rules below (do not merely append them),
+and inspect any orphaned `hive-node-health-reader-*` roles as well. A tenant
+pod upgrade does not revoke old ClusterRole permissions. For each affected
+namespace, an administrator with the cluster's kubeconfig can revoke the legacy
+grants immediately (repeat with the appropriate `NS` on every hosting cluster):
+
+```bash
+kubectl --request-timeout=15s patch clusterrole "hive-node-health-reader-${NS}" \
+  --type=merge -p '{"rules":[{"apiGroups":[""],"resources":["nodes"],"verbs":["get","list"]},{"apiGroups":["metrics.k8s.io"],"resources":["nodes"],"verbs":["list"]}]}'
+kubectl get clusterrole "hive-node-health-reader-${NS}" -o yaml
+```
+
+Verify the resulting role has only the two node rules; it must have no
+`nodes/proxy`, `pods`, wildcard resources, or aggregation rule. Also check
+other bindings to the tenant ServiceAccount: narrowing this role cannot undo
+grants from independently installed roles.
 
 ---
 
@@ -1057,12 +1079,6 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get","list"]
-- apiGroups: [""]
-  resources: ["nodes/proxy"]
-  verbs: ["get"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["list"]
 - apiGroups: ["metrics.k8s.io"]
   resources: ["nodes"]
   verbs: ["list"]

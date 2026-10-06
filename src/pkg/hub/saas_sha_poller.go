@@ -700,6 +700,8 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Revoke legacy cross-tenant telemetry grants on existing tenant roles.
+	s.reconcileNodeHealthRBACIfDue()
 	// Ensure the five per-hive security env vars are present and correct on
 	// every hosted spoke. Nothing else re-asserts them after provision time, so
 	// without this the fleet's key posture survives only as an out-of-band
@@ -779,6 +781,7 @@ func (s *HubServer) pollLatestSHAsTick(ctx context.Context, now time.Time) {
 	s.sweepOrphanedUpgradesIfDue()
 	s.sweepStuckAssignmentsIfDue()
 	s.reconcileNetAdminIfDue()
+	s.reconcileNodeHealthRBACIfDue()
 	s.reconcilePerHiveEnvIfDue()
 	s.reapOrphanedPodsIfDue()
 	s.retireExpiredGenerationsIfDue()

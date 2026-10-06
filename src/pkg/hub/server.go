@@ -1140,6 +1140,9 @@ type HubServer struct {
 	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
 	// (both are poller-loop-only state; no need for a separate mutex).
 	lastNetAdminReconcile time.Time
+
+	// Guarded by clusterUnreachableMu; repairs legacy tenant ClusterRoles.
+	lastNodeHealthRBACReconcile time.Time
 	// lastPerHiveEnvReconcile throttles the per-hive security env reconcile
 	// (perhive_env_reconcile.go), which ensures HIVE_HEARTBEAT_KEY /
 	// HIVE_TERMINAL_KEY / HIVE_SESSION_KEY / HIVE_SSO_PUBLIC_KEY /

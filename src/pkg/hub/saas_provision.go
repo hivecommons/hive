@@ -3101,9 +3101,9 @@ subjects:
 ---
 # hive-node-health-reader lets a push-reported spoke include useful cluster
 # capacity in its outbound heartbeat when the hub cannot kubectl into the
-# cluster. Read-only and cluster-scoped because Kubernetes Nodes and
-# metrics.k8s.io NodeMetrics are cluster-scoped, and the per-node hive count
-# requires listing running pods across hive-hosted-* namespaces.
+# cluster. Only Nodes and NodeMetrics are exposed: nodes/proxy permits
+# cross-tenant exec, and cluster-wide pods list exposes other tenants' specs.
+# Disk usage, pod counts and request-based capacity remain unavailable.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -3112,12 +3112,6 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list"]
-- apiGroups: [""]
-  resources: ["nodes/proxy"]
-  verbs: ["get"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["list"]
 - apiGroups: ["metrics.k8s.io"]
   resources: ["nodes"]
   verbs: ["list"]
