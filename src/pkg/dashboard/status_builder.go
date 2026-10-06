@@ -929,6 +929,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			UnscheduledInMode: unscheduledInMode,
 			CadenceModes:      cadenceModes,
 		}
+		applyAgentLastAction(&a, proc, busy)
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
 		if proc.KickOutcome.Settled(proc.LastKick) {
