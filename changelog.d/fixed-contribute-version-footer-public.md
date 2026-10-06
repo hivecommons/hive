@@ -1,0 +1,1 @@
+- The public contributor page footer now shows the Hive build from the public `/api/contribute/status` `served_sha` instead of fetching the login-protected `/api/version`, so anonymous visitors on hosted hives no longer always see "Hive version unavailable" (#10682).

@@ -43,7 +43,7 @@ func TestFetchPRsCarriesUpdatedAtForRepoCardBands(t *testing.T) {
 	c := newTestClient(t, server, "acme", []string{"widget"})
 	c.appBotLogin = "hive[bot]"
 
-	actionable, _, heldPRs, staleDrafts, _, _, _, err := c.fetchPRs(t.Context(), "widget")
+	actionable, _, heldPRs, staleDrafts, _, _, _, err := c.fetchPRs(t.Context(), "widget", nil)
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}

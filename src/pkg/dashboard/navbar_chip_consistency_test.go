@@ -71,9 +71,14 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 	topbar := dashboardTopbarHTML(t)
 	for _, want := range []string{
 		`.oc-topbar {`,
-		`position: sticky; top: var(--sp-0);`,
+		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0);`,
 		`grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
+		`width: auto;`,
 		`z-index: var(--navbar-sticky-z);`,
+		`.oc-topbar-left { font-size: var(--fs-base); color: var(--muted); display: flex; align-items: center; gap: var(--nav-chip-gap, 8px); min-width: 0; justify-content: flex-start; overflow: hidden; }`,
+		`.oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }`,
+		`.oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }`,
+		`overflow-x: auto; overflow-y: hidden;`,
 		`scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5));`,
 		`#oc-drawer-backdrop {`,
 		`.config-overlay { z-index: 10000; }`,
@@ -100,10 +105,29 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 			t.Errorf("topbar center zone missing %q", want)
 		}
 	}
-	for _, want := range []string{`id="feedback-bug-btn"`, `id="oc-settings-btn"`, `id="oc-health"`} {
+	for _, want := range []string{`id="feedback-bug-btn"`, `class="nav-chip nav-chip--icon nav-chip--action layout-toggle"`, `id="oc-settings-btn"`, `id="oc-health"`, `id="welcome-topbar-btn"`, `id="oc-gh-avatar-wrap"`} {
 		if !strings.Contains(right, want) {
 			t.Errorf("topbar right zone missing %q", want)
 		}
+	}
+	rightOrder := []string{
+		`id="feedback-bug-btn"`,
+		`class="nav-chip nav-chip--icon nav-chip--action layout-toggle"`,
+		`id="oc-settings-btn"`,
+		`id="oc-health"`,
+		`id="welcome-topbar-btn"`,
+		`id="oc-gh-avatar-wrap"`,
+	}
+	last := -1
+	for _, want := range rightOrder {
+		pos := strings.Index(right, want)
+		if pos < 0 {
+			t.Fatalf("topbar right zone missing %q", want)
+		}
+		if pos <= last {
+			t.Fatalf("topbar right zone control %q is out of order", want)
+		}
+		last = pos
 	}
 }
 

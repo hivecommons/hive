@@ -1845,6 +1845,7 @@ contribute-hive backend="" mode="docker": check-version
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
         ${AGENT_REASONING_EFFORT:+-e AGENT_REASONING_EFFORT="${AGENT_REASONING_EFFORT}"} \
         ${CONTRIBUTOR_MODE:+-e CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE}"} \
+        ${HIVE_CODEX_AUTO_USE_BANKED_RESET:+-e HIVE_CODEX_AUTO_USE_BANKED_RESET="${HIVE_CODEX_AUTO_USE_BANKED_RESET}"} \
         ${HIVE_SESSION+-e HIVE_SESSION="${HIVE_SESSION}"} \
         {{hive_image}} > /dev/null
       # ^ HIVE_SESSION uses ${VAR+...} (no colon) on purpose: an explicit

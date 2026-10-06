@@ -2250,7 +2250,7 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-filter="hive">Hive agents</button>
 </div>
 <div id="effective-models-ranked"><div class="ops-empty">Loading effective models&hellip;</div></div>
-<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">Ranked by first-pass merge rate, then merged PR count. Rows below the sample threshold are listed under <b>Not enough data yet</b>; every number is an aggregate for model + CLI.</p>
+<p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">Ranked by first-pass merge rate, then merged PR count. Rows below the sample threshold are listed under <b>Not enough data yet</b>; every number is an aggregate for model + CLI. Run columns come from the contributor task-run log only; &mdash; means no runs were recorded, not a measured 0%%. <span id="effective-models-coverage"></span></p>
 </div>
 </div>
 <!-- Fleet work (#6945): this panel was titled "My work" while rendering the work
@@ -3004,6 +3004,14 @@ var effectiveModelsWindow='7d';
 var effectiveModelsFilter='all';
 var effectiveModelsLastData=null;
 function effectivePct(v){return ((Number(v)||0)*100).toFixed(0)+'%%';}
+function effectiveRunPct(x,v){return Number(x&&x.runs||0)>0?effectivePct(v):'—';}
+function effectiveCoverageText(c){
+  if(!c)return '';
+  var days=Number(c.closed_pr_lookback_days||0);
+  var prs='Closed PRs: last '+days+' days scanned'+(c.closed_prs_partial?' (partial for this window)':'');
+  var runs='Runs: '+(c.runs_since?'since '+String(c.runs_since).slice(0,10):'none retained')+(c.runs_partial?' (older runs rotated out)':'');
+  return 'Coverage — '+prs+' · '+runs+'.';
+}
 function effectiveFixed(v){return (Number(v)||0).toFixed(1);}
 function loadEffectiveModels(){
   var mount=document.getElementById('effective-models-ranked');if(!mount)return;
@@ -3019,6 +3027,8 @@ function renderEffectiveModels(data){
   var ranked=data.ranked||[], insufficient=data.insufficient||[];
   var count=document.getElementById('effective-models-count');
   if(count)count.textContent=ranked.length+' ranked · min '+(data.min_merged_prs||5)+' merged PRs';
+  var cov=document.getElementById('effective-models-coverage');
+  if(cov)cov.textContent=effectiveCoverageText(data.coverage);
   var effColumns=[
     {key:'model',type:'text',value:function(x){return (x.model||'')+' '+(x.backend||'')+' '+(x.runtime||'');}},
     {key:'merged_prs',type:'number',value:function(x){return x.merged_prs;}},
@@ -3056,9 +3066,9 @@ function renderEffectiveModels(data){
           '<td>'+effectiveFixed(x.avg_review_rounds)+'</td>'+
           '<td>'+effectiveFixed(x.avg_fix_attempts)+'</td>'+
           '<td>'+Number(x.runs||0)+'</td>'+
-          '<td>'+effectivePct(x.verified_pr_run_rate)+'<div class="effective-sub">'+Number(x.verified_pr_runs||0)+' PR runs</div></td>'+
-          '<td>'+effectivePct(x.failure_rate)+'</td>'+
-          '<td>'+effectivePct(x.nothing_to_ship_rate)+'</td>'+
+          '<td>'+effectiveRunPct(x,x.verified_pr_run_rate)+'<div class="effective-sub">'+Number(x.verified_pr_runs||0)+' PR runs</div></td>'+
+          '<td>'+effectiveRunPct(x,x.failure_rate)+'</td>'+
+          '<td>'+effectiveRunPct(x,x.nothing_to_ship_rate)+'</td>'+
           '<td class="effective-muted">'+(worst||'—')+'</td></tr>';
       }).join('')+'</tbody></table>';
   }
@@ -7428,16 +7438,18 @@ function ccLoadVersion(){
     finish('Hive version unavailable');
     controller.abort();
   },10000);
-  // The public contribute page can be viewed without dashboard API access.
+  // This page is public on hosted hives, where the private /api/version
+  // redirects anonymous visitors to login (#10682). Read the build SHA the
+  // public /api/contribute/status already serves instead.
   return Promise.resolve().then(function(){
-    return fetch('/api/version',{signal:controller.signal});
+    return fetch('/api/contribute/status',{signal:controller.signal});
   }).then(function(r){
     if(!r.ok)throw new Error('Version request failed');
     return r.json();
   }).then(function(d){
-    if(!d||typeof d.version!=='string'||!d.version.trim()||typeof d.short!=='string'||!d.short.trim()||(d.behind!==undefined&&typeof d.behind!=='boolean'))throw new Error('Invalid version response');
-    var dot=d.behind===undefined?'⚪':(d.behind?'🟡':'🟢');
-    finish(dot+' Hive v'+d.version+' ('+d.short+')'+(d.behind===undefined?' · update status unavailable':(d.behind?' · update available':' · up to date')));
+    var sha=d&&typeof d.served_sha==='string'?d.served_sha.trim():'';
+    if(!sha||sha==='unknown')throw new Error('Invalid version response');
+    finish('Hive build '+sha);
   }).catch(function(){finish('Hive version unavailable');});
 }
 ccLoadVersion();

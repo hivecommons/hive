@@ -226,9 +226,9 @@ exempt labels, reporter-trust triage from
 `project.issue_filter.reporter_trust`, require-label filtering from
 `project.issue_filter.require_labels`, standing hive advisory/meta issues,
 bot Dependency Dashboard issues, draft PRs, exempt PR labels, and
-hold-adjacent/other remainder rows. See
-[labels-and-control-signals.md](labels-and-control-signals.md) for the label
-semantics behind hold, exempt, and hard-suppress signals. Its
+hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
+for the bucket-by-bucket rules and [labels-and-control-signals.md](labels-and-control-signals.md)
+for the label semantics behind hold, exempt, and hard-suppress signals. Its
 `actionableNow.issues` and `actionableNow.prs` splits always sum to
 `actionableNow.total`. Operators can
 view each Issues or PRs panel as a donut,
@@ -239,6 +239,26 @@ row, or a repository-card band header shows its rule from the Go band specs
 carried in `/api/status` as `overview_bands`. Each actionable/held issue and PR
 carries `band`, `signals`, `stale`, and `held`; the browser does not classify
 labels or timestamps again. Full SSE updates carry the same fields.
+
+
+### Outside buckets
+
+The Overview and Governor `outside` ⓘ tooltip uses this server-side table. The
+Settings → Labels panel repeats it as **Triage buckets: what counts as outside**
+and exposes the editable rows.
+
+| Bucket | Definition | Rule/config source | How to change |
+| --- | --- | --- | --- |
+| `needs-direction` | Issue is waiting for maintainer direction before agents may work it. | Labels in `project.issue_filter.hard_suppress_labels.needs_direction`; default `needs-direction`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| `needs-decision` | Issue is waiting for a maintainer decision. | Labels in `project.issue_filter.hard_suppress_labels.needs_decision`; default `needs-decision`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| `needs-spec` | Issue needs specification or acceptance criteria. | Labels in `project.issue_filter.hard_suppress_labels.needs_spec`; default `needs-spec`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
+| Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
+| Project issue filter | Issue lacks every required allow-list label. | `project.issue_filter.require_labels`. | Settings → Labels → Required labels. |
+| Standing meta/advisory | Hive's own advisory report or issue labelled `hive/advisory`; it is coordination state, not work. | Fixed scanner rule: advisory title/label. | Rename/close the advisory, or remove the advisory label if it should become work. |
+| Dependency dashboard | Bot dependency dashboard control panel, not a concrete task. | Fixed scanner rule: Renovate/Dependabot-style bot author plus Dependency/Renovate Dashboard title. | File concrete child issues or close/rename the dashboard issue. |
+| Draft PRs | Pull request is open but marked draft. | GitHub draft state. | Use GitHub's **Ready for review** action. |
+| Hold-adjacent/other | Safety remainder for open items that did not match a named actionable, held, blocked, or outside classifier. | Fixed scanner fallback. | Check labels and scanner rules; add a dedicated classifier if the remainder is meaningful. |
 
 The Issues and PRs panels link directly to `/api/overview/issues.csv` and
 `/api/overview/prs.csv` by default, or to the matching `.json` endpoints when
@@ -390,6 +410,17 @@ signals through `EnrichReviewSignals` — the same per-repository query and no
 per-PR mergeability or check-run fetch, since a draft is not a merge
 candidate.
 
+
+### Settings → Labels → Reporter trust: clanker-requested
+
+The Reporter trust block also controls the opt-in `clanker_requested` policy, which steers untrusted contributors to the [ClankeR relay](contributor-relay.md#steering-outside-prs-to-the-relay-clanker_requested):
+
+- **Toggle** for `project.issue_filter.reporter_trust.clanker_requested` (off by default).
+- **Label name** (placeholder `clanker-requested`) for `clanker_requested_label`; it must not be blank.
+- **Comment addendum** textarea for `clanker_requested_addendum` (optional, max 1000 bytes).
+- A live **preview** of the comment text, updated as you type.
+
+`GET`/`PUT /api/config/governor` expose and validate `clankerRequested`, `clankerRequestedLabel` and `clankerRequestedAddendum`. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md#clanker-requested-policy-for-outside-prs).
 
 ## Appearance themes
 

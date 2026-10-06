@@ -51,6 +51,11 @@ const (
 	// `claude` default, so the publisher and the relay always resolve the same
 	// pool.
 	envBackend = "AGENT_BACKEND"
+	// envAutoUseBankedReset is the contributor-local opt-in that also gates
+	// the relay's weekly-reserve exception (hivecommons/hive#10597). Here it
+	// enables the banked-reset redemption controller (#10598, ADR-0022). It is
+	// read only from this process's own environment.
+	envAutoUseBankedReset = "HIVE_CODEX_AUTO_USE_BANKED_RESET"
 )
 
 // plan is the startup decision: publish, or stand down with a stated reason.
@@ -61,6 +66,11 @@ type plan struct {
 	backend string
 	poolDir string
 	account string
+	// redeemBankedReset runs the banked-reset redemption controller beside
+	// the publisher. Only ever true for the codex backend with local opt-in.
+	redeemBankedReset bool
+	// redeemNote explains an opt-in value that could not be honoured.
+	redeemNote string
 }
 
 func main() {
@@ -81,6 +91,9 @@ func startPublisher(ctx context.Context, p plan) (<-chan struct{}, bool) {
 	mgr, ok := rotation.NewContributorBackendReadingPublisher(p.poolDir, p.account, p.backend)
 	if !ok {
 		return nil, false
+	}
+	if p.redeemBankedReset {
+		mgr.EnableCodexResetRedeem()
 	}
 	return mgr.StartPublishing(ctx), true
 }
@@ -110,6 +123,12 @@ func run(
 	}
 	fmt.Fprintf(stdout, "hive-quota-publisher: publishing %s quota readings every 5m0s into %s\n", p.backend, p.poolDir)
 	fmt.Fprintln(stdout, "hive-quota-publisher: quota protection active — the relay holds new work below its configured reserve.")
+	if p.redeemBankedReset {
+		fmt.Fprintln(stdout, "hive-quota-publisher: "+envAutoUseBankedReset+" is on — a banked Codex reset is redeemed only when the weekly window reaches 0%.")
+	}
+	if p.redeemNote != "" {
+		fmt.Fprintf(stderr, "hive-quota-publisher: %s\n", p.redeemNote)
+	}
 	<-ctx.Done()
 	// Wait for the publish loop's last write before exiting: the process
 	// holding the pool's presence marker must not disappear mid-rename.
@@ -162,7 +181,28 @@ func resolvePlan(getenv func(string) string, defaultPoolDir func() string) plan 
 		return p
 	}
 	p.publish = true
+	// The redemption controller lives inside this publisher, so every
+	// stand-down above (opt-out, guard off, an external reading source,
+	// unsupported backend) also means no competing controller is started.
+	p.redeemBankedReset, p.redeemNote = resolveBankedResetRedeem(getenv(envAutoUseBankedReset), backend)
 	return p
+}
+
+// resolveBankedResetRedeem parses the opt-in like the relay does. An invalid
+// value fails relay startup there; here it leaves redemption off and says so,
+// because this process must never stop publishing.
+func resolveBankedResetRedeem(raw, backend string) (bool, string) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "0", "false", "no", "off":
+		return false, ""
+	case "1", "true", "yes", "on":
+	default:
+		return false, envAutoUseBankedReset + " must be true or false; banked-reset redemption stays off"
+	}
+	if backend != "codex" {
+		return false, envAutoUseBankedReset + " only applies to the codex backend; ignored for " + backend
+	}
+	return true, ""
 }
 
 // configuredReadingSource names the external reading source the operator

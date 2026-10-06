@@ -75,6 +75,16 @@ func reporterTrustCommentEnabled(ra ReporterAdmitter) bool {
 	return true
 }
 
+// reporterTrustClankerConfig returns the clanker-requested settings when the
+// policy is on, or ok=false when it is off or the filter does not carry them.
+func reporterTrustClankerConfig(ra any) (ReporterTrustClankerConfig, bool) {
+	cc, ok := ra.(ReporterTrustClankerConfig)
+	if !ok || !cc.ReporterTrustClankerRequestedOn() {
+		return nil, false
+	}
+	return cc, true
+}
+
 func trimNonEmpty(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, v := range in {
@@ -96,10 +106,16 @@ func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) stri
 		}
 		labelText = "one of the labels " + strings.Join(quoted, ", ")
 	}
-	return reporterTrustWaitMarker(repo, addedLabel) + "\n" +
+	body := reporterTrustWaitMarker(repo, addedLabel) + "\n" +
 		"Thanks — this hive only works issues from " + trusted + " automatically. " +
 		"A maintainer can admit this one by adding " + labelText + " (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
 		"Until then the hive will not claim, label, or open PRs for it."
+	if cc, ok := reporterTrustClankerConfig(ra); ok {
+		body += "\n\n" + clankerRequestedPointer +
+			" Once your relay is connected, this issue will be offered to it like any other queued work." +
+			clankerRequestedAddendum(cc)
+	}
+	return body
 }
 
 func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, issue *gh.Issue, labels []string, ra ReporterAdmitter, budget *reporterTrustWaitBudget) {

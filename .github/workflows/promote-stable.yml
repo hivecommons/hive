@@ -60,7 +60,10 @@ env:
 
 jobs:
   promote:
-    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    # Stays hosted: src/scripts/promote-stable.sh drives `gh` (release lookups,
+    # blocker-label checks, emergency follow-up comments) and the self-hosted
+    # image does not ship `gh` yet (#10042). See src/docs/ci-runner-labels.md.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout promotion scripts

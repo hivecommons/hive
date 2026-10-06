@@ -74,8 +74,11 @@ const document = { getElementById(id) { return id === 'oc-version-chip' ? chip :
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsFunc(t, html, "versionUpgradeKey") + "\n" +
+		jsFunc(t, html, "versionBeeGlyphHTML") + "\n" +
 		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
 		jsFunc(t, html, "versionNavbarUpgradeHTML") + "\n" +
+		jsFunc(t, html, "versionSetHTMLPreservingUpgradeBee") + "\n" +
 		jsFunc(t, html, "renderVersionChip") + `
 renderVersionChip({hash:'1111111abcdef', short:'1111111', branch:'v5'}, {deliveryLabel:'v5', upgradeProgress:{target:'94386f3abcdef', targetShort:'94386f3', startedAt:1000}});
 assert.ok(chip.innerHTML.includes('oc-version-navbar-upgrade'), chip.innerHTML);
@@ -161,6 +164,8 @@ var _upgradeInProgress = false;
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionElapsedText") + "\n" +
 		jsFunc(t, html, "versionUpgradeProgressStatus") + "\n" +
+		jsFunc(t, html, "versionUpgradeKey") + "\n" +
+		jsFunc(t, html, "versionBeeGlyphHTML") + "\n" +
 		jsFunc(t, html, "versionUpgradeHiveHTML") + "\n" +
 		jsFunc(t, html, "versionBeeProgressHTML") + "\n" +
 		jsFunc(t, html, "versionButtonHTML") + "\n" +

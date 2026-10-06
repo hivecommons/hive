@@ -174,6 +174,11 @@ type Client struct {
 	reporterTrustMu          sync.RWMutex
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
+	// relayContributor reports whether a login holds a live contributor
+	// (relay) claim, the provenance that exempts its PRs from the
+	// clanker-requested parking (pr_clanker_requested.go). nil knows no relay
+	// contributors.
+	relayContributor func(login string) bool
 	// prSignedCommits, when set and returning true, makes the PR-request watcher
 	// re-author each head branch through createCommitOnBranch before opening the
 	// PR, so the commit is GitHub-signed (Verified) and authored by the App bot.
@@ -195,6 +200,9 @@ type Client struct {
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
 	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// agentStartHook is told when an agent's own relay request shows it
+	// working an issue (#10527). See agent_start_hook.go.
+	agentStartHook atomic.Pointer[AgentStartHook]
 	// mergeAuthz gates merge requests from the merge-request watcher against the
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
 	// TARGET (pinned SHA + governor merge-eligible membership; see
@@ -1013,6 +1021,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// one of those paths runs through.
 	repos := c.activeRepos()
 	reporterTrustWaitBudget := newReporterTrustWaitBudget()
+	clankerRequestedBudget := newClankerRequestedBudget()
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
@@ -1026,7 +1035,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo)
+		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo, clankerRequestedBudget)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -1175,7 +1184,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Exempt++
 			continue
 		}
-		if suppress := hardSuppressIssueLabel(labels); suppress != "" {
+		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
 			continue
@@ -1335,7 +1344,7 @@ func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) strin
 	return ""
 }
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
+func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -1359,6 +1368,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
+		// Parked before the hold check so a freshly labelled PR lands in the
+		// held partition on this same poll (hivecommons/hive#10781).
+		labels = c.parkClankerRequestedPR(ctx, repo, pr, labels, clankerBudget)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
 		scopeContract := reviewScopeContract(pr.GetTitle(), pr.GetBody(), owner+"/"+repoName, runKey, planRef)
@@ -1561,6 +1573,12 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 	}
 	c.storeAttributedClosedPRs(repo, out)
 	return out, nil
+}
+
+// AttributedClosedPRLookback is the updated-time window the closed attributed
+// PR scan covers, so consumers can report the history they actually hold.
+func AttributedClosedPRLookback() time.Duration {
+	return attributedClosedPRLookback()
 }
 
 func attributedClosedPRLookback() time.Duration {
@@ -3411,4 +3429,11 @@ func ExtractPRLabels(labels []*gh.Label) []string {
 // SafeGetLogin returns a GitHub user's login, or an empty string for nil.
 func SafeGetLogin(u *gh.User) string {
 	return safeGetLogin(u)
+}
+
+func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
+	if classifier, ok := filter.(HardSuppressClassifier); ok {
+		return classifier.HardSuppressIssueBucket(labels)
+	}
+	return hardSuppressIssueLabel(labels)
 }
