@@ -1247,6 +1247,12 @@
     /* Last upstream/launch error — stacked below .agent-state, never under the
        working-indicator dot, so a retry in progress cannot hide it (#3604). */
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
+    /* "Now:" line (#10934): what the agent is on, under its state line. Not
+       aria-live — it changes every update and would flood screen readers. */
+    .agent-now { text-align: right; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); word-break: break-word; }
+    .agent-now .an-lead { font-weight: 600; color: var(--text); }
+    .agent-now.outdated { color: var(--yellow); }
+    .oc-agent-detail .agent-now { text-align: left; }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -2156,22 +2162,10 @@
 
     /* Agent indicators */
     .agent-indicators { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); font-size: var(--fs-sm); }
-    details.agent-indicators > summary { list-style: none; }
-    details.agent-indicators > summary::-webkit-details-marker { display: none; }
-    details.agent-indicators > summary::before { content: '▶'; display: inline-block; margin-right: var(--sp-2); font-size: var(--fs-2xs); transition: transform 0.15s; vertical-align: middle; }
-    details.agent-indicators[open] > summary::before { transform: rotate(90deg); }
-    .ind-label { color: var(--muted); font-size: 0.65rem; }
-    .ind-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; }
     .ind-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 3px; }
     /* .ind-tag family — pill recipe; variants pick --pill-c, hover deepens tint */
     .ind-tag { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; }
     .ind-tag:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
-    .ind-pair { display: flex; align-items: center; gap: var(--sp-2); margin-top: 3px; }
-    .ind-issue { --pill-c: var(--green); }
-    .ind-pr { --pill-c: var(--purple); }
-    .ind-merged { --pill-c: var(--green); }
-    .ind-wip { --pill-c: var(--yellow); }
-    .ind-arrow { color: var(--muted); font-size: 0.7rem; }
     .ind-dots { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
     .ind-dot-item { display: flex; align-items: center; gap: 3px; }
     .ind-dlabel { font-size: var(--fs-2xs); color: var(--muted); }
@@ -7845,6 +7839,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Same for the blockers line, the stat fields and the indicators — they
         // live outside the scroll region, so replacing them wholesale cannot
         // cause the scroll jumps the fast path exists to prevent.
+        const nowEl = detail.querySelector('[data-agent-now]');
+        if (nowEl) nowEl.outerHTML = agentNowHtml(a);
         const blockersEl = detail.querySelector('.oc-detail-blockers');
         if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
         const fieldsEl = detail.querySelector('.oc-detail-fields');
@@ -7982,6 +7978,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           </select>
           ${effortSelectHtml(a)}
         </div>
+        ${agentNowHtml(a)}
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
@@ -9867,72 +9864,239 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="agent-indicators"><div class="ind-group"><div class="ind-dots">${items.join('')}</div></div></div>`;
     }
 
+    // Configured per-agent stats (statsConfig). The old "Working on / PR open
+    // / merged" rows that also lived here were fed by a script the Go
+    // dashboard never ported (#128), so they never rendered; the agent's
+    // "Now:" line below answers "what is it on?" instead (#10925).
     function agentIndicators(name) {
-      const m = currentAgentMetrics[name];
-
-      // Config-driven stats rendering — check first so agents without
-      // currentAgentMetrics entries still get their statsConfig rendered.
       const agentObj = ((window._lastStatus || {}).agents || []).find(a => a.name === name);
       const statsConfig = agentObj ? agentObj.statsConfig : null;
       if (statsConfig && statsConfig.length > 0) {
         return renderStatsFromConfig(statsConfig, name);
       }
-
-      if (!m) return '';
-
-      // Agents with issue/PR pair tracking get special pair rendering
-      if (m.pairs || m.inProgress) {
-        const pairs = m.pairs || [];
-        const inProgress = m.inProgress || [];
-        const openPairs = pairs.filter(p => p.state !== 'merged');
-        const mergedPairs = pairs.filter(p => p.state === 'merged');
-        const _org = (window._primaryRepo || 'kubestellar/console').split('/')[0];
-        const _defaultRepo = (window._primaryRepo || 'kubestellar/console').split('/')[1];
-        const _ghBase = window._githubBaseUrl || 'https://github.com';
-        const _ghUrl = (p, type) => `${_ghBase}/${encodeURIComponent(_org)}/${encodeURIComponent(p.repo || _defaultRepo)}/${type}/${type === 'issues' ? p.issue : p.pr}`;
-        const _repoTag = (p) => (p.repo && p.repo !== _defaultRepo) ? `<span style="color:var(--muted);font-size:0.65rem">${esc(p.repo)}/</span>` : '';
-        const renderPair = (p) => {
-          const issueLabel = p.issueTitle ? `⊙ #${p.issue} — ${esc(p.issueTitle.length > 48 ? p.issueTitle.slice(0, 48) + '…' : p.issueTitle)}` : `⊙ #${p.issue}`;
-          const issueTip = p.issueTitle ? esc(p.issueTitle) : '';
-          const prIcon = p.state === 'merged' ? '✓' : '⎇';
-          const prCls = p.state === 'merged' ? 'ind-pr ind-merged' : 'ind-pr';
-          const prTip = p.prTitle ? esc(p.prTitle) : '';
-          return `<div class="ind-pair">
-          ${_repoTag(p)}<a class="ind-tag ind-issue" href="${_ghUrl(p,'issues')}" target="_blank" title="${issueTip}">${issueLabel}</a>
-          <span class="ind-arrow">→</span>
-          <a class="ind-tag ${prCls}" href="${_ghUrl(p,'pull')}" target="_blank" title="${prTip}">${prIcon} #${p.pr}</a>
-        </div>`;
-        };
-        const renderWip = (ip) => {
-          const title = ip.title ? esc(ip.title.length > 48 ? ip.title.slice(0, 48) + '…' : ip.title) : '';
-          const label = title ? `⏳ #${ip.number} — ${title}` : `⏳ #${ip.number}`;
-          return `<div class="ind-pair">
-          <a class="ind-tag ind-wip" href="${_ghBase}/${_org}/${_defaultRepo}/issues/${ip.number}" target="_blank" title="${ip.title ? esc(ip.title) : ''}">${label}</a>
-        </div>`;
-        };
-        const standaloneMerged = m.mergedPrs || [];
-        const renderStandalonePr = (p) => {
-          const title = p.prTitle ? esc(p.prTitle.length > 55 ? p.prTitle.slice(0, 55) + '…' : p.prTitle) : '';
-          const tip = p.prTitle ? esc(p.prTitle) : '';
-          return `<div class="ind-pair">
-          ${_repoTag(p)}<a class="ind-tag ind-pr ind-merged" href="${_ghUrl(p,'pull')}" target="_blank" title="${tip}">✓ #${p.pr} — ${title}</a>
-        </div>`;
-        };
-        const allMergedCount = mergedPairs.length + standaloneMerged.length;
-        let html = '';
-        if (inProgress.length > 0) html += `<div class="agent-indicators"><span class="ind-label">Working on (${inProgress.length}):</span>${inProgress.map(renderWip).join('')}</div>`;
-        if (openPairs.length > 0) html += `<div class="agent-indicators"><span class="ind-label">PR open (${openPairs.length}):</span>${openPairs.map(renderPair).join('')}</div>`;
-        if (allMergedCount > 0) {
-          const mergedOpen = localStorage.getItem('hive-merged-expanded') !== 'false';
-          html += `<details class="agent-indicators merged-collapse" ${mergedOpen ? 'open' : ''} data-toggle-action="gh4"><summary class="ind-label" style="cursor:pointer;user-select:none">Merged today (${allMergedCount})</summary>${mergedPairs.map(renderPair).join('')}${standaloneMerged.map(renderStandalonePr).join('')}</details>`;
-        }
-        if (!html) html = '<div class="agent-indicators"><span class="ind-empty">no active fixes</span></div>';
-        return html;
-      }
-
       return '';
     }
 
+    /* "Now:" line on agent cards and the agent detail panel (#10934, part of
+       #10925). Built only from what the hive already sends: the agent's
+       lastAction record, busy/lastKickAt, the payload timestamp (the hive's
+       clock) and, when reservations are on, the claims ledger. Times are
+       measured on the hive's clock so a wrong viewer clock never skews them. */
+    const AGENT_NOW_UPDATE_MS = 10000;
+    const AGENT_NOW_MISSED_UPDATES = 3;
+    const AGENT_NOW_TICK_MS = 15000;
+    const AGENT_NOW_CLAIMS_REFRESH_MS = 15000;
+    const AGENT_NOW_HELP = 'What this agent is on, from what it does through the hive: the last issue or pull request it commented on, labelled, opened, reviewed or merged since it was last started. Work done outside the hive (a direct git push or command-line call) is not seen, so "no issue or pull request yet" does not mean it is doing nothing. "reserved until" is a reservation on the issue, not proof the agent is still working on it.';
+    const AGENT_NOW_PR_ACTIONS = { agent_pr_created: true, pr_closed: true, agent_pr_reviewed: true, pr_merged: true, agent_review_requested: true };
+    let _agentNowClock = null;
+    let _agentNowClaims = { enabled: false, claims: [], fetchedAt: 0 };
+
+    function agentNowClockFrom(timestamp, localMs) {
+      const hiveMs = Date.parse(timestamp || '');
+      return Number.isFinite(hiveMs) ? { hiveMs, localMs } : null;
+    }
+
+    function agentNowHiveMs(clock, localMs) {
+      if (!clock) return localMs;
+      return clock.hiveMs + Math.max(0, localMs - clock.localMs);
+    }
+
+    function agentNowIsOutdated(clock, localMs) {
+      if (!clock) return false;
+      return localMs - clock.localMs > AGENT_NOW_UPDATE_MS * AGENT_NOW_MISSED_UPDATES + AGENT_NOW_UPDATE_MS / 2;
+    }
+
+    function agentNowAgo(ms) {
+      const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      if (sec < 60) return 'just now';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min} min ago`;
+      const hours = Math.floor(min / 60);
+      if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+      const days = Math.floor(hours / 24);
+      return days === 1 ? '1 day ago' : `${days} days ago`;
+    }
+
+    // HH:MM in the viewer's time zone, with the date when it is not today on
+    // the hive's clock.
+    function agentNowClockTime(ms, hiveNowMs) {
+      const d = new Date(ms);
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (d.toDateString() === new Date(hiveNowMs).toDateString()) return time;
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+    }
+
+    /* Resolves an item's repository against the repos this viewer is shown.
+       The short name is used only when it names exactly one watched repo;
+       otherwise the line says owner/repo. Titles come only from the issue and
+       pull request lists already served for that repo, so a viewer who is not
+       shown a repo's issues is not shown its titles here either. */
+    function agentNowItem(repo, number, action, ctx) {
+      const raw = String(repo || '').trim();
+      const n = Number(number) || 0;
+      if (!raw || n <= 0 || !Array.isArray(ctx.repos)) return null;
+      const repos = ctx.repos;
+      const lower = (v) => String(v || '').toLowerCase();
+      let full = raw;
+      let short = raw;
+      if (raw.includes('/')) {
+        short = raw.slice(raw.lastIndexOf('/') + 1);
+      } else {
+        const byName = repos.filter(r => lower(r.name) === lower(raw));
+        full = byName.length === 1 && byName[0].full ? byName[0].full : (ctx.org ? ctx.org + '/' + raw : raw);
+      }
+      const watched = repos.find(r => lower(r.full) === lower(full)) || null;
+      const sameShort = repos.filter(r => lower(r.name) === lower(short)).length;
+      const label = (watched && sameShort === 1 ? short : full) + '#' + n;
+      let title = '';
+      let isPR = !!AGENT_NOW_PR_ACTIONS[action];
+      if (watched) {
+        for (const [key, pr] of [['actionableIssues', false], ['heldIssues', false], ['openPrs', true], ['heldPrs', true]]) {
+          const hit = (watched[key] || []).find(i => i && Number(i.number) === n);
+          if (hit) { title = hit.title || ''; isPR = isPR || pr; break; }
+        }
+      }
+      const href = full.includes('/')
+        ? `${ctx.ghBase || 'https://github.com'}/${full.split('/').map(encodeURIComponent).join('/')}/${isPR ? 'pull' : 'issues'}/${n}`
+        : '';
+      return { full, label, title, href };
+    }
+
+    function agentNowItemHtml(item, withTitle) {
+      const ref = item.href
+        ? `<a href="${esc(item.href)}" target="_blank" rel="noopener" data-stop="1">${esc(item.label)}</a>`
+        : esc(item.label);
+      return withTitle && item.title ? `${ref} — ${esc(item.title)}` : ref;
+    }
+
+    // Live reservations this agent holds, soonest end first. Empty when
+    // reservations are off: nothing about them is shown then.
+    function agentNowReservations(a, ctx) {
+      const cl = ctx.claims || {};
+      if (!cl.enabled || !Array.isArray(cl.claims)) return [];
+      return cl.claims
+        .filter(c => c && c.kind === 'agent' && (c.holder_id === a.name || c.holder === a.name))
+        .map(c => ({ c, ends: Date.parse(c.expires_at || '') }))
+        .filter(r => Number.isFinite(r.ends) && r.ends > ctx.hiveNowMs)
+        .sort((x, y) => x.ends - y.ends);
+    }
+
+    /* st: { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel }
+       ctx: { hiveNowMs, outdated, repos, org, ghBase, claims } */
+    function agentNowLineHtml(a, st, ctx) {
+      const outdated = !!ctx.outdated;
+      const ago = (iso) => outdated ? '' : agentNowAgo(ctx.hiveNowMs - Date.parse(iso || ''));
+      const parts = [];
+      let lead = '';
+      let showReservations = true;
+      if (st.isPoweredOff || st.isOff) { lead = 'Off'; showReservations = false; }
+      else if (st.isPaused) { lead = 'Paused'; showReservations = false; }
+      else if (st.isStopped) { lead = "Stopped — see the agent's log"; showReservations = false; }
+      else if (st.isStarting || (!a.lastKickAt && a.busy !== 'working')) { lead = 'Not started yet'; showReservations = false; }
+      const la = a.lastAction || null;
+      const item = (!lead && la) ? agentNowItem(la.repo, la.number, la.action, ctx) : null;
+      const reservations = showReservations ? agentNowReservations(a, ctx) : [];
+      let shownKey = '';
+      if (!lead && a.busy === 'working') {
+        if (item && la.current) {
+          lead = 'Now:';
+          shownKey = item.full.toLowerCase() + '#' + la.number;
+          let seg = agentNowItemHtml(item, true);
+          const age = ago(la.at);
+          if (age) seg += ' · ' + age;
+          const own = reservations.find(r => (String(r.c.repo || '').toLowerCase() + '#' + r.c.issue) === shownKey);
+          if (own) seg += ' · reserved until ' + esc(agentNowClockTime(own.ends, ctx.hiveNowMs));
+          parts.push(seg);
+        } else {
+          lead = 'Now:';
+          let seg = 'working — no issue or pull request yet';
+          if (a.lastKickAt && !outdated) seg += ' · started ' + agentNowAgo(ctx.hiveNowMs - Date.parse(a.lastKickAt));
+          parts.push(seg);
+        }
+      } else if (!lead && a.busy === 'idle') {
+        lead = 'Idle';
+        if (item) {
+          const age = ago(la.at);
+          parts.push('last: ' + agentNowItemHtml(item, false) + (age ? ', ' + age : ''));
+        }
+      } else if (!lead) {
+        lead = esc(st.stateLabel || a.busy || '');
+        showReservations = false;
+      }
+      if (showReservations) {
+        const others = reservations.filter(r => (String(r.c.repo || '').toLowerCase() + '#' + r.c.issue) !== shownKey);
+        const first = others.length ? agentNowItem(others[0].c.repo, others[0].c.issue, '', ctx) : null;
+        if (first) {
+          let seg = 'still reserved: ' + agentNowItemHtml(first, false) + ' until ' + esc(agentNowClockTime(others[0].ends, ctx.hiveNowMs));
+          if (others.length > 1) seg += ` and ${others.length - 1} more`;
+          parts.push(seg);
+        }
+      }
+      if (outdated) parts.push('information may be out of date');
+      const body = lead === 'Now:' ? `<span class="an-lead">Now:</span> ${parts.join(' · ')}` : `<span class="an-lead">${lead}</span>${parts.length ? ' · ' + parts.join(' · ') : ''}`;
+      return `<div class="agent-now${outdated ? ' outdated' : ''}" data-agent-now="${esc(a.name)}" title="${esc(AGENT_NOW_HELP)}">${body}</div>`;
+    }
+
+    // Same state derivation as the agent card (renderAgents) so the line
+    // never disagrees with the state shown above it.
+    function agentNowStateOf(a) {
+      const isOnDemand = a.onDemand === true;
+      const isPoweredOff = agentIsDisabled(a) && a.state !== 'running';
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      return { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel: isOnDemand ? 'on demand' : a.busy };
+    }
+
+    function agentNowContext(localMs) {
+      return {
+        hiveNowMs: agentNowHiveMs(_agentNowClock, localMs),
+        outdated: agentNowIsOutdated(_agentNowClock, localMs),
+        repos: (window._lastStatus || {}).repos,
+        org: window._githubOrg || '',
+        ghBase: window._githubBaseUrl || 'https://github.com',
+        claims: _agentNowClaims,
+      };
+    }
+
+    function agentNowHtml(a) {
+      return agentNowLineHtml(a, agentNowStateOf(a), agentNowContext(Date.now()));
+    }
+
+    // Repaints every "Now:" line in place so "ago" keeps counting up (and
+    // turns into "information may be out of date") without new data.
+    function refreshAgentNowLines() {
+      const agents = window._lastAgents || [];
+      document.querySelectorAll('[data-agent-now]').forEach(el => {
+        const a = agents.find(ag => ag.name === el.dataset.agentNow);
+        if (!a) return;
+        const html = agentNowHtml(a);
+        if (el.outerHTML !== html) el.outerHTML = html;
+      });
+    }
+
+    function refreshAgentNowClaims(localMs) {
+      if (localMs - _agentNowClaims.fetchedAt < AGENT_NOW_CLAIMS_REFRESH_MS) return;
+      _agentNowClaims.fetchedAt = localMs;
+      fetch('/api/claims', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return;
+          _agentNowClaims = { enabled: d.enabled === true, claims: Array.isArray(d.claims) ? d.claims : [], fetchedAt: _agentNowClaims.fetchedAt };
+          refreshAgentNowLines();
+        })
+        .catch(() => {});
+    }
+
+    // Called with every full or per-agent status payload.
+    function noteAgentNowUpdate(timestamp) {
+      const localMs = Date.now();
+      _agentNowClock = agentNowClockFrom(timestamp, localMs)
+        || (_agentNowClock ? { hiveMs: agentNowHiveMs(_agentNowClock, localMs), localMs } : null);
+      refreshAgentNowClaims(localMs);
+      if (!DASHBOARD_INTERVALS.agentNow) dashboardSetInterval('agentNow', refreshAgentNowLines, AGENT_NOW_TICK_MS);
+    }
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
@@ -10807,6 +10971,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (isStale) return statusBadgeHTML('degraded', 'stale', '', 'needs-context');
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
+          ${agentNowHtml(a)}
           ${agentBlockerLineHtml(a)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
@@ -22737,6 +22902,7 @@ function burnAreaChart() {
       const scrollY = window.scrollY;
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
+      noteAgentNowUpdate(data && data.timestamp);
       tickNavbarClock();
       currentAgentMetrics = data.agentMetrics || {};
       window._healthData = data.health || {};
@@ -27835,6 +28001,7 @@ function burnAreaChart() {
       source.addEventListener('agent-status', (e) => {
         try {
           const payload = JSON.parse(e.data);
+          noteAgentNowUpdate(payload.timestamp);
           window._lastAgents = payload.agents || [];
           window._configuredAgents = payload.configuredAgents || window._configuredAgents || [];
           if (window._lastStatus) {
@@ -39492,7 +39659,6 @@ function burnAreaChart() {
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },
       gh3: function (event, A) { event.stopPropagation(); },
-      gh4: function (event, A) { localStorage.setItem('hive-merged-expanded', this.open); },
       gh5: function (event, A) { openConfigDialog('governor',null,'Thresholds'); },
       gh6: function (event, A) { this.parentElement._zoomIn(); },
       gh7: function (event, A) { this.parentElement._zoomReset(); },
