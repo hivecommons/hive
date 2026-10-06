@@ -7437,16 +7437,18 @@ function ccLoadVersion(){
     finish('Hive version unavailable');
     controller.abort();
   },10000);
-  // The public contribute page can be viewed without dashboard API access.
+  // This page is public on hosted hives, where the private /api/version
+  // redirects anonymous visitors to login (#10682). Read the build SHA the
+  // public /api/contribute/status already serves instead.
   return Promise.resolve().then(function(){
-    return fetch('/api/version',{signal:controller.signal});
+    return fetch('/api/contribute/status',{signal:controller.signal});
   }).then(function(r){
     if(!r.ok)throw new Error('Version request failed');
     return r.json();
   }).then(function(d){
-    if(!d||typeof d.version!=='string'||!d.version.trim()||typeof d.short!=='string'||!d.short.trim()||(d.behind!==undefined&&typeof d.behind!=='boolean'))throw new Error('Invalid version response');
-    var dot=d.behind===undefined?'⚪':(d.behind?'🟡':'🟢');
-    finish(dot+' Hive v'+d.version+' ('+d.short+')'+(d.behind===undefined?' · update status unavailable':(d.behind?' · update available':' · up to date')));
+    var sha=d&&typeof d.served_sha==='string'?d.served_sha.trim():'';
+    if(!sha||sha==='unknown')throw new Error('Invalid version response');
+    finish('Hive build '+sha);
   }).catch(function(){finish('Hive version unavailable');});
 }
 ccLoadVersion();

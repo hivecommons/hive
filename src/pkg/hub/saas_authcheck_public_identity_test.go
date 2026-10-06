@@ -205,6 +205,15 @@ func TestContributorLandingFetchesAreExplicitlyClassifiedForSaaSPublicAuth(t *te
 			t.Errorf("contributor landing fetch %q: isSaaSPublicPath = %v, want %v", uri, got, wantPublic)
 		}
 	}
+	// #10682: the public footer reads served_sha from /api/contribute/status;
+	// /api/version stays private, so fetching it would only ever show anonymous
+	// visitors "Hive version unavailable".
+	if seen["/api/version"] {
+		t.Error("contributor landing must not fetch the hub-private /api/version; use the public /api/contribute/status served_sha")
+	}
+	if isSaaSPublicPath("/api/version") {
+		t.Error("/api/version must stay hub-private")
+	}
 }
 
 // TestContributeIngressAsksWhoIsCallingButNeverRedirects pins the
