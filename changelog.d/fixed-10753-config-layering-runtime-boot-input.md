@@ -1,0 +1,1 @@
+- `src/docs/config-layering.md` now says `hive.yaml.runtime` is the boot input on Kubernetes after the first boot, as it has been since #2392, instead of a snapshot read only when the ConfigMap is missing ([#10753](https://github.com/hivecommons/hive/issues/10753)).
