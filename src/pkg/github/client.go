@@ -171,6 +171,7 @@ type Client struct {
 	// for the #9665 reporter-trust hold (pr_reporter_trust.go). Both nil
 	// until the boot wiring installs them; nil means "off" and "nobody",
 	// respectively, so an unwired client never holds.
+	reporterTrustEscalation  func(string, int, string) bool
 	reporterTrustMu          sync.RWMutex
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
@@ -530,19 +531,20 @@ type IssueClaimContext struct {
 }
 
 type PullRequest struct {
-	Repo        string    `json:"repo"`
-	Number      int       `json:"number"`
-	Title       string    `json:"title"`
-	Author      string    `json:"author"`
-	AppAuthored bool      `json:"app_authored,omitempty"`
-	Labels      []string  `json:"labels"`
-	Draft       bool      `json:"draft"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ClosedAt    time.Time `json:"closed_at,omitempty"`
-	MergedAt    time.Time `json:"merged_at,omitempty"`
-	State       string    `json:"state,omitempty"`
-	URL         string    `json:"url"`
+	ReporterTrustReason string    `json:"reporter_trust_reason,omitempty"`
+	Repo                string    `json:"repo"`
+	Number              int       `json:"number"`
+	Title               string    `json:"title"`
+	Author              string    `json:"author"`
+	AppAuthored         bool      `json:"app_authored,omitempty"`
+	Labels              []string  `json:"labels"`
+	Draft               bool      `json:"draft"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ClosedAt            time.Time `json:"closed_at,omitempty"`
+	MergedAt            time.Time `json:"merged_at,omitempty"`
+	State               string    `json:"state,omitempty"`
+	URL                 string    `json:"url"`
 	// HiveAttributed is true when the PR body carries the `— hive:`
 	// attribution trailer (HasAttributionTrailer). It is how a PR a hive agent
 	// opened on a PERSON's credentials — a contributor relay, or an operator
@@ -1371,6 +1373,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		// Parked before the hold check so a freshly labelled PR lands in the
 		// held partition on this same poll (hivecommons/hive#10781).
 		labels = c.parkClankerRequestedPR(ctx, repo, pr, labels, clankerBudget)
+		labels, reporterTrustReason := c.reconcileReporterTrustSignal(ctx, repo, pr, labels)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
 		scopeContract := reviewScopeContract(pr.GetTitle(), pr.GetBody(), owner+"/"+repoName, runKey, planRef)
@@ -1401,30 +1404,31 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 				headRef, headRepo, fromFork := prHeadOrigin(pr)
 				reqLogins, reqTeams := prRequestedReviews(pr)
 				heldPRs = append(heldPRs, PullRequest{
-					Repo:               repo,
-					Number:             pr.GetNumber(),
-					Title:              pr.GetTitle(),
-					Author:             safeGetLogin(pr.GetUser()),
-					Labels:             labels,
-					CreatedAt:          pr.GetCreatedAt().Time,
-					UpdatedAt:          pr.GetUpdatedAt().Time,
-					State:              pr.GetState(),
-					URL:                pr.GetHTMLURL(),
-					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
-					HiveAttributed:     hasAttr,
-					HiveAgent:          attrMeta.Agent,
-					HiveBackend:        attrMeta.Backend,
-					HiveModel:          attrMeta.Model,
-					HiveRun:            runKey,
-					HivePlan:           planRef,
-					ScopeContract:      scopeContract,
-					HeadSHA:            prHeadSHA(pr),
-					HeadRef:            headRef,
-					HeadRepo:           headRepo,
-					FromFork:           fromFork,
-					BaseRef:            prBaseRef(pr),
-					RequestedReviewers: reqLogins,
-					RequestedTeams:     reqTeams,
+					Repo:                repo,
+					Number:              pr.GetNumber(),
+					Title:               pr.GetTitle(),
+					Author:              safeGetLogin(pr.GetUser()),
+					Labels:              labels,
+					CreatedAt:           pr.GetCreatedAt().Time,
+					UpdatedAt:           pr.GetUpdatedAt().Time,
+					State:               pr.GetState(),
+					URL:                 pr.GetHTMLURL(),
+					ReviewClass:         ClassifyReviewClass(pr.GetTitle(), labels),
+					HiveAttributed:      hasAttr,
+					HiveAgent:           attrMeta.Agent,
+					HiveBackend:         attrMeta.Backend,
+					HiveModel:           attrMeta.Model,
+					HiveRun:             runKey,
+					HivePlan:            planRef,
+					ScopeContract:       scopeContract,
+					ReporterTrustReason: reporterTrustReason,
+					HeadSHA:             prHeadSHA(pr),
+					HeadRef:             headRef,
+					HeadRepo:            headRepo,
+					FromFork:            fromFork,
+					BaseRef:             prBaseRef(pr),
+					RequestedReviewers:  reqLogins,
+					RequestedTeams:      reqTeams,
 				})
 			}
 			continue

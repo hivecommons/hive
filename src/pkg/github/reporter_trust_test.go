@@ -669,16 +669,27 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	// stranger's request and an unattended merge.
 	c.prHoldLabel = func(string) bool { return false }
 
+	var reason string
+	c.SetReporterTrustEscalation(func(repo string, number int, value string) bool {
+		if repo != "o/r" || number != 583 {
+			t.Fatalf("escalation target = %s#%d", repo, number)
+		}
+		reason = value
+		return false
+	})
 	reqPath := runReporterTrustWatcher(t, c)
+	if !strings.Contains(reason, "issue #581 filed by @stranger") {
+		t.Fatalf("missing escalation reason: %q", reason)
+	}
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
+	if applied := srv.applied(); len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
 	}
 	comments := srv.postedComments()
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "PR was authored by the hive", "untrusted **reporter**"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -730,8 +741,8 @@ func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string) bool { return true }
 	runReporterTrustWatcher(t, c)
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
+	if applied := srv.applied(); len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
 	}
 	comments := srv.postedComments()
 	var level, reporter bool
