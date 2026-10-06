@@ -105,16 +105,21 @@ rational response to having one road, not duplicated effort.
 > and only ever *adds*, so a deleted agent reappears on the next config reload.
 > Tracked in #2361.
 
-## `hive.yaml.runtime` — a snapshot on Kubernetes, an input everywhere else
+## `hive.yaml.runtime` — an input everywhere, seeded from the ConfigMap on Kubernetes
 
 This file was called `hive.yaml.bak` until the rename. The old name implied
 "the restorable backup", which is true of only half its behaviour, and the
 ambiguity cost real debugging time.
 
-**On Kubernetes it is a snapshot.** The entrypoint *writes* it after the merge
-and *reads* it only when the ConfigMap is missing or empty — the disaster
-fallback. A minority of older hives run a `copy-config` init container variant
-that does restore from it first; that variant is not what new hives get.
+**On Kubernetes it is the boot input after the first boot** (#2392). When a
+non-empty `/data/hive.yaml.runtime` (or the legacy `hive.yaml.bak`) exists, the
+entrypoint copies it over the config path and boots from it; the ConfigMap seed
+is not used and the overlay merge does not run. Only when neither exists (first
+boot, or a hive reprovisioned onto a PVC without one) does the entrypoint start
+from the seed, merge `/data/hive.yaml.dashboard` over it, and *write* the result
+to `hive.yaml.runtime`. `Config.Save()` rewrites it on every save. With neither
+file and no seed, the entrypoint exits 1. The `copy-config` init container only
+seeds the config path when the PVC has no runtime config (#2402).
 
 **Outside Kubernetes it is a live boot input, and the source of truth.** There is no
 ConfigMap and no overlay in that mode, so the entrypoint restores this file over

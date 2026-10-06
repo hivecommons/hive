@@ -6948,9 +6948,9 @@ func (c *Config) saveLocked() error {
 // PVC. Its role differs by environment, which is exactly why the old
 // hive.yaml.bak name was misleading enough to cost debugging time:
 //
-//   - Kubernetes: a post-merge SNAPSHOT. The entrypoint writes it after
-//     merging the dashboard overlay over the ConfigMap seed, and reads it
-//     back only in the disaster fallback (ConfigMap missing or empty).
+//   - Kubernetes: the boot INPUT after first boot. The entrypoint boots from
+//     it when present (no seed merge); only with none does it merge the
+//     overlay over the ConfigMap seed, and writes the result here.
 //   - Docker/LXC: a live boot INPUT and the source of truth. There is no
 //     ConfigMap and no overlay, so the entrypoint restores this file over
 //     the config path on every boot. It is the only reason a dashboard save
@@ -6958,7 +6958,7 @@ func (c *Config) saveLocked() error {
 //     early-returns outside Kubernetes for that reason.
 //
 // ".runtime" is accurate for both; ".bak" implied "the restorable backup",
-// which is true only of the Kubernetes half.
+// which understated that it is the boot input in both environments.
 // A package var (not const) only so tests can point it at a temp dir; it
 // never changes at runtime in production (same convention as
 // DashboardOverlayFile below).
