@@ -142,3 +142,22 @@ func TestHandleGovernorRepos_ReporterTrustHoldOverrides(t *testing.T) {
 		t.Error("after clearing, beta must inherit the hive-wide true")
 	}
 }
+
+func TestHandleGovernorLabels_HardSuppressLabelsRoundTrip(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"hard_suppress_labels":{"needs_direction":["direction-needed",""],"needs_decision":["decision-needed"],"needs_spec":["spec-needed"]}}`
+	w := httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	hs := srv.deps.Config.Project.IssueFilter.HardSuppressLabels
+	if !equalStringSlices(hs.NeedsDirection, []string{"direction-needed"}) || !equalStringSlices(hs.NeedsDecision, []string{"decision-needed"}) || !equalStringSlices(hs.NeedsSpec, []string{"spec-needed"}) {
+		t.Fatalf("hard suppress labels not trimmed/saved: %+v", hs)
+	}
+	result := decodeGovernorConfigGet(t, srv)
+	got := result["hardSuppressLabels"].(map[string]any)
+	if !equalStringSlices(toStringSlice(t, got["needsDirection"]), []string{"direction-needed"}) || !equalStringSlices(toStringSlice(t, got["needsHuman"]), []string{"needs-human"}) {
+		t.Fatalf("GET hardSuppressLabels = %v", got)
+	}
+}

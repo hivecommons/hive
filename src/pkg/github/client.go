@@ -1178,7 +1178,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Exempt++
 			continue
 		}
-		if suppress := hardSuppressIssueLabel(labels); suppress != "" {
+		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
 			continue
@@ -3420,4 +3420,11 @@ func ExtractPRLabels(labels []*gh.Label) []string {
 // SafeGetLogin returns a GitHub user's login, or an empty string for nil.
 func SafeGetLogin(u *gh.User) string {
 	return safeGetLogin(u)
+}
+
+func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
+	if classifier, ok := filter.(HardSuppressClassifier); ok {
+		return classifier.HardSuppressIssueBucket(labels)
+	}
+	return hardSuppressIssueLabel(labels)
 }

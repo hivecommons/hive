@@ -37,8 +37,54 @@ import (
 // admitting under "approved"), which is the unsafe direction for an approval
 // gate. The exempt/hold checks keep their own looser matching; this filter
 // does not change them.
+const (
+	DefaultNeedsHumanLabel     = "needs-human"
+	DefaultNeedsDirectionLabel = "needs-direction"
+	DefaultNeedsDecisionLabel  = "needs-decision"
+	DefaultNeedsSpecLabel      = "needs-spec"
+)
+
+// HardSuppressLabelsConfig names label buckets that remove issues from the
+// actionable queue because a maintainer must supply input first. Empty slices
+// use the built-in default for that bucket, preserving existing hives while
+// allowing owners to replace the labels from Settings → Labels.
+type HardSuppressLabelsConfig struct {
+	NeedsHuman     []string `yaml:"needs_human,omitempty" json:"needs_human,omitempty"`
+	NeedsDirection []string `yaml:"needs_direction,omitempty" json:"needs_direction,omitempty"`
+	NeedsDecision  []string `yaml:"needs_decision,omitempty" json:"needs_decision,omitempty"`
+	NeedsSpec      []string `yaml:"needs_spec,omitempty" json:"needs_spec,omitempty"`
+}
+
+func (h HardSuppressLabelsConfig) IsZero() bool {
+	return len(h.NeedsHuman) == 0 && len(h.NeedsDirection) == 0 && len(h.NeedsDecision) == 0 && len(h.NeedsSpec) == 0
+}
+
+func (h HardSuppressLabelsConfig) EffectiveNeedsHuman() []string {
+	return defaultedLabels(h.NeedsHuman, DefaultNeedsHumanLabel)
+}
+
+func (h HardSuppressLabelsConfig) EffectiveNeedsDirection() []string {
+	return defaultedLabels(h.NeedsDirection, DefaultNeedsDirectionLabel)
+}
+
+func (h HardSuppressLabelsConfig) EffectiveNeedsDecision() []string {
+	return defaultedLabels(h.NeedsDecision, DefaultNeedsDecisionLabel)
+}
+
+func (h HardSuppressLabelsConfig) EffectiveNeedsSpec() []string {
+	return defaultedLabels(h.NeedsSpec, DefaultNeedsSpecLabel)
+}
+
+func defaultedLabels(values []string, def string) []string {
+	if len(values) == 0 {
+		return []string{def}
+	}
+	return append([]string(nil), values...)
+}
+
 type IssueFilterConfig struct {
-	RequireLabels []string `yaml:"require_labels,omitempty" json:"require_labels,omitempty"`
+	RequireLabels      []string                 `yaml:"require_labels,omitempty" json:"require_labels,omitempty"`
+	HardSuppressLabels HardSuppressLabelsConfig `yaml:"hard_suppress_labels,omitempty" json:"hard_suppress_labels,omitempty"`
 	// ReporterTrust gates admission on who filed the issue (#9665): a trusted
 	// reporter's issue passes; anyone else's must carry a triage label. It
 	// runs BEFORE RequireLabels, which still applies to everything afterwards,
@@ -48,7 +94,7 @@ type IssueFilterConfig struct {
 
 // IsZero reports whether the filter is absent/empty — i.e. no filtering at all.
 func (f IssueFilterConfig) IsZero() bool {
-	return len(f.RequireLabels) == 0 && f.ReporterTrust.IsZero()
+	return len(f.RequireLabels) == 0 && f.HardSuppressLabels.IsZero() && f.ReporterTrust.IsZero()
 }
 
 // Equal reports whether two filters are identical (order-sensitive, exact).
@@ -61,6 +107,12 @@ func (f IssueFilterConfig) Equal(o IssueFilterConfig) bool {
 		if f.RequireLabels[i] != o.RequireLabels[i] {
 			return false
 		}
+	}
+	if !equalStringSlices(f.HardSuppressLabels.NeedsHuman, o.HardSuppressLabels.NeedsHuman) ||
+		!equalStringSlices(f.HardSuppressLabels.NeedsDirection, o.HardSuppressLabels.NeedsDirection) ||
+		!equalStringSlices(f.HardSuppressLabels.NeedsDecision, o.HardSuppressLabels.NeedsDecision) ||
+		!equalStringSlices(f.HardSuppressLabels.NeedsSpec, o.HardSuppressLabels.NeedsSpec) {
+		return false
 	}
 	return f.ReporterTrust.Equal(o.ReporterTrust)
 }
@@ -127,6 +179,32 @@ func (f IssueFilterConfig) ReporterTrustAwaitingLabel() string {
 // should be posted.
 func (f IssueFilterConfig) ReporterTrustCommentEnabled() bool {
 	return f.ReporterTrust.CommentOn()
+}
+
+func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
+	for _, actual := range labels {
+		for _, configured := range f.HardSuppressLabels.EffectiveNeedsHuman() {
+			if labelMatches(configured, actual) {
+				return DefaultNeedsHumanLabel
+			}
+		}
+		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDirection() {
+			if labelMatches(configured, actual) {
+				return DefaultNeedsDirectionLabel
+			}
+		}
+		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDecision() {
+			if labelMatches(configured, actual) {
+				return DefaultNeedsDecisionLabel
+			}
+		}
+		for _, configured := range f.HardSuppressLabels.EffectiveNeedsSpec() {
+			if labelMatches(configured, actual) {
+				return DefaultNeedsSpecLabel
+			}
+		}
+	}
+	return ""
 }
 
 func anyLabelMatches(required, labels []string) bool {
