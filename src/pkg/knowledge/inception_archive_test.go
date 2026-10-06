@@ -558,3 +558,65 @@ func TestCampaignArchiveListPreservesLegacySnapshots(t *testing.T) {
 		})
 	}
 }
+
+func TestRewindExternalCampaignAppendsGenerationInPlace(t *testing.T) {
+	e := newTestEngine(t)
+	now := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	if _, err := e.RewindExternalCampaign("", CampaignRewind{}, now); err == nil || !strings.Contains(err.Error(), "campaign id required") {
+		t.Fatalf("empty id error = %v", err)
+	}
+	if _, err := e.RewindExternalCampaign("org/../escape", CampaignRewind{}, now); err == nil || !strings.Contains(err.Error(), "invalid campaign id") {
+		t.Fatalf("traversal id error = %v", err)
+	}
+
+	rewind := CampaignRewind{
+		Title: "Widgets", Source: "org/repo#7", Repos: []string{"org/repo"}, Actor: "bob", Reason: "manual", LastGen: 4,
+		Recheck: &CampaignRecheck{Enabled: true, Interval: time.Hour, LastAt: now},
+		Drift:   &CampaignDrift{RecheckReason: "manual", PriorRevision: "ignored"},
+	}
+	first, err := e.RewindExternalCampaign("org/repo#7", rewind, now)
+	if err != nil {
+		t.Fatalf("first rewind error = %v", err)
+	}
+	if first.ID != "org/repo#7" || first.Revision != 1 || first.RevisionOf != "" || first.Engine != "Spektacular" || first.Type != "spektacular" ||
+		first.RecheckInterval != time.Hour || first.Drift == nil || first.Drift.PriorRevision != "0" {
+		t.Fatalf("first rewind = %#v", first)
+	}
+	if first.Lease == nil || first.Lease.Owner != "bob" || first.Lease.Surface != "revise" {
+		t.Fatalf("first rewind lease = %#v", first.Lease)
+	}
+	if len(first.History) != 1 || first.History[0].LastGen != 4 || first.History[0].Reason != "manual" || first.History[0].Actor != "bob" ||
+		!first.History[0].RewoundAt.Equal(now) || first.History[0].Drift == nil || first.History[0].Drift.PriorRevision != "0" {
+		t.Fatalf("first generation log = %#v", first.History)
+	}
+
+	if _, err := e.RewindExternalCampaign("org/repo#7", rewind, now.Add(time.Minute)); !errors.Is(err, ErrCampaignRewindInFlight) {
+		t.Fatalf("same-owner rewind during revise lease error = %v, want in flight", err)
+	}
+	other := rewind
+	other.Actor = "carol"
+	if _, err := e.RewindExternalCampaign("org/repo#7", other, now.Add(time.Minute)); !errors.Is(err, ErrCampaignLeaseHeld) {
+		t.Fatalf("other-owner rewind error = %v, want lease held", err)
+	}
+	if _, err := e.ReleaseCampaignArchive("org/repo#7", "bob", now.Add(time.Minute)); err != nil {
+		t.Fatalf("release revise lease: %v", err)
+	}
+
+	other.Reason, other.LastGen, other.Drift, other.Recheck = "cadence", 9, nil, nil
+	second, err := e.RewindExternalCampaign("org/repo#7", other, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("second rewind error = %v", err)
+	}
+	if second.Revision != 2 || second.Drift != nil || second.Recheck == nil || len(second.History) != 2 ||
+		second.History[0].LastGen != 4 || second.History[1].LastGen != 9 || second.History[1].Revision != 1 || second.History[1].Actor != "carol" {
+		t.Fatalf("second rewind = %#v", second)
+	}
+
+	e.state = &InceptionState{Phase: PhaseCapture, IdeaSlug: "inception-run", IdeaText: "inception run", Answers: map[string]string{}}
+	if _, err := e.ArchiveCurrentCampaign(); err != nil {
+		t.Fatalf("ArchiveCurrentCampaign() error = %v", err)
+	}
+	if _, err := e.RewindExternalCampaign("inception-run", rewind, now); err == nil || !strings.Contains(err.Error(), "inception campaign") {
+		t.Fatalf("inception rewind error = %v", err)
+	}
+}

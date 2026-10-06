@@ -916,14 +916,21 @@ type InceptionCampaignArchive struct {
 }
 
 // CampaignRevisionHistory records an in-place revision/dedupe event without
-// minting another campaign card for the same stable spec ID.
+// minting another campaign card for the same stable spec ID. For a Spek
+// recheck it is one generation-log entry: the closed generation's snapshot
+// plus the rewind that closed it (ADR 0020 v6 addendum, R1).
 type CampaignRevisionHistory struct {
-	ID         string    `json:"id"`
-	RevisionOf string    `json:"revision_of,omitempty"`
-	Revision   int       `json:"revision,omitempty"`
-	Phase      string    `json:"phase,omitempty"`
-	ArchivedAt time.Time `json:"archived_at,omitempty"`
-	Title      string    `json:"title,omitempty"`
+	ID         string         `json:"id"`
+	RevisionOf string         `json:"revision_of,omitempty"`
+	Revision   int            `json:"revision,omitempty"`
+	Phase      string         `json:"phase,omitempty"`
+	ArchivedAt time.Time      `json:"archived_at,omitempty"`
+	Title      string         `json:"title,omitempty"`
+	Reason     string         `json:"reason,omitempty"`
+	Actor      string         `json:"actor,omitempty"`
+	RewoundAt  time.Time      `json:"rewound_at,omitempty"`
+	LastGen    uint64         `json:"last_gen,omitempty"`
+	Drift      *CampaignDrift `json:"drift,omitempty"`
 }
 
 // CampaignRecheck records continuous-convergence cadence state for a campaign.
@@ -978,8 +985,9 @@ const (
 )
 
 var (
-	ErrCampaignLeaseHeld = errors.New("campaign lease held by another user")
-	ErrCampaignNoLease   = errors.New("campaign has no active lease")
+	ErrCampaignLeaseHeld      = errors.New("campaign lease held by another user")
+	ErrCampaignNoLease        = errors.New("campaign has no active lease")
+	ErrCampaignRewindInFlight = errors.New("campaign rewind already in flight")
 )
 
 // ArchiveCurrentCampaign snapshots the current inception state and wiki files
@@ -1194,6 +1202,96 @@ func (e *InceptionEngine) ReviseExternalCampaign(id, title, source, engine, camp
 		return nil, err
 	}
 	return archive, nil
+}
+
+// CampaignRewind describes a Spek recheck that rewinds an external campaign's
+// run to a new generation.
+type CampaignRewind struct {
+	Title   string
+	Source  string
+	Engine  string
+	Type    string
+	Repos   []string
+	Actor   string
+	Reason  string
+	LastGen uint64
+	Recheck *CampaignRecheck
+	Drift   *CampaignDrift
+}
+
+// RewindExternalCampaign rewinds a non-Inception campaign in place to a new
+// generation in one locked write (ADR 0020 v6 addendum, R1): the same archive
+// ID gets Revision N+1, the new Drift and recheck state, a revise lease for
+// the actor, and exactly one generation-log entry for the closed generation.
+// A live revise lease refuses the rewind and leaves the archive unchanged.
+func (e *InceptionEngine) RewindExternalCampaign(id string, rewind CampaignRewind, now time.Time) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("campaign id required")
+	}
+	for _, component := range strings.Split(id, "/") {
+		if component == "." || component == ".." {
+			return nil, fmt.Errorf("invalid campaign id")
+		}
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	owner := campaignOwner(rewind.Actor)
+	archive, err := e.readArchiveLocked(id)
+	if err != nil {
+		archive = InceptionCampaignArchive{ID: id}
+	}
+	if archive.State != nil || archive.Type == "inception" {
+		return nil, fmt.Errorf("campaign %q is an inception campaign", id)
+	}
+	if archive.Lease != nil && archive.Lease.Owner != "" && now.Before(archive.Lease.ExpiresAt) {
+		if archive.Lease.Owner != owner {
+			return nil, fmt.Errorf("%w: %s", ErrCampaignLeaseHeld, archive.Lease.Owner)
+		}
+		if archive.Lease.Surface == "revise" {
+			return nil, ErrCampaignRewindInFlight
+		}
+	}
+	entry := campaignRevisionHistoryFromArchive(archive)
+	entry.Reason = strings.TrimSpace(rewind.Reason)
+	entry.Actor = owner
+	entry.RewoundAt = now
+	entry.LastGen = rewind.LastGen
+	var drift *CampaignDrift
+	if rewind.Drift != nil {
+		d := *rewind.Drift
+		d.PriorRevision = strconv.Itoa(archive.Revision)
+		drift = &d
+		snapshot := d
+		entry.Drift = &snapshot
+	}
+	archive.History = append(archive.History, entry)
+	archive.Revision++
+	archive.Title = strings.TrimSpace(firstNonEmpty(rewind.Title, archive.Title))
+	archive.Source = strings.TrimSpace(firstNonEmpty(rewind.Source, archive.Source))
+	if len(rewind.Repos) > 0 {
+		archive.Repos = append([]string{}, rewind.Repos...)
+	}
+	archive.Engine = strings.TrimSpace(firstNonEmpty(rewind.Engine, archive.Engine, "Spektacular"))
+	archive.Type = strings.TrimSpace(firstNonEmpty(rewind.Type, archive.Type, "spektacular"))
+	archive.RevisionOf = ""
+	archive.ArchivedAt = now
+	archive.Drift = drift
+	if rewind.Recheck != nil {
+		recheck := *rewind.Recheck
+		archive.Recheck = &recheck
+		if recheck.Interval > 0 {
+			archive.RecheckInterval = recheck.Interval
+		}
+	}
+	archive.Lease = &CampaignLease{Owner: owner, Surface: "revise", AcquiredAt: now, ExpiresAt: now.Add(campaignLeaseTTL)}
+	if err := e.writeArchiveStateLocked(&archive); err != nil {
+		return nil, err
+	}
+	return &archive, nil
 }
 
 // dedupeCampaignArchives builds a read-only view of legacy revision chains.

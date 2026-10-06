@@ -3,19 +3,22 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 const (
 	recheckReasonCadence = "cadence"
 	recheckReasonManual  = "manual"
-	recheckTaskPrefix    = "spek-recheck-"
 	gitHeadTimeout       = 2 * time.Second
 )
 
@@ -55,11 +58,9 @@ func (s *Server) handleCampaignRecheck(w http.ResponseWriter, r *http.Request) {
 	campaign, err := s.triggerCampaignRecheck(r.Context(), id, requestUser(r), recheckReasonManual, r.URL.Query().Get("force") == "true", time.Now())
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, errRecheckUnavailable) {
-			status = http.StatusNotImplemented
-		} else if errors.Is(err, errRecheckDisabled) {
+		if errors.Is(err, errRecheckDisabled) {
 			status = http.StatusNotFound
-		} else if errors.Is(err, errRecheckInFlight) {
+		} else if errors.Is(err, errRecheckInFlight) || errors.Is(err, knowledge.ErrCampaignLeaseHeld) {
 			status = http.StatusConflict
 		} else if errors.Is(err, errRecheckNotFound) {
 			status = http.StatusNotFound
@@ -67,22 +68,20 @@ func (s *Server) handleCampaignRecheck(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), status)
 		return
 	}
-	jsonResponse(w, campaignRecheckResponse{OK: true, Campaign: campaign, Message: "Spektacular recheck revision created"})
+	jsonResponse(w, campaignRecheckResponse{OK: true, Campaign: campaign, Message: "Spektacular recheck rewound the run to a new generation"})
 }
 
 var (
-	errRecheckUnavailable = errors.New("Spek continuous convergence recheck is disabled on v6 pending #10734")
-	errRecheckDisabled    = errors.New("campaign recheck is not enabled")
-	errRecheckInFlight    = errors.New("campaign recheck revision already in flight")
-	errRecheckNotFound    = errors.New("campaign not found")
+	errRecheckDisabled = errors.New("campaign recheck is not enabled")
+	errRecheckInFlight = errors.New("campaign recheck already in flight")
+	errRecheckNotFound = errors.New("campaign not found")
 )
 
-var spekRecheckDisabledOnV6 = true
+// campaignRecheckMu serialises rewinds so the stage-lease check, the archive
+// rewind and the spec admission of one recheck cannot interleave with another.
+var campaignRecheckMu sync.Mutex
 
 func (s *Server) TickCampaignRechecks(ctx context.Context, now time.Time) {
-	if spekRecheckDisabledOnV6 {
-		return
-	}
 	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Runs.Spektacular.Recheck.Enabled {
 		return
 	}
@@ -108,16 +107,18 @@ func (s *Server) TickCampaignRechecks(ctx context.Context, now time.Time) {
 	}
 }
 
+// triggerCampaignRecheck rewinds the campaign's existing run to a new
+// generation (ADR 0020 v6 addendum): the same archive and run key get
+// Revision N+1 and a fresh spec stage admitted on the run's own lease key.
 func (s *Server) triggerCampaignRecheck(ctx context.Context, id, actor, reason string, force bool, now time.Time) (Campaign, error) {
-	if spekRecheckDisabledOnV6 {
-		return Campaign{}, errRecheckUnavailable
-	}
 	if s == nil || s.deps == nil || s.deps.Inception == nil || s.contributeHub == nil {
 		return Campaign{}, errors.New("campaign store unavailable")
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
+	campaignRecheckMu.Lock()
+	defer campaignRecheckMu.Unlock()
 	campaigns, err := s.allCampaigns(nil)
 	if err != nil {
 		return Campaign{}, err
@@ -139,55 +140,122 @@ func (s *Server) triggerCampaignRecheck(ctx context.Context, id, actor, reason s
 	if base.Recheck != nil && base.Recheck.InFlight {
 		return Campaign{}, errRecheckInFlight
 	}
-	source := firstRunNonEmpty(base.RunKey, base.Source, base.ID)
-	baseArchive, err := s.deps.Inception.UpsertExternalCampaign(base.ID, base.Title, source, base.Engine, base.Type, base.Repos, now)
-	if err != nil {
-		return Campaign{}, err
-	}
-	revision, err := s.deps.Inception.ReviseExternalCampaign(baseArchive.ID, base.Title, source, base.Engine, base.Type, actor, base.Repos, now)
-	if err != nil {
-		return Campaign{}, err
+	repo := firstCampaignRepo(base)
+	runKey := runKeyOfLease(firstRunNonEmpty(base.RunKey, base.Source, base.ID), repo)
+	if s.contributeHub.runHasLiveStageLease(runKey, now) {
+		return Campaign{}, errRecheckInFlight
 	}
 	interval := s.recheckInterval(base)
-	revision.Recheck = &knowledge.CampaignRecheck{Enabled: true, Interval: interval}
 	evidence, _ := (codebaseHeadEvidenceSource{}).Evidence(ctx, base, priorCampaignHead(base))
-	evidence.PriorRevision = firstRunNonEmpty(base.RevisionOf, base.ID)
-	evidence.RecheckReason = reason
 	external, failures := s.collectRecheckDiscovery(ctx, base, parseCampaignTime(base.LastActivity))
-	revision.Drift = &knowledge.CampaignDrift{
-		CodebaseChanged: evidence.CodebaseChanged,
-		PriorHeadSHA:    evidence.PriorHeadSHA,
-		CurrentHeadSHA:  evidence.CurrentHeadSHA,
-		PriorRevision:   evidence.PriorRevision,
-		DeltaCount:      evidence.DeltaCount,
-		RecheckReason:   evidence.RecheckReason,
-		External:        external,
-		ExternalCount:   len(external),
-		SourcesFailed:   failures,
-	}
-	if _, err := s.deps.Inception.SetCampaignRecheck(revision.ID, revision.Recheck); err != nil {
+	archive, err := s.deps.Inception.RewindExternalCampaign(base.ID, knowledge.CampaignRewind{
+		Title: base.Title, Source: runKey, Engine: base.Engine, Type: base.Type, Repos: base.Repos,
+		Actor: actor, Reason: reason, LastGen: base.RunGen,
+		Recheck: &knowledge.CampaignRecheck{Enabled: true, Interval: interval, LastAt: now, LastDeltaCount: recheckLastDelta(base)},
+		Drift: &knowledge.CampaignDrift{
+			CodebaseChanged: evidence.CodebaseChanged,
+			PriorHeadSHA:    evidence.PriorHeadSHA,
+			CurrentHeadSHA:  evidence.CurrentHeadSHA,
+			DeltaCount:      evidence.DeltaCount,
+			RecheckReason:   reason,
+			External:        external,
+			ExternalCount:   len(external),
+			SourcesFailed:   failures,
+		},
+	}, now)
+	if err != nil {
+		if errors.Is(err, knowledge.ErrCampaignRewindInFlight) {
+			return Campaign{}, errRecheckInFlight
+		}
 		return Campaign{}, err
 	}
-	if _, err := s.deps.Inception.SetCampaignDrift(revision.ID, revision.Drift); err != nil {
+	gen := base.RunGen + 1
+	if err := s.contributeHub.admitRecheckGeneration(repo, runKey, base.Title, gen, now); err != nil {
 		return Campaign{}, err
 	}
-	baseMeta := &knowledge.CampaignRecheck{Enabled: true, Interval: interval, LastAt: now, LastDeltaCount: recheckLastDelta(base)}
-	if _, err := s.deps.Inception.SetCampaignRecheck(baseArchive.ID, baseMeta); err == nil {
-		base.Recheck = campaignRecheckFromKnowledge(baseMeta, false, now)
-	}
-	repo := firstCampaignRepo(base)
-	leaseKey := revision.ID + ":" + StageSpec
-	if repo != "" {
-		leaseKey = repo + "!" + leaseKey
-	}
-	taskID := recheckTaskPrefix + sanitizeReceiptSegment(revision.ID)
-	if err := s.contributeHub.recordLeaseForKeyStage(runAdmissionIdentity, taskID, repo, 0, leaseKey, "triage", StageSpec, 1, now); err != nil {
-		return Campaign{}, err
+	// The revise lease only bridges the rewind until the spec stage lease
+	// exists; from here on Drift carries the in-flight state (R2).
+	if released, err := s.deps.Inception.ReleaseCampaignArchive(archive.ID, actor, now); err == nil && released != nil {
+		archive = released
 	}
 	if s.audit != nil {
-		s.audit.Log(actor, "campaign_recheck", auditDetail("campaign", base.ID, "revision", revision.ID, "reason", reason), "")
+		s.audit.Log(actor, "campaign_recheck", auditDetail("campaign", base.ID, "revision", strconv.Itoa(archive.Revision), "reason", reason), "")
 	}
-	return campaignFromInceptionArchive(*revision), nil
+	out := campaignFromInceptionArchive(*archive)
+	if out.Recheck != nil {
+		out.Recheck.InFlight = true
+	}
+	return out, nil
+}
+
+// runHasLiveStageLease reports whether any unexpired stage lease belongs to
+// runKey; a rewind is refused while one is live (R3).
+func (h *ContributeWSHub) runHasLiveStageLease(runKey string, now time.Time) bool {
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	return h.runHasLiveStageLeaseLocked(runKey, now)
+}
+
+func (h *ContributeWSHub) runHasLiveStageLeaseLocked(runKey string, now time.Time) bool {
+	for _, l := range h.leases {
+		if l != nil && l.stage != "" && runKeyOfLease(l.key, l.repo) == runKey && !l.expiresAt.IsZero() && now.Before(l.expiresAt) {
+			return true
+		}
+	}
+	return false
+}
+
+// admitRecheckGeneration admits the rewound generation's spec stage on the
+// run's own admission lease key (<repo>!<runKey>:spec, task run-admit-<runKey>)
+// with a gen past every gen the run already used, so prior receipts survive.
+func (h *ContributeWSHub) admitRecheckGeneration(repo, runKey, title string, gen uint64, now time.Time) error {
+	stageKey := runKey + ":" + StageSpec
+	if repo != "" {
+		stageKey = repo + "!" + stageKey
+	}
+	taskID := runAdmissionTaskPrefix + sanitizeReceiptSegment(runKey)
+	ref, _ := worksource.ParseKey(runKey)
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	if h.retiredRuns[runKey] == runRetiredAbandoned {
+		return fmt.Errorf("run %s was abandoned", runKey)
+	}
+	if h.runHasLiveStageLeaseLocked(runKey, now) {
+		return errRecheckInFlight
+	}
+	if next := nextRunAdmissionGen(runKey); next > gen {
+		gen = next
+	}
+	if h.leases == nil {
+		h.leases = make(map[string]*taskLease)
+	}
+	lease := &taskLease{
+		identity:  runAdmissionIdentity,
+		taskID:    taskID,
+		repo:      repo,
+		number:    ref.Number,
+		key:       stageKey,
+		title:     title,
+		tier:      "triage",
+		stage:     StageSpec,
+		gen:       gen,
+		expiresAt: now.Add(leaseTTL),
+	}
+	if ref.Repo != "" {
+		lease.workItem = worksource.WorkItemContextFromRef(ref, title).Normalized()
+	}
+	k := leaseKey(runAdmissionIdentity, taskID)
+	prev := h.leases[k]
+	h.leases[k] = lease
+	if err := h.saveLeasesLocked(); err != nil {
+		if prev != nil {
+			h.leases[k] = prev
+		} else {
+			delete(h.leases, k)
+		}
+		return fmt.Errorf("persisting recheck spec lease for %s: %w", taskID, err)
+	}
+	return nil
 }
 
 func (s *Server) recheckInterval(c Campaign) time.Duration {
@@ -208,18 +276,12 @@ func (s *Server) decorateCampaignRechecks(campaigns map[string]Campaign) {
 	}
 	defaultEnabled := s.deps.Config.Runs.Spektacular.Recheck.Enabled
 	now := time.Now()
-	inFlight := map[string]bool{}
-	for _, c := range campaigns {
-		if c.RevisionOf != "" && c.CurrentStage != "completed" && c.Status != "shipped" {
-			inFlight[c.RevisionOf] = true
-		}
-	}
 	for id, c := range campaigns {
 		if c.Recheck == nil {
 			interval := s.deps.Config.Runs.Spektacular.DefaultRecheckInterval()
 			c.Recheck = &CampaignRecheck{Enabled: defaultEnabled, Interval: interval.String()}
 		}
-		c.Recheck.InFlight = c.Recheck.InFlight || inFlight[id]
+		c.Recheck.InFlight = c.Recheck.InFlight || campaignRecheckInFlight(c)
 		if c.Recheck.Enabled && c.Recheck.NextAt == "" {
 			last := parseCampaignTime(c.LastActivity)
 			if last.IsZero() {
@@ -236,6 +298,15 @@ func (s *Server) decorateCampaignRechecks(campaigns map[string]Campaign) {
 		}
 		campaigns[id] = c
 	}
+}
+
+// campaignRecheckInFlight is the ADR 0020 v6 in-flight predicate: the revise
+// lease is held, or Drift is set and the rewound generation has not completed.
+func campaignRecheckInFlight(c Campaign) bool {
+	if c.reviseLeaseHeld {
+		return true
+	}
+	return c.Drift != nil && c.CurrentStage != "completed" && c.Status != "shipped"
 }
 
 func campaignRecheckFromArchive(archive knowledge.InceptionCampaignArchive, inFlight bool) *CampaignRecheck {
