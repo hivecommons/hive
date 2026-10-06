@@ -363,7 +363,7 @@
     }
     #acmm-badge { overflow: hidden; text-overflow: ellipsis; }
     #oc-git-version { position: relative; display: block; margin: var(--sp-0); font-family: var(--font-sans); min-width: 0; max-width: 100%; }
-    #oc-git-version #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
+    .oc-version-menu #spoke-upgrade-btn { width: 100%; justify-content: center; white-space: normal; }
     .oc-version-chip {
       width: 100%; display: flex; align-items: center; gap: var(--sp-2); min-height: 32px;
       padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill);
@@ -376,8 +376,8 @@
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
-    .oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior: contain; }
-    .avatar-menu.oc-version-menu { position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: 0; width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; }
+    .oc-version-menu { --oc-version-menu-width: min(640px, calc(100vw - 24px)); position: fixed; --oc-version-menu-min-width: min(420px, calc(100vw - 24px)); left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: var(--oc-version-menu-min-width); width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; overscroll-behavior: contain; }
+    .avatar-menu.oc-version-menu { position: fixed; left: 12px; right: auto; bottom: auto; top: 12px; z-index: 10002; min-width: var(--oc-version-menu-min-width); width: var(--oc-version-menu-width); max-width: var(--oc-version-menu-width); max-height: calc(100vh - 24px); box-sizing: border-box; }
     .oc-version-menu:empty { display: none; }
     .oc-version-focus-pulse { outline: 2px solid color-mix(in srgb, var(--amber) 72%, transparent); outline-offset: 3px; border-radius: var(--r); }
     .oc-version-menu .avatar-menu-item { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
@@ -387,8 +387,8 @@
     .oc-version-row strong, .oc-version-row a { color: var(--text); }
     .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
-    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-    #oc-git-version #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
+    .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+    .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
     .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: visible; }
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
@@ -26414,7 +26414,7 @@ function burnAreaChart() {
     }
 
     function renderVersionMenu(v, ctx) {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (!menu) return;
       menu.innerHTML = renderVersionDetails(v, ctx);
     }
@@ -26588,32 +26588,57 @@ function burnAreaChart() {
     }
 
     function closeVersionMenu() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       const chip = document.getElementById('oc-version-chip');
       if (menu) menu.hidden = true;
       if (chip) chip.setAttribute('aria-expanded', 'false');
     }
 
+    function ensureVersionMenuPortal() {
+      const menu = document.getElementById('oc-version-menu');
+      if (!menu || !document.body) return menu;
+      if (menu.parentElement !== document.body) document.body.appendChild(menu);
+      return menu;
+    }
+
     function positionVersionMenu() {
       const chip = document.getElementById('oc-version-chip');
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (!chip || !menu || typeof window === 'undefined') return;
       const viewportW = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 0);
       const viewportH = Math.max(240, window.innerHeight || document.documentElement.clientHeight || 0);
       const gutter = 12;
       const gap = 10;
-      const width = Math.min(640, Math.max(0, viewportW - gutter * 2));
+      const minUsefulWidth = Math.min(420, Math.max(0, viewportW - gutter * 2));
+      let width = Math.min(640, Math.max(0, viewportW - gutter * 2));
       const rect = chip.getBoundingClientRect ? chip.getBoundingClientRect() : { left: gutter, top: gutter, bottom: gutter };
-      const height = Math.min(menu.offsetHeight || 0, Math.max(0, viewportH - gutter * 2));
-      let left = rect.left;
-      if (left + width > viewportW - gutter) left = viewportW - gutter - width;
-      if (left < gutter) left = gutter;
-      let top = rect.top - height - gap;
-      if (top < gutter) top = rect.bottom + gap;
-      if (top + height > viewportH - gutter) top = Math.max(gutter, viewportH - gutter - height);
+      const sidebar = document.querySelector ? document.querySelector('.oc-sidebar') : null;
+      const sidebarRect = sidebar && sidebar.getBoundingClientRect ? sidebar.getBoundingClientRect() : null;
+      const besideLeft = sidebarRect ? sidebarRect.right + gap : 0;
+      const besideWidth = sidebarRect ? viewportW - besideLeft - gutter : 0;
+      const placeBesideSidebar = sidebarRect && besideWidth >= minUsefulWidth;
+      let left;
+      if (placeBesideSidebar) {
+        left = besideLeft;
+        width = Math.min(640, Math.max(0, besideWidth));
+      } else {
+        left = rect.left;
+        if (left + width > viewportW - gutter) left = viewportW - gutter - width;
+        if (left < gutter) left = gutter;
+      }
       menu.style.width = width + 'px';
       menu.style.maxWidth = width + 'px';
       menu.style.maxHeight = Math.max(0, viewportH - gutter * 2) + 'px';
+      const height = Math.min(menu.offsetHeight || 0, Math.max(0, viewportH - gutter * 2));
+      let top;
+      if (placeBesideSidebar) {
+        top = rect.top + ((rect.height || 0) / 2) - (height / 2);
+      } else {
+        top = rect.top - height - gap;
+        if (top < gutter) top = rect.bottom + gap;
+      }
+      if (top + height > viewportH - gutter) top = Math.max(gutter, viewportH - gutter - height);
+      if (top < gutter) top = gutter;
       menu.style.left = left + 'px';
       menu.style.top = top + 'px';
       menu.style.right = 'auto';
@@ -26621,12 +26646,12 @@ function burnAreaChart() {
     }
 
     function positionVersionMenuIfOpen() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       if (menu && !menu.hidden) positionVersionMenu();
     }
 
     function toggleVersionMenu() {
-      const menu = document.getElementById('oc-version-menu');
+      const menu = ensureVersionMenuPortal();
       const chip = document.getElementById('oc-version-chip');
       if (!menu || !chip) return;
       const nextHidden = !menu.hidden ? true : false;
@@ -36592,7 +36617,8 @@ function burnAreaChart() {
 
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-git-version');
-      if (wrap && !wrap.contains(e.target)) closeVersionMenu();
+      const menu = document.getElementById('oc-version-menu');
+      if (wrap && !wrap.contains(e.target) && !(menu && menu.contains(e.target))) closeVersionMenu();
     });
     window.addEventListener('resize', positionVersionMenuIfOpen);
     window.addEventListener('scroll', positionVersionMenuIfOpen, true);
