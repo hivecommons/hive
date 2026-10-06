@@ -191,6 +191,13 @@ let pr = costPerUnitDisplay(5.48, 937, 'hive-attributed merged PRs');
 assert.equal(pr.value, '$0.00585');
 assert.equal(pr.title, '$5.48 ÷ 937 hive-attributed merged PRs = $0.00585');
 
+pr = costPerUnitDisplay(14005.48, 937, 'hive-attributed merged PRs');
+assert.equal(pr.value, '$14.95');
+assert.equal(pr.title, '$14,005 ÷ 937 hive-attributed merged PRs = $14.95');
+
+let issue = costPerUnitDisplay(14005.48, 1182, 'hive-attributed closed issues');
+assert.equal(issue.value, '$11.85');
+
 let none = costPerUnitDisplay(0, 937, 'hive-attributed merged PRs');
 assert.equal(none.value, '—');
 assert.equal(none.title, 'no cost records yet');
@@ -206,7 +213,7 @@ assert.equal(div0.title, 'no hive-attributed closed issues yet');
 	}
 }
 
-func TestDashboardCostSparklineUsesCurrentLineage(t *testing.T) {
+func TestDashboardCostAllTimePreservesLineageResets(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node unavailable: cost lineage behavior was not executed")
@@ -235,9 +242,17 @@ let _costHistory = [
   { t: 4, usd: 5.48 }
 ];
 ` + block + `
-const lineage = costCurrentLineageHist(5.48);
-assert.deepEqual(lineage.map(e => e.usd), [5.40, 5.48]);
-assert.equal(Math.max(...lineage.map(e => e.usd)), 5.48);
+const currentLineage = costCurrentLineageHist(5.48);
+assert.deepEqual(currentLineage.map(e => e.usd), [5.40, 5.48]);
+
+const allTime = costAllTimeEstimate({ total_usd: 5.48, window_start: 3 });
+assert.equal(allTime.usd, 14005.48);
+assert.equal(allTime.firstTimestamp, 1);
+assert.deepEqual(allTime.series.map(e => e.usd), [1000, 14000, 14005.4, 14005.48]);
+assert.equal(allTime.resets.length, 1);
+assert.equal(allTime.resets[0].timestamp, 3);
+assert.equal(allTime.resets[0].previous, 14000);
+assert.equal(allTime.resets[0].next, 5.4);
 `
 
 	cmd := exec.Command(node, "-e", script)
