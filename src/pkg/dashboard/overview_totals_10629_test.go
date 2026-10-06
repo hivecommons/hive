@@ -212,11 +212,12 @@ const nums = m.slice(1).map(Number);
 if (nums[0] !== nums[1] + nums[2] + nums[3] + nums[4]) throw new Error('partition equation does not sum: ' + subline);
 const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
 if (outside !== nums[4]) throw new Error('outside breakdown does not sum: ' + subline);
-if (!subline.includes('Outside: items Hive is configured to leave alone.')) throw new Error('compact outside summary missing: ' + subline);
-if (!subline.includes('overview-partition-row')) throw new Error('compact rows missing: ' + subline);
-if (!subline.includes('+1 more')) throw new Error('long outside list was not collapsed: ' + subline);
-if (!subline.includes('Settings → Labels') || !subline.includes('Learn more ↗') || !subline.includes('fixed buckets')) throw new Error('single footer row missing: ' + subline);
-if (subline.includes('project.issue_filter') || subline.includes('change:') || subline.includes('Open Settings')) throw new Error('tooltip still duplicates settings prose: ' + subline);
+const actionSubline = renderActionableEquationSubline(issueEq);
+if (!actionSubline.includes('Outside: items Hive is configured to leave alone.')) throw new Error('compact outside summary missing: ' + actionSubline);
+if (!actionSubline.includes('overview-partition-row')) throw new Error('compact rows missing: ' + actionSubline);
+if (!actionSubline.includes('+1 more')) throw new Error('long outside list was not collapsed: ' + actionSubline);
+if (!actionSubline.includes('Settings → Labels') || !actionSubline.includes('Learn more ↗') || !actionSubline.includes('fixed buckets')) throw new Error('single footer row missing: ' + actionSubline);
+if (actionSubline.includes('project.issue_filter') || actionSubline.includes('change:') || actionSubline.includes('Open Settings')) throw new Error('tooltip still duplicates settings prose: ' + actionSubline);
 const held = renderOverviewSplitSubline(12, 10, 2, 'held');
 if (held !== '12 held = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
 `

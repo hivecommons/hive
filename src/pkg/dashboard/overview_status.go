@@ -370,35 +370,6 @@ func overviewEquationTitle(eq *FrontendActionableEquation, _ FrontendOverviewTot
 	return "Actionable now — work that can move without waiting."
 }
 
-func overviewOutsideDetail(prefix string, breakdown map[string]int) string {
-	if len(breakdown) == 0 {
-		return ""
-	}
-	labels := map[string]string{
-		"needs_direction":      "needs-direction",
-		"needs_decision":       "needs-decision",
-		"needs_spec":           "needs-spec",
-		"exempt":               "exempt",
-		"filtered":             "filtered",
-		"reporter_triage":      "reporter triage",
-		"hive_advisory":        "hive advisory",
-		"dependency_dashboard": "dependency dashboard",
-		"other":                "other",
-	}
-	order := []string{"needs_direction", "needs_decision", "needs_spec", "exempt", "filtered", "reporter_triage", "hive_advisory", "dependency_dashboard", "other"}
-	parts := make([]string, 0, len(breakdown))
-	for _, key := range order {
-		count := breakdown[key]
-		if count > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", count, labels[key]))
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return prefix + ": " + strings.Join(parts, " · ")
-}
-
 type overviewPartitionMeta struct {
 	ExemptLabels                []string
 	RequireLabels               []string
