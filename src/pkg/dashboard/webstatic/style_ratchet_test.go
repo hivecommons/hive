@@ -28,11 +28,11 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 	"operator static/index.html": {
 		inlineStyles:   1588,
 		rawColors:      143,
-		rawFontSizes:   666,
-		rawPadding:     226,
+		rawFontSizes:   664,
+		rawPadding:     224,
 		rawBorderRadii: 176},
 	"contributor landing": {
-		inlineStyles:   95,
+		inlineStyles:   94,
 		rawColors:      106,
 		rawFontSizes:   201,
 		rawPadding:     105,
@@ -40,9 +40,9 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 	},
 	"hub static pages": {
 		inlineStyles:   956,
-		rawColors:      454,
+		rawColors:      450,
 		rawFontSizes:   427,
-		rawPadding:     167,
+		rawPadding:     165,
 		rawBorderRadii: 104,
 	},
 	"design system preview": {},

@@ -344,6 +344,8 @@
     /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
       position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0); min-height: var(--navbar-sticky-height);
+      width: auto;
+      box-sizing: border-box;
       margin: var(--sp-0);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
@@ -442,7 +444,7 @@
       margin-left: -10px;
     }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; }
+    .oc-topbar-center { display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
     .dashboard-custom-style-note { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
     .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
@@ -509,16 +511,16 @@
 
     @media (max-width: 1280px) {
       .oc-topbar {
-        grid-template-columns: minmax(0, 1fr) auto; height: auto; min-height: var(--navbar-sticky-height);
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height);
         align-content: center;
         column-gap: var(--sp-5); row-gap: var(--sp-2); padding-top: var(--sp-3); padding-bottom: var(--sp-3);
       }
       .oc-topbar-left { min-width: 0; }
-      .oc-topbar-center { justify-content: flex-end; }
+      .oc-topbar-center { justify-content: center; }
       #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #acmm-badge, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
       #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
-      .oc-topbar-right { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
+      .oc-topbar-right { justify-content: flex-end; flex-wrap: nowrap; overflow: visible; }
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }
 
@@ -3379,9 +3381,13 @@
     .agent-collapsed-tile.stopped .agent-tile-dot, .agent-collapsed-tile.needs-login .agent-tile-dot, .repo-collapsed-tile.error .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
     .repo-collapsed-tile.blocked .agent-tile-dot { background: var(--yellow); box-shadow: 0 0 0 1px color-mix(in srgb, var(--yellow) 40%, transparent); }
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
-    .agent-navbar-upnext { display: inline-flex; align-items: stretch; justify-content: center; gap: var(--sp-2); min-width: 0; max-width: min(480px, 34vw); overflow: hidden; }
+    .agent-navbar-upnext {
+      display: inline-flex; align-items: stretch; justify-content: flex-start; gap: var(--sp-2);
+      min-width: 0; max-width: min(640px, 42vw); overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: thin; mask-image: linear-gradient(90deg, var(--text) 0, var(--text) calc(100% - var(--sp-4)), transparent 100%);
+    }
     .agent-navbar-upnext[hidden] { display: none; }
-    .agent-navbar-tile { flex: 0 0 calc(var(--sp-9) * 4); min-width: 0; height: calc(var(--nav-chip-h) + var(--sp-2)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; gap: 0 var(--sp-2); padding: var(--sp-1) var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
+    .agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px); min-width: 136px; height: calc(var(--nav-chip-h) + var(--sp-2)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; align-items: center; gap: 0 var(--sp-2); padding: var(--sp-1) var(--sp-2); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.05; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-navbar-tile.up-next-pulse { animation: navbar-up-next-pulse var(--navbar-motion-duration) ease-out; }
@@ -3400,7 +3406,7 @@
       45% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 90%, transparent), 0 0 0 var(--sp-4) color-mix(in srgb, var(--amber) 24%, transparent); }
       100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
     }
-    @media (max-width: 1180px) { .agent-navbar-upnext { display: none !important; } }
+    @media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     @media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }
     .advisory-collapsed-advice { display: flex; align-items: stretch; gap: var(--sp-2); width: min(760px, 52vw); max-width: 760px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
@@ -4411,10 +4417,10 @@
     </div>
     <div class="oc-topbar-right">
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="reports" title="Feedback reports" aria-label="Feedback reports"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
+      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <button type="button" class="nav-chip nav-chip--action" id="oc-settings-btn" data-action="openConfigDialog" data-arg0="governor" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings"><span class="nav-chip__icon" aria-hidden="true">⚙</span><span class="nav-chip__label">Settings</span></button>
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
-      <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
