@@ -3874,8 +3874,9 @@ type GitHubConfig struct {
 	selfAuthorizationHoldEnvOverride *bool `yaml:"-" json:"-"`
 	// ReporterTrustHold controls the #9665 reporter-trust hold: when active, an
 	// App-authored PR whose rationale traces to an issue filed by a reporter
-	// project.issue_filter.reporter_trust does not trust receives `hold` at
-	// EVERY ACMM level, including L6, plus an explanatory notice. A human
+	// project.issue_filter.reporter_trust does not trust, without any configured
+	// untrusted_require_labels acceptance label, receives `hold` at EVERY
+	// ACMM level, including L6, plus an explanatory notice. A human
 	// removes it; the App never auto-releases it. nil follows
 	// reporter_trust.enabled so switching the gate on covers both halves;
 	// an explicit value or HIVE_REPORTER_TRUST_HOLD decides on its own.
