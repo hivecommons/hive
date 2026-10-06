@@ -171,6 +171,62 @@ func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
 	}
 }
 
+func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
+	th := Theme{
+		ID:   "operator-css",
+		Dark: true,
+		Tokens: map[string]string{
+			"--accent":    "#58a6ff",
+			"--surface-0": "#0d1117",
+			"--surface-1": "#161b22",
+			"--surface-2": "#21262d",
+			"--surface-3": "#30363d",
+			"--text":      "#f0f6fc",
+		},
+		CustomCSS: `#oc-topbar{display:flex!important}.repo-name{text-align:center!important}`,
+	}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("CSS custom layout guard: %v", err)
+	}
+	customIdx := strings.Index(css, `#oc-topbar{display:flex!important}`)
+	guardIdx := strings.Index(css, `body #oc-topbar.oc-topbar{position:fixed!important;`)
+	if customIdx < 0 || guardIdx < 0 {
+		t.Fatalf("theme CSS missing custom override or layout guard:\n%s", css)
+	}
+	if guardIdx < customIdx {
+		t.Fatalf("layout guard must be emitted after custom CSS so it wins cascade:\n%s", css)
+	}
+	for _, want := range []string{
+		`display:grid!important`,
+		`grid-template-columns:var(--topbar-grid-columns)!important`,
+		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
+		`body #repos.repo-grid .repo-card .repo-name{display:grid!important;`,
+		`body #repos.repo-grid .repo-card .repo-name>a{text-align:left!important;`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("layout guard missing %q:\n%s", want, css)
+		}
+	}
+}
+
+func TestBuiltinThemeCustomCSSDoesNotTargetProtectedLayout(t *testing.T) {
+	protectedSelectorRE := regexp.MustCompile(`(?i)(#oc-topbar|\.oc-topbar|#repos|\.repo-grid|\.repo-card|\.repo-name|#oc-project-name|\.oc-project-title)`)
+	layoutDeclarationRE := regexp.MustCompile(`(?i)\b(display|grid(?:-[a-z-]+)?|flex(?:-[a-z-]+)?|justify(?:-[a-z-]+)?|align(?:-[a-z-]+)?|place(?:-[a-z-]+)?|text-align|margin|position|left|right|width|max-width|min-width)\s*:`)
+	for _, th := range Catalog() {
+		if strings.TrimSpace(th.CustomCSS) == "" {
+			continue
+		}
+		for _, block := range regexp.MustCompile(`(?s)([^{}]+)\{([^{}]+)\}`).FindAllStringSubmatch(th.CustomCSS, -1) {
+			selector := strings.TrimSpace(block[1])
+			body := strings.TrimSpace(block[2])
+			if protectedSelectorRE.MatchString(selector) && layoutDeclarationRE.MatchString(body) {
+				t.Fatalf("built-in theme %s custom_css must not set layout on protected dashboard selectors %q: %s", th.ID, selector, body)
+			}
+		}
+	}
+}
+
 func TestBuiltinThemesProvideAccessibleLightAndDarkModes(t *testing.T) {
 	for _, th := range Catalog() {
 		dark := darkModeTokens(th)
