@@ -100,8 +100,9 @@ const (
 	//
 	// capExtExecOMP (declared beside it as "ext-exec/omp") is the same opt-in
 	// for the OMP workbench host (#8361 step 9, #6899), gated by
-	// runs.external.omp. The two tokens are independent: declaring one grants
-	// nothing for the other engine.
+	// runs.external.omp. capExtExecVibeKanban is the local board/workspace host
+	// opt-in, gated by runs.external.vibe_kanban. The tokens are independent:
+	// declaring one grants nothing for another engine.
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -124,6 +125,7 @@ func serverCapabilities() []string {
 		capRunStage,
 		capExtExecFlue,
 		capExtExecOMP,
+		capExtExecVibeKanban,
 	}
 }
 

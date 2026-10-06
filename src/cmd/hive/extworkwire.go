@@ -27,8 +27,9 @@ import (
 // names; the adapter packages cannot be imported here without linking them
 // into every build.
 const (
-	extExecEngineFlue = "flue"
-	extExecEngineOMP  = "omp"
+	extExecEngineFlue       = "flue"
+	extExecEngineOMP        = "omp"
+	extExecEngineVibeKanban = "vibe-kanban"
 )
 
 var (
@@ -126,6 +127,8 @@ func (s *extworkStatus) bindingFor(engine string) (*externalExecutionBinding, er
 		b, err = newExternalFlueExecutionBinding(s.srv, s.cfg, s.registry, s.now)
 	case extExecEngineOMP:
 		b, err = newExternalOMPExecutionBinding(s.srv, s.cfg, s.registry, s.now)
+	case extExecEngineVibeKanban:
+		b, err = newExternalVibeKanbanExecutionBinding(s.srv, s.cfg, s.registry, s.now)
 	default:
 		err = fmt.Errorf("%w: %s", extwork.ErrEngineNotLinked, engine)
 	}
@@ -148,6 +151,9 @@ func configForEngine(cfg *config.Config, engine string) string {
 	switch engine {
 	case extExecEngineFlue:
 		return strings.Join([]string{cfg.FlueBindingMode(), cfg.Runs.External.Flue.Endpoint, cfg.Runs.External.Flue.WorkflowVersion}, "\x00")
+	case extExecEngineVibeKanban:
+		vk := cfg.Runs.External.VibeKanban
+		return strings.Join([]string{cfg.VibeKanbanBindingMode(), vk.MCPCommand, vk.ProjectID, vk.StateDir, vk.WorkflowVersion}, "\x00")
 	case extExecEngineOMP:
 		return strings.Join([]string{cfg.OMPBindingMode(), cfg.Runs.External.OMP.WorkflowVersion}, "\x00")
 	default:
@@ -253,6 +259,44 @@ func newExternalFlueExecutionBinding(srv *dashboard.Server, cfg *config.Config, 
 	}
 	store := extwork.NewLeaseStore(hubLeaseAuthority{hub: hub, now: now}, extworkRecordDir())
 	return &externalExecutionBinding{engine: extExecEngineFlue, adapter: adapter, binding: extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode)}, nil
+}
+
+func newExternalVibeKanbanBinding(srv *dashboard.Server, cfg *config.Config, registry *extwork.Registry, now func() time.Time) (*extwork.Binding, error) {
+	b, err := newExternalVibeKanbanExecutionBinding(srv, cfg, registry, now)
+	if err != nil {
+		return nil, err
+	}
+	return b.binding, nil
+}
+
+func newExternalVibeKanbanExecutionBinding(srv *dashboard.Server, cfg *config.Config, registry *extwork.Registry, now func() time.Time) (*externalExecutionBinding, error) {
+	mode := cfg.VibeKanbanBindingMode()
+	if mode == config.FlueBindingModeOff {
+		return nil, errExternalBindingOff
+	}
+	if now == nil {
+		now = time.Now
+	}
+	vkCfg := cfg.Runs.External.VibeKanban
+	stateDir := strings.TrimSpace(vkCfg.StateDir)
+	if stateDir == "" {
+		stateDir = filepath.Join(extworkRecordDir(), extExecEngineVibeKanban)
+	}
+	adapter, err := registry.Open(extExecEngineVibeKanban, map[string]string{
+		"mcp_command":                  vkCfg.MCPCommand,
+		"project_id":                   vkCfg.ProjectID,
+		"state_dir":                    stateDir,
+		extwork.SettingWorkflowVersion: vkCfg.WorkflowVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	hub := srv.ContributeHub()
+	if hub == nil {
+		return nil, errExternalHubNotRunning
+	}
+	store := extwork.NewLeaseStore(hubLeaseAuthority{hub: hub, now: now}, extworkRecordDir())
+	return &externalExecutionBinding{engine: extExecEngineVibeKanban, adapter: adapter, binding: extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode)}, nil
 }
 
 // newExternalOMPBinding builds the OMP workbench host binding for this hub

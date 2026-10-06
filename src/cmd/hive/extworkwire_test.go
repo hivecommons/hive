@@ -169,3 +169,65 @@ func TestExternalOMPBindingFailsClosed(t *testing.T) {
 		t.Fatalf("report-only binding = %v %v", b, err)
 	}
 }
+
+func TestExternalVibeKanbanBindingFailsClosed(t *testing.T) {
+	prevDir := outputschema.AgentReportDir
+	outputschema.AgentReportDir = t.TempDir()
+	t.Cleanup(func() { outputschema.AgentReportDir = prevDir })
+	srv := dashboard.NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	clock := func() time.Time { return time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC) }
+	failClosed := func(err error) bool {
+		return errors.Is(err, errExternalBindingOff) || errors.Is(err, errExternalHubNotRunning) || errors.Is(err, extwork.ErrEngineNotLinked)
+	}
+	if _, err := newExternalVibeKanbanBinding(srv, cfg, extwork.DefaultRegistry, clock); !errors.Is(err, errExternalBindingOff) {
+		t.Fatalf("default config = %v, want off", err)
+	}
+	cfg.Runs.External.Flue.Enabled = true
+	cfg.Runs.External.OMP.Enabled = true
+	if _, err := newExternalVibeKanbanBinding(srv, cfg, extwork.DefaultRegistry, clock); !errors.Is(err, errExternalBindingOff) {
+		t.Fatalf("other hosts enabled, vibe-kanban off = %v", err)
+	}
+	cfg.Runs.External.VibeKanban.Enabled = true
+	cfg.Runs.External.VibeKanban.MCPCommand = "vibe-kanban --mcp"
+	cfg.Runs.External.VibeKanban.ProjectID = "project-1"
+	cfg.Runs.External.VibeKanban.WorkflowVersion = "vibe-kanban/phase2"
+	if _, err := newExternalVibeKanbanBinding(srv, cfg, extwork.DefaultRegistry, clock); !failClosed(err) {
+		t.Fatalf("enabled without hub = %v, want a fail-closed sentinel", err)
+	}
+	if _, err := newExternalVibeKanbanBinding(srv, cfg, extwork.NewRegistry(), clock); !errors.Is(err, extwork.ErrEngineNotLinked) {
+		t.Fatalf("empty registry = %v", err)
+	}
+	fake := &fakeExtAdapter{}
+	reg := extwork.NewRegistry()
+	reg.Register(extExecEngineVibeKanban, func(settings map[string]string) (extwork.Adapter, error) {
+		if settings["mcp_command"] != "vibe-kanban --mcp" || settings["project_id"] != "project-1" || settings[extwork.SettingWorkflowVersion] != "vibe-kanban/phase2" || settings["state_dir"] == "" {
+			t.Errorf("settings = %v", settings)
+		}
+		return fake, nil
+	})
+	if _, err := newExternalVibeKanbanBinding(srv, cfg, reg, clock); !errors.Is(err, errExternalHubNotRunning) {
+		t.Fatalf("linked engine without hub = %v", err)
+	}
+	srv.RegisterAPI(&dashboard.Dependencies{Config: cfg, ExternalExec: &extworkStatus{registry: reg, srv: srv, cfg: cfg, now: clock}})
+	if srv.ContributeHub() == nil {
+		t.Skip("RegisterAPI did not create a contributor hub in this configuration")
+	}
+	b, err := newExternalVibeKanbanBinding(srv, cfg, reg, nil)
+	if err != nil || b.Mode() != extwork.ModeShadow {
+		t.Fatalf("shadow binding = %v %v", b, err)
+	}
+	adm := extwork.Admission{
+		WorkKey: "hivecommons/hive#10641", AssignmentID: "task-10641", Generation: 1, Stage: "implement",
+		ContractRevision: "c1", Engine: extExecEngineVibeKanban, WorkflowVersion: "vibe-kanban/phase2",
+		InputRevision: "0123456789abcdef0123456789abcdef01234567", RequestDigest: extwork.RequestDigest([]byte("bundle")),
+		Authority: extwork.AuthorityBinding{Identity: "vk", Tier: "C4", Capability: "ext-exec/vibe-kanban", Mode: extwork.ModeShadow},
+	}
+	if _, err := b.Dispatch(context.Background(), adm, []byte("bundle")); !errors.Is(err, extwork.ErrLeaseAuthority) || fake.starts != 0 {
+		t.Fatalf("dispatch without a lease = %v starts=%d", err, fake.starts)
+	}
+	cfg.Runs.External.VibeKanban.Mode = config.FlueBindingModeReportOnly
+	if b, err := newExternalVibeKanbanBinding(srv, cfg, reg, clock); err != nil || b.Mode() != extwork.ModeReportOnly {
+		t.Fatalf("report-only binding = %v %v", b, err)
+	}
+}
