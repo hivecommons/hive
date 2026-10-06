@@ -323,13 +323,13 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	norm := normalizeIssueBandsConfig(cfg)
 	switch key {
 	case "in-progress":
-		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned, claimed by an agent, or an open PR references it — nothing needed unless it stalls"}
+		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned or claimed by an agent — nothing needed unless it stalls"}
 	case "agent-filed":
 		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
 		return BandSpec{Key: key, Label: "Needs human", Short: "needs human", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — a human must unblock or decide before agents continue"}
 	case "done":
-		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " or a merged PR references it — verify the work landed and close the issue"}
+		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — verify the work landed and close the issue"}
 	default:
 		return BandSpec{Key: "ready", Label: "Unclaimed", Short: "unclaimed", Rule: "no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up"}
 	}

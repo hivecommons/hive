@@ -3518,7 +3518,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			if !overviewKPIExcludedBand(band) {
 				e.OverviewActionable++
 			}
-			if band == "waiting" {
+			if band == "waiting" || band == "done" {
 				e.OverviewBlockedHuman++
 			}
 		}
@@ -3536,6 +3536,12 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			}
 		}
 	}
+	totals := status.OverviewTotals
+	if totals.Issues.Forge == 0 && totals.PRs.Forge == 0 && len(status.Repos) > 0 {
+		totals = overviewTotals(status)
+	}
+	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
+	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
 	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
 }
 
