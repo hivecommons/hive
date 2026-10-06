@@ -220,6 +220,9 @@ func (c *Client) levelHoldReleaseBlockedByOtherPolicy(ctx context.Context, owner
 	if c.reporterTrustHoldActive(repoRef) {
 		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil)
 		if reporter.Held {
+			if err := c.AddLabels(ctx, repoRef, number, []string{issueNeedsHumanLabel}); err != nil {
+				return true, fmt.Errorf("applying needs-human for reporter-trust hold on %s#%d: %w", repoRef, number, err)
+			}
 			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(reporterTrustNotice(reporter))}); err != nil {
 				return true, fmt.Errorf("commenting on reporter-trust hold for %s#%d: %w", repoRef, number, err)
 			}

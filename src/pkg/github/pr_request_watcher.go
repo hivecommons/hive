@@ -574,7 +574,13 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		resp.ReporterTrustHeld = reporter.Held
 	}
 	if !res.DuplicateTree && (holdByLevel || selfAuth.Held || reporter.Held) {
-		if lerr := c.AddLabels(ctx, req.Repo, res.Number, []string{"hold"}); lerr != nil {
+		holdLabels := []string{"hold"}
+		if reporter.Held {
+			// A reporter-trust hold is a human-only decision at every level, so
+			// it raises needs-human with the hold (hivecommons/hive#10773).
+			holdLabels = reporterTrustHoldLabels()
+		}
+		if lerr := c.AddLabels(ctx, req.Repo, res.Number, holdLabels); lerr != nil {
 			// A missing hold label is a policy failure, not a cosmetic one. Keep
 			// the request queued: the next bounded retry deduplicates the existing
 			// PR and reapplies the label instead of silently declaring success.
@@ -592,6 +598,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 				slog.String("repo", req.Repo), slog.Int("number", res.Number),
 				slog.String("rationale_repo", reporter.Repo), slog.Int("rationale_issue", reporter.Issue),
 				slog.String("reporter", reporter.Reporter), slog.String("association", reporter.Association),
+				slog.String("needs_human_reason", reporter.NeedsHumanReason()),
 				slog.String("agent", req.Agent))
 		} else {
 			c.logger.Info("pr-request watcher: applied hold label (hold-gated ACMM level)",
@@ -655,6 +662,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"reporter_trust_held", strconv.FormatBool(reporter.Held),
 		"reporter_login", reporter.Reporter,
 		"reporter_association", reporter.Association,
+		"needs_human_reason", reporter.NeedsHumanReason(),
 		"duplicate_tree", strconv.FormatBool(res.DuplicateTree))
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
