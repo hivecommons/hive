@@ -12679,18 +12679,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // are not: `hold` on an agent's own PR is usually the ACMM level gate
     // ("held for human review"), which the hive lifts itself once policy no
     // longer requires the checkpoint; `needs-human` beside the hold is the
-    // escalation ledger saying automated fix attempts are exhausted, and
-    // that one only a person can clear. The labels are the single source of
-    // truth here, exactly as they are for the needs-human pill. Returned
+    // fix-loop fallback, unless reporter_trust_reason carries the original
+    // reporter-trust notice evidence. Neither reason changes the label-driven
+    // hold gate; only a person clears a reporter-trust hold. Returned
     // without wrapping so the state chip can show it as-is and the pill can
     // append it in parentheses after the title.
     function heldReason(item) {
-      if (item && item.reporter_trust_reason) return item.reporter_trust_reason + '; maintainer must remove `hold` to release';
       const labels = (item && item.labels ? item.labels : []).map(l => String(l));
       const held = holdLabels(labels);
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
+      if (item && item.reporter_trust_reason) {
+        parts.push(item.reporter_trust_reason + ', a maintainer must review this');
+        return parts.join('; ');
+      }
       if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');

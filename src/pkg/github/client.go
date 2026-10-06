@@ -1410,6 +1410,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			if !pr.GetDraft() {
 				headRef, headRepo, fromFork := prHeadOrigin(pr)
 				reqLogins, reqTeams := prRequestedReviews(pr)
+				if reporterTrustReason == "" {
+					reporterTrustReason = c.reporterTrustHeldPRReason(ctx, owner, repoName, pr.GetNumber(), labels)
+				}
 				heldPRs = append(heldPRs, PullRequest{
 					Repo:                repo,
 					Number:              pr.GetNumber(),
