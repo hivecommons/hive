@@ -125,6 +125,17 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	if !h.claimsEnabled() || c == nil || repoFull == "" || number <= 0 {
 		return ghpkg.IssueClaimMark{}, false
 	}
+	// The queue may predate a label change. Recheck before posting the
+	// legacy claim marker too, not only when writing the worker ledger.
+	if h.server.deps.GHClient != nil {
+		checkCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)
+		reason, err := h.server.deps.GHClient.IssueClaimBlockReason(checkCtx, repoFull, number)
+		cancel()
+		if err != nil || reason != "" {
+			h.logger.Warn("[contribute-ws] issue claim refused", "repo", repoFull, "number", number, "reason", reason, "error", err)
+			return ghpkg.IssueClaimMark{}, false
+		}
+	}
 	claim := ghpkg.IssueClaimMark{
 		Identity:  claimIdentityFor(c),
 		StartedAt: now,

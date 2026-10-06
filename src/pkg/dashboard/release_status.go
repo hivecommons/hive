@@ -31,7 +31,11 @@ type ReleaseChannelStatus struct {
 	ImageRef string `json:"imageRef,omitempty"`
 	// PendingChannel is a just-requested hub intent that has not landed in the
 	// Deployment image yet. Channel remains the observed truth while this is set.
-	PendingChannel  string `json:"pendingChannel,omitempty"`
+	PendingChannel string `json:"pendingChannel,omitempty"`
+	// Branch is the branch this binary was built from — the same value the
+	// version menu shows. It lets the panel name what the hive is tracking when
+	// its image reference cannot be read, instead of saying only "unknown".
+	Branch          string `json:"branch,omitempty"`
 	SelectorEnabled bool   `json:"selectorEnabled"`
 	SelectorReason  string `json:"selectorReason,omitempty"`
 	SelectorDetail  string `json:"selectorDetail,omitempty"`
@@ -232,8 +236,10 @@ type SpokeReleaseStatus struct {
 	Attempt UpgradeAttemptStatus `json:"attempt"`
 	// HubReachable is false when the spoke's heartbeat loop has not reached the
 	// hub recently, so the dashboard can warn that this view may be stale rather
-	// than presenting it as current truth.
-	HubReachable bool `json:"hubReachable"`
+	// than presenting it as current truth. nil (omitted) when there is no hub
+	// heartbeat to judge — e.g. a standalone hive with no hub configured — so
+	// such a hive is not told its hub "has not been reached".
+	HubReachable *bool `json:"hubReachable,omitempty"`
 	// LastHeartbeatAt is the RFC3339 time of the most recent heartbeat attempt,
 	// "" when the loop has not run (e.g. no hub configured).
 	LastHeartbeatAt string `json:"lastHeartbeatAt,omitempty"`
@@ -250,7 +256,8 @@ func buildSpokeReleaseStatus(imageRef, trackedChannel string, outcome *upgradeOu
 	}
 	if beatOK && !lastBeat.IsZero() {
 		st.LastHeartbeatAt = lastBeat.UTC().Format(time.RFC3339)
-		st.HubReachable = time.Since(lastBeat) <= staleAfter
+		reachable := time.Since(lastBeat) <= staleAfter
+		st.HubReachable = &reachable
 	}
 	return st
 }

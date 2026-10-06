@@ -43,14 +43,18 @@ The evidence source interface is `RecheckEvidenceSource`.
 ### Discovery sources
 
 The outward-looking half is opt-in under
-`runs.spektacular.recheck.discovery`. Operators declare bounded sources of kind
-`upstream_release`, `repo_activity`, `standards_feed`, or `landscape`; Hive
-rejects undeclared kinds and hosts outside `variables.security.http_allowlist`.
-Discovery runs before the recheck `spec` stage generator, records evidence on
-the linked revision's `drift.external` block, and includes that evidence in the
-spec-stage prompt as context. It is read-only and non-fatal: source failures are
-recorded in `sources_failed` and never block the recheck. Evidence is never
-auto-applied; the existing spec and plan human checkpoints remain authoritative.
+`runs.spektacular.recheck.discovery` for typed release/activity/feed signals and
+under `runs.spektacular.recheck.sources` for exact document snapshots. Typed
+discovery rejects undeclared kinds and hosts outside
+`variables.security.http_allowlist`, records evidence on `drift.external`, and
+includes that evidence in the spec-stage prompt as context. Exact document
+sources are retained as `drift.drift_source` before the revision starts its
+spec lease; they require an explicit relay egress proxy and exact-host
+allow-list, never follow redirects or links, and have fixed request, time, and
+response-size bounds. Empty source lists perform no discovery network access.
+All discovery is read-only, non-fatal, and untrusted evidence only; source
+failures are recorded and never bypass human checkpoints or automatically apply
+external changes.
 
 ## Consequences
 

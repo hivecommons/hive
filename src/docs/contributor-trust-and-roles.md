@@ -53,6 +53,15 @@ The default is `lgtm`, matching the Kubernetes/Prow convention. Hive creates the
 
 Merger appears in contributor tier listings, profile badges, leaderboard tier filters, and the Credly milestone mapping so operators and contributors can see that it is a distinct maintainer-granted trust tier.
 
+## Clanker-requested policy for outside PRs
+
+Trust tiers describe contributors who already use the relay. The opt-in `project.issue_filter.reporter_trust.clanker_requested` policy covers the other side: untrusted people who open issues and PRs directly. Setup, config keys, and the exact behaviour are in [Steering outside PRs to the relay](contributor-relay.md#steering-outside-prs-to-the-relay-clanker_requested); the dashboard controls are under **Settings → Labels → Reporter trust**.
+
+- **Issues:** the reporter-trust wait comment on an untrusted reporter's issue also points them at the relay's Basic setup guide.
+- **PRs:** an open PR from an untrusted author that did not come through the relay (no contributor claim for that author, and not App-authored) is labelled `clanker-requested` (configurable) and shown as held, with a one-shot notice.
+- **Human override:** removing the label releases the PR permanently; Hive never re-applies it. A PR resubmitted through the relay is never parked.
+- **Non-goals:** this is not a branch-protection change. It does not block pushes, change required reviews, or alter GitHub permissions; it only holds Hive's own automation on the labelled PR, and a maintainer can still review or merge it by hand.
+
 ## Delegated ClankeR agent roles
 
 A contributor relay can request an agent role with `HIVE_AGENT_ROLE` or the WebSocket `auth_response.role`. The `/contribute` UI labels this as **Acting as**. Operators may also assign a role directly from a contributor card; that owner assignment is shown as the active role and takes precedence over whatever the relay requested.

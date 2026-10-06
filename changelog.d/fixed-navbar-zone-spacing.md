@@ -1,0 +1,1 @@
+- Fixed the dashboard navbar so left, centered running-agent, and right control zones stay distributed without clipping the agent strip.

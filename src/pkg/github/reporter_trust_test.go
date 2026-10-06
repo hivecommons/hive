@@ -671,14 +671,16 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 
 	reqPath := runReporterTrustWatcher(t, c)
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665"} {
+	for _, want := range []string{
+		ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665",
+		"reporter-trust hold — issue #581 filed by @stranger",
+		"authored by the hive", "untrusted reporter", "`needs-human`",
+	} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -696,6 +698,26 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	}
 	if resp.SelfAuthorized {
 		t.Error("a human-filed issue is not a #5117 hold; the two gates must not be confused")
+	}
+}
+
+// assertReporterTrustHoldLabels pins hivecommons/hive#10773: a reporter-trust
+// hold is a human-only decision, so it must raise needs-human with "hold" or a
+// maintainer never learns the PR is waiting on them.
+func assertReporterTrustHoldLabels(t *testing.T, applied []string) {
+	t.Helper()
+	if len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
+	}
+}
+
+func TestReporterTrustNeedsHumanReason(t *testing.T) {
+	held := ReporterTrust{Held: true, Issue: 581, Repo: "o/r", Reporter: "stranger", Association: "NONE"}
+	if got, want := held.NeedsHumanReason(), "reporter-trust hold — issue #581 filed by @stranger"; got != want {
+		t.Fatalf("NeedsHumanReason() = %q, want %q", got, want)
+	}
+	if got := (ReporterTrust{}).NeedsHumanReason(); got != "" {
+		t.Fatalf("NeedsHumanReason() on an unheld finding = %q, want empty", got)
 	}
 }
 
@@ -730,9 +752,7 @@ func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string) bool { return true }
 	runReporterTrustWatcher(t, c)
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	var level, reporter bool
 	for _, body := range comments {
@@ -803,5 +823,62 @@ func TestReleaseLevelHold_TrustedReporterStillReleases(t *testing.T) {
 	_, reason, _ := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", reporterHeldPR(583))
 	if reason != "hold" {
 		t.Fatalf("reason = %q; a trusted reporter's PR must not be held by the reporter gate", reason)
+	}
+}
+
+func clankerReporterTrust() config.IssueFilterConfig {
+	f := enabledReporterTrust()
+	on := true
+	f.ReporterTrust.ClankerRequested = &on
+	f.ReporterTrust.ClankerRequestedAddendum = "Please read CONTRIBUTING.md first."
+	return f
+}
+
+// TestEnumerateActionable_ReporterTrustWaitClankerParagraph pins
+// hivecommons/hive#10780 end to end: with clanker_requested on, the one-shot
+// wait comment carries the ClankeR pointer and addendum, and is still posted
+// once per issue.
+func TestEnumerateActionable_ReporterTrustWaitClankerParagraph(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 104, Title: "stranger asks", User: wireUser{"stranger"}, AuthorAssociation: "NONE", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(clankerReporterTrust())
+
+	for i := 0; i < 2; i++ {
+		if _, err := c.EnumerateActionable(context.Background()); err != nil {
+			t.Fatalf("EnumerateActionable: %v", err)
+		}
+	}
+	if got := len(h.comments); got != 1 {
+		t.Fatalf("comments = %d, want one wait comment", got)
+	}
+	for _, want := range []string{reporterTrustWaitMarkerPrefix, "triage/accepted", clankerRelayDocURL, "Please read CONTRIBUTING.md first."} {
+		if !strings.Contains(h.comments[0], want) {
+			t.Errorf("wait comment missing %q:\n%s", want, h.comments[0])
+		}
+	}
+	if !h.labels["needs-triage"] {
+		t.Fatalf("awaiting label flow changed: %#v", h.labels)
+	}
+}
+
+func TestEnumerateActionable_ReporterTrustWaitClankerTrustedNoop(t *testing.T) {
+	h := newReporterTrustWaitHarness(t, wireIssue{
+		Number: 105, Title: "maintainer asks", User: wireUser{"maintainer"}, AuthorAssociation: "MEMBER", CreatedAt: hoursAgo(1),
+	})
+	server := h.server()
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, h.org, []string{h.repo})
+	c.SetIssueFilter(clankerReporterTrust())
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 || len(h.comments) != 0 || h.labels["needs-triage"] {
+		t.Fatalf("trusted reporter affected: count=%d comments=%d labels=%#v", result.Issues.Count, len(h.comments), h.labels)
 	}
 }

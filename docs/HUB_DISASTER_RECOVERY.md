@@ -93,16 +93,19 @@ writable layer and the one that wins. See `src/docs/config-layering.md` for the
 full precedence order, and `GET /api/config/provenance` on a running spoke to
 ask which layer set any given field.
 
-#### `hive.yaml.runtime` is a snapshot, not a restore source
+#### `hive.yaml.runtime` is the boot input since #2392
 
-The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
-(`src/deploy/entrypoint.sh:989-992`) — it is a snapshot of the *result*, not an
-input. On variant-C hives nothing reads it during a normal boot.
+On any hive running an image with #2392, the entrypoint boots from a non-empty
+`hive.yaml.runtime` on every normal boot (`src/deploy/entrypoint.sh:836-847`),
+whatever its `copy-config` variant. A variant-C init container still copies the
+seed first, but the entrypoint then copies the runtime config over it. The file
+is written after the first-boot merge (`entrypoint.sh:989-992`) and by every
+`Config.Save()`. (`entrypoint.sh:152-161` is the UID isolation pass, not a
+restore path.)
 
-It has exactly one non-redundant role: the **disaster fallback** at
-`entrypoint.sh:152-161`, which restores from `hive.yaml.runtime` when the ConfigMap is
-missing or empty. That is a genuinely different scenario from the overlay path,
-which is why the file is still worth capturing.
+A restore that brings back `hive.yaml.dashboard` but leaves a stale
+`hive.yaml.runtime` on the PVC boots the stale file — restore both (the backup
+archive holds both, see [backup-restore](../src/docs/backup-restore.md)).
 
 `hive.yaml.runtime` and the overlay are **near-copies but not interchangeable**. The overlay
 is written secret-free on purpose (`dashboardOverlayBytes` collapses

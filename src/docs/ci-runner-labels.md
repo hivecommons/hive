@@ -93,11 +93,13 @@ fork-safe fleet expression as the rest of CI. This includes `docker.yml`'s
 `gate`, amd64 image build legs, arm64 image build legs via QEMU, and manifest
 `merge*` jobs, the remaining `v2-ci.yml` Docker smoke job,
 `coverage-hourly.yml`, `dco-post-merge.yml`, `fossa.yml`,
-`pr-auto-update-test.yml`, `promote-stable.yml` and `notice-autofix.yml`.
+`pr-auto-update-test.yml` and `notice-autofix.yml`.
 
 A few jobs are still pinned to `ubuntu-latest` on purpose:
 
-- Jobs that invoke the `gh` CLI (`tagged-release.yml`, `prune-ghcr*.yml`,
+- Jobs that invoke the `gh` CLI (`tagged-release.yml`, `promote-stable.yml` —
+  its `promote-stable.sh` failed with `gh: command not found` on the fleet and
+  stalled the `stable` channel, #10042 — `prune-ghcr*.yml`,
   issue/PR command workflows, refs/cache/changelog/docs reminders,
   `gh-aw-compile.yml`, `ci-infra-*.yml`, `hive-of-the-week.yml` and similar)
   stay hosted until the self-hosted image includes `gh` and that image is

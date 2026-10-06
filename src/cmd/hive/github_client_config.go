@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
@@ -61,13 +63,15 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 }
 
 // githubHoldLabels is the hold-label set every client carries: the canonical
-// per-hive hold label (hive-pause/<id>). The legacy hive/<id> spelling is
+// per-hive hold label (hive-pause/<id>), plus the clanker-requested label while
+// reporter_trust.clanker_requested is on. The legacy hive/<id> spelling is
 // deliberately NOT part of it: that label is the provenance label on every
 // item the hive claims, and github.HasHoldLabelWith never treats it as a hold
 // (#9371), so carrying it here could hold nothing and treating it as a hold
 // would park every claimed item.
 func (b *boot) githubHoldLabels() []string {
-	return []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
+	labels := []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
+	return append(labels, b.cfg.Project.IssueFilter.ReporterTrust.ExtraHoldLabels()...)
 }
 
 // applyGitHubClientConfigHooks installs the settings that depend on config
@@ -99,6 +103,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	// Relay provenance for the clanker-requested PR parking (#10781). The
+	// ledger is read per call because the client can be configured before
+	// it is built.
+	client.SetRelayContributor(b.relayContributor)
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
@@ -168,6 +176,26 @@ func (b *boot) reporterTrustHoldEnabled(repo string) bool {
 // the PR-side hold.
 func (b *boot) reporterTrusted(login, association string) bool {
 	return b.cfg.Project.IssueFilter.ReporterTrust.Trusted(login, association)
+}
+
+// relayContributor reports whether login holds a live contributor (relay)
+// claim, so its PRs count as relay-originated and are never parked as
+// clanker-requested.
+func (b *boot) relayContributor(login string) bool {
+	return ledgerHasContributor(b.issueClaims, login)
+}
+
+func ledgerHasContributor(ledger *claims.Ledger, login string) bool {
+	login = strings.TrimSpace(login)
+	if ledger == nil || login == "" {
+		return false
+	}
+	for _, c := range ledger.List() {
+		if c.Kind == claims.KindContributor && strings.EqualFold(strings.TrimSpace(c.Holder), login) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyGitHubClientMutationBoundary installs the external-mutation fencing
@@ -280,6 +308,13 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// audit stream attributes to the governor flow (#5656). The store
 		// dedupes with the audit-sink bridge by (ref, kind).
 		recordPROpened(b.dashSrv, b.cfg.Project.Org, agentName, repo, number, url)
+	})
+	// #10527: an agent's own comment, label/claim or PR request on an issue a
+	// kick listed to it is its start signal; that is when the agent claim (and
+	// its 🔒 comment) is recorded. The ledger is read per call because the
+	// client can be configured before it is built.
+	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {
+		recordAgentStart(b.issueClaims, b.cfg.Project.Org, agentName, repo, issue, signal, b.logger)
 	})
 	// PR follow-up session resume (#9583, default off): remember which live
 	// CLI session authored this PR, and the PR's handoff note, so its

@@ -146,7 +146,7 @@ func TestFetchPRsClosedScanErrorReturnsOpenPRsAndCachedAttributions(t *testing.T
 	defer srv.Close()
 
 	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	_, _, _, _, firstAttributed, _, _, err := c.fetchPRs(context.Background(), "r")
+	_, _, _, _, firstAttributed, _, _, err := c.fetchPRs(context.Background(), "r", nil)
 	if err != nil {
 		t.Fatalf("first fetchPRs: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestFetchPRsClosedScanErrorReturnsOpenPRsAndCachedAttributions(t *testing.T
 		t.Fatalf("first attributed = %+v, want cached closed #7", firstAttributed)
 	}
 
-	actionable, _, _, _, attributed, _, _, err := c.fetchPRs(context.Background(), "r")
+	actionable, _, _, _, attributed, _, _, err := c.fetchPRs(context.Background(), "r", nil)
 	if err != nil {
 		t.Fatalf("closed scan failure must not fail fetchPRs: %v", err)
 	}

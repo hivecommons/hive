@@ -289,11 +289,14 @@ func TestBuildAutoUpdateStatusNextUpdateAt(t *testing.T) {
 		return autoUpdateInputs{Policy: &p, CommitsBehind: &behind}
 	}
 
-	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Channel: "stable", TargetResolved: true})); got.NextUpdateAt != eta {
-		t.Fatalf("nextUpdateAt = %q, want %q", got.NextUpdateAt, eta)
+	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Channel: "stable", TargetResolved: true, NextUpdateStatus: "queued"})); got.NextUpdateAt != eta || got.NextUpdateStatus != "queued" {
+		t.Fatalf("next update = %q/%q, want %q/queued", got.NextUpdateAt, got.NextUpdateStatus, eta)
 	}
-	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Paused: true})); got.NextUpdateAt != "" {
-		t.Fatalf("paused nextUpdateAt = %q, want empty", got.NextUpdateAt)
+	if got := buildAutoUpdateStatus(autoUpdateInputs{Policy: &spoke.HeartbeatUpgradePolicy{HubManaged: true, Channel: "stable", TargetResolved: true, NextUpdateStatus: "none"}, CommitsBehind: &behind}); got.NextUpdateAt != "" || got.NextUpdateStatus != "none" {
+		t.Fatalf("none queued next update = %q/%q, want empty/none", got.NextUpdateAt, got.NextUpdateStatus)
+	}
+	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{HubManaged: true, Paused: true, NextUpdateStatus: "queued"})); got.NextUpdateAt != "" || got.NextUpdateStatus != "" {
+		t.Fatalf("paused next update = %q/%q, want empty", got.NextUpdateAt, got.NextUpdateStatus)
 	}
 	if got := buildAutoUpdateStatus(policy(spoke.HeartbeatUpgradePolicy{})); got.NextUpdateAt != "" {
 		t.Fatalf("disabled nextUpdateAt = %q, want empty", got.NextUpdateAt)

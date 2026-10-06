@@ -58,3 +58,4 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0020: External work sources over a versioned HTTP/JSON contract](0020-external-work-source-boundary.md)
 - [ADR-0020: Spek continuous convergence](0020-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)
 - [ADR-0021: Named planning-engine boundary for Project Inception runs](0021-planning-engine-boundary.md)
+- [ADR-0021: Opt-in redemption of earned Codex resets](0021-opt-in-earned-codex-reset-redemption.md)
