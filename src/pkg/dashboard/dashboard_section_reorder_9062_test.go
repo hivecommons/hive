@@ -52,6 +52,8 @@ var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
 var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
 var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
 var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
+var DASHBOARD_HIDDEN_SECTIONS_KEY='hive.dashboard.hiddenSections';
+var DASHBOARD_HIDE_DENYLIST=['overview-section'];
 var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
 var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
 var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
@@ -195,7 +197,7 @@ func TestDashboardApplyResetAndSidebarSort(t *testing.T) {
 		t.Skip("node not on PATH — dashboard layout apply/sidebar behavior was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSidebarNavItems", "dashboardSortSidebar", "resetDashboardLayout"}
+	funcs := []string{"dashboardCanHideSection", "dashboardHiddenSectionsRead", "dashboardHiddenSectionsWrite", "dashboardSectionHidden", "dashboardApplyHiddenSections", "dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSidebarNavItems", "dashboardSortSidebar", "resetDashboardLayout"}
 	var b strings.Builder
 	b.WriteString(dashboardLayoutPreamble9062())
 	b.WriteString(`
@@ -203,6 +205,7 @@ class El {
   constructor(id, attr, val){ this.id=id; this.children=[]; this.parentElement=null; this.attrs={}; this.style={}; this.hidden=false; this.textContent=''; this.innerHTML=''; this.classList={toggle(){},add(){},remove(){},contains(){return false}}; if(attr)this.attrs[attr]=val; }
   getAttribute(n){ return this.attrs[n] || null; }
   setAttribute(n,v){ this.attrs[n]=v; }
+  removeAttribute(n){ delete this.attrs[n]; }
   appendChild(ch){ if(ch.parentElement) ch.parentElement.children=ch.parentElement.children.filter(x=>x!==ch); ch.parentElement=this; this.children.push(ch); return ch; }
   insertBefore(ch,before){ if(ch.parentElement) ch.parentElement.children=ch.parentElement.children.filter(x=>x!==ch); ch.parentElement=this; const i=this.children.indexOf(before); if(i<0)this.children.push(ch); else this.children.splice(i,0,ch); return ch; }
   querySelector(sel){ if(sel === ':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR) return this.children.find(c=>c.attrs['data-dashboard-section']); return null; }
