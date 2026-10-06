@@ -1,0 +1,1 @@
+- docs: renumber Codex reset ADR on v5 (#10840)
