@@ -2,7 +2,10 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -24,6 +27,8 @@ import (
 
 // ReporterTrust is the gate's finding for one PR request.
 type ReporterTrust struct {
+	// OwnsNeedsHuman proves this gate, not an earlier escalation, added the label.
+	OwnsNeedsHuman bool
 	// Held is true when the PR must carry "hold" regardless of ACMM level.
 	Held bool
 	// Issue is the untrusted-reporter issue that decided it. Zero when Held is false.
@@ -194,10 +199,105 @@ func reporterTrustNotice(finding ReporterTrust) string {
 > [!IMPORTANT]
 > **Held for maintainer sign-off: the source issue reporter is not trusted.** (%s)
 >
-> This PR was authored by the hive, not by an outside contributor. The **untrusted reporter** is @%s (GitHub association: %s), who filed %s#%d without a configured issue acceptance label. The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
+> This PR was authored by the hive; the untrusted **reporter**, not the PR author, is @%s. Its rationale traces to %s#%d, filed by @%s (GitHub association: %s). The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
 >
 > Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. The `+"`%s`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
-		ReporterTrustNoticeMarker, finding.NeedsHumanReason(), finding.Reporter, associationOrUnknown(finding.Association), finding.Repo, finding.Issue, issueNeedsHumanLabel)
+		reporterTrustMarker(finding), finding.NeedsHumanReason(), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association), issueNeedsHumanLabel)
+}
+
+const reporterTrustMetadataPrefix = "<!-- hive:reporter-trust-metadata "
+
+func reporterTrustMarker(finding ReporterTrust) string {
+	data, _ := json.Marshal(finding)
+	return ReporterTrustNoticeMarker + "\n" + reporterTrustMetadataPrefix + string(data) + " -->"
+}
+
+func reporterTrustFinding(body string) (ReporterTrust, bool) {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, reporterTrustMetadataPrefix) && strings.HasSuffix(line, " -->") {
+			var finding ReporterTrust
+			err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(line, reporterTrustMetadataPrefix), " -->")), &finding)
+			return finding, err == nil && finding.Held && finding.Issue > 0 && finding.Reporter != ""
+		}
+	}
+	// The original notice is durable evidence even if the reporter has since
+	// become trusted or the source issue has been triaged. Neither releases hold.
+	if match := legacyReporterTrustFinding.FindStringSubmatch(body); len(match) == 5 {
+		number, err := strconv.Atoi(match[2])
+		return ReporterTrust{Held: true, Repo: match[1], Issue: number, Reporter: match[3], Association: match[4]}, err == nil && number > 0
+	}
+	return ReporterTrust{}, false
+}
+
+var legacyReporterTrustFinding = regexp.MustCompile(`traces to ([^\s]+)#([0-9]+), filed by @([^\s]+) \(GitHub association: ([^)]+)\)`)
+
+func (f ReporterTrust) escalationReason() string {
+	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s (%s)", f.Issue, f.Reporter, f.Repo)
+}
+
+// SetReporterTrustEscalation installs the durable policy-reason ledger. Its
+// return value indicates an independent needs-human reason is still active.
+func (c *Client) SetReporterTrustEscalation(fn func(string, int, string) bool) {
+	c.reporterTrustMu.Lock()
+	defer c.reporterTrustMu.Unlock()
+	c.reporterTrustEscalation = fn
+}
+
+func (c *Client) recordReporterTrustEscalation(repo string, number int, reason string) bool {
+	c.reporterTrustMu.RLock()
+	fn := c.reporterTrustEscalation
+	c.reporterTrustMu.RUnlock()
+	if fn == nil {
+		// Without a ledger, releasing a label could erase another reason.
+		return true
+	}
+	owner, name := c.splitRepo(repo)
+	return fn(owner+"/"+name, number, reason)
+}
+
+// reconcileReporterTrustSignal repairs old holds, persists their visible
+// human-only reason, and releases only this gate's ledger entry. The existing
+// label-event release path removes needs-human after a human removes hold.
+func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, pr *gh.PullRequest, labels []string) ([]string, string) {
+	if !hasExactLabel(labels, "hold") && !hasExactLabel(labels, issueNeedsHumanLabel) {
+		c.recordReporterTrustEscalation(repo, pr.GetNumber(), "")
+		return labels, ""
+	}
+	owner, name := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, name, pr.GetNumber())
+	if err != nil {
+		return labels, ""
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		comment := comments[i]
+		if !c.isTrustedAppBotCommentAuthor(comment) || !IsReporterTrustHoldNotice(comment.GetBody()) {
+			continue
+		}
+		finding, ok := reporterTrustFinding(comment.GetBody())
+		if !ok {
+			return labels, ""
+		}
+		if hasExactLabel(labels, "hold") {
+			reason := finding.escalationReason()
+			c.recordReporterTrustEscalation(repo, pr.GetNumber(), reason)
+			if !hasExactLabel(labels, issueNeedsHumanLabel) {
+				if !finding.OwnsNeedsHuman {
+					finding.OwnsNeedsHuman = true
+					// Persist ownership when upgrading a legacy invisible hold.
+					if err := c.CreateIssueComment(ctx, repo, pr.GetNumber(), reporterTrustNotice(finding)); err != nil {
+						return labels, reason
+					}
+				}
+				if err := c.AddLabels(ctx, repo, pr.GetNumber(), []string{issueNeedsHumanLabel}); err == nil {
+					labels = append(labels, issueNeedsHumanLabel)
+				}
+			}
+			return labels, reason
+		}
+		c.recordReporterTrustEscalation(repo, pr.GetNumber(), "")
+		return labels, ""
+	}
+	return labels, ""
 }
 
 // IsReporterTrustHoldNotice reports whether a PR comment is the #9665 notice.

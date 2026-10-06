@@ -200,7 +200,11 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 		signals = append(signals, Signal{Role: role, Label: "agent-authored by " + role})
 	}
 	if labels["needs-human"] {
-		signals = append(signals, Signal{Glyph: "⚠", Label: "needs human review"})
+		reason := "needs human review"
+		if pr.ReporterTrustReason != "" {
+			reason = pr.ReporterTrustReason
+		}
+		signals = append(signals, Signal{Glyph: "⚠", Label: reason})
 	}
 	if labels["needs-decision"] || labels["2-discussing"] {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
@@ -248,7 +252,11 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID), Stale: stale, Signals: signals}
+	holdReason := heldReason(pr.Labels, pr.HiveAttributed, hiveID)
+	if pr.ReporterTrustReason != "" {
+		holdReason = pr.ReporterTrustReason + "; maintainer must remove `hold` to release"
+	}
+	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: holdReason, Stale: stale, Signals: signals}
 }
 
 type prReviewInfo struct{ glyph, label string }
