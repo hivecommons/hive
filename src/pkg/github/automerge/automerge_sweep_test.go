@@ -2182,7 +2182,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"head":            map[string]string{"sha": headSHA},
 				"labels":          prLabels,
 			})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status") && hasShaNumber(r.URL.Path):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
 			json.NewEncoder(w).Encode(map[string]any{
@@ -2190,7 +2190,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"total_count": 1,
 				"statuses":    []map[string]string{{"context": "ci/build", "state": pr.statusState}},
 			})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs") && hasShaNumber(r.URL.Path):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
 			json.NewEncoder(w).Encode(map[string]any{
@@ -2226,6 +2226,18 @@ func pathNumber(t *testing.T, path, prefix, suffix string) int {
 		t.Fatalf("parse number from %q: %v", path, err)
 	}
 	return number
+}
+
+// hasShaNumber reports whether the path carries a synthetic "sha<N>" commit
+// produced by the sweep fixtures; other SHAs fall through to per-test handlers.
+func hasShaNumber(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		if strings.HasPrefix(part, "sha") {
+			_, err := strconv.Atoi(strings.TrimPrefix(part, "sha"))
+			return err == nil
+		}
+	}
+	return false
 }
 
 func shaNumber(t *testing.T, path string) int {
