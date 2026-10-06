@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/claims"
 )
 
@@ -24,14 +25,8 @@ func TestBlockedClaimsLoopReleasesAndStops(t *testing.T) {
 			t.Error("poller did not stop")
 		}
 	}()
-	deadline := time.Now().Add(time.Second)
-	for {
-		if _, ok := ledger.Lookup("o/r", 1); !ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("blocked claim was not released")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	testutil.Eventually(t, time.Second, func() bool {
+		_, ok := ledger.Lookup("o/r", 1)
+		return !ok
+	}, "blocked claim was not released")
 }
