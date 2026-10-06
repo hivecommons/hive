@@ -302,3 +302,158 @@ func TestStartRefusesPinnedDifferentProject(t *testing.T) {
 		t.Fatalf("Start with pinned different project = %v, want ErrIncarnationMismatch", err)
 	}
 }
+
+func TestFactoryAndNewValidation(t *testing.T) {
+	cases := []Config{
+		{},
+		{ProjectID: "p"},
+		{ProjectID: "p", WorkflowVersion: "v"},
+		{ProjectID: "p", WorkflowVersion: "v", StateDir: "state"},
+	}
+	for i, cfg := range cases {
+		if _, err := New(cfg); err == nil {
+			t.Fatalf("case %d succeeded", i)
+		}
+	}
+	fc := newFakeClient()
+	dir := testStateDir(t)
+	adapter, err := Factory(map[string]string{SettingProjectID: fc.projectID, SettingWorkflowVersion: "v", SettingStateDir: dir, SettingMCPCommand: "cmd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter.Engine() != Engine {
+		t.Fatalf("engine = %q", adapter.Engine())
+	}
+}
+
+func TestAdmitRefusals(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, _ := admissionAndPayload(t)
+	cases := []struct {
+		name string
+		edit func(*extwork.Admission)
+	}{
+		{"engine", func(a *extwork.Admission) { a.Engine = "flue" }},
+		{"version", func(a *extwork.Admission) { a.WorkflowVersion = "other" }},
+		{"mode", func(a *extwork.Admission) { a.Authority.Mode = "publish" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := adm
+			tc.edit(&got)
+			if err := a.Admit(got); !errors.Is(err, extwork.ErrRefused) {
+				t.Fatalf("Admit = %v, want ErrRefused", err)
+			}
+		})
+	}
+}
+
+func TestStartRefusesDigestAndConflictingRecord(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, payload := admissionAndPayload(t)
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: []byte("different")}); !errors.Is(err, extwork.ErrPayloadDigest) {
+		t.Fatalf("digest error = %v", err)
+	}
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	conflict := adm
+	conflict.Generation = 2
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: conflict, Payload: payload}); !errors.Is(err, extwork.ErrConflict) {
+		t.Fatalf("conflicting key = %v", err)
+	}
+	rec, ok, err := a.loadByWorkKey(adm.WorkKey)
+	if err != nil || !ok {
+		t.Fatalf("load record ok=%v err=%v", ok, err)
+	}
+	rec.RequestDigest = extwork.RequestDigest([]byte("other"))
+	if err := a.saveRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); !errors.Is(err, extwork.ErrConflict) {
+		t.Fatalf("conflicting digest = %v", err)
+	}
+}
+
+func TestStartResumesRecordWithoutWorkspace(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, payload := admissionAndPayload(t)
+	fc.failStartWorkspace = true
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); !errors.Is(err, extwork.ErrRefused) {
+		t.Fatalf("first start = %v", err)
+	}
+	fc.failStartWorkspace = false
+	res, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Deduplicated || res.RemoteRunID != "workspace-1" || len(fc.issues) != 1 || len(fc.workspaces) != 1 {
+		t.Fatalf("resume result=%+v issues=%d workspaces=%d", res, len(fc.issues), len(fc.workspaces))
+	}
+}
+
+func TestObserveEdges(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, payload := admissionAndPayload(t)
+	if obs, err := a.Observe(context.Background(), adm.ExecutionKey(), ""); !errors.Is(err, extwork.ErrNotFound) || obs.State != extwork.StateUnknown {
+		t.Fatalf("missing observe obs=%+v err=%v", obs, err)
+	}
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Observe(context.Background(), adm.ExecutionKey(), "other-project"); !errors.Is(err, extwork.ErrIncarnationMismatch) {
+		t.Fatalf("pinned mismatch = %v", err)
+	}
+	fc.issues[0]["status"] = defaultInReviewStatus
+	obs, err := a.Observe(context.Background(), adm.ExecutionKey(), fc.projectID)
+	if err != nil || obs.State != extwork.StateWaiting {
+		t.Fatalf("in review obs=%+v err=%v", obs, err)
+	}
+	fc.issues[0]["status"] = defaultDoneStatus
+	obs, err = a.Observe(context.Background(), adm.ExecutionKey(), fc.projectID)
+	if err != nil || obs.State != extwork.StateTerminal || obs.ResultClass != "done" {
+		t.Fatalf("done obs=%+v err=%v", obs, err)
+	}
+	fc.issues[0]["status"] = "Mystery"
+	obs, err = a.Observe(context.Background(), adm.ExecutionKey(), fc.projectID)
+	if err != nil || obs.State != extwork.StateUnknown {
+		t.Fatalf("unknown obs=%+v err=%v", obs, err)
+	}
+}
+
+func TestCancelEdgesAndOpenArtifact(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, payload := admissionAndPayload(t)
+	if _, err := a.Cancel(context.Background(), adm.ExecutionKey(), ""); !errors.Is(err, extwork.ErrNotFound) {
+		t.Fatalf("missing cancel = %v", err)
+	}
+	if _, err := a.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Cancel(context.Background(), adm.ExecutionKey(), "other-project"); !errors.Is(err, extwork.ErrIncarnationMismatch) {
+		t.Fatalf("cancel mismatch = %v", err)
+	}
+	if rc, err := a.OpenArtifact(context.Background(), adm.ExecutionKey(), fc.projectID, "receipt.json"); !errors.Is(err, extwork.ErrNotFound) || rc != nil {
+		t.Fatalf("OpenArtifact rc=%v err=%v", rc, err)
+	}
+}
+
+func TestCorruptRecordReportsError(t *testing.T) {
+	fc := newFakeClient()
+	a := newAdapterForTest(t, fc)
+	adm, _ := admissionAndPayload(t)
+	if err := os.WriteFile(a.recordPath(adm.WorkKey), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.loadByWorkKey(adm.WorkKey); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("loadByWorkKey corrupt = %v", err)
+	}
+	if _, _, err := a.loadByExecutionKey(adm.ExecutionKey()); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("loadByExecutionKey corrupt = %v", err)
+	}
+}
