@@ -277,12 +277,8 @@ func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, 
 			return labels, reason
 		}
 		other := c.recordReporterTrustEscalation(repo, pr.GetNumber(), "")
-		// A later human-only escalation comment is also an independent reason.
-		for _, later := range comments[i+1:] {
-			if strings.Contains(later.GetBody(), "needs-human") {
-				other = true
-			}
-		}
+		// Independent reasons come from the ledger and label events, not prose
+		// that happens to mention needs-human after the hold notice.
 		if finding.OwnsNeedsHuman && !other && c.reporterTrustSignalReleaseAuthorized(ctx, owner, name, pr.GetNumber()) {
 			if err := c.RemoveLabel(ctx, repo, pr.GetNumber(), "needs-human"); err == nil {
 				labels = withoutExactLabel(labels, "needs-human")

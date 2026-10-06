@@ -23,9 +23,14 @@ func TestReporterTrustSignalReconciliation(t *testing.T) {
 		name                     string
 		held, owns, other, newer bool
 		wantRemove               bool
+		laterComment             string
 	}{
 		{name: "held stays visible", held: true, owns: true},
 		{name: "human release clears owned signal", owns: true, wantRemove: true},
+		{name: "maintainer prose does not block release", owns: true, wantRemove: true, laterComment: "removed hold, needs-human can go too"},
+		{name: "bot prose does not block release", owns: true, wantRemove: true, laterComment: "Summary: needs-human was set for reporter trust"},
+		{name: "prose does not bypass ledger", owns: true, other: true, laterComment: "needs-human can go too"},
+		{name: "prose does not bypass newer label", owns: true, newer: true, laterComment: "needs-human can go too"},
 		{name: "preexisting signal retained"},
 		{name: "CI escalation retained", owns: true, other: true},
 		{name: "newer human signal retained", owns: true, newer: true},
@@ -38,7 +43,12 @@ func TestReporterTrustSignalReconciliation(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case strings.HasSuffix(r.URL.Path, "/comments"):
-					_ = json.NewEncoder(w).Encode([]map[string]any{{"body": reporterTrustNotice(finding), "user": userJSON("kubestellar-hive[bot]", "Bot")}})
+					comments := []map[string]any{{"body": reporterTrustNotice(finding), "user": userJSON("kubestellar-hive[bot]", "Bot")}}
+					if tc.laterComment != "" {
+						comments = append(comments, map[string]any{"body": tc.laterComment, "user": userJSON("maintainer", "User")})
+						comments = append(comments, map[string]any{"body": tc.laterComment, "user": userJSON("kubestellar-hive[bot]", "Bot")})
+					}
+					_ = json.NewEncoder(w).Encode(comments)
 				case strings.HasSuffix(r.URL.Path, "/events"):
 					events := []map[string]any{
 						{"event": "unlabeled", "label": map[string]string{"name": "hold"}, "actor": userJSON("maintainer", "User"), "created_at": "2026-10-06T10:00:00Z"},
