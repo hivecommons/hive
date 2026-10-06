@@ -73,7 +73,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `hive-podman-lifecycle-probe.sh` | Deploy | Exercises the Quadlet lifecycle — stop, start, restart, recreate, and boot wiring (#4377) — to verify the unit behaves correctly across each transition. |
 | `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
 | `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
-| `vibe-kanban-mirror.js` | Integrations | Report-only, default-off mirror of one repository's admitted hive queue (`/api/contribute/queue` + `/api/contribute/fleet`) onto a local vibe-kanban board via its MCP stdio server (#10641). Never writes back to hive. See [`src/docs/vibe-kanban.md`](../src/docs/vibe-kanban.md). |
+| `vibe-kanban-mirror.js` | Integrations | Report-only, default-off mirror of one repository's admitted hive queue (`/api/contribute/queue` + `/api/contribute/fleet`) onto a local vibe-kanban board via its MCP stdio server (#10641). Never writes back to hive. With `VIBE_KANBAN_SHADOW_LOG`, records board pick-ups of queued items as `ext_work_shadow_observed` events in a local JSONL file. See [`src/docs/vibe-kanban.md`](../src/docs/vibe-kanban.md). |
 
 ## Contributor relay
 
@@ -107,7 +107,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 |---|---|
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.js` with stubs, plus direct-require coverage of `lib/pane-classifier.js`. |
-| `vibe-kanban-mirror.test.js` | `vibe-kanban-mirror.js` against a fake MCP stdio server (`testdata/vibe-kanban-mcp/`): status mapping, default-off, `--dry-run`, and idempotent `--once` reruns. |
+| `vibe-kanban-mirror.test.js` | `vibe-kanban-mirror.js` against a fake MCP stdio server (`testdata/vibe-kanban-mcp/`): status mapping, default-off, `--dry-run`, idempotent `--once` reruns, and shadow pick-up observation. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
 | `repo-toolchain.test.sh` | `repo-toolchain.sh` manifest parsing: what never reaches pip (URLs, paths, options, unknown directives), apt lines recorded not run, pip failure never fails the task. |
 | `test_agent_env_scrub.sh` | `agent-env-scrub.sh` (#4045): backend CLIs must not re-export live GitHub credentials into the tool shells they spawn. Behavioural plus source assertions. |
