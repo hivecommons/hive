@@ -205,14 +205,14 @@ const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   ] }
 ] };
 const subline = renderOverviewTotalPartitionSubline(issueEq);
-const m = subline.match(/(\d+) = (\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+) outside/);
-if (!m) throw new Error('partition subline did not render expected equation: ' + subline);
+const m = subline.match(/(\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+) outside/);
+if (!m) throw new Error('partition subline did not render expected breakdown: ' + subline);
 const nums = m.slice(1).map(Number);
-if (nums[0] !== nums[1] + nums[2] + nums[3] + nums[4]) throw new Error('partition equation does not sum: ' + subline);
+if (42 !== nums[0] + nums[1] + nums[2] + nums[3]) throw new Error('partition terms do not sum to open total: ' + subline);
 const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
-if (outside !== nums[4]) throw new Error('outside breakdown does not sum: ' + subline);
+if (outside !== nums[3]) throw new Error('outside breakdown does not sum: ' + subline);
 const held = renderOverviewSplitSubline(12, 10, 2, 'held');
-if (held !== '12 held = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
+if (held !== '12 = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -281,6 +281,7 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"aria-describedby",
 		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
 		"These items are not actionable because this hive&apos;s filters exclude them",
+		"overview-kpi-outside",
 		"Triage buckets: what counts as outside",
 		"project.issue_filter.hard_suppress_labels.needs_direction",
 		"Fixed scanner rule",

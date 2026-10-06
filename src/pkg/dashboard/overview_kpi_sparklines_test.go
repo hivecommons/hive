@@ -34,7 +34,7 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 		t.Fatalf("history len = %d, want cap %d", len(got), trendHistoryMaxEntries)
 	}
 	last := got[len(got)-1]
-	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 {
+	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 || last.OverviewOutside != 0 {
 		t.Fatalf("overview KPI sample = %+v", last)
 	}
 	dir := t.TempDir()
@@ -81,6 +81,7 @@ func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
 		"overviewActionable",
 		"overviewHeld",
 		"overviewBlockedHuman",
+		"overviewOutside",
 	} {
 		if !strings.Contains(string(data), `"`+field+`":0`) {
 			t.Fatalf("marshaled zero-value overview history missing %s: %s", field, data)
@@ -113,7 +114,7 @@ let _overviewLastRepos = [{name: 'hive', full: 'hivecommons/hive'}];
 global.window = {_lastStatus: {hiveId: 'test'}};
 global.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
 let _overviewKPIHistory = [
-  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3}
+  {t: Date.now(), overviewOpenIssues: 58, overviewOpenPrs: 12, overviewActionable: 36, overviewHeld: 6, overviewBlockedHuman: 3, overviewOutside: 25}
 ];
 const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
 const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
@@ -144,12 +145,12 @@ const prSlices = [{key: 'ready', count: 12, items: []}, {key: 'blocked', count: 
 const liveRepos = [{name: 'hive', full: 'hivecommons/hive', issues: 39, prs: 31, actionableIssues: [1,2,3,4,5,6,7], heldIssues: [8,9], openPrs: [10,11], heldPrs: [12,13]}];
 _overviewLastRepos = liveRepos;
 const markup = renderOverviewKPIs(overviewFilterRepos(liveRepos), issueSlices, prSlices, {showKPIs: true});
-assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 5);
-assert.equal((markup.match(/<svg/g) || []).length, 5);
+assert.equal((markup.match(/class="overview-kpi"/g) || []).length, 6);
+assert.equal((markup.match(/<svg/g) || []).length, 6);
 assert.match(markup, />39<\/span><span class="overview-kpi-label">Total open issues<\/span>/);
 assert.match(markup, />31<\/span><span class="overview-kpi-label">Total open PRs<\/span>/);
-assert.match(markup, />39 issues \+ 31 PRs = /);
-for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human']) {
+assert.match(markup, /aria-label="39 total open issues \+ 31 total open PRs = /);
+for (const key of ['open-issues','open-prs','actionable-now','held','blocked-needs-human','outside']) {
   assert.match(markup, new RegExp('overview-kpi:' + key));
 }
 `)
