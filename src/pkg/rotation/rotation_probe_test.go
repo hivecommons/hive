@@ -835,11 +835,12 @@ func TestCodexHeadroomRejectsUnrecognizedSchema(t *testing.T) {
 }
 
 func TestNoCodexSpendOrBillingMutation(t *testing.T) {
-	// #6833 criterion: no code path purchases credits. The consume endpoint
-	// sits on the same app-server surface the probe already talks to, so its
-	// absence deserves to be pinned rather than assumed.
+	// #6833 criterion: no code path purchases credits. ADR-0021 (#10595)
+	// permits redeeming already-earned resets, but only from the single
+	// consent-gated controller file; purchaseCredits stays banned everywhere.
 	root := filepath.Join("..", "..")
 	banned := []string{"rateLimitResetCredit", "/consume", "purchaseCredits"}
+	redeemFile := filepath.Join("..", "..", "pkg", "rotation", "codex_reset_redeem.go")
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
@@ -852,8 +853,11 @@ func TestNoCodexSpendOrBillingMutation(t *testing.T) {
 			return err
 		}
 		for _, s := range banned {
+			if s != "purchaseCredits" && filepath.Clean(path) == filepath.Clean(redeemFile) {
+				continue
+			}
 			if strings.Contains(string(b), s) {
-				t.Errorf("%s references %q — no code path may spend credits or mutate billing", path, s)
+				t.Errorf("%s references %q — no code path may spend credits or mutate billing (earned-reset redemption is allowed only in %s, ADR-0021)", path, s, redeemFile)
 			}
 		}
 		return nil
