@@ -95,6 +95,25 @@ func TestBuildKickMessages_Tester(t *testing.T) {
 	}
 }
 
+func TestBuildKickMessages_IncludesGovernorWorkSourceRule(t *testing.T) {
+	s := newScheduler()
+	actionable := extraActionable()
+	msgs := s.BuildKickMessages(actionable, []string{"quality"})
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	for _, want := range []string{
+		"The PRs/issues for this kick are listed in this prompt by the governor",
+		"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work",
+		"blocked by the hive proxy for agents",
+		"Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers",
+	} {
+		if !strings.Contains(msgs[0].Message, want) {
+			t.Errorf("expected governor work-source rule to contain %q:\n%s", want, msgs[0].Message)
+		}
+	}
+}
+
 func TestBuildKickMessages_Architect_Extra(t *testing.T) {
 	s := newScheduler()
 	actionable := extraActionable()
