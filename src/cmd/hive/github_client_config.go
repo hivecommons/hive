@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/mergelane"
 )
 
 // configureGitHubClient installs EVERY hook, policy gate and setting the hive
@@ -110,6 +112,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
+	// Merge strategy (#10889): the self-merge sweep, the lgtm queue sweep and
+	// the hive-merge relay read the live per-repo strategy from config alone;
+	// only hive-serialized repos reach the lane gate.
+	client.SetSerializedLane(b.cfg.RepoMergeStrategy, b.serializedLaneGate)
 	// Invocation-attribution trail (pkg/github/attribution.go): the trailer
 	// gate reads the live cfg pointer (the config watcher swaps contents in
 	// place), so a dashboard flip takes effect on the next creation. The
@@ -196,6 +202,43 @@ func ledgerHasContributor(ledger *claims.Ledger, login string) bool {
 		}
 	}
 	return false
+}
+
+// serializedLaneGate is the lane gate installed on every client (#10889).
+// The lane is one per process over the durable front record and is built on
+// the first request from a hive-serialized repository, so a hive with every
+// repo on direct never opens it. A lane that cannot be built refuses every
+// merge into hive-serialized repos rather than merging directly.
+func (b *boot) serializedLaneGate(ctx context.Context, req github.LaneMergeRequest) (github.LaneMergeResult, error) {
+	b.mergeLaneOnce.Do(func() {
+		store, err := mergelane.OpenStore(mergelane.DefaultStorePath)
+		if err != nil {
+			b.mergeLaneErr = err
+			return
+		}
+		b.mergeLane, b.mergeLaneErr = mergelane.New(mergelane.Options{
+			Store: store,
+			GitHub: &mergelane.RESTGitHub{
+				Client:               b.currentGitHubClient,
+				ConfigRequiredChecks: func() (map[string]bool, bool) { return b.cfg.AutoMerge.RequiredCheckSet() },
+			},
+			Strategy:         b.cfg.RepoMergeStrategy,
+			AutoMergeAllowed: b.cfg.RepoAutoMergeEnabled,
+			Paused:           b.cfg.IsRepoPaused,
+			Logger:           b.logger,
+		})
+		if b.mergeLaneErr != nil && b.logger != nil {
+			b.logger.Error("serialized lane unavailable: hive-serialized repos get no merge", "error", b.mergeLaneErr)
+		}
+	})
+	if b.mergeLane == nil {
+		reason := github.ReasonLaneUnavailable
+		if b.mergeLaneErr != nil {
+			reason += ": " + b.mergeLaneErr.Error()
+		}
+		return github.LaneMergeResult{Outcome: github.LaneOutcomeRefused, Reason: reason}, nil
+	}
+	return b.mergeLane.Merge(ctx, req)
 }
 
 // applyGitHubClientMutationBoundary installs the external-mutation fencing
