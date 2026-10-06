@@ -248,7 +248,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID), Stale: stale, Signals: signals}
+	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.NeedsHumanReason), Stale: stale, Signals: signals}
 }
 
 type prReviewInfo struct{ glyph, label string }
@@ -498,7 +498,7 @@ func containsAnyHoldLabel(s string, needles []string) bool {
 	return false
 }
 
-func heldReason(labels []string, hiveAttributed bool, hiveID string) string {
+func heldReason(labels []string, hiveAttributed bool, hiveID string, evidence ...string) string {
 	held := holdLabels(labels, hiveID)
 	parts := make([]string, 0, 3)
 	labelText := ""
@@ -510,6 +510,10 @@ func heldReason(labels []string, hiveAttributed bool, hiveID string) string {
 		labelText = " — label " + strings.Join(quoted, ", ")
 	}
 	parts = append(parts, "On hold"+labelText+": agents will not act on this until the hold label is removed")
+	if len(evidence) > 0 && evidence[0] != "" {
+		parts = append(parts, evidence[0]+", a maintainer must review this")
+		return strings.Join(parts, "; ")
+	}
 	if hiveAttributed {
 		parts = append(parts, "opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator")
 	}

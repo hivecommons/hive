@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -188,6 +190,51 @@ func reporterTrustNotice(finding ReporterTrust) string {
 // IsReporterTrustHoldNotice reports whether a PR comment is the #9665 notice.
 func IsReporterTrustHoldNotice(body string) bool {
 	return strings.Contains(body, ReporterTrustNoticeMarker)
+}
+
+// Both notice generations carry the original finding. Read that evidence rather
+// than re-evaluating today's trust settings: a historical hold requires a human
+// even if the reporter has since become trusted or the gate has been disabled.
+var reporterTrustReasonPattern = regexp.MustCompile(`reporter-trust hold — issue #([0-9]+) filed by @([A-Za-z0-9-]+)`)
+var legacyReporterTrustReasonPattern = regexp.MustCompile(`rationale traces to [^\s]+#([0-9]+), filed by @([A-Za-z0-9-]+)`)
+
+func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin string) string {
+	for _, comment := range comments {
+		if comment == nil || !IsReporterTrustHoldNotice(comment.GetBody()) {
+			continue
+		}
+		if strings.TrimSpace(appBotLogin) != "" && !strings.EqualFold(safeGetLogin(comment.GetUser()), appBotLogin) {
+			continue
+		}
+		for _, pattern := range []*regexp.Regexp{reporterTrustReasonPattern, legacyReporterTrustReasonPattern} {
+			match := pattern.FindStringSubmatch(comment.GetBody())
+			if len(match) == 3 {
+				issue, err := strconv.Atoi(match[1])
+				if err == nil && issue > 0 {
+					return (ReporterTrust{Held: true, Issue: issue, Reporter: match[2]}).NeedsHumanReason()
+				}
+			}
+		}
+		return "reporter-trust hold — maintainer sign-off required"
+	}
+	return ""
+}
+
+func (c *Client) reporterTrustHeldPRReason(ctx context.Context, owner, repo string, number int, labels []string) string {
+	// Only held PRs call this helper. Holds using other labels need no comment
+	// fetch; old notices without needs-human remain eligible for enrichment.
+	candidate := false
+	for _, label := range labels {
+		candidate = candidate || label == issueNeedsHumanLabel || label == "hold"
+	}
+	if !candidate {
+		return ""
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return "" // Display enrichment must never fail enumeration.
+	}
+	return reporterTrustReasonFromComments(comments, c.appBotLogin)
 }
 
 func hasReporterTrustNotice(comments []*gh.IssueComment, appBotLogin string) bool {

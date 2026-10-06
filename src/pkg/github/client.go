@@ -567,6 +567,9 @@ type PullRequest struct {
 	// discarded from the actionable snapshot.
 	ScopeContract string        `json:"scope_contract,omitempty"`
 	Rework        PRReworkStats `json:"rework,omitempty"`
+	// NeedsHumanReason is display-only evidence from a trusted reporter-trust
+	// hold notice. It never changes hold enforcement or fix-loop accounting.
+	NeedsHumanReason string `json:"needs_human_reason,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
 	// indistinguishable from "GitHub says this PR cannot be merged" and would
@@ -1400,7 +1403,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			if !pr.GetDraft() {
 				headRef, headRepo, fromFork := prHeadOrigin(pr)
 				reqLogins, reqTeams := prRequestedReviews(pr)
+				needsHumanReason := c.reporterTrustHeldPRReason(ctx, owner, repoName, pr.GetNumber(), labels)
 				heldPRs = append(heldPRs, PullRequest{
+					NeedsHumanReason:   needsHumanReason,
 					Repo:               repo,
 					Number:             pr.GetNumber(),
 					Title:              pr.GetTitle(),
