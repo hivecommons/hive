@@ -1547,6 +1547,10 @@ the PVC has no runtime config yet, the entrypoint:
 2. merges the PVC dashboard overlay `/data/hive.yaml.dashboard` **over** it, and
 3. writes `/data/hive.yaml.runtime` (`src/deploy/entrypoint.sh:848-993`).
 
+On every later boot it copies `/data/hive.yaml.runtime` (or the legacy
+`/data/hive.yaml.bak`) to `/etc/hive/hive.yaml` and boots from it, without the
+seed or the merge (`entrypoint.sh:836-847`).
+
 The dashboard's `Config.Save()` writes the overlay. Therefore:
 
 - **Editing the ConfigMap after first boot does nothing** to the running config —
