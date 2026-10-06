@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText",
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
-		"versionUpgradeProgressStatus", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
+		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
 		"versionNavbarUpgradeHTML", "ensureVersionMenuPortal", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
 	} {
 		source.WriteString(jsFunc(t, html, name))
@@ -29,6 +30,47 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	if out, err := exec.Command(node, "-e", source.String()).CombinedOutput(); err != nil {
 		t.Fatalf("version renderer failed: %v\n%s", err, out)
 	}
+}
+
+func TestUpgradeBeeKeyframesCompositeOnly(t *testing.T) {
+	html := indexHTML(t)
+	declarationRE := regexp.MustCompile(`(?m)([a-zA-Z-]+)\s*:`)
+	for _, name := range []string{"ocBeeOrbit", "ocBeeWaggle", "ocHoneyPulse"} {
+		body := cssKeyframesBody(t, html, name)
+		for _, match := range declarationRE.FindAllStringSubmatch(body, -1) {
+			prop := strings.ToLower(match[1])
+			if prop != "transform" && prop != "opacity" {
+				t.Fatalf("@keyframes %s animates %s; upgrade bee animation must stay composite-only", name, prop)
+			}
+		}
+	}
+}
+
+func cssKeyframesBody(t *testing.T, css, name string) string {
+	t.Helper()
+	start := strings.Index(css, "@keyframes "+name)
+	if start < 0 {
+		t.Fatalf("index.html does not define @keyframes %s", name)
+	}
+	open := strings.Index(css[start:], "{")
+	if open < 0 {
+		t.Fatalf("@keyframes %s has no body", name)
+	}
+	open += start
+	depth := 0
+	for i := open; i < len(css); i++ {
+		switch css[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[open+1 : i]
+			}
+		}
+	}
+	t.Fatalf("unbalanced @keyframes %s body", name)
+	return ""
 }
 
 func TestVersionPopoverEscapesSidebarClipping(t *testing.T) {
@@ -75,7 +117,7 @@ const elements = {
   'oc-version-menu': { hidden: true },
   'oc-navbar-upgrade': { hidden: true, setAttribute() {} }
 };
-const document = { getElementById: id => elements[id] || null };
+const document = { getElementById: id => elements[id] || null, createElement: null };
 const window = {};
 let payload, calls = 0, _upgradeInProgress = false, _upgradeTargetHash = null;
 const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
@@ -170,6 +212,39 @@ async function render(overrides = {}) {
   assert.ok(out.navbar.includes('oc-version-navbar-upgrade'));
   assert.ok(out.navbar.includes('Upgrading'));
   assert.ok(out.navbar.includes('b2c3d4e'));
+  const originalCreateElement = document.createElement;
+  function fakeProgressNode(key, hive) {
+    const node = {
+      hive,
+      getAttribute(name) { return name === 'data-upgrade-key' ? key : null; },
+      querySelector(selector) { return selector === '.oc-version-hive' ? this.hive : null; }
+    };
+    if (hive) hive.replaceWith = replacement => { node.hive = replacement; };
+    return node;
+  }
+  function fakeTemplateFromHTML(html) {
+    const key = (String(html).match(/data-upgrade-key="([^"]+)"/) || [])[1] || '';
+    const nextHive = { id: 'next-hive' };
+    const progress = fakeProgressNode(key, nextHive);
+    return { childNodes: [progress], querySelector(selector) { return selector === '[data-upgrade-key]' ? progress : null; } };
+  }
+  document.createElement = tag => {
+    assert.equal(tag, 'template');
+    const template = { content: fakeTemplateFromHTML('') };
+    Object.defineProperty(template, 'innerHTML', { set(value) { this.content = fakeTemplateFromHTML(value); } });
+    return template;
+  };
+  const stableProgress = { target: 'b2c3d4e', targetShort: 'b2c3d4e', startedAt: 12345 };
+  const stableKey = versionUpgradeKey(stableProgress);
+  const currentHive = { id: 'current-hive' };
+  const host = {
+    assigned: [],
+    querySelector(selector) { return selector === '[data-upgrade-key]' ? fakeProgressNode(stableKey, currentHive) : null; },
+    replaceChildren(...nodes) { this.assigned = nodes; }
+  };
+  assert.equal(versionSetHTMLPreservingUpgradeBee(host, versionNavbarUpgradeHTML(stableProgress, {}), stableKey), true);
+  assert.equal(host.assigned[0].querySelector('.oc-version-hive'), currentHive, 'same upgrade refresh must keep the existing bee container so CSS keyframes do not restart');
+  document.createElement = originalCreateElement;
   versionClearUpgradeProgress();
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
   assert.ok(out.menu.includes('deployment runtime is not explicitly configured (unknown)'));

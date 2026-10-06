@@ -220,6 +220,8 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
 					_, _ = io.WriteString(w, `[]`)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42":
+					_, _ = io.WriteString(w, `{"number":42,"labels":[]}`)
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 					_, _ = io.WriteString(w, `{"name":"agent/security"}`)
 				case r.Method == http.MethodPost && r.URL.Path == tc.endpoint:

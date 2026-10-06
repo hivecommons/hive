@@ -110,7 +110,7 @@
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
          media query overrides it with its own FAB-sized clearance. */
-      padding: var(--sp-0) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
+      padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
       margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
     }
     [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
@@ -341,10 +341,10 @@
       transition: width 0.5s ease, background 0.5s ease;
     }
 
-    /* Topbar — sticky blurred header (hub .site-header recipe). */
+    /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
-      position: sticky; top: var(--sp-0); min-height: var(--navbar-sticky-height);
-      margin: var(--sp-0) calc(-1 * var(--sp-7)) var(--sp-6);
+      position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0); min-height: var(--navbar-sticky-height);
+      margin: var(--sp-0);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--line);
@@ -393,9 +393,11 @@
     .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: visible; }
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
-    .oc-version-bee { --oc-version-bee-radius: 17px; position: absolute; z-index: 3; left: 50%; top: 50%; font-size: 0.82rem; transform-origin: -1px -1px; animation: ocBeeOrbit 1.9s linear infinite; }
-    .oc-version-bee:nth-child(2) { animation-delay: -0.6s; }
-    .oc-version-bee:nth-child(3) { animation-delay: -1.2s; }
+    .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: calc(var(--navbar-motion-duration, var(--overview-transition-duration, 600ms)) * 3.2); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: center; will-change: transform, opacity; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite; }
+    .oc-version-bee:nth-child(2) { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
+    .oc-version-bee:nth-child(3) { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
+    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); }
     .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
     .oc-version-progress-copy { position: relative; z-index: 1; min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
     .oc-version-progress-title { color: var(--text); font-weight: 700; }
@@ -414,8 +416,9 @@
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      from { transform: rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg); }
-      to { transform: rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg); }
+      0% { opacity: 0.9; transform: translate(-50%, -50%) rotate(0deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(0deg) translateZ(0); }
+      50% { opacity: 1; transform: translate(-50%, -50%) rotate(180deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-180deg) translateZ(0); }
+      100% { opacity: 0.9; transform: translate(-50%, -50%) rotate(360deg) translateX(var(--oc-version-bee-radius, 17px)) rotate(-360deg) translateZ(0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -428,7 +431,7 @@
     @media (prefers-reduced-motion: reduce) {
       .oc-version-bee, .oc-version-bee-chip, .oc-version-honey-dot { animation: none; }
       .oc-version-hive .oc-version-bee { display: none; }
-      .oc-version-hive .oc-version-bee:nth-child(2) { display: inline; transform: translate(-50%, -50%); }
+      .oc-version-hive .oc-version-bee:nth-child(2) { display: grid; transform: translate(-50%, -50%) translateZ(0); }
       .oc-version-honey-dot { opacity: 0.75; transform: none; }
     }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
@@ -845,7 +848,7 @@
         transition: opacity .22s ease;
       }
       #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
-      .oc-topbar { margin-left: calc(-1 * var(--sp-6)); }
+      .oc-topbar { left: var(--sp-0); right: var(--sp-0); margin-left: var(--sp-0); }
       body { padding-left: var(--sp-6); }
     }
     @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
@@ -13944,7 +13947,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
+        return `<div class="overview-kpi" role="button" tabindex="0" data-action="ocNavigate" data-keydown-action="ocNavigate" data-keys="Enter, " data-prevent="1" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
       }).join('')}</div></div>`;
     }
 
@@ -26383,18 +26386,30 @@ function burnAreaChart() {
       return phase + ' → ' + target + (elapsed ? ' · ' + elapsed : '');
     }
 
+    function versionUpgradeKey(st) {
+      if (!st) return '';
+      return [st.target || st.targetShort || 'target', st.startedAt || '0'].map(function(part) { return String(part || '').trim(); }).join('|');
+    }
+
     function versionBeeProgressHTML(st, v) {
       if (!st) return '';
       const title = st.completedAt ? 'Upgrade complete' : 'Upgrading…';
-      return '<div class="oc-version-upgrade-progress" role="status" aria-live="polite">' +
-        versionUpgradeHiveHTML() + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title">' + escapeHtml(title) + '</div>' +
-        '<div class="oc-version-progress-status">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
+      const key = versionUpgradeKey(st);
+      return '<div class="oc-version-upgrade-progress" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML(key) + '<div class="oc-version-progress-copy"><div class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + '</div>' +
+        '<div class="oc-version-progress-status" data-upgrade-status="1">' + versionUpgradeProgressStatus(v || {}, st) + '</div></div></div>';
     }
 
-    function versionUpgradeHiveHTML() {
-      return '<span class="oc-version-hive" aria-hidden="true">' +
+    function versionBeeGlyphHTML() {
+      return '<svg class="oc-version-bee-glyph" viewBox="0 0 32 32" focusable="false" aria-hidden="true"><path d="M12 8c-2-4-6-5-8-2 0 3 3 5 7 5m9-3c2-4 6-5 8-2 0 3-3 5-7 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 17c0-5 4-9 10-9s10 4 10 9-4 9-10 9S6 22 6 17Z" fill="currentColor"/><path d="M12 9c-2 4-2 11 0 16m8-16c2 4 2 11 0 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.45"/><path d="M24 15h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    }
+
+    function versionUpgradeHiveHTML(key) {
+      const keyAttr = key ? ' data-upgrade-hive-key="' + escapeHtml(key) + '"' : '';
+      const bee = '<span class="oc-version-bee" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
+      return '<span class="oc-version-hive"' + keyAttr + ' aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
-        '<span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-bee">🐝</span><span class="oc-version-honey-dot"></span>' +
+        bee + bee + bee + '<span class="oc-version-honey-dot"></span>' +
         '</span>';
     }
 
@@ -26405,9 +26420,39 @@ function burnAreaChart() {
       const complete = !!st.completedAt;
       const title = complete ? 'Upgrade complete ✓' : 'Upgrading…';
       const status = complete ? (target || '') : ((target ? '→ ' + target : versionUpgradeProgressStatus(v || {}, st)) + (elapsed ? ' · ' + elapsed : ''));
-      return '<span class="oc-version-navbar-upgrade" role="status" aria-live="polite">' +
-        versionUpgradeHiveHTML() + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
-        '<span class="oc-version-progress-status">' + escapeHtml(status) + '</span></span></span>';
+      const key = versionUpgradeKey(st);
+      return '<span class="oc-version-navbar-upgrade" data-upgrade-key="' + escapeHtml(key) + '" role="status" aria-live="polite">' +
+        versionUpgradeHiveHTML(key) + '<span class="oc-version-progress-copy"><span class="oc-version-progress-title" data-upgrade-title="1">' + escapeHtml(title) + (complete ? '' : ' ') + '</span>' +
+        '<span class="oc-version-progress-status" data-upgrade-status="1">' + escapeHtml(status) + '</span></span></span>';
+    }
+
+    function versionSetHTMLPreservingUpgradeBee(el, html, upgradeKey) {
+      if (!el) return false;
+      if (!upgradeKey || !el.querySelector || !el.replaceChildren || !document || !document.createElement) {
+        el.innerHTML = html;
+        return false;
+      }
+      const currentProgress = el.querySelector('[data-upgrade-key]');
+      if (!currentProgress || currentProgress.getAttribute('data-upgrade-key') !== upgradeKey) {
+        el.innerHTML = html;
+        return false;
+      }
+      const currentHive = currentProgress.querySelector && currentProgress.querySelector('.oc-version-hive');
+      const template = document.createElement('template');
+      template.innerHTML = String(html || '').trim();
+      const nextProgress = template.content && template.content.querySelector && template.content.querySelector('[data-upgrade-key]');
+      if (!currentHive || !nextProgress || nextProgress.getAttribute('data-upgrade-key') !== upgradeKey) {
+        el.innerHTML = html;
+        return false;
+      }
+      const nextHive = nextProgress.querySelector && nextProgress.querySelector('.oc-version-hive');
+      if (!nextHive || !nextHive.replaceWith) {
+        el.innerHTML = html;
+        return false;
+      }
+      nextHive.replaceWith(currentHive);
+      el.replaceChildren.apply(el, Array.from(template.content.childNodes));
+      return true;
     }
 
     function versionButtonHTML(label, title, targetHash, enabled) {
@@ -26506,7 +26551,9 @@ function burnAreaChart() {
     function renderVersionMenu(v, ctx) {
       const menu = ensureVersionMenuPortal();
       if (!menu) return;
-      menu.innerHTML = renderVersionDetails(v, ctx);
+      const html = renderVersionDetails(v, ctx);
+      const progress = ctx && ctx.upgradeProgress || null;
+      versionSetHTMLPreservingUpgradeBee(menu, html, progress ? versionUpgradeKey(progress) : '');
     }
 
     function versionManualUpgradeActive(v, offeredTargetHash) {
@@ -26528,9 +26575,10 @@ function burnAreaChart() {
       const upgrading = progress && !progress.completedAt;
       const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
       if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
-      chip.innerHTML = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
+      const html = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
         '<span class="oc-version-sha" title="' + escapeHtml(fullHash || shortHash) + '">' + escapeHtml(shortHash) + '</span>' +
         (channel ? '<span class="oc-version-channel">' + escapeHtml(channel) + '</span>' : '') + progressGlyph + updateDot + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>';
+      versionSetHTMLPreservingUpgradeBee(chip, html, upgrading ? versionUpgradeKey(progress) : '');
       chip.title = progress && !progress.completedAt ? 'Upgrade in progress — Version & upgrade details' : 'Version & upgrade details';
       chip.setAttribute('aria-label', upgrading ? 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version & upgrade details' : 'Version & upgrade details');
     }
@@ -26546,7 +26594,7 @@ function burnAreaChart() {
       }
       const complete = !!progress.completedAt;
       el.hidden = false;
-      el.innerHTML = versionNavbarUpgradeHTML(progress, v || {});
+      versionSetHTMLPreservingUpgradeBee(el, versionNavbarUpgradeHTML(progress, v || {}), versionUpgradeKey(progress));
       el.title = complete ? 'Upgrade complete — jump to Version details' : 'Upgrade in progress — jump to Version details';
       el.setAttribute('aria-label', complete ? 'Upgrade complete — Version details' : 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version details');
     }
