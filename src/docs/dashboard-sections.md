@@ -62,8 +62,6 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 
 - The band charts count more than Actionable now. The charts include items in "Needs human" and "Confirm & close". Actionable now leaves those out. So an issue chart can total 3 while Actionable now shows 2 issues.
 - The "PRs by band" chart puts held pull requests in "Needs human". The tiles count the same pull requests as Held. So the chart can show 4 needing a human while the Blocked / needs-human tile shows 0 pull requests.
-- The Blocked / needs-human trend line counts fewer things than its tile. The line counts only issues in "Needs human" plus blocked or waiting pull requests. It leaves out "Confirm & close" issues, `needs-human`-labelled issues and issues waiting for their reporter. The line can sit at 0 while the tile reads 1.
-- The hover rules for "Claimed" and "Confirm & close" say an open or merged pull request that mentions the issue counts. Today Hive does not check for such pull requests, so that part of the rule never applies.
 
 **What it is good for.** Look here first each day. A growing Actionable now means Hive has work to do. A growing Blocked / needs-human means people are the bottleneck. Click a tile to filter the Projects section to the items it counts. Then add the missing decision, remove a stale label, or close finished issues.
 
