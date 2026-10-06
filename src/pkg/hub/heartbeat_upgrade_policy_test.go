@@ -185,8 +185,8 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 		t.Fatal("seeded candidate has no commit date")
 	}
 	got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable)
-	if got.NextUpdateAt != want {
-		t.Errorf("NextUpdateAt = %q, want the stable chases-candidate deadline %q", got.NextUpdateAt, want)
+	if got.NextUpdateAt != want || got.NextUpdateStatus != stableNextUpdateStatusQueued {
+		t.Errorf("NextUpdate = %q/%q, want the stable eligible deadline %q/queued", got.NextUpdateAt, got.NextUpdateStatus, want)
 	}
 	if status := s.stablePromotionStatus(targets); status.EligibleAt == nil || *status.EligibleAt != got.NextUpdateAt {
 		t.Errorf("NextUpdateAt %q disagrees with the hub card's eligible_at %v", got.NextUpdateAt, status.EligibleAt)
@@ -195,15 +195,15 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 		t.Errorf("NextUpdateAt %q is not RFC3339: %v", got.NextUpdateAt, err)
 	}
 
-	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" {
-		t.Errorf("candidate hive NextUpdateAt = %q, want unknown — candidate moves on every green build", got.NextUpdateAt)
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" || got.NextUpdateStatus != "" {
+		t.Errorf("candidate hive NextUpdate = %q/%q, want empty — candidate moves on every green build", got.NextUpdateAt, got.NextUpdateStatus)
 	}
 
 	if err := saveStablePromotionState(StablePromotionState{AutoPromote: false, UpdatedBy: hubAdminUsername}); err != nil {
 		t.Fatal(err)
 	}
-	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable); got.NextUpdateAt != "" {
-		t.Errorf("NextUpdateAt = %q while stable auto-promotion is paused, want unknown", got.NextUpdateAt)
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:stable", ReleaseChannelStable); got.NextUpdateAt != "" || got.NextUpdateStatus != stableNextUpdateStatusPaused {
+		t.Errorf("NextUpdate = %q/%q while stable auto-promotion is paused, want empty/paused", got.NextUpdateAt, got.NextUpdateStatus)
 	}
 }
 
@@ -244,22 +244,43 @@ func TestNextScheduledAutoUpgradeAt(t *testing.T) {
 func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	// stableNextPromotionAt consults the live stable generation and the
-	// release workflow runs before falling back to the candidate soak
-	// (#10587); stub both so the assertion is hermetic.
-	origGen, origRuns := ghcrTagGeneration, stablePromotionFetchRuns
-	ghcrTagGeneration = func(string, string, *slog.Logger) int { return 0 }
-	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun { return nil }
-	defer func() { ghcrTagGeneration, stablePromotionFetchRuns = origGen, origRuns }()
+	origGen, origRuns, origDigest := ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest
+	defer func() { ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest = origGen, origRuns, origDigest }()
+	resetStablePromotionCaches()
+	t.Cleanup(resetStablePromotionCaches)
+
 	builtAt := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	queued := []ChannelTarget{
 		{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:stable"},
 		{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate", CommittedAt: builtAt},
 	}
-	if got, want := stableNextPromotionAt(queued), stablePromotionEligibleAt(builtAt); got != want || got == "" {
-		t.Fatalf("queued candidate: got %q, want %q", got, want)
+	ghcrTagGeneration = func(_ string, tag string, _ *slog.Logger) int {
+		switch tag {
+		case ReleaseChannelStable:
+			return 100
+		case "d5a638e":
+			return 101
+		default:
+			return 0
+		}
+	}
+	ghcrTagDigest = func(_ string, tag string, _ *slog.Logger) string {
+		if tag == "d5a638e" {
+			return "sha256:candidate"
+		}
+		return ""
+	}
+	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun {
+		return []stablePromotionWorkflowRun{{RunNumber: 101, HeadSHA: "d5a638e", UpdatedAt: builtAt, Status: "completed", Conclusion: "success"}}
+	}
+	s := newHubServerForTest(t, withHubLogger(targetingLogger()))
+	got, status := s.stableNextPromotion(queued)
+	if want := stablePromotionEligibleAt(builtAt); got != want || status != stableNextUpdateStatusQueued {
+		t.Fatalf("queued candidate: got %q/%q, want %q/queued", got, status, want)
 	}
 
+	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun { return nil }
+	resetStablePromotionCaches()
 	for name, targets := range map[string][]ChannelTarget{
 		"same digest": {
 			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:same"},
@@ -269,17 +290,22 @@ func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:a"},
 			{Channel: ReleaseChannelCandidate, SHA: "0ba47d0", Digest: "sha256:b", CommittedAt: builtAt},
 		},
+	} {
+		if got, status := s.stableNextPromotion(targets); got != "" || status != stableNextUpdateStatusNone {
+			t.Errorf("%s: got %q/%q, want empty/none", name, got, status)
+		}
+	}
+	for name, targets := range map[string][]ChannelTarget{
 		"stable unresolved": {
 			{Channel: ReleaseChannelStable},
 			{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate", CommittedAt: builtAt},
 		},
-		"candidate date unknown": {
+		"candidate missing": {
 			{Channel: ReleaseChannelStable, SHA: "0ba47d0", Digest: "sha256:stable"},
-			{Channel: ReleaseChannelCandidate, SHA: "d5a638e", Digest: "sha256:candidate"},
 		},
 	} {
-		if got := stableNextPromotionAt(targets); got != "" {
-			t.Errorf("%s: got %q, want unknown", name, got)
+		if got, status := s.stableNextPromotion(targets); got != "" || status != stableNextUpdateStatusUnknown {
+			t.Errorf("%s: got %q/%q, want empty/unknown", name, got, status)
 		}
 	}
 }
@@ -296,7 +322,7 @@ func TestHeartbeatUpgradePolicyNextUpdateAtWireShape(t *testing.T) {
 	if _, present := m["next_update_at"]; present {
 		t.Errorf("next_update_at present when unknown: %s", raw)
 	}
-	raw, err = json.Marshal(HeartbeatUpgradePolicy{NextUpdateAt: "2026-10-03T13:00:00Z"})
+	raw, err = json.Marshal(HeartbeatUpgradePolicy{NextUpdateAt: "2026-10-03T13:00:00Z", NextUpdateStatus: stableNextUpdateStatusQueued})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,5 +331,8 @@ func TestHeartbeatUpgradePolicyNextUpdateAtWireShape(t *testing.T) {
 	}
 	if string(m["next_update_at"]) != `"2026-10-03T13:00:00Z"` {
 		t.Errorf("next_update_at = %s, want the RFC3339 ETA", m["next_update_at"])
+	}
+	if string(m["next_update_status"]) != `"queued"` {
+		t.Errorf("next_update_status = %s, want queued", m["next_update_status"])
 	}
 }

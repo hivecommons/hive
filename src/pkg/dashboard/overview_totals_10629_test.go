@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -82,13 +83,13 @@ func TestOverviewActionableEquationPartitionsOpenWork(t *testing.T) {
 	if got.Equation.OpenIssues != 9 || got.Equation.OpenPRs != 5 || got.Equation.TotalOpen != 14 {
 		t.Fatalf("open side = %+v, want 9 issues + 5 PRs", got.Equation)
 	}
-	if got.Total != 3 || terms["actionable"] != 3 || terms["held"] != 2 || terms["blocked_needs_human"] != 3 || terms["confirm_close"] != 1 || terms["draft"] != 1 || terms["outside"] != 4 {
+	if got.Total != 3 || terms["actionable"] != 3 || terms["held"] != 2 || terms["blocked_needs_human"] != 4 || terms["outside"] != 5 {
 		t.Fatalf("partition terms = %+v, actionableNow=%+v", terms, got)
 	}
 	if sum != got.Equation.TotalOpen {
 		t.Fatalf("partition sum = %d, want total open %d (%s)", sum, got.Equation.TotalOpen, got.Equation.Text)
 	}
-	if want := "9 issues + 5 PRs = 3 actionable + 2 held + 3 blocked/needs-human + 1 confirm/close + 1 draft + 4 outside"; got.Equation.Text != want {
+	if want := "9 issues + 5 PRs = 3 actionable + 2 held + 4 blocked/needs-human + 5 outside"; got.Equation.Text != want {
 		t.Fatalf("equation text = %q, want %q", got.Equation.Text, want)
 	}
 	for _, want := range []string{"1 exempt", "1 hive advisory", "1 dependency dashboard", "outside PRs: 1 filtered"} {
@@ -168,6 +169,56 @@ func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 		t.Fatalf("breakdown did not resolve live config values: %+v", got.Outside.Breakdown)
 	}
 }
+
+func TestOverviewKPIRenderedMathSublineSumsToHeadline(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Overview KPI render math was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "const OVERVIEW_ISSUE_BREAKDOWN_LABELS =")
+	if start < 0 {
+		t.Fatal("Overview KPI helper block not found")
+	}
+	end := strings.Index(html[start:], "    function overviewKPIEquation")
+	if end < 0 {
+		t.Fatal("Overview KPI helper block end not found")
+	}
+	block := html[start : start+end]
+	script := `
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+` + block + `
+const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
+  { key: 'held', label: 'held', count: 10 },
+  { key: 'blocked_needs_human', label: 'blocked/needs-human', count: 3 },
+  { key: 'outside', label: 'outside', count: 25, breakdown: [
+    { key: 'needs-direction', label: 'needs-direction', count: 6 },
+    { key: 'needs-decision', label: 'needs-decision', count: 2 },
+    { key: 'exempt-labels', label: 'exempt', count: 1 },
+    { key: 'reporter-triage', label: 'reporter triage', count: 7 },
+    { key: 'standing-meta-advisory', label: 'hive advisory', count: 1 },
+    { key: 'hold-adjacent-other-issues', label: 'other/unclassified', count: 8 }
+  ] }
+] };
+const subline = renderOverviewTotalPartitionSubline(issueEq);
+const m = subline.match(/(\d+) = (\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+) outside/);
+if (!m) throw new Error('partition subline did not render expected equation: ' + subline);
+const nums = m.slice(1).map(Number);
+if (nums[0] !== nums[1] + nums[2] + nums[3] + nums[4]) throw new Error('partition equation does not sum: ' + subline);
+const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
+if (outside !== nums[4]) throw new Error('outside breakdown does not sum: ' + subline);
+const held = renderOverviewSplitSubline(12, 10, 2, 'held');
+if (held !== '12 held = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Overview KPI render math JS failed: %v\n%s", err, out)
+	}
+}
 func TestGovernorActionableSplitsShareOverviewPartition(t *testing.T) {
 	now := time.Date(2026, 10, 5, 16, 0, 0, 0, time.UTC)
 	status := &StatusPayload{Repos: []FrontendRepo{{
@@ -204,10 +255,10 @@ func TestGovernorActionableSplitsShareOverviewPartition(t *testing.T) {
 	if got.Issues != got.IssueEquation.Result || got.PRs != got.PREquation.Result {
 		t.Fatalf("governor equations do not match splits: actionable=%+v issueEq=%+v prEq=%+v", got, got.IssueEquation, got.PREquation)
 	}
-	if got.IssueEquation.Text != "6 open − 1 held − 1 blocked/needs-human − 1 confirm/close − 1 outside = 2" {
+	if got.IssueEquation.Text != "6 open − 1 held − 2 blocked/needs-human − 1 outside = 2" {
 		t.Fatalf("issue equation = %q", got.IssueEquation.Text)
 	}
-	if got.PREquation.Text != "4 open − 1 held − 1 blocked/needs-human − 1 draft = 1" {
+	if got.PREquation.Text != "4 open − 1 held − 1 blocked/needs-human − 1 outside = 1" {
 		t.Fatalf("PR equation = %q", got.PREquation.Text)
 	}
 }
@@ -228,7 +279,7 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"overview-kpi-subline",
 		"overviewPartitionTooltip(term, context)",
 		"aria-describedby",
-		"data-action=\"openConfigDialog\" data-arg0=\"governor\" data-arg2",
+		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
 		"These items are not actionable because this hive&apos;s filters exclude them",
 	} {
 		if !strings.Contains(html, want) {
@@ -240,6 +291,9 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"window.alert(",
 		"window.prompt(",
 		"window.confirm(",
+		// The tooltip renders inside <button class="overview-kpi">; a nested <button> makes the HTML
+		// parser close the card early and the tooltip spills inline (oke-11 screenshot, 2026-10-05).
+		`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-arg0="governor" data-arg2`,
 	} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("static/index.html uses forbidden native/dialog tooltip pattern %q", forbidden)

@@ -14604,3 +14604,56 @@ test('#10389 Pi explicit provider readings remain fail closed', () => {
     } finally { teardown(relay); }
   }
 });
+
+// ── #10597 HIVE_CODEX_AUTO_USE_BANKED_RESET weekly-reserve exception ─────────
+function banked10597(env, reading) {
+  return loadRelay({ env: { ...env, HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', captured_at: new Date().toISOString(), limits: [], ...reading }) } });
+}
+const WEEKLY_LOW_10597 = { id: 'w', kind: 'weekly', pct_remaining: 10 };
+const OPT_IN_10597 = { HIVE_CODEX_AUTO_USE_BANKED_RESET: '1' };
+
+test('#10597 default-off: a banked reset does not relax the weekly reserve', () => {
+  const relay = banked10597({}, { limits: [WEEKLY_LOW_10597], reset_credits_available: 2 });
+  assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'medium' }).admit, false);
+});
+
+test('#10597 opt-in with credits admits below the weekly reserve', () => {
+  const relay = banked10597(OPT_IN_10597, { limits: [WEEKLY_LOW_10597], reset_credits_available: 1 });
+  const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+  assert.strictEqual(d.admit, true);
+  assert.strictEqual(d.reason, 'banked_reset_available');
+});
+
+test('#10597 opt-in without credits keeps normal weekly reserve behaviour', () => {
+  for (const extra of [{ reset_credits_available: 0 }, {}]) {
+    const relay = banked10597(OPT_IN_10597, { limits: [WEEKLY_LOW_10597], ...extra });
+    assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'medium' }).admit, false);
+  }
+});
+
+test('#10597 0% weekly holds even with credits', () => {
+  const relay = banked10597(OPT_IN_10597, { limits: [{ ...WEEKLY_LOW_10597, pct_remaining: 0 }], reset_credits_available: 3 });
+  assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'medium' }).admit, false);
+});
+
+test('#10597 a stale reading holds despite opt-in and credits', () => {
+  const relay = banked10597(OPT_IN_10597, { limits: [WEEKLY_LOW_10597], reset_credits_available: 3, captured_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString() });
+  const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'stale');
+});
+
+test('#10597 short-term exhaustion still holds when weekly is reset-backed', () => {
+  const relay = banked10597(OPT_IN_10597, { limits: [{ id: 's', kind: 'five_hour', pct_remaining: 5 }, WEEKLY_LOW_10597], reset_credits_available: 3 });
+  const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.window_kind, 'five_hour');
+});
+
+test('#10597 a manual pause outranks the reset-backed exception', () => {
+  const relay = banked10597(OPT_IN_10597, { limits: [WEEKLY_LOW_10597], reset_credits_available: 3 });
+  relay.setContributorQuotaStayPaused(true);
+  const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+  assert.strictEqual(d.admit, false);
+  assert.strictEqual(d.reason, 'explicit_pause');
+});

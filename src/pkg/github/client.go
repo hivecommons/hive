@@ -1566,6 +1566,12 @@ func (c *Client) fetchAttributedClosedPRs(ctx context.Context, owner, repoName, 
 	return out, nil
 }
 
+// AttributedClosedPRLookback is the updated-time window the closed attributed
+// PR scan covers, so consumers can report the history they actually hold.
+func AttributedClosedPRLookback() time.Duration {
+	return attributedClosedPRLookback()
+}
+
 func attributedClosedPRLookback() time.Duration {
 	raw := strings.TrimSpace(os.Getenv(attributedClosedPRLookbackEnv))
 	if raw == "" {

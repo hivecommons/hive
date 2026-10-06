@@ -761,6 +761,14 @@ jobs:
           bash -n bin/contributor-relay.sh
           node bin/contributor-relay.test.js
 
+      # bin/vibe-kanban-mirror.js (#10641): report-only hive → vibe-kanban
+      # mirror, exercised against a fake MCP stdio server.
+      - name: vibe-kanban mirror tests
+        working-directory: .
+        run: |
+          node --check bin/vibe-kanban-mirror.js
+          node bin/vibe-kanban-mirror.test.js
+
       # backend-smoke.yml's failure-issue script runs only on a scheduled
       # failure, in production, and its output is an issue somebody acts on —
       # so nothing ever exercised it, and it spent a day announcing that the

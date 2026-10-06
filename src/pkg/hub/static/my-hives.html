@@ -658,9 +658,23 @@ function githubAppHealthHTML(g, h) {
   return '<span class="github-app-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
+function nextUpdateHTML(h) {
+  if (h.trackedChannel !== "stable" || !h.autoUpgrade) return "";
+  var status = h.nextUpdateStatus || "unknown";
+  if (status === "queued" && h.nextUpdateAt) {
+    return '<br><span class="rel" title="Next stable promotion ETA: ' + esc(h.nextUpdateAt) + '">Next update: ' + esc(relTime(h.nextUpdateAt)) + '</span>';
+  }
+  if (status === "none") {
+    return '<br><span class="rel" title="Stable and candidate currently point at the same built image">Next update: none queued (stable is current)</span>';
+  }
+  if (status === "paused") {
+    return '<br><span class="rel">Next update: paused</span>';
+  }
+  return '<br><span class="rel" title="The hub could not determine the next stable promotion time">Next update: unknown</span>';
+}
 function versionHTML(h) {
   var sha = h.gitHash || "";
-  if (!sha) return '<span class="output">—</span>';
+  if (!sha) return '<span class="output">—</span>' + nextUpdateHTML(h);
   var behind = h.commitsBehindStableV4;
   var badge = "";
   if (behind != null && behind > 0) {
@@ -668,7 +682,7 @@ function versionHTML(h) {
   } else if (behind == null) {
     badge = ' <span class="badge" title="Could not compare this commit with stable v4 tip">? behind</span>';
   }
-  return '<span style="font-family:monospace;color:var(--text-muted)">' + esc(sha) + '</span>' + badge;
+  return '<span style="font-family:monospace;color:var(--text-muted)">' + esc(sha) + '</span>' + badge + nextUpdateHTML(h);
 }
 function toggleHTML(a) {
   // A legacy/unknown spoke did not report enabled/paused meaningfully — render
