@@ -16,7 +16,7 @@ import (
 )
 
 // Consent-gated banked-reset redemption controller (hivecommons/hive#10598,
-// ADR-0021).
+// ADR-0022).
 //
 // A Codex account can bank EARNED rate-limit resets (the read-only count is
 // published as reset_credits_available, #10596). When the contributor opts in
@@ -142,7 +142,7 @@ func newCodexResetRedeemer(dir, backend, account string) *codexResetRedeemer {
 }
 
 // codexConsumeResetCredit is the single production call site of the
-// redemption method (ADR-0021).
+// redemption method (ADR-0022).
 func codexConsumeResetCredit(ctx context.Context, idempotencyKey string) (json.RawMessage, error) {
 	return codexAppServerRequest(ctx, codexResetRedeemMethod, map[string]any{"idempotencyKey": idempotencyKey})
 }
