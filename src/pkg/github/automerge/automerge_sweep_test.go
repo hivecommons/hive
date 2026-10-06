@@ -47,6 +47,54 @@ func issueLabels(primary string, extra []string) []map[string]string {
 	return labels
 }
 
+func TestReleaseHoldActiveReadsTipStatus(t *testing.T) {
+	now := time.Date(2026, 10, 6, 15, 45, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		state     string
+		updatedAt time.Time
+		wantHeld  bool
+	}{
+		{name: "pending fresh hold blocks", state: "pending", updatedAt: now.Add(-time.Minute), wantHeld: true},
+		{name: "success clears hold", state: "success", updatedAt: now.Add(-time.Minute)},
+		{name: "stale pending hold is ignored", state: "pending", updatedAt: now.Add(-releaseInProgressMaxAge - time.Minute)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, nil, &[]int{}, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/v5":
+					json.NewEncoder(w).Encode(map[string]any{"name": "v5", "commit": map[string]string{"sha": "tipsha"}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/tipsha/status":
+					json.NewEncoder(w).Encode(map[string]any{
+						"state":       tc.state,
+						"total_count": 1,
+						"statuses": []map[string]string{{
+							"context":    releaseInProgressStatusContext,
+							"state":      tc.state,
+							"updated_at": tc.updatedAt.Format(time.RFC3339),
+						}},
+					})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+			})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.now = func() time.Time { return now }
+			held, reason, err := c.releaseHoldActive(context.Background(), "acme", "widget", "v5")
+			if err != nil {
+				t.Fatalf("releaseHoldActive returned error: %v", err)
+			}
+			if held != tc.wantHeld {
+				t.Fatalf("held = %v, want %v", held, tc.wantHeld)
+			}
+			if held && reason != releaseInProgressStatusContext {
+				t.Fatalf("reason = %q, want %q", reason, releaseInProgressStatusContext)
+			}
+		})
+	}
+}
+
 func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	var audits []AutoMergeSweepEvent
 	var merged []int
