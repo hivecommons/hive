@@ -89,3 +89,11 @@ func TestIssueClaimBlockReasonLookupFailure(t *testing.T) {
 		t.Fatal("failed lookup treated as permission to claim")
 	}
 }
+
+func TestIssueClaimBlockReasonNoClient(t *testing.T) {
+	for _, c := range []*Client{nil, &Client{}} {
+		if _, err := c.IssueClaimBlockReason(context.Background(), "o/r", 42); err == nil {
+			t.Fatal("missing client treated as permission to claim")
+		}
+	}
+}

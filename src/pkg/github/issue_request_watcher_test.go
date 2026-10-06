@@ -856,6 +856,39 @@ func TestIssueRequestWatcher_ClaimAppliesLabelAndAudits(t *testing.T) {
 	}
 }
 
+func TestIssueRequestWatcher_ClaimLookupFailureRetriesWithoutWriting(t *testing.T) {
+	writes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writes++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "claim", Repo: "o/r", Number: 42, Agent: "scanner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if writes != 0 {
+		t.Fatalf("claim lookup failure performed %d write requests", writes)
+	}
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Fatalf("claim request should remain queued for retry: %v", err)
+	}
+	if _, err := os.Stat(reqPath + ".result"); !os.IsNotExist(err) {
+		t.Fatalf("lookup failure wrote result file: %v", err)
+	}
+}
+
 // A claim request missing number/agent is quarantined, not retried forever.
 func TestIssueRequestWatcher_ClaimMalformed(t *testing.T) {
 	c := issueTestClient(t, "http://127.0.0.1:0")
