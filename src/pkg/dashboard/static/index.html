@@ -1605,6 +1605,22 @@
     .repo-automerge-toggle { flex: 0 0 auto; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
     .repo-name .repo-automerge-toggle { margin-left: auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
+    .repo-strategy-btn { flex: 0 0 auto; font-size: var(--fs-2xs); line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid var(--border); background: transparent; color: var(--muted); }
+    button.repo-strategy-btn { cursor: pointer; }
+    .repo-strategy-btn.serialized { border-color: color-mix(in srgb, var(--indigo) 45%, transparent); color: var(--indigo); }
+    .repo-lane-panel { margin-top: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); font-size: var(--fs-2xs); }
+    .repo-lane-title { font-weight: 700; letter-spacing: 0.04em; color: var(--muted); margin-bottom: var(--sp-1); }
+    .repo-lane + .repo-lane { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed var(--border); }
+    .repo-lane-row { margin: 2px 0; }
+    .repo-lane-row a { color: inherit; }
+    .repo-lane-key { display: inline-block; min-width: 5.5em; color: var(--muted); }
+    .repo-lane-stage { font-weight: 600; }
+    .repo-lane-muted { color: var(--muted); overflow-wrap: anywhere; }
+    .repo-lane-enforcement { padding: 0 var(--sp-2); border-radius: var(--r-pill); border: 1px solid var(--border); cursor: help; }
+    .repo-lane-enforcement-server-enforced { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+    .repo-lane-enforcement-hive-checked, .repo-lane-enforcement-unknown { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
+    .repo-lane-reasons ul { margin: var(--sp-1) 0 0; padding-left: 1.2em; }
+    .repo-lane-reco { margin-top: var(--sp-1); color: var(--yellow); }
     .repo-automerge-switch { flex: 0 0 auto; }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
@@ -12961,6 +12977,83 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
     }
 
+    // Repo merge strategy (#10886) and serialized lane state (#10892). The
+    // lane panel reads GET /api/repos/merge-lane per hive-serialized card,
+    // cached for a minute so the governor's repaint does not refetch it.
+    const repoMergeLaneCache = {};
+    const REPO_MERGE_LANE_TTL_MS = 60000;
+    function ensureRepoMergeLane(full) {
+      const key = String(full || '').toLowerCase();
+      if (!key) return;
+      const cached = repoMergeLaneCache[key];
+      if (cached && (cached.loading || Date.now() - cached.at < REPO_MERGE_LANE_TTL_MS)) return;
+      repoMergeLaneCache[key] = Object.assign({}, cached || {}, { loading: true, at: Date.now() });
+      fetch('/api/repos/merge-lane?repo=' + encodeURIComponent(full))
+        .then(r => r.json().then(d => ({ ok: r.ok, data: d })).catch(() => ({ ok: r.ok, data: {} })))
+        .then(({ ok, data }) => {
+          repoMergeLaneCache[key] = ok ? { at: Date.now(), data: data } : { at: Date.now(), error: data.error || 'lane state unavailable' };
+          repaintReposForWidth();
+        })
+        .catch(e => { repoMergeLaneCache[key] = { at: Date.now(), error: (e && e.message) || 'network error' }; });
+    }
+    function repoLanePRLink(repoUrl, pr, title) {
+      return `<a href="${esc(repoUrl + '/pull/' + Number(pr))}" target="_blank" rel="noopener"${title ? ` title="${esc(title)}"` : ''}>#${Number(pr)}</a>`;
+    }
+    function repoLanePanelHTML(full, repoUrl) {
+      const cached = repoMergeLaneCache[String(full || '').toLowerCase()] || {};
+      const head = '<div class="repo-lane-title">SERIALIZED LANE</div>';
+      if (cached.error) return `<div class="repo-lane-panel">${head}<div class="repo-lane-muted">Lane state unavailable: ${esc(cached.error)}</div></div>`;
+      const data = cached.data;
+      if (!data) return `<div class="repo-lane-panel">${head}<div class="repo-lane-muted">Loading lane state…</div></div>`;
+      if (data.merge_strategy !== 'hive-serialized') return '';
+      const errLine = data.lane_error ? `<div class="repo-lane-muted">Lane record unreadable: ${esc(data.lane_error)}</div>` : '';
+      const lanes = data.lanes || [];
+      if (!lanes.length) return `<div class="repo-lane-panel">${head}${errLine}<div class="repo-lane-muted">No pull request has entered the lane yet.</div></div>`;
+      const body = lanes.map(l => {
+        const enfTip = l.enforcement === 'server-enforced'
+          ? 'GitHub requires branches to be up to date on this branch (read from rulesets)'
+          : (l.enforcement === 'hive-checked'
+              ? 'GitHub does not require up-to-date branches here; Hive checks it before every merge'
+              : 'Hive cannot read whether GitHub requires up-to-date branches here (classic branch protection needs Administration permission)' + (l.enforcement_reason ? ' — ' + l.enforcement_reason : ''));
+        const enf = `<span class="repo-lane-enforcement repo-lane-enforcement-${esc(l.enforcement || 'unknown')}" title="${esc(enfTip)}">${esc(l.enforcement_label || 'unknown')}</span>`;
+        const front = l.front
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">front</span>${repoLanePRLink(repoUrl, l.front.pr)} <span class="repo-lane-stage">${esc(l.front.stage_label || l.front.stage)}</span>${l.front.reason ? `<div class="repo-lane-muted">${esc(l.front.reason)}</div>` : ''}</div>`
+          : '<div class="repo-lane-row"><span class="repo-lane-key">front</span><span class="repo-lane-muted">empty</span></div>';
+        const waiting = (l.waiting || []).length
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">waiting</span>${l.waiting.map(w => repoLanePRLink(repoUrl, w.pr, w.position + '. ' + w.reason)).join(' → ')}</div>`
+          : '';
+        const last = l.last_exit
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">last left</span>${repoLanePRLink(repoUrl, l.last_exit.pr)}<div class="repo-lane-muted">${esc(l.last_exit.reason)}</div></div>`
+          : '';
+        const reasons = (l.reasons || []).length
+          ? `<details class="repo-lane-reasons"><summary>no-merge reasons (${l.reasons.length})</summary><ul>${l.reasons.map(x => `<li>${x.pr ? repoLanePRLink(repoUrl, x.pr) + ' ' : ''}${esc(x.reason)}</li>`).join('')}</ul></details>`
+          : '';
+        const reco = l.recommend_up_to_date_rule && l.recommendation ? `<div class="repo-lane-reco">⚠ ${esc(l.recommendation)}</div>` : '';
+        return `<div class="repo-lane"><div class="repo-lane-row"><span class="repo-lane-key">branch</span><code>${esc(l.branch)}</code> ${enf}</div>${front}${waiting}${last}${reasons}${reco}</div>`;
+      }).join('');
+      return `<div class="repo-lane-panel">${head}${errLine}${body}</div>`;
+    }
+    async function setRepoMergeStrategy(repo, strategy, btn) {
+      if (btn && btn.dataset.busy === '1') return;
+      const label = btn ? btn.textContent : '';
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Saving…'; }
+      try {
+        const resp = await fetch('/api/repos/merge-strategy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, merge_strategy: strategy })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        delete repoMergeLaneCache[String(repo || '').toLowerCase()];
+        showToast('Merge strategy for ' + repo + ' is now ' + strategy, 'success');
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Merge strategy change failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (btn) { btn.dataset.busy = ''; btn.textContent = label; }
+      }
+    }
+
     async function startSwarm(repo, btn, force) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Calling…'; }
@@ -15415,6 +15508,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               ? (autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo')
               : (autoMergeOn ? 'Requires repo write or owner role to disable Hive auto-merge' : 'Requires owner role to enable Hive auto-merge'));
         const autoMergeBtn = `<label class="config-toggle repo-automerge-toggle" title="${esc(autoMergeTip)}"><span class="config-toggle-label">auto-merge</span><span class="config-toggle-switch repo-automerge-switch ${autoMergeOn ? 'on' : ''} ${canSetAutoMerge ? '' : 'disabled'}" role="switch" tabindex="0" aria-checked="${autoMergeOn ? 'true' : 'false'}" aria-label="${esc('auto-merge for ' + cardRepo)}" data-disabled="${canSetAutoMerge ? 'false' : 'true'}" ${canSetAutoMerge ? `data-action="toggleRepoAutoMerge" data-keydown-action="toggleRepoAutoMerge" data-keys="Enter, " data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1"` : ''}></span></label>`;
+        // Merge strategy (#10886): repo-write may switch to hive-serialized;
+        // only an owner may switch back to direct — mirror the server.
+        const mergeStrategy = r.mergeStrategy || 'direct';
+        const serialized = mergeStrategy === 'hive-serialized';
+        const strategyTarget = serialized ? 'direct' : 'hive-serialized';
+        const canSetStrategy = serialized ? dashboardRoleAtLeast(window._hiveRole || 'read', 'owner') : canPauseRepo;
+        const strategyTip = 'Merge strategy: ' + mergeStrategy + (serialized
+          ? ' — one pull request per target branch is brought up to date, re-checked and merged at a time'
+          : ' — Hive merges each eligible pull request on its own') + (canSetStrategy
+          ? '. Click to switch to ' + strategyTarget + '.'
+          : (serialized ? '. Requires owner role to switch back to direct.' : '. Requires repo write or owner role to change.'));
+        const strategyBtn = canSetStrategy
+          ? `<button type="button" class="repo-strategy-btn${serialized ? ' serialized' : ''}" data-action="setRepoMergeStrategy" data-arg0="${esc(cardRepo)}" data-arg1="${esc(strategyTarget)}" data-arg-types="s,s,t" data-stop="1" data-prevent="1" title="${esc(strategyTip)}">${esc(mergeStrategy)}</button>`
+          : `<span class="repo-strategy-btn${serialized ? ' serialized' : ''}" title="${esc(strategyTip)}">${esc(mergeStrategy)}</span>`;
+        if (serialized) ensureRepoMergeLane(cardRepo);
+        const laneHtml = serialized ? repoLanePanelHTML(cardRepo, repoUrl) : '';
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
@@ -15440,11 +15549,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo-order-key="${esc(cardRepoKey)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
-          </div>${pillsHtml}
+          </div>${laneHtml}${pillsHtml}
         </div>`;
       }).join(''));
     }

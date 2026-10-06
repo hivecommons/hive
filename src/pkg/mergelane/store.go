@@ -231,17 +231,40 @@ func (s *Store) Snapshot(repo, branch string) (Record, bool, error) {
 	if !ok {
 		return Record{}, false, nil
 	}
-	out := *rec
-	if rec.Front != nil {
-		f := *rec.Front
+	return rec.clone(), true, nil
+}
+
+// Lanes returns a copy of every lane recorded for repo, one per target
+// branch, ordered by branch. It is read-only, for the lane-state view.
+func (s *Store) Lanes(repo string) ([]Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.reloadLocked(); err != nil {
+		return nil, err
+	}
+	want := strings.ToLower(strings.TrimSpace(repo))
+	var out []Record
+	for _, rec := range s.lanes {
+		if strings.ToLower(strings.TrimSpace(rec.Repo)) == want {
+			out = append(out, rec.clone())
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Branch < out[j].Branch })
+	return out, nil
+}
+
+func (r *Record) clone() Record {
+	out := *r
+	if r.Front != nil {
+		f := *r.Front
 		out.Front = &f
 	}
-	out.Waiting = append([]Waiter(nil), rec.Waiting...)
-	if rec.LastExit != nil {
-		e := *rec.LastExit
+	out.Waiting = append([]Waiter(nil), r.Waiting...)
+	if r.LastExit != nil {
+		e := *r.LastExit
 		out.LastExit = &e
 	}
-	return out, true, nil
+	return out
 }
 
 func (r *Record) removeWaiter(pr int) {

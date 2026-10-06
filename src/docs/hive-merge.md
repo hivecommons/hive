@@ -259,6 +259,19 @@ A malformed request file (invalid JSON) is renamed `.bad`.
 The UID map is **informational only** here. The watcher re-derives ownership
 from the file's UID regardless.
 
+## Repositories on the serialized lane
+
+For a repository whose `merge_strategy` is `hive-serialized`, the watcher does
+not merge on its own: the request goes through the serialized lane, which lets
+only the pull request at the front of its target branch be brought up to date,
+re-checked live and merged with its head pinned. A request for any other pull
+request is deferred with `deferred: not at the front of the lane` and retried
+on later ticks; a target branch with GitHub's merge queue is left alone and the
+request is refused. Repositories on `direct` (the default) are unaffected. See
+[Per-repo merge strategy](operator-reference.md#per-repo-merge-strategy-merge_strategy)
+for the lane's guarantees, the remaining one-API-call window without GitHub's
+up-to-date rule, fork handling and downgrade behaviour.
+
 ## Related
 
 - [`hive-open-pr`](hive-open-pr.md) — the equivalent relay for opening a PR;

@@ -234,6 +234,134 @@ calls stay within 25% of the App's hourly REST allowance — a 45-repo hive on a
 fixed 10s tick used to exceed the whole allowance on list calls alone and
 starve every other GitHub caller, including the agents.
 
+## Per-repo merge strategy (`merge_strategy`)
+
+`merge_strategy` decides **how** Hive merges into a repository, never
+**whether** it does: `auto_merge`, the ACMM gate, holds, pauses and every
+merge path's own checks apply exactly as before. It is set per repository,
+next to the per-repo `auto_merge` switch:
+
+```yaml
+project:
+  repo_policies:
+    - repo: atomic-image-builder
+      merge_strategy: hive-serialized   # or: direct (the default when unset)
+```
+
+| Strategy | Behaviour |
+|---|---|
+| `direct` (default) | Each merge path (the self-merge sweep, the `lgtm` queue, the [`hive-merge`](hive-merge.md) relay) merges an eligible pull request on its own, exactly as Hive always has. Deciding a repository is `direct` needs no GitHub call. |
+| `hive-serialized` | The **serialized lane**: per target branch at most one pull request — the one at the front — is brought up to date, has its required checks run on its exact head, is re-checked live and is merged with its head pinned. Every other eligible pull request waits in order with the reason `deferred: not at the front of the lane`. Meant for personal-account repositories, where GitHub's merge queue is not available. |
+
+An unrecognised value is a configuration error for that repository: Hive does
+not merge there and does not fall back to `direct`. Anyone who may switch a
+repository's auto-merge off (owner or repo write) may switch it to
+`hive-serialized`; only an owner may switch it back to `direct`. The dashboard
+repository card shows the strategy and offers the change to permitted users;
+the same API is `GET`/`POST /api/repos/merge-strategy` (see
+[api-reference.md](api-reference.md)).
+
+`merge_strategy` is unrelated to `knowledge.primer.merge_strategy`, which
+controls how knowledge primers are merged. The two only share a name.
+
+### What the serialized lane guarantees
+
+For every `hive-serialized` repository:
+
+1. At most one pull request per target branch is in final validation, across
+   all merge paths and across restarts (the front record is durable under
+   `/data/mergelane/`; a restart repeats an interrupted validation in full).
+2. No pull request merges unless its head contained the target branch tip the
+   final re-check read.
+3. No pull request merges unless every required check finished successfully on
+   the exact head that merges. Missing, queued or running never counts as
+   passing; an unknown or empty required-check set means no merge.
+4. The merge call pins the validated head.
+5. Immediately before the merge Hive re-reads the head, the branch tip,
+   open/draft state, the target branch, mergeability, the required-check set
+   and its results, hold/do-not-merge/exempt/pause labels, the strategy,
+   auto-merge permission and the calling path's own authorization.
+6. Any change, error or ambiguous answer means no merge (fail closed).
+7. One validation never covers two merges.
+8. No existing gate on any merge path is weakened or skipped, and setting the
+   strategy never turns merging on.
+9. Repositories left on `direct` behave exactly as before.
+10. Hive never rebases, force-pushes or otherwise rewrites a pull request
+    branch; it only merges the target branch into it, pinned to the head it
+    evaluated.
+
+A front pull request whose checks never finish leaves the front after the
+front timeout (60 minutes by default, restarted on every branch update) and
+the next one starts.
+
+### The remaining window, and GitHub's up-to-date rule
+
+No GitHub merge API can be made conditional on the target branch's tip; they
+pin only the head. Between Hive's final re-read of the tip and the merge call
+there is therefore a window of about one API call. Without GitHub's own
+"Require branches to be up to date before merging" rule on the branch, a commit
+landing in that instant can slip through (guarantee 2 then fails). Hive does
+not hide this: after every merge it checks that the merge landed directly on
+the validated tip and, if it did not, raises an alert naming the merged pull
+request and the unexpected commit (and that commit's pull request, when it has
+one). The alert is logged at error level (`merge lane: merge did not land on
+the validated tip`) and recorded as an `alert` lane decision.
+
+**Recommendation:** turn GitHub's "Require branches to be up to date before
+merging" rule on for every target branch of a `hive-serialized` repository
+(Settings → Rules → Rulesets, "Require status checks to pass" with "Require
+branches to be up to date"). GitHub then closes the window on the server. It
+costs one CI run per merge, because the lane only ever updates the pull request
+at the front.
+
+### Seeing what the lane is doing
+
+On a `hive-serialized` repository card the dashboard shows a serialized lane
+panel per target branch: the pull request at the front and its stage
+(updating, waiting for checks, final re-check, merging), the waiting pull
+requests in order, the last reason a pull request left the front, every
+recorded no-merge or deferral reason, and the guarantee in force:
+
+| Label | Meaning |
+|---|---|
+| server-enforced | A ruleset on the branch requires up-to-date branches; GitHub closes the window. |
+| Hive-checked | Rulesets require checks but not up-to-date branches; only Hive's own check and the post-merge alert apply. |
+| unknown | No ruleset speaks to it. Classic branch protection carries the flag, but reading it needs the Administration permission the App does not hold. |
+
+For Hive-checked and unknown lanes the panel recommends turning the up-to-date
+rule on. The same state is available to scripts, the admin MCP server and
+`hivectl` through `GET /api/repos/merge-lane?repo=<repo>`; a `direct`
+repository returns only its strategy and has no lane panel.
+
+### Fork pull requests
+
+The lane brings a pull request up to date only by merging the target branch
+into its branch, pinned to the evaluated head; it never rebases or
+force-pushes, and never rewrites a contributor's commits. A fork pull request
+that already contains the current tip with passing required checks needs no
+update and merges normally. Fork CI waiting for maintainer approval
+(`action_required`) counts as not passed. When Hive cannot update a fork's
+branch (GitHub refuses the update, for example because "Allow edits by
+maintainers" is off), the pull request does not merge from the front; it
+leaves the front with the recorded reason once the front timeout runs out,
+the next pull request starts, and it stays eligible to merge at a later turn
+once its author has brought it up to date.
+
+### Branches with GitHub's merge queue
+
+A target branch that has GitHub's merge queue is left alone: the serialized
+lane does not run for it and Hive makes no direct merge into it. When Hive
+cannot establish whether the branch has GitHub's merge queue, it does not merge
+(fail closed). The lane panel lists the refusal among its reasons.
+
+### Downgrading
+
+A Hive without the serialized lane ignores the `merge_strategy` key
+(configuration decoding ignores unknown keys), so after a downgrade every
+opted-in repository silently goes back to `direct` merging. Older versions
+cannot be changed to warn about this; check your repositories' strategy before
+downgrading.
+
 ## Image provenance and tags
 
 Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored **by digest** into the matching `ghcr.io/kubestellar/*` packages. Post-transfer, `hivecommons` is the native publishing org; the workflow retags the already-built digest into `kubestellar` so that spokes still pinned to the old org keep resolving, and both orgs serve digest-identical manifest lists for the same tag. (A missing cross-org credential is a hard failure in that direction precisely because a one-sided publish would leave `kubestellar` serving stale tags to live spokes.)

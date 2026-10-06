@@ -977,6 +977,8 @@ type FrontendRepo struct {
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
 	AutoMerge   bool   `json:"autoMerge"`
+	// MergeStrategy is the repo's merge_strategy (direct or hive-serialized).
+	MergeStrategy string `json:"mergeStrategy"`
 }
 
 type FrontendBeads struct {
