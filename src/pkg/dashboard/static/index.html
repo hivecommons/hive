@@ -5876,21 +5876,61 @@
       const levels = Array.isArray(data && data.levels) ? data.levels : [];
       return levels.map(l => ({ name: `L${l.level} ${l.name || ''}`.trim(), passed: !!l.passed, detail: `${Number(l.matched) || 0}/${Number(l.total) || 0}` }));
     }
+    function acmmCollapsedCurrentLevel(text) {
+      const statusLevel = Number(window._lastStatus && window._lastStatus.acmmLevel);
+      if (Number.isFinite(statusLevel) && statusLevel > 0) return statusLevel;
+      const evalLevel = Number(typeof _acmmEvalData !== 'undefined' && _acmmEvalData && _acmmEvalData.operational_level);
+      if (Number.isFinite(evalLevel) && evalLevel > 0) return evalLevel;
+      const textMatch = String(text || '').match(/L\s*(\d+)/i);
+      const textLevel = textMatch ? Number(textMatch[1]) : NaN;
+      return Number.isFinite(textLevel) && textLevel > 0 ? textLevel : NaN;
+    }
+    function acmmCollapsedLevelLabel(level) {
+      if (!Number.isFinite(level) || level <= 0) return 'not yet evaluated';
+      if (typeof acmmLevelLabel === 'function') return acmmLevelLabel(level).replace(' ', ' · ');
+      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+      return `L${level}${levelNames[level] ? ' · ' + levelNames[level] : ''}`;
+    }
+    function acmmCollapsedGapDetail(data, level, dims, total, met) {
+      const levels = Array.isArray(data && data.levels) ? data.levels : [];
+      if (Number.isFinite(level) && levels.length) {
+        const next = levels.find(l => Number(l.level) === level + 1);
+        const current = levels.find(l => Number(l.level) === level);
+        const target = next || current;
+        if (target) {
+          const targetTotal = Number(target.total) || 0;
+          const targetMet = Number(target.matched) || 0;
+          const gaps = Math.max(0, targetTotal - targetMet);
+          if (gaps) return {
+            detail: next ? `${gaps} gap${gaps === 1 ? '' : 's'} to L${level + 1}` : `${gaps} gap${gaps === 1 ? '' : 's'}`,
+            tip: next ? `${gaps} open gap${gaps === 1 ? '' : 's'} toward L${level + 1}` : `${gaps} open gap${gaps === 1 ? '' : 's'} at current level L${level}`
+          };
+          return { detail: next ? `ready for L${level + 1}` : `${targetMet}/${targetTotal} dims`, tip: next ? `No open gaps toward L${level + 1}` : `Current level L${level} has ${targetMet}/${targetTotal}` };
+        }
+      }
+      const gaps = Math.max(0, total - met);
+      return {
+        detail: total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'not yet evaluated',
+        tip: total ? `${gaps} open gap${gaps === 1 ? '' : 's'} in the current evaluation` : 'ACMM evaluation has not reported criteria yet'
+      };
+    }
     function acmmCollapsedEvalHtml(text) {
       const data = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? ((typeof acmmGetActiveData === 'function' && acmmGetActiveData()) || _acmmEvalData) : null;
-      if (!data) return miniWrap('acmm-eval-section', text, miniText(text, text));
-      const codebase = Number(data.codebase_level);
-      const op = (typeof _acmmEvalData !== 'undefined' && _acmmEvalData) ? Number(_acmmEvalData.operational_level) : Number(data.operational_level);
-      const level = Number.isFinite(Number(data.overall_level)) ? Number(data.overall_level) : (Number.isFinite(codebase) && Number.isFinite(op) ? Math.min(codebase, op) : Number(text && String(text).match(/\d+/)));
+      const level = acmmCollapsedCurrentLevel(text);
+      if (!data) {
+        const label = acmmCollapsedLevelLabel(level);
+        const title = Number.isFinite(level) ? `${label} · not yet evaluated` : 'ACMM not yet evaluated';
+        return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>${escapeHtml(label)}</span><span class="acmm-pill-detail">not yet evaluated</span></button>`;
+      }
       const dims = acmmCollapsedDimensions(data);
       const total = dims.length || Number(data.criteria_total) || 0;
       const met = dims.length ? dims.filter(d => d.passed).length : Number(data.criteria_passed) || 0;
-      const gaps = Math.max(0, total - met);
-      const detail = total ? (gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : `${met}/${total} dims`) : 'no criteria';
-      const tipLines = dims.length ? dims.map(d => `${d.passed ? '✓' : '•'} ${d.name}: ${d.detail}`) : [`criteria: ${met}/${total}`];
+      const gapDetail = acmmCollapsedGapDetail(data, level, dims, total, met);
+      const detail = gapDetail.detail;
+      const label = acmmCollapsedLevelLabel(level);
       const scope = (typeof _acmmSelectedRepo !== 'undefined' && _acmmSelectedRepo) ? `Showing ${_acmmSelectedRepo}` : 'Aggregate ACMM evaluation';
-      const title = [`L${Number.isFinite(level) ? level : '—'} · ${detail}`, scope, ...tipLines].join('\n');
-      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>L${escapeHtml(Number.isFinite(level) ? String(level) : '—')}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
+      const title = [`current level ${label}; ${gapDetail.tip}`, scope, 'Expand ACMM Eval for per-level details.'].join('\n');
+      return `<button type="button" class="acmm-collapsed-pill" data-action="ocNavigate" data-arg0="acmm-eval-section" data-stop="1" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span>${escapeHtml(label)}</span><span class="acmm-pill-detail">${escapeHtml(detail)}</span></button>`;
     }
     function knowledgeCollapsedSummary(text) {
       const history = typeof _factHistory !== 'undefined' && Array.isArray(_factHistory) ? _factHistory : [];
