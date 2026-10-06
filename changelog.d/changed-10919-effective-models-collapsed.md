@@ -1,0 +1,1 @@
+- dashboard: the Operations **Most effective models** panel now starts collapsed, remembers whether you opened or closed it, and only fetches `/api/contribute/effective-models` once expanded, so the work, runs, decisions and queue cards no longer sit below a tall table on first load (#10919)

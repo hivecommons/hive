@@ -2238,8 +2238,8 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      small samples into "Not enough data yet" so a one-lucky-PR model does not
      lead the ranked list. -->
 <div class="ops-card mb-7" id="effective-models-card" data-ops-card="models">
-<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Most effective models card" aria-pressed="false">⠿</button><span class="feed-dot"></span><button type="button" class="ops-card-collapse-toggle section-header-toggle" id="effective-models-toggle" aria-expanded="true" aria-controls="effective-models-body" data-ops-section="effective-models-card" title="Collapse panel"><span class="section-chevron" aria-hidden="true">▼</span><span class="ops-card-title">Most effective models</span></button><span class="ops-card-count" id="effective-models-count"></span></div>
-<div class="section-body" id="effective-models-body">
+<div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Most effective models card" aria-pressed="false">⠿</button><span class="feed-dot"></span><button type="button" class="ops-card-collapse-toggle section-header-toggle" id="effective-models-toggle" aria-expanded="false" aria-controls="effective-models-body" data-ops-section="effective-models-card" data-ops-default-collapsed title="Expand panel"><span class="section-chevron collapsed" aria-hidden="true">▼</span><span class="ops-card-title">Most effective models</span></button><span class="ops-card-count" id="effective-models-count"></span></div>
+<div class="section-body collapsed" id="effective-models-body">
 <div class="effective-controls" role="group" aria-label="Effective model filters">
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip active" data-eff-window="7d">7d</button>
   <button type="button" class="hv-btn btn-secondary btn-sm effective-chip" data-eff-window="30d">30d</button>
@@ -2778,7 +2778,9 @@ function activateTab(t,push){
     // identity lookup that throws must not leave the fleet panels on "Loading…".
     try{ccResolveViewer();}catch(e){console.error('ccResolveViewer failed',e);}
     try{ccLoadWall();ccInitWallForm();}catch(e){console.error('ccLoadWall failed',e);}
-    try{loadEffectiveModels();}catch(e){console.error('loadEffectiveModels failed',e);}
+    // Collapsed by default (#10919): fetch only once the panel is open, so a
+    // viewer who never expands it does not pay for the request on every load.
+    try{loadEffectiveModelsIfOpen();}catch(e){console.error('loadEffectiveModels failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   // The standings and the standing strip are independent: a throw in one must
@@ -3003,6 +3005,7 @@ document.addEventListener('click',function(e){
 var effectiveModelsWindow='7d';
 var effectiveModelsFilter='all';
 var effectiveModelsLastData=null;
+var effectiveModelsRequested=false;
 function effectivePct(v){return ((Number(v)||0)*100).toFixed(0)+'%%';}
 function effectiveRunPct(x,v){return Number(x&&x.runs||0)>0?effectivePct(v):'—';}
 function effectiveCoverageText(c){
@@ -3013,7 +3016,12 @@ function effectiveCoverageText(c){
   return 'Coverage — '+prs+' · '+runs+'.';
 }
 function effectiveFixed(v){return (Number(v)||0).toFixed(1);}
+function loadEffectiveModelsIfOpen(){
+  if(effectiveModelsRequested||ccOpsSectionRead('effective-models-card'))return;
+  loadEffectiveModels();
+}
 function loadEffectiveModels(){
+  effectiveModelsRequested=true;
   var mount=document.getElementById('effective-models-ranked');if(!mount)return;
   mount.innerHTML='<div class="ops-empty">Loading effective models&hellip;</div>';
   var url='/api/contribute/effective-models?window='+encodeURIComponent(effectiveModelsWindow)+'&filter='+encodeURIComponent(effectiveModelsFilter);
@@ -6565,8 +6573,18 @@ function ccRailRead(){try{return localStorage.getItem(OPS_RAIL_KEY)==='1';}catch
 function ccRailWrite(collapsed){try{if(collapsed)localStorage.setItem(OPS_RAIL_KEY,'1');else localStorage.removeItem(OPS_RAIL_KEY);}catch(e){}}
 var OPS_SECTION_LS_PREFIX='hive-section-collapsed-';
 var opsCollapsiblePanelsInit=false;
-function ccOpsSectionRead(sectionId){try{return localStorage.getItem(OPS_SECTION_LS_PREFIX+sectionId)==='1';}catch(e){return false;}}
-function ccOpsSectionWrite(sectionId,collapsed){try{if(collapsed)localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'1');else localStorage.removeItem(OPS_SECTION_LS_PREFIX+sectionId);}catch(e){}}
+// A section whose toggle carries data-ops-default-collapsed starts collapsed and
+// stores an explicit '0' when opened, so the open state survives a reload
+// (#10919). Every other section keeps the original contract: '1' = collapsed,
+// a missing key = expanded.
+function ccOpsSectionDefaultCollapsed(sectionId){var btn=document.querySelector('[data-ops-section="'+sectionId+'"]');return !!(btn&&btn.hasAttribute('data-ops-default-collapsed'));}
+function ccOpsSectionRead(sectionId){
+  var stored=null;try{stored=localStorage.getItem(OPS_SECTION_LS_PREFIX+sectionId);}catch(e){}
+  if(stored==='1')return true;
+  if(stored==='0')return false;
+  return ccOpsSectionDefaultCollapsed(sectionId);
+}
+function ccOpsSectionWrite(sectionId,collapsed){try{if(collapsed)localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'1');else if(ccOpsSectionDefaultCollapsed(sectionId))localStorage.setItem(OPS_SECTION_LS_PREFIX+sectionId,'0');else localStorage.removeItem(OPS_SECTION_LS_PREFIX+sectionId);}catch(e){}}
 function ccApplySectionCollapse(sectionId){
   var root=document.getElementById(sectionId);if(!root)return;
   var collapsed=ccOpsSectionRead(sectionId),body=root.querySelector('.section-body'),chevron=root.querySelector('.section-chevron'),btn=root.querySelector('[data-ops-section="'+sectionId+'"]');
@@ -6581,6 +6599,7 @@ function ccToggleOpsSection(sectionId){
   var collapsed=!ccOpsSectionRead(sectionId);
   ccOpsSectionWrite(sectionId,collapsed);
   ccApplySectionCollapse(sectionId);
+  if(!collapsed&&sectionId==='effective-models-card')loadEffectiveModelsIfOpen();
 }
 function initOpsCollapsiblePanels(){
   if(opsCollapsiblePanelsInit)return;
