@@ -105,7 +105,7 @@ rational response to having one road, not duplicated effort.
 > and only ever *adds*, so a deleted agent reappears on the next config reload.
 > Tracked in #2361.
 
-## `hive.yaml.runtime` — a snapshot on Kubernetes, an input everywhere else
+## `hive.yaml.runtime` is the boot input on every runtime
 
 This file was called `hive.yaml.bak` until the rename. The old name implied
 "the restorable backup", which is true of only half its behaviour, and the
