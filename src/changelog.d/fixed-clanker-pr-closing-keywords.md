@@ -1,0 +1,1 @@
+- Ensure contributor-lane ClankeR PRs include GitHub closing keywords for their assigned issue when targeting the default branch, so merged fixes close their issues.
