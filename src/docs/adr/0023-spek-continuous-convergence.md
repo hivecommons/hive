@@ -1,4 +1,4 @@
-# ADR-0020: Spek continuous convergence
+# ADR-0023: Spek continuous convergence
 
 ## Status
 

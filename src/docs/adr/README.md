@@ -56,6 +56,6 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0018: Shared dashboard design tokens and component layer](0018-dashboard-design-tokens.md)
 - [ADR-0019: Escalate to direction, spec, signal, or meta-issue instead of stalling](0019-escalation-over-stalling.md)
 - [ADR-0020: External work sources over a versioned HTTP/JSON contract](0020-external-work-source-boundary.md)
-- [ADR-0020: Spek continuous convergence](0020-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)
 - [ADR-0021: Named planning-engine boundary for Project Inception runs](0021-planning-engine-boundary.md)
-- [ADR-0021: Opt-in redemption of earned Codex resets](0021-opt-in-earned-codex-reset-redemption.md)
+- [ADR-0022: Opt-in redemption of earned Codex resets](0022-opt-in-earned-codex-reset-redemption.md)
+- [ADR-0023: Spek continuous convergence](0023-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)
