@@ -182,6 +182,15 @@ env:
   # Admin merges must still land only DCO-signed commits; this is a
   # disposition, not a precedent.
 
+  # a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 — the squash of #10744, on v5,
+  # reported by the monitor in #10746. This is a missing-signoff caused by the
+  # admin squash template dropping the trailer: PR #10744's branch commit was
+  # DCO-signed, and the PR author, squash merger, and landing author are the
+  # same maintainer identity, clubanderson (Andy Anderson
+  # <andy@clubanderson.com>). Protected v5 history cannot be rewritten to add
+  # the lost trailer, so the correct instrument is this per-commit waiver.
+  # Accepted by maintainer disposition from clubanderson in #10746.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -193,7 +202,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
