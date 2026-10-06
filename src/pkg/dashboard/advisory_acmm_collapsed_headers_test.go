@@ -35,10 +35,11 @@ func TestACMMCollapsedHeaderUsesReadableStatusPill(t *testing.T) {
 		"acmm-collapsed-pill",
 		"acmm-pill-detail",
 		"function acmmCollapsedDimensions(data)",
+		"function acmmCollapsedCurrentLevel(text)",
 		"function acmmCollapsedEvalHtml(text)",
 		"criteria_results",
 		"levels.map",
-		"`L${Number.isFinite(level) ? level : '—'} · ${detail}`",
+		"current level ${label}; ${gapDetail.tip}",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("ACMM collapsed status contract missing %q", want)
