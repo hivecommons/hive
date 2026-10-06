@@ -219,19 +219,33 @@ func TestF3AuthorizerIsWiredInMain(t *testing.T) {
 // the sweep exists to merge trusted-queued green PRs, and a sweep that merges
 // nothing is a broken sweep, not a safe one.
 
-// TestF3TrustedMergerGateIsNotBlanket asserts the gate is applied at the queued
-// sweep and NOT copied onto the self-merge path, which is authorized by a
-// different mechanism (App authorship + required checks) and has no queuer at
-// all. Gating it on a queuer login it never has would disable it permanently.
+// TestF3TrustedMergerGateIsNotBlanket asserts the gate is applied only where
+// a queuer identity exists — the queued sweep and the serialized lane's final
+// re-check of that same queue approval — and NOT copied onto the self-merge
+// path, which is authorized by a different mechanism (App authorship +
+// required checks) and has no queuer at all. Gating it on a queuer login it
+// never has would disable it permanently.
 func TestF3TrustedMergerGateIsNotBlanket(t *testing.T) {
 	src := f3ReadSource(t, "automerge_sweep.go")
-	// Exactly one non-test call site: the queued sweep. A second would mean the
-	// gate leaked onto a path with no queuer identity.
+	// Exactly two non-test call sites, both keyed on the queue approval's
+	// queuer. A third would mean the gate leaked onto a path with no queuer
+	// identity; fewer means F3 or the lane re-check regressed.
 	calls := regexp.MustCompile(`c\.isTrustedMerger\(`).FindAllString(src, -1)
-	if len(calls) != 1 {
-		t.Errorf("automerge_sweep.go has %d isTrustedMerger call sites, want exactly 1 (the queued "+
-			"sweep). More than one suggests the gate was copied onto a path that has no queuer "+
-			"identity and would fail closed forever; zero means F3 regressed.", len(calls))
+	if len(calls) != 2 {
+		t.Errorf("automerge_sweep.go has %d isTrustedMerger call sites, want exactly 2 (the queued "+
+			"sweep and the lane's queue-approval re-check). More suggests the gate was copied onto "+
+			"a path that has no queuer identity and would fail closed forever; fewer means F3 regressed.", len(calls))
+	}
+	for _, want := range []struct{ decl, name, call string }{
+		{"func (c *Engine) trySweepQueuedPR(", "trySweepQueuedPR", "c.isTrustedMerger(queuedBy)"},
+		{"func (c *Engine) queueApprovalStillHolds(", "queueApprovalStillHolds", "c.isTrustedMerger(approval.QueuedBy)"},
+	} {
+		if !strings.Contains(f3FuncBody(t, src, want.decl, want.name), want.call) {
+			t.Errorf("%s does not consult %s — the gate must sit on the queuer-bearing paths", want.name, want.call)
+		}
+	}
+	if body := f3FuncBody(t, src, "func (c *Engine) trySweepSelfAuthoredPR(", "trySweepSelfAuthoredPR"); strings.Contains(body, "isTrustedMerger") {
+		t.Error("trySweepSelfAuthoredPR consults isTrustedMerger — the self-merge path has no queuer and would fail closed forever")
 	}
 }
 

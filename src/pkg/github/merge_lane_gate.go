@@ -2,7 +2,6 @@ package github
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -103,7 +102,7 @@ func RunSerializedLane(ctx context.Context, gate SerializedLaneGate, req LaneMer
 	}
 	res, err := gate(ctx, req)
 	if err != nil && strings.TrimSpace(res.Reason) == "" {
-		res.Reason = fmt.Sprintf("serialized merge lane error: %v", err)
+		res.Reason = err.Error()
 	}
 	return res, err
 }
