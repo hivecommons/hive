@@ -1,1 +1,0 @@
-- Fixed the dashboard navbar so upgrade-progress pills cannot overlap or squeeze the centered running-agent strip.

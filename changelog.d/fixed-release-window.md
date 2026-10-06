@@ -1,1 +1,0 @@
-- Keep v5 tagged releases moving under high merge cadence by making release-gate checks instant, holding hive automerges during the short post-publish release window, and re-arming docker backstops after stale release attempts.
