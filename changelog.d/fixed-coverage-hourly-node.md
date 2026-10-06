@@ -1,0 +1,1 @@
+- The hourly coverage gate now installs Node.js on self-hosted runners before Go tests that shell out to JavaScript harnesses, so dashboard and hub coverage are scored instead of failing with `node` missing ([#10747](https://github.com/hivecommons/hive/issues/10747)).

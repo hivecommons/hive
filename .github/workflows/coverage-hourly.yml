@@ -87,6 +87,29 @@ jobs:
             echo "::notice::go-cache-guard.sh not present on the measured ref; keeping default Go cache settings"
           fi
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Guard shared node tool cache (repair a half-written entry)
+        # setup-node reports "Found in cache" for a node/<ver>/x64 entry whose
+        # .complete marker exists but bin/npm does not (#10505, #10518). The
+        # canary repairs this too, but its cron is starved to a ~5h cadence, so
+        # heal the node from the hot path: drop the marker (never the directory,
+        # a sibling job may be mid-run) so the next job re-extracts.
+        if: ${{ always() }}
+        run: |
+          set -u
+          command -v npm >/dev/null 2>&1 && exit 0
+          for marker in "${RUNNER_TOOL_CACHE:-/nonexistent}"/node/*/x64.complete; do
+            [ -e "$marker" ] || continue
+            dir="${marker%.complete}"
+            [ -x "$dir/bin/npm" ] && continue
+            echo "::warning::node tool cache $dir has a .complete marker but no executable bin/npm; removing the marker so the next job on $RUNNER_NAME rebuilds it"
+            rm -f "$marker"
+          done
+          echo "::error::npm is not on PATH after actions/setup-node on $RUNNER_NAME (half-written shared tool cache, see #10518); marker removed, re-run this job"
+          exit 1
+
       # The coverage run must NOT abort this job on a test failure: the
       # per-package check below is what turns a failure into a readable report.
       # Previously a failing package exited non-zero here and the check step was
