@@ -236,14 +236,17 @@ async function render(overrides = {}) {
   };
   const stableProgress = { target: 'b2c3d4e', targetShort: 'b2c3d4e', startedAt: 12345 };
   const stableKey = versionUpgradeKey(stableProgress);
-  const currentHive = { id: 'current-hive' };
+  const currentHive = { id: 'current-hive', animationStarts: 1 };
   const host = {
     assigned: [],
     querySelector(selector) { return selector === '[data-upgrade-key]' ? fakeProgressNode(stableKey, currentHive) : null; },
     replaceChildren(...nodes) { this.assigned = nodes; }
   };
-  assert.equal(versionSetHTMLPreservingUpgradeBee(host, versionNavbarUpgradeHTML(stableProgress, {}), stableKey), true);
-  assert.equal(host.assigned[0].querySelector('.oc-version-hive'), currentHive, 'same upgrade refresh must keep the existing bee container so CSS keyframes do not restart');
+  for (let i = 0; i < 4; i++) {
+    assert.equal(versionSetHTMLPreservingUpgradeBee(host, versionNavbarUpgradeHTML({ ...stableProgress, targetShort: 'b2c3d4e' }, {}), stableKey), true);
+    assert.equal(host.assigned[0].querySelector('.oc-version-hive'), currentHive, 'same upgrade refresh must keep the existing bee container so CSS keyframes do not restart');
+    assert.equal(currentHive.animationStarts, 1, 'same upgrade refresh must not produce a fresh animationstart');
+  }
   document.createElement = originalCreateElement;
   versionClearUpgradeProgress();
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
