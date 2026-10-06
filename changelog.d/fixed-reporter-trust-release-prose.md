@@ -1,0 +1,1 @@
+- Release reporter-trust-owned needs-human labels using the escalation ledger and label events, without treating later comments mentioning the label as independent escalations.
