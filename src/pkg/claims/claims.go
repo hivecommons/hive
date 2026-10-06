@@ -40,8 +40,8 @@ const (
 	// KindHuman is a person acting directly: dashboard, hivectl, an `/claim`
 	// comment, or their own IDE/CLI session running under their login.
 	KindHuman Kind = "human"
-	// KindAgent is one of this hive's own agents, claimed by the hub when the
-	// scheduler kicks it with the issue in IssueRefs.
+	// KindAgent is one of this hive's own agents, claimed by the hub on the
+	// agent's first start signal on an issue a kick listed to it (#10527).
 	KindAgent Kind = "agent"
 	// KindContributor is a relay contributor ("clanker") the hub dispatched
 	// the issue to over the contribute WebSocket.
@@ -162,6 +162,35 @@ func (s Stall) Since() time.Time {
 	}
 	return s.Attempts[0].ClaimedAt
 }
+
+// Listing is a kick naming an issue to one of the hive's agents (#10527).
+//
+// A kick lists up to governor.kick_limits.max_issues issues, and the agent
+// starts on at most a few of them, so a listing is not a claim: it posts no
+// GitHub comment and is not an Attempt. It holds the issue back from other
+// agents and relay contributors for DefaultListedTTL, and lets the agent's
+// first start signal on the issue (a comment, a label or claim request, a
+// pull-request request) turn into a real claim for as long as the agent's
+// claim TTL after the kick.
+type Listing struct {
+	Repo   string `json:"repo"`
+	Issue  int    `json:"issue"`
+	Holder string `json:"holder"`
+	// ListedAt is when the kick was delivered.
+	ListedAt time.Time `json:"listed_at"`
+	// ExpiresAt is when the hold on other workers lapses.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Key is the canonical "owner/repo#N" key of the listed issue.
+func (li Listing) Key() string { return Key(li.Repo, li.Issue) }
+
+// Expired reports whether the listing's hold has lapsed at now.
+func (li Listing) Expired(now time.Time) bool { return !now.Before(li.ExpiresAt) }
+
+// DefaultListedTTL is how long a kick listing holds an issue back from other
+// workers. Short on purpose: it covers the kick being live, not the work.
+const DefaultListedTTL = 30 * time.Minute
 
 // Request is one attempt to claim an issue.
 type Request struct {
@@ -310,11 +339,13 @@ type Ledger struct {
 	// escalated maps an issue key to the Since of the last stall escalated
 	// on it, so one run is escalated once however often it is observed.
 	escalated map[string]time.Time
-	path      string
-	policy    Policy
-	hooks     Hooks
-	now       func() time.Time
-	hive      string
+	// listed holds the kick listings (#10527) by issue key.
+	listed map[string]Listing
+	path   string
+	policy Policy
+	hooks  Hooks
+	now    func() time.Time
+	hive   string
 }
 
 // ErrInvalid is returned for requests missing a repo, issue, holder or kind.
@@ -331,6 +362,7 @@ func New(path string, policy Policy, hooks Hooks) (*Ledger, error) {
 		claims:    map[string]Claim{},
 		attempts:  map[string][]Attempt{},
 		escalated: map[string]time.Time{},
+		listed:    map[string]Listing{},
 		path:      path,
 		policy:    policy,
 		hooks:     hooks,
@@ -407,6 +439,9 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 	default:
 		p := prev
 		res = Result{Outcome: OutcomeRefused, Claim: prev, Previous: &p}
+	}
+	if res.Outcome.Changed() {
+		delete(l.listed, key)
 	}
 	var saveErr error
 	if res.Outcome.Changed() || len(expired) > 0 {
@@ -592,6 +627,12 @@ func (l *Ledger) HeldKeys(exceptHolderID string) map[string]bool {
 		}
 		out[k] = true
 	}
+	for k, li := range l.listed {
+		if li.Expired(now) || (exceptHolderID != "" && li.Holder == exceptHolderID) {
+			continue
+		}
+		out[k] = true
+	}
 	return out
 }
 
@@ -709,6 +750,105 @@ func (l *Ledger) pruneLocked(now time.Time) {
 			delete(l.escalated, k)
 		}
 	}
+	window := l.listingWindow()
+	for k, li := range l.listed {
+		if li.Expired(now) && !now.Before(li.ListedAt.Add(window)) {
+			delete(l.listed, k)
+		}
+	}
+}
+
+// ---- kick listings (#10527) ----
+
+// listingWindow is how long after a kick the listed agent's first start
+// signal still becomes a claim: the agent claim TTL, the hold a kick used to
+// take on every issue it named.
+func (l *Ledger) listingWindow() time.Duration {
+	return l.policy.ttlFor(KindAgent, 0)
+}
+
+// MarkListed records that a delivered kick named the issue to the agent
+// holder. It posts nothing and counts as no claim. An issue under a live claim
+// or a live listing for another agent is left alone and reports false.
+func (l *Ledger) MarkListed(repo string, issue int, holder string) (Listing, bool) {
+	repo, holder = strings.TrimSpace(repo), strings.TrimSpace(holder)
+	if l == nil || repo == "" || issue <= 0 || holder == "" {
+		return Listing{}, false
+	}
+	l.mu.Lock()
+	now := l.now()
+	expired := l.expireLocked(now)
+	key := Key(repo, issue)
+	_, held := l.claims[key]
+	prev, listed := l.listed[key]
+	var li Listing
+	ok := !held && (!listed || prev.Expired(now) || prev.Holder == holder)
+	if ok {
+		li = Listing{Repo: repo, Issue: issue, Holder: holder, ListedAt: now, ExpiresAt: now.Add(DefaultListedTTL)}
+		l.listed[key] = li
+	}
+	if ok || len(expired) > 0 {
+		_ = l.saveLocked()
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	fireExpired(hooks, expired)
+	return li, ok
+}
+
+// Listed returns the live kick listing on an issue, if any.
+func (l *Ledger) Listed(repo string, issue int) (Listing, bool) {
+	if l == nil {
+		return Listing{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	li, ok := l.listed[Key(strings.TrimSpace(repo), issue)]
+	if !ok || li.Expired(l.now()) {
+		return Listing{}, false
+	}
+	return li, true
+}
+
+// ClaimOnStart turns the agent's first start signal on an issue into a real
+// agent claim — comment, label and Attempt included — when a kick listed the
+// issue to that agent within the listing window, or renews the agent's own
+// live claim. Any other start signal (a comment on an issue nobody kicked the
+// agent with, a request about its own pull request) reports false and
+// changes nothing.
+func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, bool, error) {
+	repo, agent = strings.TrimSpace(repo), strings.TrimSpace(agent)
+	if l == nil || repo == "" || issue <= 0 || agent == "" {
+		return Result{}, false, nil
+	}
+	l.mu.Lock()
+	now := l.now()
+	key := Key(repo, issue)
+	c, held := l.claims[key]
+	li, listed := l.listed[key]
+	ok := (held && !c.Expired(now) && c.Kind == KindAgent && c.Holder == agent) ||
+		(listed && li.Holder == agent && now.Before(li.ListedAt.Add(l.listingWindow())))
+	l.mu.Unlock()
+	if !ok {
+		return Result{}, false, nil
+	}
+	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent})
+	return res, true, err
+}
+
+// LastAttempt returns the most recent agent claim recorded on the issue, by
+// any agent, within AttemptRetention.
+func (l *Ledger) LastAttempt(repo string, issue int) (Attempt, bool) {
+	if l == nil {
+		return Attempt{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	list := l.attempts[Key(strings.TrimSpace(repo), issue)]
+	if len(list) == 0 {
+		return Attempt{}, false
+	}
+	return list[len(list)-1], true
 }
 
 // Stall reports the most recent run of threshold claims one agent made on the
@@ -786,6 +926,8 @@ type persisted struct {
 	// absent from files written before it, which load as no history.
 	Attempts  map[string][]Attempt `json:"attempts,omitempty"`
 	Escalated map[string]time.Time `json:"escalated,omitempty"`
+	// Listed carries the kick listings (#10527).
+	Listed []Listing `json:"listed,omitempty"`
 }
 
 const persistVersion = 1
@@ -821,6 +963,11 @@ func (l *Ledger) load() error {
 	for k, since := range p.Escalated {
 		l.escalated[k] = since
 	}
+	for _, li := range p.Listed {
+		if li.Repo != "" && li.Issue > 0 && li.Holder != "" {
+			l.listed[li.Key()] = li
+		}
+	}
 	return nil
 }
 
@@ -842,6 +989,10 @@ func (l *Ledger) saveLocked() error {
 	if len(l.escalated) > 0 {
 		p.Escalated = l.escalated
 	}
+	for _, li := range l.listed {
+		p.Listed = append(p.Listed, li)
+	}
+	sort.Slice(p.Listed, func(i, j int) bool { return p.Listed[i].Key() < p.Listed[j].Key() })
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err

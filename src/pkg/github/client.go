@@ -195,6 +195,9 @@ type Client struct {
 	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
 	prRepoPolicyGate       atomic.Pointer[PRRepoPolicyGate]
+	// agentStartHook is told when an agent's own relay request shows it
+	// working an issue (#10527). See agent_start_hook.go.
+	agentStartHook atomic.Pointer[AgentStartHook]
 	// mergeAuthz gates merge requests from the merge-request watcher against the
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
 	// TARGET (pinned SHA + governor merge-eligible membership; see

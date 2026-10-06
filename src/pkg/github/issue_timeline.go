@@ -2,13 +2,15 @@ package github
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
 
 // IssueEvent is one entry of an issue's timeline, reduced to the fields the
-// claim escalation gate (#10527) reads to decide whether anything moved.
+// claim escalation and verify-once gates (#10527) read to decide whether
+// anything moved.
 type IssueEvent struct {
 	// Event is GitHub's timeline event name: "labeled", "cross-referenced",
 	// "referenced", "assigned", "closed", ...
@@ -22,6 +24,13 @@ type IssueEvent struct {
 	SourcePR int
 	// CommitID is the referencing commit on a referenced event.
 	CommitID string
+	// Actor is the login that caused the event (the commenter on a
+	// "commented" event); empty when GitHub names none.
+	Actor string
+	// ActorIsBot reports that Actor is a bot or GitHub App account, so the
+	// verify-once gate (#10527) can tell the hive's own comments from a
+	// reporter or maintainer acting.
+	ActorIsBot bool
 }
 
 // IssueTimelineSince returns the issue's timeline events that happened after
@@ -61,6 +70,14 @@ func issueEventFrom(t *gh.Timeline, since time.Time) (IssueEvent, bool) {
 	}
 	if src := t.GetSource(); src != nil && src.Issue != nil && src.Issue.IsPullRequest() {
 		ev.SourcePR = src.Issue.GetNumber()
+	}
+	actor := t.GetActor()
+	if actor == nil {
+		actor = t.GetUser()
+	}
+	if actor != nil {
+		ev.Actor = actor.GetLogin()
+		ev.ActorIsBot = strings.EqualFold(actor.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(ev.Actor), "[bot]")
 	}
 	return ev, true
 }

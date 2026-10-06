@@ -281,6 +281,13 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// dedupes with the audit-sink bridge by (ref, kind).
 		recordPROpened(b.dashSrv, b.cfg.Project.Org, agentName, repo, number, url)
 	})
+	// #10527: an agent's own comment, label/claim or PR request on an issue a
+	// kick listed to it is its start signal; that is when the agent claim (and
+	// its 🔒 comment) is recorded. The ledger is read per call because the
+	// client can be configured before it is built.
+	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {
+		recordAgentStart(b.issueClaims, b.cfg.Project.Org, agentName, repo, issue, signal, b.logger)
+	})
 	// PR follow-up session resume (#9583, default off): remember which live
 	// CLI session authored this PR, and the PR's handoff note, so its
 	// follow-ups can resume that conversation or brief a fresh one. The

@@ -213,3 +213,18 @@ func TestClaimProgress(t *testing.T) {
 		})
 	}
 }
+
+// #10527: kick listings are not claims, so an issue a kick only listed — the
+// scanner's whole work list every cycle — never reaches the gate.
+func TestClaimEscalationIgnoresKickListings(t *testing.T) {
+	f := newEscalationFixture(t)
+	for range 4 {
+		if _, ok := f.ledger.MarkListed("myorg/repo", 10512, "scanner"); !ok {
+			f.t.Fatal("listing refused")
+		}
+		f.now = f.now.Add(claims.DefaultAgentTTL + 7*time.Minute)
+	}
+	if holder, held := f.lookup(); held || f.reads != 0 || len(f.escalated) != 0 {
+		t.Fatalf("listed-only issue: held=%v holder=%q reads=%d escalations=%d, want free and unread", held, holder, f.reads, len(f.escalated))
+	}
+}
