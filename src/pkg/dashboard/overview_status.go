@@ -129,6 +129,7 @@ func overviewTotals(status *StatusPayload) FrontendOverviewTotals {
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_direction", ib.NeedsDirection)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_decision", ib.NeedsDecision)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_spec", ib.NeedsSpec)
+			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_confirmation", ib.ReporterConfirmation)
 			addOverviewBreakdown(totals.Issues.Breakdown, "exempt", ib.Exempt)
 			addOverviewBreakdown(totals.Issues.Breakdown, "filtered", overviewGenericIssueFiltered(ib))
 			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_triage", ib.ReporterTriage)
@@ -174,7 +175,7 @@ func addOverviewBreakdown(dst map[string]int, key string, count int) {
 }
 
 func overviewGenericIssueFiltered(b github.RepoIssueBreakdown) int {
-	named := b.NeedsHuman + b.NeedsDirection + b.NeedsDecision + b.NeedsSpec + b.Exempt
+	named := b.NeedsHuman + b.NeedsDirection + b.NeedsDecision + b.NeedsSpec + b.ReporterConfirmation + b.Exempt
 	return max(0, b.Filtered-named)
 }
 
@@ -224,8 +225,9 @@ func overviewActionableEquations(totals FrontendOverviewTotals, actionableIssues
 	openIssues := totals.Issues.Forge
 	openPRs := totals.PRs.Forge
 	outsideNeedsHuman := totals.Issues.Breakdown["needs_human"]
-	issueBlockedHuman += outsideNeedsHuman
-	issueOutside := max(0, totals.Issues.Outside-outsideNeedsHuman)
+	waitingReporter := totals.Issues.Breakdown["reporter_confirmation"]
+	issueBlockedHuman += outsideNeedsHuman + waitingReporter
+	issueOutside := max(0, totals.Issues.Outside-outsideNeedsHuman-waitingReporter)
 	prOutside := max(0, totals.PRs.Outside+draft)
 	details := overviewPartitionDetails(totals, issueOutside, prOutside, issueBlockedHuman, prBlockedHuman, meta)
 	issueEq := overviewActionableKindEquation("issues", openIssues, actionableIssues, []FrontendActionableEquationTerm{
@@ -469,7 +471,8 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 		},
 		IssueBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label after the person finishes.", "Labels", "/docs/dashboard.md#outside-buckets"),
-			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
+			overviewBreakdownTerm("waiting-on-reporter", "waiting on reporter", totals.Issues.Breakdown["reporter_confirmation"], "Issue carries needs-reporter-confirmation, so Hive is waiting for confirmation before closing.", "label:needs-reporter-confirmation", "is:open label:needs-reporter-confirmation", "Use the linked GitHub search, then reply /fixed or add new evidence.", "", "https://github.com/hivecommons/hive/issues?q=is%3Aopen%20label%3Aneeds-reporter-confirmation"),
+			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]-totals.Issues.Breakdown["reporter_confirmation"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
 		},
 		PRBlocked: []FrontendActionableBreakdownTerm{
 			overviewBreakdownTerm("pr-blocked-band", "blocked/waiting PR band", prBlocked, "Overview PR blocked/waiting bands cover merge conflicts, requested human review, needs-human, or other PR gates.", "overview PR band specs", "server-provided overview_bands.prs", "Resolve mergeability/review gates or clear the needs-human signal shown on the PR pill.", "", "/docs/dashboard.md#overview"),

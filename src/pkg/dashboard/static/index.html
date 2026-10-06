@@ -13809,6 +13809,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       needs_direction: 'needs-direction',
       needs_decision: 'needs-decision',
       needs_spec: 'needs-spec',
+      reporter_confirmation: 'waiting on reporter',
       exempt: 'exempt',
       filtered: 'filtered',
       reporter_triage: 'reporter triage',
@@ -13850,7 +13851,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
           let v = Number(ib[key] || 0);
           if (key === 'filtered') {
-            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'exempt']));
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
           }
           if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
         });
@@ -13925,6 +13926,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'needs-direction': return 'needs direction';
         case 'needs-decision': return 'needs decision';
         case 'needs-spec': return 'needs spec';
+        case 'waiting-on-reporter': return 'waiting on reporter';
         case 'exempt-labels':
         case 'exempt-pr-labels': return 'exempt label match';
         case 'reporter-triage': return 'untrusted reporter';

@@ -9,6 +9,10 @@ GH_BIN="${GH_BIN:-gh}"
 REPO="${SWEEP_REPO:-${GITHUB_REPOSITORY:-}}"
 PR_NUMBER="${SWEEP_PR_NUMBER:-}"
 DRY_RUN="${DRY_RUN:-0}"
+REPORTER_CONFIRMATION_LABEL="needs-reporter-confirmation"
+REPORTER_CONFIRMATION_COLOR="fbca04"
+REPORTER_CONFIRMATION_DESCRIPTION="Hive is waiting for the issue reporter or a maintainer to confirm the fix"
+NEEDS_HUMAN_LABEL="needs-human"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -65,6 +69,50 @@ for part in sys.argv[1].split("."):
 if cur is None:
     sys.exit(1)
 print(cur)' "$expr"
+}
+
+issue_label_present() {
+  local issue_json="$1" label="$2"
+  python3 -c 'import json,sys
+want=sys.argv[1].lower()
+for label in json.load(sys.stdin).get("labels") or []:
+    if (label.get("name") or "").strip().lower() == want:
+        sys.exit(0)
+sys.exit(1)' "$label" <<<"$issue_json"
+}
+
+issue_author() {
+  python3 -c 'import json,sys
+print(((json.load(sys.stdin).get("user") or {}).get("login")) or "")'
+}
+
+author_has_write_access() {
+  local login="$1" perm
+  [ -n "$login" ] || return 1
+  perm=$(api "repos/${REPO}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null || echo 'none')
+  case "$perm" in
+    admin|maintain|write) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+apply_reporter_confirmation_labels() {
+  local issue="$1" issue_json="$2" author labels=()
+  if ! issue_label_present "$issue_json" "$REPORTER_CONFIRMATION_LABEL"; then
+    labels+=("$REPORTER_CONFIRMATION_LABEL")
+  fi
+  author=$(printf '%s' "$issue_json" | issue_author)
+  if author_has_write_access "$author" && ! issue_label_present "$issue_json" "$NEEDS_HUMAN_LABEL"; then
+    labels+=("$NEEDS_HUMAN_LABEL")
+  fi
+  [ "${#labels[@]}" -gt 0 ] || return 0
+  api -X POST "repos/${REPO}/labels" -f "name=${REPORTER_CONFIRMATION_LABEL}" -f "color=${REPORTER_CONFIRMATION_COLOR}" \
+    -f "description=${REPORTER_CONFIRMATION_DESCRIPTION}" >/dev/null 2>&1 || true
+  local args=()
+  for label in "${labels[@]}"; do
+    args+=(-f "labels[]=${label}")
+  done
+  api -X POST "repos/${REPO}/issues/${issue}/labels" "${args[@]}" >/dev/null
 }
 
 pr_json=$(api "repos/${REPO}/pulls/${PR_NUMBER}")
@@ -173,6 +221,9 @@ for comment in json.load(sys.stdin):
 sys.exit(1)'
   if python3 -c "$comment_seen_py" "$marker" <<<"$comments_json"
   then
+    if [ "$DRY_RUN" != "1" ]; then
+      apply_reporter_confirmation_labels "$issue" "$issue_json"
+    fi
     echo "Skipping #${issue}: sweep comment already exists."
     skipped=$((skipped + 1))
     continue
@@ -185,6 +236,7 @@ sys.exit(1)'
     printf '%s\n' "$comment_body"
   else
     api -X POST "repos/${REPO}/issues/${issue}/comments" -f "body=${comment_body}" >/dev/null
+    apply_reporter_confirmation_labels "$issue" "$issue_json"
     echo "Commented on #${issue} for merged PR #${PR_NUMBER}."
   fi
   posted=$((posted + 1))

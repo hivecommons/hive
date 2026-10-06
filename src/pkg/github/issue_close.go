@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -61,6 +62,9 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 		// reporter of a human-filed bug is the same discourtesy this gate
 		// exists to prevent, just in the opposite direction.
 		if c.hasReporterConfirmationRequest(ctx, owner, repoName, number) {
+			if labelErr := c.applyReporterConfirmationLabels(ctx, owner, repoName, number, issue); labelErr != nil {
+				return false, fmt.Errorf("%w: %s; additionally failed to label confirmation request: %v", ErrReporterConfirmationRequired, reason, labelErr)
+			}
 			c.warn("issue close still blocked pending reporter confirmation; request already posted",
 				"repo", owner+"/"+repoName,
 				"issue", number,
@@ -70,6 +74,9 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 		body := reporterConfirmationRequestComment(issue)
 		if _, _, commentErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)}); commentErr != nil {
 			return false, fmt.Errorf("%w: %s; additionally failed to post confirmation request: %v", ErrReporterConfirmationRequired, reason, commentErr)
+		}
+		if labelErr := c.applyReporterConfirmationLabels(ctx, owner, repoName, number, issue); labelErr != nil {
+			return false, fmt.Errorf("%w: %s; additionally failed to label confirmation request: %v", ErrReporterConfirmationRequired, reason, labelErr)
 		}
 		c.warn("issue close blocked pending reporter confirmation",
 			"repo", owner+"/"+repoName,
@@ -98,6 +105,9 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, req); err != nil {
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
+	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, issueNeedsReporterConfirmationLabel); err != nil && !githubStatusError(err, http.StatusNotFound) {
+		return false, fmt.Errorf("removing %s from %s/%s#%d: %w", issueNeedsReporterConfirmationLabel, owner, repoName, number, err)
+	}
 	return isPR, nil
 }
 
@@ -105,6 +115,44 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 // has already posted. It is the literal opening of the request body, so the
 // two cannot drift apart without this file changing.
 const reporterConfirmationRequestMarker = "Reporter-confirmation gate:"
+
+func (c *Client) applyReporterConfirmationLabels(ctx context.Context, owner, repo string, number int, issue *gh.Issue) error {
+	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, issueNeedsReporterConfirmationLabel, "", ""); err != nil {
+		return fmt.Errorf("ensuring %s label: %w", issueNeedsReporterConfirmationLabel, err)
+	}
+	labels := issueLabelNames(issue.Labels)
+	toAdd := make([]string, 0, 2)
+	if !labelPresent(labels, issueNeedsReporterConfirmationLabel) {
+		toAdd = append(toAdd, issueNeedsReporterConfirmationLabel)
+	}
+	if reporterHasWriteAccess(ctx, c, owner, repo, safeGetLogin(issue.GetUser())) && !labelPresent(labels, issueNeedsHumanLabel) {
+		toAdd = append(toAdd, issueNeedsHumanLabel)
+	}
+	if len(toAdd) == 0 {
+		return nil
+	}
+	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, toAdd); err != nil {
+		return fmt.Errorf("adding labels %v: %w", toAdd, err)
+	}
+	return nil
+}
+
+func reporterHasWriteAccess(ctx context.Context, c *Client, owner, repo, login string) bool {
+	login = strings.TrimSpace(login)
+	if c == nil || c.client == nil || login == "" {
+		return false
+	}
+	perm, _, err := c.client.Repositories.GetPermissionLevel(ctx, owner, repo, login)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(perm.GetPermission())) {
+	case "admin", "maintain", "write":
+		return true
+	default:
+		return false
+	}
+}
 
 // hasReporterConfirmationRequest reports whether the hive has already asked the
 // reporter to confirm. It deliberately fails OPEN (false) when the comments
