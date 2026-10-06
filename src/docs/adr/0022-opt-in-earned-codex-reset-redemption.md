@@ -1,4 +1,4 @@
-# ADR-0021: Opt-in redemption of earned Codex resets
+# ADR-0022: Opt-in redemption of earned Codex resets
 
 Status: Accepted
 

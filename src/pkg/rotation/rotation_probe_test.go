@@ -835,7 +835,7 @@ func TestCodexHeadroomRejectsUnrecognizedSchema(t *testing.T) {
 }
 
 func TestNoCodexSpendOrBillingMutation(t *testing.T) {
-	// #6833 criterion: no code path purchases credits. ADR-0021 (#10595)
+	// #6833 criterion: no code path purchases credits. ADR-0022 (#10595)
 	// permits redeeming already-earned resets, but only from the single
 	// consent-gated controller file; purchaseCredits stays banned everywhere.
 	root := filepath.Join("..", "..")
@@ -857,7 +857,7 @@ func TestNoCodexSpendOrBillingMutation(t *testing.T) {
 				continue
 			}
 			if strings.Contains(string(b), s) {
-				t.Errorf("%s references %q — no code path may spend credits or mutate billing (earned-reset redemption is allowed only in %s, ADR-0021)", path, s, redeemFile)
+				t.Errorf("%s references %q — no code path may spend credits or mutate billing (earned-reset redemption is allowed only in %s, ADR-0022)", path, s, redeemFile)
 			}
 		}
 		return nil
