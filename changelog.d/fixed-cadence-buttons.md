@@ -1,0 +1,1 @@
+- Fixed the agent Cadences dialog so mode buttons and legacy continuous conversion controls respond and save per-mode settings.

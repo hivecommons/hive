@@ -2117,6 +2117,8 @@
     .cadence-continuous-fields { display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end;margin-top:var(--sp-4); }
     .cadence-mode-presets { display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2); }
     .cadence-day-label { display:inline-flex;gap:3px;align-items:center;margin-right:var(--sp-3); }
+    .cadence-legacy-notice { color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--yellow) 8%, transparent);border:1px solid color-mix(in srgb, var(--yellow) 28%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-5); }
+    .cadence-legacy-action { margin-left:var(--sp-3); }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
       .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
@@ -31126,6 +31128,25 @@ function burnAreaChart() {
       markDirty('cadences', mode, value);
       renderConfigTab(_configState.tab);
     }
+    function switchToPerModeCadences() {
+      if (!_configState.data.general) _configState.data.general = {};
+      if (!_configState.data.cadences) _configState.data.cadences = {};
+      _configState.data.general.continuous = false;
+      for (const mode of ['surge', 'busy', 'idle']) {
+        if (!Object.prototype.hasOwnProperty.call(_configState.data.cadences, mode)) {
+          _configState.data.cadences[mode] = 'continuous';
+          markDirty('cadences', mode, 'continuous');
+          continue;
+        }
+        const currentKind = cadenceModeValue(_configState.data.cadences[mode]);
+        if (currentKind !== 'continuous' && currentKind !== 'off') {
+          _configState.data.cadences[mode] = 'continuous';
+          markDirty('cadences', mode, 'continuous');
+        }
+      }
+      markDirty('general', 'continuous', false);
+      renderConfigTab(_configState.tab);
+    }
     function cadenceKindKey(event, mode, kind) {
       if (event.key === 'Enter' || event.key === ' ') { cadenceSetKind(mode, kind); return; }
       const order = ['off', 'interval', 'continuous'];
@@ -31147,7 +31168,7 @@ function burnAreaChart() {
     }
     function cadenceKindButton(mode, current, kind, label) {
       const checked = current === kind;
-      return `<button class="hv-btn btn-secondary btn-sm" type="button" role="radio" aria-checked="${checked ? 'true' : 'false'}" tabindex="${checked ? '0' : '-1'}" data-action="cadenceSetKind" data-keydown-action="cadenceKindKey" data-keys="Enter, ,ArrowLeft,ArrowRight,ArrowUp,ArrowDown" data-prevent="1" data-arg0="${mode}" data-arg1="${kind}" data-arg-types="e,s,s">${label}</button>`;
+      return `<button class="hv-btn btn-secondary btn-sm" type="button" role="radio" aria-checked="${checked ? 'true' : 'false'}" tabindex="${checked ? '0' : '-1'}" data-action="cadenceSetKind" data-keydown-action="cadenceKindKey" data-keys="Enter, ,ArrowLeft,ArrowRight,ArrowUp,ArrowDown" data-prevent="1" data-arg1="${mode}" data-arg2="${kind}" data-arg-types="e,s,s">${label}</button>`;
     }
     function renderCadenceBuilder(mode, value, legacyContinuous) {
       const storedKind = cadenceModeValue(value);
@@ -31207,9 +31228,14 @@ function burnAreaChart() {
       // toggleConfigSwitch rather than the card's immediate action.
       const _agentName = _configState.agent || '';
       const _live = (window._lastAgents || []).find(a => a.name === _agentName);
-      const _enabled = !(_live && _live.enabled === false);
       const _general = (_configState.data && _configState.data.general) || {};
-      const _continuous = _general.continuous === true;
+      const _dirtyGeneral = (_configState.dirty && _configState.dirty.general) || {};
+      const _enabled = Object.prototype.hasOwnProperty.call(_dirtyGeneral, 'enabled')
+        ? _dirtyGeneral.enabled === true
+        : _general.enabled !== false;
+      const _continuous = Object.prototype.hasOwnProperty.call(_dirtyGeneral, 'continuous')
+        ? _dirtyGeneral.continuous === true
+        : _general.continuous === true;
       const _continuousCooldown = Number(_general.continuousCooldown || 60);
       const _continuousBudgetPct = Number(_general.continuousBudgetPct || 80);
       const _continuousBudgetNote = _live && _live.continuousBlocked === 'budget'
@@ -31231,6 +31257,11 @@ function burnAreaChart() {
             ${_continuousBudgetNote}
           </span>
         </div>
+        ${_continuous ? `<div class="cadence-legacy-notice">
+          <b>Legacy continuous is on.</b> SURGE, BUSY, and IDLE are using the old "continuous in all active modes" shortcut until you save per-mode cadences.
+          The row buttons below are editable; choosing Off or Interval automatically switches this agent to per-mode cadences.
+          <button class="hv-btn btn-secondary btn-sm cadence-legacy-action" type="button" data-action="switchToPerModeCadences">Switch to per-mode cadences</button>
+        </div>` : ''}
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
           <b>Continuous.</b> When enabled, cadence no longer decides the next kick while the agent is in a running sequence; the next kick is scheduled from the observed session end plus the cool-down. Turning it off returns to these cadences.
