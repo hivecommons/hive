@@ -16,7 +16,7 @@ func TestContributorPRsBaseSyncDefaultsOff(t *testing.T) {
 func TestLoadContributorPRsBaseSync(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
-	if err := os.WriteFile(path, []byte("project:\n  org: hivecommons\n  repos: [hive]\nagents:\n  scanner:\n    backend: claude\nreview:\n  contributor_prs:\n    base_sync: true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("project:\n  org: hivecommons\n  repos: [hive]\ngithub:\n  token: ghp_testtoken\nagents:\n  scanner:\n    backend: claude\nreview:\n  contributor_prs:\n    base_sync: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
