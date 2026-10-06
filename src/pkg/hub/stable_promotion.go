@@ -234,7 +234,7 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 	sort.SliceStable(soaking, func(i, j int) bool { return soaking[i].eligible.Before(soaking[j].eligible) })
 
 	verified := 0
-	for i, group := range [][]pending{soaked, soaking} {
+	for _, group := range [][]pending{soaked, soaking} {
 		for _, p := range group {
 			if verified >= stablePromotionMaxVerifiedRuns {
 				return StablePromotionBuild{}, ""
@@ -246,9 +246,10 @@ func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *s
 				continue
 			}
 			build := StablePromotionBuild{SHA: short, Digest: v.digest, Generation: p.run.RunNumber, BuiltAt: p.built.Format(time.RFC3339)}
-			if i == 0 {
-				return build, now.UTC().Format(time.RFC3339)
-			}
+			// Report when the build actually crossed the soak line, also for
+			// builds that already soaked. Returning now() made eligible_at
+			// drift forward on every poll and hid a stalled promotion
+			// workflow behind a perpetual "due now" (#10042, #10187).
 			return build, p.eligible.Format(time.RFC3339)
 		}
 	}
