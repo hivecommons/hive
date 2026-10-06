@@ -46,7 +46,7 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 		`id="agent-navbar-upnext"`,
 		`class="agent-navbar-upnext"`,
 		`function renderAgentNavbarUpNext(agents, nowMs)`,
-		`sortAgentsForCollapsedTiles(agents, now).filter(a => agentNavbarHasSchedule(a, now)).slice(0, 3)`,
+		`agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3)`,
 		`function renderAgentNavbarTileDiff(wrap, list, now)`,
 		`data-agent-key`,
 		`function openAgentsUpNextPanel()`,
@@ -75,7 +75,10 @@ function agentIsDisabled(a) { return !!a && a.enabled === false; }
 ` + jsFunc(t, html, "agentCollapsedParseNextKick") + `
 ` + jsFunc(t, html, "formatKickCountdown") + `
 ` + jsFunc(t, html, "agentCollapsedNextKickMs") + `
+` + jsFunc(t, html, "agentCollapsedNextLabel") + `
+` + jsFunc(t, html, "agentTileIsRunning") + `
 ` + jsFunc(t, html, "agentCollapsedSortKey") + `
+` + jsFunc(t, html, "agentTileStates") + `
 ` + jsFunc(t, html, "sortAgentsForCollapsedTiles") + `
 const now = Date.UTC(2026, 9, 3, 11, 40, 0);
 const agents = [
