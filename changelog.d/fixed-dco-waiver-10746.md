@@ -1,1 +1,0 @@
-- The post-merge DCO monitor now records the accepted maintainer waiver for v5 squash commit `a8104b0c`, clearing the protected-branch trailer alert for #10746.

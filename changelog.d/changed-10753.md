@@ -1,1 +1,0 @@
-- docs: describe hive.yaml.runtime as the live boot input on K8s and Docker, with the ConfigMap only seeding first boot (#10753, #10754, #10755, #10756, #10757, #10758)
