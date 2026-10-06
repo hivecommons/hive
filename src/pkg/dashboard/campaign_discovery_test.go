@@ -107,6 +107,7 @@ func TestDiscoveryUsesOnlyConfiguredProxy(t *testing.T) {
 }
 
 func TestRecheckAttachesDiscoveryToRevision(t *testing.T) {
+	t.Skip("Spek continuous convergence recheck is disabled on v6 pending #10734")
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "denied", http.StatusForbidden)
 	}))
