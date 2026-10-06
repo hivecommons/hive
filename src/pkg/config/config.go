@@ -6958,7 +6958,7 @@ func (c *Config) saveLocked() error {
 //     early-returns outside Kubernetes for that reason.
 //
 // ".runtime" is accurate for both; ".bak" implied "the restorable backup",
-// which is true only of the Kubernetes half.
+// which is true of neither: on both it is what the hive boots from.
 // A package var (not const) only so tests can point it at a temp dir; it
 // never changes at runtime in production (same convention as
 // DashboardOverlayFile below).
