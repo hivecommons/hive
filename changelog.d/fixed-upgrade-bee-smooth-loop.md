@@ -1,0 +1,1 @@
+- Slow and stabilize the dashboard upgrade bee orbit while preserving the animated wrapper across status text refreshes.

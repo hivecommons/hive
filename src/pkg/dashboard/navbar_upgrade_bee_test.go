@@ -128,18 +128,36 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	html := indexHTML(t)
 	beeRule := cssRule(t, html, ".oc-version-bee")
 	for _, want := range []string{
-		"linear infinite both",
-		"will-change: transform, opacity",
+		"--oc-version-bee-duration: var(--bee-orbit-duration, 11s)",
+		"animation-duration: var(--oc-version-bee-duration)",
+		"animation-timing-function: linear",
+		"animation-iteration-count: infinite",
+		"animation-fill-mode: both",
+		"will-change: transform",
+		"transform-box: border-box",
+		"contain: layout paint style",
 	} {
 		if !strings.Contains(beeRule, want) {
 			t.Fatalf("orbiting bee rule missing seamless animation hint %q in %s", want, beeRule)
 		}
 	}
+	for _, selector := range []string{".oc-version-bee--phase-b", ".oc-version-bee--phase-c"} {
+		rule := cssRule(t, html, selector)
+		if !strings.Contains(rule, "animation-delay: calc(var(--oc-version-bee-duration)") {
+			t.Fatalf("%s should phase the persistent bee node without touching JS render state: %s", selector, rule)
+		}
+	}
+	glyphRule := cssRule(t, html, ".oc-version-bee-glyph")
+	for _, want := range []string{"transform-box: fill-box", "transform-origin: 50% 50%"} {
+		if !strings.Contains(glyphRule, want) {
+			t.Fatalf("bee SVG glyph should anchor transforms around its own box with %q in %s", want, glyphRule)
+		}
+	}
 
 	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
 	for _, want := range []string{
-		"0% { opacity: 0.96; transform: translate(-50%, -50%) rotate(0turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
-		"100% { opacity: 0.96; transform: translate(-50%, -50%) rotate(1turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
+		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
+		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
 	} {
 		if !strings.Contains(orbit, want) {
 			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)
@@ -148,6 +166,45 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	for _, forbidden := range []string{"\n      50%", "rotate(-"} {
 		if strings.Contains(orbit, forbidden) {
 			t.Fatalf("upgrade bee orbit should avoid loop-boundary decomposition hitches from %q in %s", forbidden, orbit)
+		}
+	}
+}
+
+func TestUpgradeBeeTopbarRenderPatchesTextInPlace(t *testing.T) {
+	html := indexHTML(t)
+	helper := jsFunc(t, html, "versionSetHTMLPreservingUpgradeBee")
+	for _, want := range []string{
+		"currentProgress.parentNode === el",
+		"currentTitle.innerHTML = nextTitle.innerHTML",
+		"currentStatus.innerHTML = nextStatus.innerHTML",
+	} {
+		if !strings.Contains(helper, want) {
+			t.Fatalf("upgrade bee topbar refresh should patch text in place without replacing the bee wrapper; missing %q in:\n%s", want, helper)
+		}
+	}
+	chip := jsFunc(t, html, "renderVersionChip")
+	navbar := jsFunc(t, html, "renderNavbarUpgradeIndicator")
+	for _, fn := range []struct {
+		name string
+		body string
+	}{
+		{"renderVersionChip", chip},
+		{"renderNavbarUpgradeIndicator", navbar},
+	} {
+		if !strings.Contains(fn.body, "versionSetHTMLPreservingUpgradeBee(") {
+			t.Fatalf("%s must use the preserving render path:\n%s", fn.name, fn.body)
+		}
+	}
+	layout := jsFunc(t, html, "applyLayout")
+	for _, forbidden := range []string{"innerHTML", "replaceChildren", "oc-topbar"} {
+		if forbidden == "oc-topbar" {
+			if !strings.Contains(layout, "document.getElementById('oc-topbar')") || !strings.Contains(layout, "topbar.style.display") {
+				t.Fatalf("applyLayout should only show the existing topbar, not rebuild it:\n%s", layout)
+			}
+			continue
+		}
+		if strings.Contains(layout, forbidden) {
+			t.Fatalf("applyLayout must not rebuild topbar/upgrade ancestors via %s:\n%s", forbidden, layout)
 		}
 	}
 }
