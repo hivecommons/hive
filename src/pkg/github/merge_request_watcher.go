@@ -300,9 +300,17 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// Merge strategy (#10889), decided from configuration alone before any
+	// lane-specific GitHub call: a direct repo takes exactly the path below.
+	// A hive-serialized repo keeps every gate above and below, skips the
+	// unpinned branch update (the lane updates only its front PR, pinned to
+	// the evaluated head) and merges only through the lane.
+	laneStrategy, laneGate := c.SerializedLane()
+	serialized := SerializedStrategy(laneStrategy, req.Repo)
+
 	// Optional branch-update-first (resolves "behind main"). A failure here is
 	// not fatal — the merge attempt below will surface the real blocker.
-	if req.UpdateBranch {
+	if req.UpdateBranch && !serialized {
 		if err := c.UpdateBranch(ctx, req.Repo, req.Number); err != nil {
 			c.logger.Info("merge-request watcher: update-branch failed (continuing to merge attempt)",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
@@ -343,6 +351,11 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	if serialized {
+		c.mergeThroughLane(ctx, path, req, fileUID, attempts, laneGate, nowFn)
+		return
+	}
+
 	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
 	if err != nil {
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
@@ -355,6 +368,49 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", res.SHA), slog.String("agent", req.Agent))
 	c.clearMergeFailureAlertsForRepo(req.Repo)
+}
+
+// mergeThroughLane hands a request that passed every relay gate to the
+// serialized lane (#10889). Only the lane's front PR merges, after its final
+// re-check; the relay's authorization (agent, file owner, the pinned SHA when
+// the request carries one, and the merge-eligible list) is re-checked there
+// for the exact head. A deferred or
+// waiting request stays queued for the next tick without consuming an
+// attempt: "not at the front of the lane" is expected, not an error.
+func (c *Client) mergeThroughLane(ctx context.Context, path string, req MergeRequest, fileUID, attempts int, gate SerializedLaneGate, nowFn func() time.Time) {
+	owner, repoName := c.splitRepo(req.Repo)
+	fullRepo := owner + "/" + repoName
+	authz := c.mergeAuthz
+	expectSHA := strings.TrimSpace(req.ExpectSHA)
+	res, err := RunSerializedLane(ctx, gate, LaneMergeRequest{
+		Repo:   fullRepo,
+		Number: req.Number,
+		Path:   PRAuditPathRelay,
+		Method: req.Method,
+		Authorize: func(_ context.Context, head string) error {
+			if expectSHA != "" && head != expectSHA {
+				return fmt.Errorf("head %s is not the requested expect_sha %s", head, expectSHA)
+			}
+			return authz(req.Agent, fileUID, req.Repo, req.Number, head)
+		},
+	})
+	switch {
+	case err != nil, res.Outcome == LaneOutcomeLeft, res.Outcome == LaneOutcomeRefused:
+		c.recordMergeFailure(path, req, attempts, res.Reason, nowFn)
+	case res.Merged():
+		c.RecordPRMergedAudit(fullRepo, req.Number, res.Method, res.SHA, PRAuditPathRelay)
+		c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339), OK: true, SHA: res.SHA})
+		_ = os.Remove(path)
+		c.logger.Info("merge-request watcher: PR merged by App bot through the serialized lane",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("sha", res.SHA), slog.String("agent", req.Agent))
+		c.clearMergeFailureAlertsForRepo(req.Repo)
+	default:
+		c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts - 1, Error: res.Reason, At: nowFn().UTC().Format(time.RFC3339)})
+		c.logger.Info("merge-request watcher: request waiting in the serialized lane",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("outcome", res.Outcome), slog.String("reason", res.Reason))
+	}
 }
 
 // recordMergeFailure writes the failed attempt's result and applies the retry

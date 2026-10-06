@@ -312,6 +312,12 @@ type Client struct {
 	commitTrees  map[string]string
 	mutationMu   sync.RWMutex
 	mutation     effects.Boundary
+
+	// laneStrategy and laneGate route hive-serialized repos through the
+	// serialized lane (#10889); see SetSerializedLane. Guarded by
+	// mergePolicyMu. Nil means every repo is direct.
+	laneStrategy func(repo string) string
+	laneGate     SerializedLaneGate
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {

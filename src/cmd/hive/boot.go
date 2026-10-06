@@ -25,6 +25,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/mention"
+	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -125,6 +126,9 @@ type boot struct {
 	mentionPollerCancel           context.CancelFunc
 	refreshDashboard              func()
 	mutationBoundary              effects.Boundary
+	mergeLaneOnce                 sync.Once
+	mergeLane                     *mergelane.Lane
+	mergeLaneErr                  error
 	findingPublisher              *publish.Publisher
 	outcomeLedger                 *outcome.Ledger
 	heartbeatFleetStats           func() (*int, *int, *int, string)
