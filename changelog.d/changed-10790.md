@@ -1,0 +1,1 @@
+- test(hub): cover admin notifications handlers, webhook address guard and activity hot-reload (#10790)
