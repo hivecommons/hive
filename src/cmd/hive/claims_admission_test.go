@@ -31,12 +31,16 @@ func TestKickClaimsRespectNeedsHumanAndReleaseOnTick(t *testing.T) {
 	srv.RegisterAPI(&dashboard.Dependencies{Config: &config.Config{}, IssueClaims: ledger})
 	t.Cleanup(srv.CloseContributeHub)
 
-	recordAgentKickClaims(srv, "o", "scanner", []string{"r#1"}, logger)
+	recordAgentKickListings(srv, "o", "scanner", []string{"r#1"}, logger)
+	if _, listed := ledger.Listed("o/r", 1); !listed {
+		t.Fatal("kick did not record listing")
+	}
+	recordAgentStart(ledger, "o", "scanner", "r", 1, "comment", logger)
 	if _, ok := ledger.Lookup("o/r", 1); ok {
-		t.Fatal("needs-human issue claimed by kick")
+		t.Fatal("needs-human issue claimed on start")
 	}
 	label.Store("bug")
-	recordAgentKickClaims(srv, "o", "scanner", []string{"r#1"}, logger)
+	recordAgentStart(ledger, "o", "scanner", "r", 1, "comment", logger)
 	if c, ok := ledger.Lookup("o/r", 1); !ok || c.Kind != claims.KindAgent {
 		t.Fatal("ordinary issue not claimed")
 	}

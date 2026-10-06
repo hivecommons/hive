@@ -66,7 +66,11 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 	ledger.SetAdmissionCheck(func(req claims.Request) (string, error) {
 		ctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
 		defer cancel()
-		return client().IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+		gh := client()
+		if gh == nil {
+			return "", github.ErrNoGitHubClient
+		}
+		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
 	})
 }
 
