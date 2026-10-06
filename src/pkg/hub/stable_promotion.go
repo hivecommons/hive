@@ -268,14 +268,26 @@ func stablePromotionEligibleAt(builtAt string) string {
 	return built.Add(time.Duration(stablePromotionSoakHours) * time.Hour).UTC().Format(time.RFC3339)
 }
 
+const (
+	stableNextUpdateStatusQueued  = "queued"
+	stableNextUpdateStatusNone    = "none"
+	stableNextUpdateStatusPaused  = "paused"
+	stableNextUpdateStatusUnknown = "unknown"
+)
+
 // stableNextPromotionAt is the hub's ETA for the next promotion into the
-// stable channel (#10256), from the same "stable chases candidate and is always
-// 24 hours behind it" rule the release-channel block's eligible_at uses, so
-// the spoke and the hub card cannot disagree. Returns "" (unknown) when stable
-// auto-promotion is paused, either channel is unresolved, or nothing is queued.
+// stable channel (#10256), from the same serialized per-build soak rule the
+// release-channel block's eligible_at uses, so the spoke and the hub card cannot
+// disagree. Returns "" when no ETA is currently knowable; callers that need to
+// distinguish "none queued" from "unknown" should use stableNextPromotion.
 func stableNextPromotionAt(targets []ChannelTarget) string {
+	at, _ := (&HubServer{logger: slog.Default()}).stableNextPromotion(targets)
+	return at
+}
+
+func (s *HubServer) stableNextPromotion(targets []ChannelTarget) (string, string) {
 	if !loadStablePromotionState().AutoPromote {
-		return ""
+		return "", stableNextUpdateStatusPaused
 	}
 	var candidate, stable *ChannelTarget
 	for i := range targets {
@@ -287,12 +299,16 @@ func stableNextPromotionAt(targets []ChannelTarget) string {
 		}
 	}
 	if candidate == nil || stable == nil || candidate.Digest == "" || stable.Digest == "" {
-		return ""
+		return "", stableNextUpdateStatusUnknown
+	}
+	status := s.stablePromotionStatus(targets)
+	if status.EligibleAt != nil && *status.EligibleAt != "" {
+		return *status.EligibleAt, stableNextUpdateStatusQueued
 	}
 	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
-		return ""
+		return "", stableNextUpdateStatusNone
 	}
-	return stablePromotionEligibleAt(candidate.CommittedAt)
+	return "", stableNextUpdateStatusUnknown
 }
 
 func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) []ChannelTarget {

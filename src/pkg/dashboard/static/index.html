@@ -26392,7 +26392,16 @@ function burnAreaChart() {
       if (au.enabled !== false && au.state !== 'disabled' && au.state !== 'paused') {
         const nextAt = au.nextUpdateAt ? new Date(au.nextUpdateAt) : null;
         const nextOK = nextAt && !isNaN(nextAt.getTime());
-        html += row('Next update', nextOK ? value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds') : value('unknown', 'The hub has not reported when the next update is expected'), nextOK ? au.nextUpdateAt : 'unknown');
+        const nextStatus = au.nextUpdateStatus || '';
+        if (nextOK) {
+          html += row('Next update', value(nextAt.toLocaleString(), 'Expected ' + au.nextUpdateAt + ' — the hub\'s estimate; it may land later if a promotion check holds'), au.nextUpdateAt);
+        } else if (nextStatus === 'none') {
+          html += row('Next update', value('none queued (stable is current)', 'Stable and candidate currently point at the same built image'), 'none queued');
+        } else if (nextStatus === 'paused') {
+          html += row('Next update', value('paused', 'Stable auto-promotion is paused'), 'paused');
+        } else {
+          html += row('Next update', value('unknown', 'The hub has not reported when the next update is expected'), 'unknown');
+        }
       }
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
@@ -29912,7 +29921,10 @@ function burnAreaChart() {
         if (au.policySource === 'hub') rows += '<div>Policy source: the hub (heartbeat)</div>';
         else rows += '<div>Policy source: this spoke\'s local config (the hub has not reported a policy)</div>';
         if (au.commitsBehind != null) rows += '<div>Commits behind: ' + escapeHtml(String(au.commitsBehind)) + '</div>';
-        if (au.state !== 'disabled' && au.state !== 'paused') rows += '<div>Next update: ' + (au.nextUpdateAt ? escapeHtml(au.nextUpdateAt) : 'unknown') + '</div>';
+        if (au.state !== 'disabled' && au.state !== 'paused') {
+          var next = au.nextUpdateAt || (au.nextUpdateStatus === 'none' ? 'none queued (stable is current)' : (au.nextUpdateStatus === 'paused' ? 'paused' : 'unknown'));
+          rows += '<div>Next update: ' + escapeHtml(next) + '</div>';
+        }
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div class="text-danger">Last error: ' + escapeHtml(au.lastError) + '</div>';
         el.style.color = 'var(--muted)';
