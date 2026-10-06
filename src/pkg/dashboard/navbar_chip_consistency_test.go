@@ -72,7 +72,7 @@ func TestNavbarStickyThreeZoneLayout(t *testing.T) {
 	for _, want := range []string{
 		`.oc-topbar {`,
 		`position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: auto;`,
-		`--topbar-grid-columns: minmax(0, 1fr) auto minmax(0, 1fr);`,
+		`--topbar-grid-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);`,
 		`display: grid; grid-template-columns: var(--topbar-grid-columns); align-items: center;`,
 		`width: 100%;`,
 		`z-index: var(--navbar-sticky-z);`,
