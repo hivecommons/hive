@@ -75,7 +75,7 @@ lower() { tr '[:upper:]' '[:lower:]'; }
 is_bot_identity() {
   case "$(printf '%s' "$1" | lower)" in
     *'[bot]'*|*copilot@users.noreply.github.com|*'+copilot@users.noreply.github.com'| \
-    *github-actions*|*'hive-release-bot'*|*noreply@anthropic.com)
+    *github-actions*|*'hive-release-bot'*|actions@github.com|actions-user|*noreply@anthropic.com)
       return 0
       ;;
     *) return 1 ;;
@@ -86,6 +86,33 @@ if [ -n "$pr_author" ] && is_bot_identity "$pr_author"; then
   echo "PR author ${pr_author} is a bot; squash will stay bot-authored, nothing to check."
   exit 0
 fi
+
+# is_release_commit <sha> <author-name> <author-email-lc> <signoff-emails>
+# True only for the exact shape tagged-release.yml commits: authored by
+# hive-release-bot <actions@github.com>, signed off with that same address,
+# and touching nothing outside CHANGELOG.md and changelog.d/.
+is_release_commit() {
+  rc_sha="$1"
+  rc_author_name="$2"
+  rc_author_lc="$3"
+  rc_signoffs="$4"
+
+  [ "$rc_author_name" = "hive-release-bot" ] || return 1
+  [ "$rc_author_lc" = "actions@github.com" ] || return 1
+  printf '%s\n' "$rc_signoffs" | grep -qxF "$rc_author_lc" || return 1
+
+  rc_paths=$(git diff-tree --no-commit-id --name-only -r "$rc_sha")
+  [ -n "$rc_paths" ] || return 1
+  while IFS= read -r rc_path; do
+    case "$rc_path" in
+      CHANGELOG.md|changelog.d/*) ;;
+      *) return 1 ;;
+    esac
+  done <<EOF
+$rc_paths
+EOF
+  return 0
+}
 
 # Commits that already landed on a protected line are out of scope (#6919).
 #
@@ -141,6 +168,21 @@ while IFS= read -r sha; do
   # gate only decides whether an EXISTING sign-off will still name the right
   # person after GitHub rewrites the author during the squash.
   [ -n "$signoff_emails" ] || continue
+
+  # The automated release commit is the one PR commit GitHub never rewrites:
+  # tagged-release.yml authors and signs it as hive-release-bot and merges
+  # its PR with merge_method=merge, so the commit lands on v5 exactly as it
+  # is here and the squash mismatch this gate exists for cannot arise. The
+  # PR itself is opened with RELEASE_PR_TOKEN, i.e. by a human login, so the
+  # bot-PR skip above does not cover it and the generic rule reads the bot's
+  # own sign-off as foreign. The exemption is deliberately narrow: the bot
+  # identity, a self-sign-off, AND a diff confined to CHANGELOG.md and
+  # changelog.d/ (what the release step stages) — a changelog-only commit
+  # cannot carry code, so forging this shape onto a real PR buys nothing.
+  if is_release_commit "$sha" "$author_name" "$author_lc" "$signoff_emails"; then
+    echo "Skipping ${sha}: release commit authored and signed by hive-release-bot; its PR merges with a merge commit, not a squash."
+    continue
+  fi
 
   # The landing squash commit is attributed to the PULL REQUEST author, so the
   # question this gate answers is: does a sign-off certify THAT person? We need
