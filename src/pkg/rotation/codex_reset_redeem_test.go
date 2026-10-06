@@ -527,6 +527,43 @@ func TestCodexResetRedeem_HeldLockHoldsAndStaleLockIsTakenOver(t *testing.T) {
 	}
 }
 
+// Many takers racing on one abandoned lock: exactly one may proceed.
+func TestCodexResetRedeem_StaleLockTakeoverRaceHasOneWinner(t *testing.T) {
+	dir := t.TempDir()
+	clock := newRedeemClock()
+	fake := &redeemFake{reply: redeemReply(`"reset"`)}
+	const takers = 16
+	rs := make([]*codexResetRedeemer, takers)
+	for i := range rs {
+		rs[i] = newTestRedeemer(dir, fake, clock)
+	}
+	if err := os.WriteFile(rs[0].lockPath(), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * codexResetRedeemLockStale)
+	if err := os.Chtimes(rs[0].lockPath(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	var won atomic.Int32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, r := range rs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, ok := r.lock(); ok {
+				won.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if n := won.Load(); n != 1 {
+		t.Fatalf("exactly one taker must win the stale lock, got %d", n)
+	}
+}
+
 // Two controllers for the same pool: while one is mid-request the other must
 // not send; once it finishes, the other's re-read sees the recovery.
 func TestCodexResetRedeem_ConcurrentAttemptsSpendOneReset(t *testing.T) {
