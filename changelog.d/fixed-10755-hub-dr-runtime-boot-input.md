@@ -1,0 +1,1 @@
+- `docs/HUB_DISASTER_RECOVERY.md` now says the entrypoint boots from `hive.yaml.runtime` since #2392, fixes a cite to `entrypoint.sh:152-161`, and says to restore both `hive.yaml.runtime` and `hive.yaml.dashboard` ([#10755](https://github.com/hivecommons/hive/issues/10755)).
