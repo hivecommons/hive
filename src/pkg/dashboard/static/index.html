@@ -32363,19 +32363,60 @@ function burnAreaChart() {
         untrustedRequireLabels: Array.isArray(d.untrustedRequireLabels) ? d.untrustedRequireLabels : ['triage/accepted'],
         knownAssociations: Array.isArray(d.knownAssociations) && d.knownAssociations.length
           ? d.knownAssociations
-          : ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE']
+          : ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'],
+        clankerRequested: !!d.clankerRequested,
+        clankerRequestedLabel: typeof d.clankerRequestedLabel === 'string' ? d.clankerRequestedLabel : 'clanker-requested',
+        clankerRequestedAddendum: typeof d.clankerRequestedAddendum === 'string' ? d.clankerRequestedAddendum : '',
+        clankerStaged: !!d.clankerStaged
       };
+    }
+
+    // Live preview of the clanker-requested explanation, shared by the render
+    // and the input handlers so typing updates it without re-rendering.
+    function clankerRequestedPreviewText(label, addendum) {
+      const name = (label || '').trim() || 'clanker-requested';
+      let text = 'This PR carries the `' + name + '` label, so Hive is holding it for a maintainer.';
+      const extra = (addendum || '').trim();
+      if (extra) text += '\n\n' + extra;
+      return text;
+    }
+
+    function updateClankerRequestedPreview() {
+      const lbl = document.getElementById('cfg-clanker-label');
+      const add = document.getElementById('cfg-clanker-addendum');
+      const prev = document.getElementById('cfg-clanker-preview');
+      if (prev) prev.textContent = clankerRequestedPreviewText(lbl ? lbl.value : '', add ? add.value : '');
+    }
+
+    function setClankerRequestedField(key, value) {
+      stageReporterTrust({ [key]: value });
+      updateClankerRequestedPreview();
+    }
+
+    function toggleClankerRequested(el) {
+      const isOn = el.classList.toggle('on');
+      stageReporterTrust({ clankerRequested: isOn });
+      renderConfigTab('Labels');
     }
 
     function stageReporterTrust(next) {
       _configState.data.reporterTrust = Object.assign({}, _configState.data.reporterTrust || {}, next);
       const st = reporterTrustState();
-      markDirty('labels', 'reporter_trust', {
+      const block = {
         enabled: st.enabled,
         trusted_associations: st.trustedAssociations,
         trusted_logins: st.trustedLogins,
         untrusted_require_labels: st.untrustedRequireLabels
-      });
+      };
+      // Only send the clanker-requested keys once the operator touched them, so
+      // an unrelated edit never writes the defaults into config.
+      if ('clankerRequested' in next || 'clankerRequestedLabel' in next || 'clankerRequestedAddendum' in next || st.clankerStaged) {
+        _configState.data.reporterTrust.clankerStaged = true;
+        block.clanker_requested = st.clankerRequested;
+        block.clanker_requested_label = st.clankerRequestedLabel;
+        block.clanker_requested_addendum = st.clankerRequestedAddendum;
+      }
+      markDirty('labels', 'reporter_trust', block);
     }
 
     function toggleReporterTrustEnabled(el) {
@@ -32436,6 +32477,23 @@ function burnAreaChart() {
               <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="reporter_label" data-arg2="cfg-reporter-label-input" ${st.enabled ? '' : 'disabled'} title="Add this triage label">+ Add</button>
             </div>
           </div>
+        </div>
+        <h4 class="rt-h4">Clanker-requested PRs</h4>
+        <div class="config-toggle rt-toggle">
+          <div class="config-toggle-switch ${st.clankerRequested ? 'on' : ''}" data-action="toggleClankerRequested" data-arg-types="t" title="Hold PRs that carry the clanker-requested label"></div>
+          <span class="config-toggle-label">Hold PRs carrying the clanker-requested label <span class="config-info">i<span class="config-tooltip">Off by default. While on, a PR carrying this label is treated as held for a maintainer; Hive never removes the hold.</span></span></span>
+        </div>
+        <div class="rt-body${st.clankerRequested ? '' : ' rt-dim'}">
+          <div class="config-field">
+            <label for="cfg-clanker-label">Label name</label>
+            <input type="text" id="cfg-clanker-label" value="${esc(st.clankerRequestedLabel)}" placeholder="clanker-requested" ${st.clankerRequested ? '' : 'disabled'} data-input-action="setClankerRequestedField" data-arg0="clankerRequestedLabel" data-arg-types="s,v" title="Label that marks a PR as clanker-requested; must not be blank">
+          </div>
+          <div class="config-field">
+            <label for="cfg-clanker-addendum">Comment addendum</label>
+            <textarea id="cfg-clanker-addendum" rows="3" maxlength="1000" placeholder="Optional text appended to the explanation (max 1000 bytes)" ${st.clankerRequested ? '' : 'disabled'} data-input-action="setClankerRequestedField" data-arg0="clankerRequestedAddendum" data-arg-types="s,v" title="Optional free text appended to the explanation comment">${esc(st.clankerRequestedAddendum)}</textarea>
+          </div>
+          <div class="fs-sm mb-2 rt-subhead">Comment preview</div>
+          <pre id="cfg-clanker-preview" class="fs-xs" style="white-space:pre-wrap">${esc(clankerRequestedPreviewText(st.clankerRequestedLabel, st.clankerRequestedAddendum))}</pre>
         </div>`;
     }
 

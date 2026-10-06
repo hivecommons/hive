@@ -101,6 +101,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"untrustedRequireLabels":    reporterTrust.EffectiveUntrustedRequireLabels(),
 		"untrustedRequireLabelsSet": len(reporterTrust.UntrustedRequireLabels) > 0,
 		"knownAssociations":         config.KnownAuthorAssociations,
+		"clankerRequested":          reporterTrust.ClankerRequestedOn(),
+		"clankerRequestedLabel":     reporterTrust.EffectiveClankerRequestedLabel(),
+		"clankerRequestedAddendum":  reporterTrust.ClankerRequestedAddendum,
 	}
 	hardSuppress := cfg.Project.IssueFilter.HardSuppressLabels
 	hardSuppressPayload := map[string]any{
@@ -598,10 +601,13 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
-			Enabled                *bool     `json:"enabled"`
-			TrustedAssociations    *[]string `json:"trusted_associations"`
-			TrustedLogins          *[]string `json:"trusted_logins"`
-			UntrustedRequireLabels *[]string `json:"untrusted_require_labels"`
+			Enabled                  *bool     `json:"enabled"`
+			TrustedAssociations      *[]string `json:"trusted_associations"`
+			TrustedLogins            *[]string `json:"trusted_logins"`
+			UntrustedRequireLabels   *[]string `json:"untrusted_require_labels"`
+			ClankerRequested         *bool     `json:"clanker_requested"`
+			ClankerRequestedLabel    *string   `json:"clanker_requested_label"`
+			ClankerRequestedAddendum *string   `json:"clanker_requested_addendum"`
 		} `json:"reporter_trust"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -627,6 +633,17 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			rt.UntrustedRequireLabels = trimNonEmpty(*body.ReporterTrust.UntrustedRequireLabels)
+		}
+		if body.ReporterTrust.ClankerRequested != nil {
+			v := *body.ReporterTrust.ClankerRequested
+			rt.ClankerRequested = &v
+		}
+		if body.ReporterTrust.ClankerRequestedLabel != nil {
+			v := strings.TrimSpace(*body.ReporterTrust.ClankerRequestedLabel)
+			rt.ClankerRequestedLabel = &v
+		}
+		if body.ReporterTrust.ClankerRequestedAddendum != nil {
+			rt.ClankerRequestedAddendum = strings.TrimSpace(*body.ReporterTrust.ClankerRequestedAddendum)
 		}
 		if err := config.ValidateReporterTrust(rt); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)

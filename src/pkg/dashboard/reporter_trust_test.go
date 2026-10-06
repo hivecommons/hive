@@ -161,3 +161,90 @@ func TestHandleGovernorLabels_HardSuppressLabelsRoundTrip(t *testing.T) {
 		t.Fatalf("GET hardSuppressLabels = %v", got)
 	}
 }
+
+func TestHandleGovernorConfigGet_ClankerRequestedDefaults(t *testing.T) {
+	srv := newFullServer(t)
+	rt := decodeGovernorConfigGet(t, srv)["reporterTrust"].(map[string]any)
+	if rt["clankerRequested"] != false {
+		t.Errorf("clankerRequested = %v, want false by default", rt["clankerRequested"])
+	}
+	if rt["clankerRequestedLabel"] != "clanker-requested" {
+		t.Errorf("clankerRequestedLabel = %v, want the default label", rt["clankerRequestedLabel"])
+	}
+	if rt["clankerRequestedAddendum"] != "" {
+		t.Errorf("clankerRequestedAddendum = %v, want empty", rt["clankerRequestedAddendum"])
+	}
+}
+
+func TestHandleGovernorLabels_ClankerRequestedRoundTrip(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"reporter_trust":{"clanker_requested":true,"clanker_requested_label":"  bot-ok ","clanker_requested_addendum":" ask a maintainer "}}`
+	w := httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	rt := srv.deps.Config.Project.IssueFilter.ReporterTrust
+	if !rt.ClankerRequestedOn() || rt.EffectiveClankerRequestedLabel() != "bot-ok" || rt.ClankerRequestedAddendum != "ask a maintainer" {
+		t.Fatalf("clanker fields not saved/trimmed: %+v", rt)
+	}
+	got := decodeGovernorConfigGet(t, srv)["reporterTrust"].(map[string]any)
+	if got["clankerRequested"] != true || got["clankerRequestedLabel"] != "bot-ok" || got["clankerRequestedAddendum"] != "ask a maintainer" {
+		t.Errorf("GET does not reflect the saved clanker fields: %v", got)
+	}
+
+	// A save that touches only the other fields leaves the clanker keys alone.
+	w = httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"reporter_trust":{"enabled":true}}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("second save code = %d, body = %s", w.Code, w.Body.String())
+	}
+	rt = srv.deps.Config.Project.IssueFilter.ReporterTrust
+	if !rt.ClankerRequestedOn() || rt.EffectiveClankerRequestedLabel() != "bot-ok" || rt.ClankerRequestedAddendum != "ask a maintainer" {
+		t.Errorf("unrelated save clobbered clanker fields: %+v", rt)
+	}
+
+	w = httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"reporter_trust":{"clanker_requested":false}}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle-off code = %d, body = %s", w.Code, w.Body.String())
+	}
+	rt = srv.deps.Config.Project.IssueFilter.ReporterTrust
+	if rt.ClankerRequestedOn() || len(rt.ExtraHoldLabels()) != 0 || rt.EffectiveClankerRequestedLabel() != "bot-ok" {
+		t.Errorf("toggle off should only flip the switch: %+v", rt)
+	}
+}
+
+func TestHandleGovernorLabels_ClankerRequestedUntouchedLeavesConfig(t *testing.T) {
+	srv := newFullServer(t)
+	w := httptest.NewRecorder()
+	srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", `{"reporter_trust":{"enabled":true}}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	rt := srv.deps.Config.Project.IssueFilter.ReporterTrust
+	if rt.ClankerRequested != nil || rt.ClankerRequestedLabel != nil || rt.ClankerRequestedAddendum != "" {
+		t.Errorf("clanker fields must stay unset when absent from the body: %+v", rt)
+	}
+}
+
+func TestHandleGovernorLabels_ClankerRequestedRejectsInvalid(t *testing.T) {
+	cases := map[string]string{
+		"blank label":   `{"reporter_trust":{"clanker_requested_label":"   "}}`,
+		"long addendum": `{"reporter_trust":{"clanker_requested_addendum":"` + strings.Repeat("x", 1001) + `"}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := newFullServer(t)
+			w := httptest.NewRecorder()
+			srv.handleGovernorLabels(w, ownerPUT(t, "/api/config/governor/labels", body))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("code = %d, want 400; body = %s", w.Code, w.Body.String())
+			}
+			rt := srv.deps.Config.Project.IssueFilter.ReporterTrust
+			if !rt.IsZero() {
+				t.Errorf("a rejected save must not mutate config: %+v", rt)
+			}
+		})
+	}
+}
