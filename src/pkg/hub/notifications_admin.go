@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -213,12 +214,13 @@ func validateHubNotificationURL(rawURL, fieldName string) error {
 	if !strings.HasPrefix(rawURL, "https://") {
 		return fmt.Errorf("%s must start with https:// or be empty", fieldName)
 	}
-	host := strings.TrimPrefix(rawURL, "https://")
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
-		host = host[:idx]
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL", fieldName)
 	}
-	host = strings.ToLower(host)
-	for _, p := range []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "[::1]", "0.0.0.0"} {
+	// Hostname() strips port and IPv6 brackets, so "[::1]:8443" becomes "::1".
+	host := strings.ToLower(u.Hostname())
+	for _, p := range []string{"localhost", "127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "169.254.", "::1", "0.0.0.0"} {
 		if strings.HasPrefix(host, p) {
 			return fmt.Errorf("%s must not target private/internal addresses", fieldName)
 		}
