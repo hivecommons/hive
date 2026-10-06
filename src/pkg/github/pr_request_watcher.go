@@ -576,7 +576,8 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if !res.DuplicateTree && (holdByLevel || selfAuth.Held || reporter.Held) {
 		holdLabels := []string{"hold"}
 		if reporter.Held {
-			holdLabels = append(holdLabels, "needs-human")
+			// A reporter-trust hold is a human-only decision at every level.
+			holdLabels = reporterTrustHoldLabels()
 			reporter.OwnsNeedsHuman = !res.AlreadyExisted
 		}
 		if lerr := c.AddLabels(ctx, req.Repo, res.Number, holdLabels); lerr != nil {
@@ -597,6 +598,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 				slog.String("repo", req.Repo), slog.Int("number", res.Number),
 				slog.String("rationale_repo", reporter.Repo), slog.Int("rationale_issue", reporter.Issue),
 				slog.String("reporter", reporter.Reporter), slog.String("association", reporter.Association),
+				slog.String("needs_human_reason", reporter.NeedsHumanReason()),
 				slog.String("agent", req.Agent))
 		} else {
 			c.logger.Info("pr-request watcher: applied hold label (hold-gated ACMM level)",
@@ -663,6 +665,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"reporter_trust_held", strconv.FormatBool(reporter.Held),
 		"reporter_login", reporter.Reporter,
 		"reporter_association", reporter.Association,
+		"needs_human_reason", reporter.NeedsHumanReason(),
 		"duplicate_tree", strconv.FormatBool(res.DuplicateTree))
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't

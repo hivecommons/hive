@@ -68,3 +68,32 @@ assert.doesNotMatch(releaseEl.innerHTML, /the hive is running 0aca1bd/i);
 		t.Fatalf("node release status rendering failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
+
+func TestRenderReleaseStatusFallsBackToBuildBranch(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: release status rendering was not executed")
+	}
+	html := indexHTML(t)
+	script := `const assert = require('node:assert/strict');
+let releaseEl = { hidden: true, innerHTML: '' };
+global.document = { getElementById(id) { return id === 'release-status' ? releaseEl : null; } };
+function escapeHtml(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function relativeAge() { return '10m ago'; }
+function versionShortSHA(v) { return String(v || '').slice(0, 7); }
+` + jsFunc(t, html, "renderReleaseStatus") + `
+renderReleaseStatus({
+  channel: { resolved: false, branch: 'v6', selectorDetail: 'self-hosted Podman spoke' },
+  attempt: { state: 'never' }
+});
+assert.match(releaseEl.innerHTML, /Tracking <strong>v6<\/strong>/);
+assert.doesNotMatch(releaseEl.innerHTML, /Channel <strong>unknown/);
+assert.doesNotMatch(releaseEl.innerHTML, /hub has not been reached/);
+renderReleaseStatus({ channel: { resolved: false }, attempt: { state: 'never' }, hubReachable: false });
+assert.match(releaseEl.innerHTML, /Channel <strong>unknown<\/strong>[\s\S]*image reference unavailable/);
+assert.match(releaseEl.innerHTML, /hub has not been reached/);
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node release status rendering failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}

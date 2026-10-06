@@ -682,14 +682,16 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 		t.Fatalf("missing escalation reason: %q", reason)
 	}
 
-	if applied := srv.applied(); len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
-		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "PR was authored by the hive", "untrusted **reporter**"} {
+	for _, want := range []string{
+		ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665",
+		"reporter-trust hold — issue #581 filed by @stranger",
+		"authored by the hive", "untrusted reporter", "`needs-human`",
+	} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -707,6 +709,26 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	}
 	if resp.SelfAuthorized {
 		t.Error("a human-filed issue is not a #5117 hold; the two gates must not be confused")
+	}
+}
+
+// assertReporterTrustHoldLabels pins hivecommons/hive#10773: a reporter-trust
+// hold is a human-only decision, so it must raise needs-human with "hold" or a
+// maintainer never learns the PR is waiting on them.
+func assertReporterTrustHoldLabels(t *testing.T, applied []string) {
+	t.Helper()
+	if len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
+	}
+}
+
+func TestReporterTrustNeedsHumanReason(t *testing.T) {
+	held := ReporterTrust{Held: true, Issue: 581, Repo: "o/r", Reporter: "stranger", Association: "NONE"}
+	if got, want := held.NeedsHumanReason(), "reporter-trust hold — issue #581 filed by @stranger"; got != want {
+		t.Fatalf("NeedsHumanReason() = %q, want %q", got, want)
+	}
+	if got := (ReporterTrust{}).NeedsHumanReason(); got != "" {
+		t.Fatalf("NeedsHumanReason() on an unheld finding = %q, want empty", got)
 	}
 }
 
@@ -741,9 +763,7 @@ func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string) bool { return true }
 	runReporterTrustWatcher(t, c)
-	if applied := srv.applied(); len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
-		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	var level, reporter bool
 	for _, body := range comments {

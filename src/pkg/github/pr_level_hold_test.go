@@ -27,6 +27,7 @@ type levelHoldServer struct {
 	removes       int
 	releaseNotes  int
 	reporterNotes int
+	labelsAdded   []string
 }
 
 func (s *levelHoldServer) start(t *testing.T) *httptest.Server {
@@ -94,6 +95,11 @@ func (s *levelHoldServer) start(t *testing.T) *httptest.Server {
 				"actor":      map[string]string{"login": author},
 				"label":      map[string]string{"name": "hold"},
 			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/11/labels":
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			s.labelsAdded = append(s.labelsAdded, labels...)
+			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
 			s.removes++
 			w.WriteHeader(http.StatusOK)
@@ -203,6 +209,9 @@ func TestReleaseLevelHoldsOnceDoesNotReleaseReporterTrustHold(t *testing.T) {
 	}
 	if s.reporterNotes != 1 {
 		t.Fatalf("reporterNotes=%d, want reporter-trust notice posted", s.reporterNotes)
+	}
+	if len(s.labelsAdded) != 1 || s.labelsAdded[0] != "needs-human" {
+		t.Fatalf("labelsAdded=%v, want [needs-human] raised with the reporter-trust hold (#10773)", s.labelsAdded)
 	}
 }
 

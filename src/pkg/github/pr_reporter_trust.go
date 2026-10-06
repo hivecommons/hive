@@ -158,17 +158,29 @@ func associationOrUnknown(association string) string {
 	return association
 }
 
+// NeedsHumanReason names the untrusted reporter, not the hive-authored PR.
+func (r ReporterTrust) NeedsHumanReason() string {
+	if !r.Held {
+		return ""
+	}
+	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s", r.Issue, r.Reporter)
+}
+
+func reporterTrustHoldLabels() []string {
+	return []string{"hold", issueNeedsHumanLabel}
+}
+
 // reporterTrustNotice is the comment left on a held PR. The person clearing
 // the hold needs to know it is about who asked, not about the code.
 func reporterTrustNotice(finding ReporterTrust) string {
 	return fmt.Sprintf(`%s
 > [!IMPORTANT]
-> **Held for maintainer sign-off: the request came from outside the project.**
+> **Held for maintainer sign-off: the request came from outside the project.** (%s)
 >
-> This PR was authored by the hive; the untrusted **reporter**, not the PR author, is @%s. Its rationale traces to %s#%d, filed by @%s (GitHub association: %s). This hive holds work requested by reporters who are not owners, members or collaborators of the repository so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
+> This PR was authored by the hive; the **untrusted reporter**, not the PR author, is @%s. Its rationale traces to %s#%d, filed by @%s (GitHub association: %s). This hive holds work requested by reporters who are not owners, members or collaborators of the repository so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
 >
-> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
-		reporterTrustMarker(finding), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association))
+> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. The `+"`needs-human`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
+		reporterTrustMarker(finding), finding.NeedsHumanReason(), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association))
 }
 
 const reporterTrustMetadataPrefix = "<!-- hive:reporter-trust-metadata "

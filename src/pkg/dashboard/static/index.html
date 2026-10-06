@@ -26855,6 +26855,11 @@ function burnAreaChart() {
         if (ch.pendingChannel && ch.pendingChannel !== ch.channel) {
           chLabel += ' <span class="release-status-row--warn">(switch to <code>' + escapeHtml(ch.pendingChannel) + '</code> requested)</span>';
         }
+      } else if (!ch.imageTag && !ch.imageRef && ch.branch) {
+        // No readable image reference: name the built-from branch the version
+        // menu shows rather than a bare "unknown" that contradicts it.
+        chTone = 'info'; chIcon = '📡';
+        chLabel = 'Tracking <strong>' + escapeHtml(ch.branch) + '</strong> <span class="text-muted">(build branch; image reference unavailable)</span>';
       } else {
         chTone = 'warn'; chIcon = '❔';
         chLabel = 'Channel <strong>unknown</strong>' +
