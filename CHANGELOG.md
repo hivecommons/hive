@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.138.2)
+
+### Changed
+
+- dashboard: the Operations **Most effective models** panel now starts collapsed, remembers whether you opened or closed it, and only fetches `/api/contribute/effective-models` once expanded, so the work, runs, decisions and queue cards no longer sit below a tall table on first load (#10919)
+
+### Fixed
+
+- dashboard: Overview trend lines now count "Blocked / needs-human" and "Outside" the same way as their tiles, including "Confirm & close" and needs-human/reporter-confirmation issues, so server and browser samples no longer disagree ([#10916](https://github.com/hivecommons/hive/issues/10916)). The "Claimed" and "Confirm & close" band hover text no longer promises a linked-PR check that never runs ([#10917](https://github.com/hivecommons/hive/issues/10917)). The "waiting on reporter" row now searches the hive's own watched repositories instead of hivecommons/hive ([#10918](https://github.com/hivecommons/hive/issues/10918)).
+
 ## 2026-10-06 (v5.138.1)
 
 ### Fixed
