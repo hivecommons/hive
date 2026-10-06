@@ -61,13 +61,15 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 }
 
 // githubHoldLabels is the hold-label set every client carries: the canonical
-// per-hive hold label (hive-pause/<id>). The legacy hive/<id> spelling is
+// per-hive hold label (hive-pause/<id>), plus the clanker-requested label while
+// reporter_trust.clanker_requested is on. The legacy hive/<id> spelling is
 // deliberately NOT part of it: that label is the provenance label on every
 // item the hive claims, and github.HasHoldLabelWith never treats it as a hold
 // (#9371), so carrying it here could hold nothing and treating it as a hold
 // would park every claimed item.
 func (b *boot) githubHoldLabels() []string {
-	return []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
+	labels := []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
+	return append(labels, b.cfg.Project.IssueFilter.ReporterTrust.ExtraHoldLabels()...)
 }
 
 // applyGitHubClientConfigHooks installs the settings that depend on config
