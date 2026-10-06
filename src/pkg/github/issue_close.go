@@ -106,7 +106,9 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
 	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, issueNeedsReporterConfirmationLabel); err != nil && !githubStatusError(err, http.StatusNotFound) {
-		return false, fmt.Errorf("removing %s from %s/%s#%d: %w", issueNeedsReporterConfirmationLabel, owner, repoName, number, err)
+		// Best-effort: the issue is already closed, so a stale label must not fail the close.
+		c.logger.Warn("removing reporter-confirmation label after close failed",
+			"repo", owner+"/"+repoName, "issue", number, "error", err)
 	}
 	return isPR, nil
 }

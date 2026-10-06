@@ -13920,6 +13920,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return 'Held: work intentionally paused for a maintainer.';
         case 'blocked_needs_human':
           return 'Blocked: work waiting on a person or dependency.';
+        case 'waiting-on-reporter':
+          return 'Waiting on reporter: issues labeled needs-reporter-confirmation (search label:needs-reporter-confirmation).';
         default:
           return `${term?.label || term?.key || 'Bucket'}: items in this bucket.`;
       }
