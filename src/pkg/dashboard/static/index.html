@@ -2797,7 +2797,18 @@
       pointer-events: none;
     }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
-    .overview-partition-tooltip { width: min(46rem, calc(100vw - var(--sp-8))); pointer-events: auto; }
+    .overview-partition-tooltip {
+      width: min(24rem, calc(100vw - var(--sp-8)));
+      max-height: min(18rem, calc(100vh - var(--sp-8)));
+      overflow: hidden;
+      pointer-events: auto;
+    }
+    .overview-partition-tooltip .overview-partition-summary { display: block; margin-bottom: var(--sp-2); font-weight: 700; }
+    .overview-partition-tooltip .overview-partition-row { display: flex; justify-content: space-between; gap: var(--sp-4); white-space: nowrap; }
+    .overview-partition-tooltip .overview-partition-label { overflow: hidden; text-overflow: ellipsis; }
+    .overview-partition-tooltip .overview-partition-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .overview-partition-tooltip .overview-partition-more { display: block; margin-top: var(--sp-2); }
+    .overview-partition-tooltip .overview-partition-footer { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-2); border-top: 1px solid var(--border); }
     .overview-partition-tooltip .muted { opacity: .58; }
 
     .config-list { margin-bottom: 14px; }
@@ -13825,28 +13836,91 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? ` <a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
+      return href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
       const tab = row && row.settingsTab;
       // Not a <button>: this tooltip is rendered inside the <button class="overview-kpi"> card, and the HTML
       // parser force-closes an open <button> when it meets a nested one, spilling the tooltip inline.
-      return tab ? ` <span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">open Settings → ${esc(tab)}</span>` : '';
+      return tab ? `<span role="button" tabindex="0" class="hv-btn btn-secondary btn-sm" data-action="openConfigDialog" data-keydown-action="openConfigDialog" data-keys="Enter, " data-prevent="1" data-arg0="governor" data-arg2="${esc(tab)}" data-stop="1">Settings → ${esc(tab)}</span>` : '';
+    }
+
+    function overviewPartitionSummaryLine(term) {
+      switch (term?.key) {
+        case 'outside':
+        case 'other':
+          return 'Outside: items Hive is configured to leave alone.';
+        case 'held':
+          return 'Held: work intentionally paused for a maintainer.';
+        case 'blocked_needs_human':
+          return 'Blocked: work waiting on a person or dependency.';
+        default:
+          return `${term?.label || term?.key || 'Bucket'}: items in this bucket.`;
+      }
+    }
+
+    function overviewPartitionGloss(row) {
+      switch (row?.key) {
+        case 'needs-direction': return 'needs direction';
+        case 'needs-decision': return 'needs decision';
+        case 'needs-spec': return 'needs spec';
+        case 'exempt-labels':
+        case 'exempt-pr-labels': return 'exempt label match';
+        case 'reporter-triage': return 'untrusted reporter';
+        case 'project-issue-filter': return 'missing required label';
+        case 'standing-meta-advisory': return 'standing advisory';
+        case 'dependency-dashboard': return 'dependency control panel';
+        case 'draft-prs': return 'draft until ready';
+        case 'issue-hold-labels':
+        case 'pr-hold-labels': return 'hold label';
+        case 'needs-human': return 'needs human';
+        case 'issue-waiting-band': return 'waiting issue gate';
+        case 'pr-blocked-band': return 'blocked PR gate';
+        default: return 'fixed bucket';
+      }
+    }
+
+    function overviewPartitionPreferredDocs(term, rows) {
+      const found = (rows || []).find(row => row && row.docsHref);
+      if (found) return found;
+      if (term?.docsHref) return term;
+      return null;
+    }
+
+    function overviewPartitionPreferredSettings(rows) {
+      return (rows || []).find(row => row && row.settingsTab) || null;
+    }
+
+    function overviewPartitionRowHTML(row) {
+      const hasCount = row && Object.prototype.hasOwnProperty.call(row, 'count') && Number.isFinite(Number(row.count));
+      const value = hasCount ? esc(String(Number(row.count))) : esc(overviewPartitionGloss(row));
+      const zero = hasCount && Number(row.count) === 0 ? ' muted' : '';
+      return `<div class="overview-partition-row${zero}"><span class="overview-partition-label">${esc(row?.label || row?.key || 'other')}</span><span class="overview-partition-count">${value}</span></div>`;
     }
 
     function overviewPartitionTooltip(term, context) {
+      const MAX_TOOLTIP_ROWS = 8;
       const rows = Array.isArray(term?.breakdown) ? term.breakdown : [];
-      const body = rows.length ? rows.map(row => {
-        const zero = Number(row.count || 0) === 0 ? ' muted' : '';
-        const setting = row.settingPath ? ` — setting: <code>${esc(row.settingPath)}</code> = <code>${esc(row.settingValue || '')}</code>` : '';
-        const change = row.howToChange ? ` — change: ${esc(row.howToChange)}` : '';
-        return `<div class="${zero}">${esc(Number(row.count || 0))} · ${esc(row.label || row.key || '')} — ${esc(row.rule || '')}${setting}${change}${overviewPartitionSettingsButton(row)}${overviewPartitionDocsLink(row)}</div>`;
-      }).join('') : `<div>${esc(term?.rule || 'Server-side partition term.')}</div>`;
-      const footer = (term?.key === 'outside')
-        ? '<div class="mt-2 text-muted">These items are not actionable because this hive&apos;s filters exclude them; adjust the settings above to change what counts.</div>'
-        : '';
-      return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip">${body}${footer}</span>`;
+      const orderedRows = rows.slice().sort((a, b) => {
+        const ac = Number(a?.count || 0) > 0 ? 0 : 1;
+        const bc = Number(b?.count || 0) > 0 ? 0 : 1;
+        return ac - bc;
+      });
+      const visibleRows = orderedRows.slice(0, MAX_TOOLTIP_ROWS);
+      const hiddenCount = Math.max(0, orderedRows.length - visibleRows.length);
+      const body = visibleRows.length
+        ? visibleRows.map(overviewPartitionRowHTML).join('')
+        : overviewPartitionRowHTML({ label: term?.label || term?.key || 'items', count: term?.count || 0 });
+      const docsRow = overviewPartitionPreferredDocs(term, rows);
+      const settingsRow = overviewPartitionPreferredSettings(rows);
+      const fixed = rows.some(row => row && !row.settingsTab) ? '<span class="text-muted">fixed buckets</span>' : '';
+      const more = hiddenCount > 0 && docsRow?.docsHref
+        ? `<a class="overview-partition-more" href="${esc(docsRow.docsHref)}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
+        : (hiddenCount > 0 ? `<span class="overview-partition-more text-muted">+${esc(String(hiddenCount))} more</span>` : '');
+      const footerParts = [overviewPartitionSettingsButton(settingsRow), overviewPartitionDocsLink(docsRow), fixed].filter(Boolean).join('');
+      const footer = footerParts ? `<span class="overview-partition-footer">${footerParts}</span>` : '';
+      return `<span id="${esc(context)}-tip" class="config-tooltip overview-partition-tooltip" role="tooltip"><span class="overview-partition-summary">${esc(overviewPartitionSummaryLine(term))}</span>${body}${more}${footer}</span>`;
     }
 
     function overviewPartitionInfo(term, context) {
@@ -23733,10 +23807,17 @@ function burnAreaChart() {
       const tipW = tip.offsetWidth || 240;
       let left = rect.left + rect.width / 2 - tipW / 2;
       const EDGE_PAD = 8;
+      const TIP_GAP = 6;
       if (left < EDGE_PAD) left = EDGE_PAD;
       if (left + tipW > window.innerWidth - EDGE_PAD) left = window.innerWidth - EDGE_PAD - tipW;
-      tip.style.top = (rect.bottom + 6) + 'px';
+      const tipH = tip.offsetHeight || 0;
+      const below = rect.bottom + TIP_GAP;
+      const above = rect.top - TIP_GAP - tipH;
+      let top = below;
+      if (tipH && below + tipH > window.innerHeight - EDGE_PAD && above >= EDGE_PAD) top = above;
+      if (tipH && top + tipH > window.innerHeight - EDGE_PAD) top = Math.max(EDGE_PAD, window.innerHeight - EDGE_PAD - tipH);
       tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
     }
     document.addEventListener('mouseover', (e) => {
       const info = e.target.closest('.config-info');
