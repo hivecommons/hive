@@ -199,6 +199,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		upgradeOutcomeRec, marker, versionHash,
 		lastBeat, beatOK, dashboardHeartbeatStaleAfter,
 	)
+	if !beatOK && spoke.HeartbeatEnabled() {
+		// A hub is configured but no beat has been attempted yet: that is
+		// genuinely "not reached", unlike a hive with no hub at all.
+		unreachable := false
+		releaseStatus.HubReachable = &unreachable
+	}
+	if versionBranch != "" && versionBranch != "unknown" {
+		releaseStatus.Channel.Branch = versionBranch
+	}
 	if marker == nil {
 		if manualAttempt := upgradeAttemptFromDashboardState(manualUpgrade); manualAttempt != nil {
 			releaseStatus.Attempt = *manualAttempt
@@ -215,6 +224,9 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		if imageSource == spoke.SelfImageSourcePodmanEnv {
 			releaseStatus.Channel.SelectorReason = "podman-self-hosted"
 			releaseStatus.Channel.SelectorDetail = "self-hosted Podman spoke; change Image= in hive.container"
+		} else if strings.TrimSpace(imageRef) == "" && deployment.Runtime == deploymentRuntimePodmanQuadlet {
+			releaseStatus.Channel.SelectorReason = "podman-self-hosted"
+			releaseStatus.Channel.SelectorDetail = "self-hosted Podman spoke; HIVE_SELF_IMAGE is not set in hive.env, so this hive cannot read its own image reference. Rerun bin/hive-podman-setup.sh (or bin/hive-podman-update.sh) to record it, then restart hive.service."
 		} else {
 			releaseStatus.Channel.SelectorReason = "unsupported"
 			releaseStatus.Channel.SelectorDetail = "Release-channel selection is available only for hub-managed spokes already following a release channel; this deployment appears self-hosted, branch-tracking, pinned, or missing hub credentials."
