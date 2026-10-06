@@ -1,1 +1,0 @@
-- Spektacular rechecks can opt into bounded, read-only discovery of declared documents through a relay proxy, retaining source-labelled evidence on each revision without bypassing approval checkpoints.
