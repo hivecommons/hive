@@ -95,14 +95,12 @@ ask which layer set any given field.
 
 #### `hive.yaml.runtime` is the boot input since #2392
 
-The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
-(`src/deploy/entrypoint.sh:989-992`) — it is a snapshot of the *result*, not an
-input. On variant-C hives nothing reads it during a normal boot.
-
-It has exactly one non-redundant role: the **disaster fallback** at
-`entrypoint.sh:152-161`, which restores from `hive.yaml.runtime` when the ConfigMap is
-missing or empty. That is a genuinely different scenario from the overlay path,
-which is why the file is still worth capturing.
+Since #2392 the entrypoint boots a Kubernetes hive from `hive.yaml.runtime`
+whenever the file exists (`src/deploy/entrypoint.sh:836-847`), whatever its
+`copy-config` variant: a variant-C init container still copies the seed first,
+and the entrypoint then copies the runtime config over it. The seed and overlay
+merge run only when the PVC has no runtime config, and the entrypoint then writes
+the merged result to `hive.yaml.runtime` (`entrypoint.sh:989-992`).
 
 `hive.yaml.runtime` and the overlay are **near-copies but not interchangeable**. The overlay
 is written secret-free on purpose (`dashboardOverlayBytes` collapses
