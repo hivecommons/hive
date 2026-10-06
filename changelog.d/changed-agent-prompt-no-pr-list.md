@@ -1,1 +1,0 @@
-- Agent kicks now state that governor-supplied PR/issue lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery only wastes an agent turn ([#10913](https://github.com/hivecommons/hive/issues/10913)).
