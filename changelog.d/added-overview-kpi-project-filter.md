@@ -1,0 +1,1 @@
+- Clicking Overview KPI tiles now filters the Projects section to matching issues and pull requests with a clearable chip and deep link.
