@@ -1,6 +1,13 @@
 name: Promote Stable Channel
 
 on:
+  # Non-schedule backstop (#10877): repository-wide schedule: delivery is
+  # starved, so also evaluate promotion after each Tagged Release run (the
+  # workflow that publishes new candidate versions); see tagged-release.yml's
+  # own workflow_run trigger (#5318). The `gate` job de-duplicates.
+  workflow_run:
+    workflows: ["Tagged Release"]
+    types: [completed]
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
@@ -52,7 +59,44 @@ env:
   EMERGENCY_FOLLOWUP_ISSUE: ${{ inputs.emergency-followup-issue || '' }}
 
 jobs:
+  gate:
+    # Non-schedule backstop (#10877): repository-wide schedule: delivery is
+    # starved (~one tick per 6-7h), so this workflow also runs when its
+    # upstream workflow completes. Bounded de-dup: skip when another run of
+    # this workflow for the same commit started within the last 30
+    # minutes (cron + event must not double-run).
+    if: >-
+      github.event_name != 'workflow_run' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'v5' )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.dedup.outputs.run }}
+    steps:
+      - name: Skip when a recent run already covers this commit
+        id: dedup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          recent=$(gh api "repos/${REPO}/actions/workflows/promote-stable.yml/runs?per_page=30&created=>=${since}" \
+            --jq "[.workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | select(true)] | length" || echo 0)
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "${recent:-0}" = "0" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${recent} recent promote-stable.yml run(s) already cover ${SHA}; skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   promote:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     # Stays hosted: src/scripts/promote-stable.sh drives `gh` (release lookups,
     # blocker-label checks, emergency follow-up comments) and the self-hosted
     # image does not ship `gh` yet (#10042). See src/docs/ci-runner-labels.md.
