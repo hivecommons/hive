@@ -13,8 +13,8 @@ import (
 // issue out of the queue until a maintainer triages it; this half makes sure
 // an unaccepted stranger's request never merges without a human, at any ACMM
 // level. A PR whose rationale traces to an unaccepted issue filed by a reporter
-// the operator does not trust receives literal `hold` plus a notice, and only
-// a person removes it — the App never auto-releases a reporter-trust hold.
+// the operator does not trust receives literal `hold` plus `needs-human` and a
+// notice, and only a person removes it — the App never auto-releases a reporter-trust hold.
 // An issue's configured acceptance label already supplies that sign-off.
 //
 // It composes with, and never replaces, the #5117 self-authorization gate:
@@ -168,17 +168,36 @@ func associationOrUnknown(association string) string {
 	return association
 }
 
+// NeedsHumanReason is the one-line reason a reporter-trust hold raises
+// needs-human with (hivecommons/hive#10773). It names the issue and the
+// untrusted reporter, not the PR author: the PR itself was opened by the hive.
+func (r ReporterTrust) NeedsHumanReason() string {
+	if !r.Held {
+		return ""
+	}
+	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s", r.Issue, r.Reporter)
+}
+
+// reporterTrustHoldLabels is the label set a reporter-trust hold applies.
+// "hold" is the enforcement; needs-human is the signal that puts the PR in
+// front of a maintainer (hivecommons/hive#10773) — without it a green, held
+// PR sits silently because nothing tells anyone it is waiting on them.
+func reporterTrustHoldLabels() []string {
+	return []string{"hold", issueNeedsHumanLabel}
+}
+
 // reporterTrustNotice is the comment left on a held PR. The person clearing
-// the hold needs to know it is about who asked, not about the code.
+// the hold needs to know it is about who asked, not about the code — and that
+// the outsider is the issue's reporter, not this PR's author.
 func reporterTrustNotice(finding ReporterTrust) string {
 	return fmt.Sprintf(`%s
 > [!IMPORTANT]
-> **Held for maintainer sign-off: the source issue reporter is not trusted.**
+> **Held for maintainer sign-off: the source issue reporter is not trusted.** (%s)
 >
-> This PR's rationale traces to %s#%d, filed by @%s (GitHub association: %s), without a configured issue acceptance label. The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
+> This PR was authored by the hive, not by an outside contributor. The **untrusted reporter** is @%s (GitHub association: %s), who filed %s#%d without a configured issue acceptance label. The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
 >
-> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
-		ReporterTrustNoticeMarker, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association))
+> Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. The `+"`%s`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
+		ReporterTrustNoticeMarker, finding.NeedsHumanReason(), finding.Reporter, associationOrUnknown(finding.Association), finding.Repo, finding.Issue, issueNeedsHumanLabel)
 }
 
 // IsReporterTrustHoldNotice reports whether a PR comment is the #9665 notice.

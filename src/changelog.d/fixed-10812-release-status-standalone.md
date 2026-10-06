@@ -1,0 +1,1 @@
+- Stop the dashboard release-status strip from warning that the hub is unreachable on hives with no hub configured, and show the built-from branch (with HIVE_SELF_IMAGE guidance on Podman) instead of "Channel unknown" when the image reference cannot be read.

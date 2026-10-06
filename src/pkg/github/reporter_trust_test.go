@@ -684,14 +684,12 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 
 	reqPath := runReporterTrustWatcher(t, c)
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "authored by the hive", "untrusted reporter", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -709,6 +707,23 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	}
 	if resp.SelfAuthorized {
 		t.Error("a human-filed issue is not a #5117 hold; the two gates must not be confused")
+	}
+}
+
+func assertReporterTrustHoldLabels(t *testing.T, applied []string) {
+	t.Helper()
+	if len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
+	}
+}
+
+func TestReporterTrustNeedsHumanReason(t *testing.T) {
+	held := ReporterTrust{Held: true, Issue: 581, Repo: "o/r", Reporter: "stranger", Association: "NONE"}
+	if got, want := held.NeedsHumanReason(), "reporter-trust hold — issue #581 filed by @stranger"; got != want {
+		t.Fatalf("NeedsHumanReason() = %q, want %q", got, want)
+	}
+	if got := (ReporterTrust{}).NeedsHumanReason(); got != "" {
+		t.Fatalf("NeedsHumanReason() on an unheld finding = %q, want empty", got)
 	}
 }
 
@@ -743,7 +758,8 @@ func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
 			labels := srv.applied()
 			comments := srv.postedComments()
 			if tc.wantHeld {
-				if len(labels) != 1 || labels[0] != "hold" || len(comments) != 1 || !IsReporterTrustHoldNotice(comments[0]) {
+				assertReporterTrustHoldLabels(t, labels)
+				if len(comments) != 1 || !IsReporterTrustHoldNotice(comments[0]) {
 					t.Fatalf("want reporter hold and notice, got labels=%v comments=%v", labels, comments)
 				}
 			} else if len(labels) != 0 || len(comments) != 0 {
@@ -795,9 +811,7 @@ func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string) bool { return true }
 	runReporterTrustWatcher(t, c)
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
-	}
+	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	var level, reporter bool
 	for _, body := range comments {
