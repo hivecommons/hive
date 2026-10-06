@@ -110,7 +110,7 @@
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
          media query overrides it with its own FAB-sized clearance. */
-      padding: var(--sp-0) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
+      padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
       margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
     }
     [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
@@ -341,10 +341,10 @@
       transition: width 0.5s ease, background 0.5s ease;
     }
 
-    /* Topbar — sticky blurred header (hub .site-header recipe). */
+    /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
-      position: sticky; top: var(--sp-0); min-height: var(--navbar-sticky-height);
-      margin: var(--sp-0) calc(-1 * var(--sp-7)) var(--sp-6);
+      position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: var(--sp-0); min-height: var(--navbar-sticky-height);
+      margin: var(--sp-0);
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--line);
@@ -845,7 +845,7 @@
         transition: opacity .22s ease;
       }
       #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
-      .oc-topbar { margin-left: calc(-1 * var(--sp-6)); }
+      .oc-topbar { left: var(--sp-0); right: var(--sp-0); margin-left: var(--sp-0); }
       body { padding-left: var(--sp-6); }
     }
     @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
@@ -13944,7 +13944,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
-        return `<button type="button" class="overview-kpi" data-action="ocNavigate" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</button>`;
+        return `<div class="overview-kpi" role="button" tabindex="0" data-action="ocNavigate" data-keydown-action="ocNavigate" data-keys="Enter, " data-prevent="1" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
       }).join('')}</div></div>`;
     }
 
