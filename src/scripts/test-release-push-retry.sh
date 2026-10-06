@@ -399,14 +399,17 @@ if guard is None:
 else:
     guard_run = guard.get("run") or ""
     # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v5,
-    # not a push. The backstop may count that publishing run, but the decide
-    # job's workflow_run filter above must still reject workflow_dispatch so
-    # the handoff cannot re-enter the release loop.
+    # not a push. The backstop may count that publishing run. #10866 also
+    # needs a backstop-primed v5 workflow_dispatch docker run to re-enter this
+    # workflow once the images exist; post-release handoffs are harmless
+    # because Unreleased is empty by then.
     if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v5"' not in guard_run:
         bad("the backstop no longer accepts v5 workflow_dispatch docker.yml publishing runs (#6380)")
+    if 'gh workflow run docker.yml --ref v5' not in guard_run:
+        bad("the backstop no longer primes docker.yml when v5 tip images are missing (#10866)")
     decide_if = dec.get("if") or ""
-    if "github.event.workflow_run.event != 'workflow_dispatch'" not in decide_if:
-        bad("decide no longer filters workflow_dispatch workflow_run events, risking a release loop (#6380)")
+    if "github.event.workflow_run.event != 'workflow_dispatch'" in decide_if:
+        bad("decide still rejects v5 workflow_dispatch docker completions, so a backstop-primed image build cannot release (#10866)")
 push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_v5"), None)
 if push_step is None:

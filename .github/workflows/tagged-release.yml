@@ -119,10 +119,11 @@ name: Tagged Release
 # Neither is a bug in the deferral itself — a superseded run genuinely must
 # not release, because its images were built from the old tree (see RACES).
 # The gap is that nothing ever comes back for the work left behind. The
-# schedule below is that "come back": it runs against v5's CURRENT tip, whose
-# images docker.yml has long since published, so it releases the accumulated
-# Unreleased section without ever tagging content the images do not contain.
-# On a healthy repo it is a no-op (Unreleased is empty => release=false).
+# schedule below is that "come back": it runs against v5's CURRENT tip. If
+# that exact tip's images are not published yet, it explicitly starts docker.yml
+# for v5 and exits green; the resulting workflow_run is then allowed to enter
+# this workflow and release if v5 is still at that published SHA. On a healthy
+# repo it is a no-op (Unreleased is empty => release=false).
 #
 # DUAL-PUBLISH (kubestellar -> hivecommons org transfer): during the transfer
 # window every publish targets BOTH ghcr.io/kubestellar and
@@ -163,16 +164,17 @@ permissions:
 
 jobs:
   decide:
-    # workflow_run: only a successful docker.yml build of a real v5 push (a
-    # workflow_dispatch build is the scratch-branch gate dance this workflow
-    # itself starts — releasing off it would be releasing off our own tail).
+    # workflow_run: only a successful docker.yml build for v5. Both push and
+    # workflow_dispatch builds count: post-release dispatches are harmless
+    # because Unreleased is already empty, and the backstop below may need to
+    # prime docker.yml manually when a busy branch's current tip has not yet
+    # published images.
     # schedule/workflow_dispatch: the #5318 backstop, which has no triggering
     # run to qualify and instead resolves v5's current tip below.
     if: >-
       github.event_name != 'workflow_run' || (
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'v5' &&
-      github.event.workflow_run.event != 'workflow_dispatch' )
+      github.event.workflow_run.head_branch == 'v5' )
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.derive.outputs.release }}
@@ -230,7 +232,8 @@ jobs:
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
             --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v5"))] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v5 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v5's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v5 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag yet. Dispatching docker.yml for v5; if v5 is still at the published SHA when that run completes, its workflow_run will continue this release opportunity (#5318)."
+            gh workflow run docker.yml --ref v5
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
