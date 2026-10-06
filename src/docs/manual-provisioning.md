@@ -1322,15 +1322,15 @@ spec:
       serviceAccountName: hive-sa
       # ── init containers — REQUIRED. The ConfigMap is mounted read-only at
       # /etc/hive-seed and copied into a WRITABLE emptyDir at /etc/hive. The hive
-      # process must WRITE /etc/hive/hive.yaml at runtime (the entrypoint seeds
-      # it, then merges the PVC overlay over it, and the dashboard's Save writes
-      # it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
+      # process must WRITE /etc/hive/hive.yaml at runtime (on first boot the entrypoint
+      # seeds it, then merges the PVC overlay over it; later boots restore it from
+      # /data/hive.yaml.runtime; the dashboard's Save writes it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
       # every config save fails with "open /etc/hive/hive.yaml: read-only file
       # system" — and dashboard-installed GitHub App auth / ACMM changes are lost.
       initContainers:
       - name: copy-config
         image: ${IMAGE}
-        command: ["sh","-c","cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi"]
+        command: ["sh","-c","if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - { name: config,          mountPath: /etc/hive-seed, readOnly: true }
         - { name: config-writable, mountPath: /etc/hive }
@@ -1540,11 +1540,17 @@ if it does not exist.
 
 ## Config precedence — the PVC overlay is authoritative
 
-At runtime the effective config is **not** the ConfigMap. The entrypoint:
+At runtime the effective config is **not** the ConfigMap. On the **first boot**
+(no non-empty `/data/hive.yaml.runtime` or legacy `/data/hive.yaml.bak`) the
+entrypoint:
 
-1. seeds `/etc/hive/hive.yaml` from the `hive-config` ConfigMap on boot, then
+1. seeds `/etc/hive/hive.yaml` from the `hive-config` ConfigMap, then
 2. merges the PVC dashboard overlay `/data/hive.yaml.dashboard` **over** it, and
 3. writes `/data/hive.yaml.runtime`.
+
+On **every later boot** it copies `/data/hive.yaml.runtime` over
+`/etc/hive/hive.yaml` and boots from that; the seed is not used and the overlay
+merge does not run. With neither file and no seed, it exits 1.
 
 The dashboard's `Config.Save()` writes the overlay. Therefore:
 
