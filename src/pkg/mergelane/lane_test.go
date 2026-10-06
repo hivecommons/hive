@@ -38,6 +38,8 @@ type fakeGH struct {
 	errs      map[string]error
 	autoLand  bool
 	pending   map[int]string
+	canUpdate map[int]bool
+	comments  map[int][]string
 	seq       int
 	calls     []string
 	counts    map[string]int
@@ -58,6 +60,8 @@ func newFake() *fakeGH {
 		errs:      map[string]error{},
 		autoLand:  true,
 		pending:   map[int]string{},
+		canUpdate: map[int]bool{},
+		comments:  map[int][]string{},
 		counts:    map[string]int{},
 		hooks:     map[string]map[int]func(){},
 	}
@@ -174,6 +178,33 @@ func (f *fakeGH) UpdateBranch(_ context.Context, _ string, n int, expectedHead s
 	return nil
 }
 
+func (f *fakeGH) ViewerCanUpdateBranch(_ context.Context, _ string, n int) (bool, error) {
+	if err := f.call("ViewerCanUpdateBranch"); err != nil {
+		return false, err
+	}
+	return f.canUpdate[n], nil
+}
+
+func (f *fakeGH) IssueCommentsContain(_ context.Context, _ string, n int, needle string) (bool, error) {
+	if err := f.call("IssueCommentsContain"); err != nil {
+		return false, err
+	}
+	for _, body := range f.comments[n] {
+		if strings.Contains(body, needle) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeGH) CreateIssueComment(_ context.Context, _ string, n int, body string) error {
+	if err := f.call("CreateIssueComment"); err != nil {
+		return err
+	}
+	f.comments[n] = append(f.comments[n], body)
+	return nil
+}
+
 func (f *fakeGH) Merge(_ context.Context, _ string, n int, head string) (string, error) {
 	if err := f.call("Merge"); err != nil {
 		return "", err
@@ -226,6 +257,7 @@ type harness struct {
 	autoMerge bool
 	paused    bool
 	override  time.Duration
+	baseSync  bool
 	blocked   func(repo string, labels []string) string
 	authErr   error
 	events    []Event
@@ -261,9 +293,10 @@ func (h *harness) options(store *Store) Options {
 			}
 			return defaultBlocked(labels)
 		},
-		Audit:  func(e Event) { h.events = append(h.events, e) },
-		Alert:  func(a Alert) { h.alerts = append(h.alerts, a) },
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ContributorBaseSyncAllowed: func(string) bool { return h.baseSync },
+		Audit:                      func(e Event) { h.events = append(h.events, e) },
+		Alert:                      func(a Alert) { h.alerts = append(h.alerts, a) },
+		Logger:                     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

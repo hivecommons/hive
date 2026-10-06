@@ -222,10 +222,11 @@ func (b *boot) serializedLaneGate(ctx context.Context, req github.LaneMergeReque
 				Client:               b.currentGitHubClient,
 				ConfigRequiredChecks: func() (map[string]bool, bool) { return b.cfg.AutoMerge.RequiredCheckSet() },
 			},
-			Strategy:         b.cfg.RepoMergeStrategy,
-			AutoMergeAllowed: b.cfg.RepoAutoMergeEnabled,
-			Paused:           b.cfg.IsRepoPaused,
-			Logger:           b.logger,
+			Strategy:                   b.cfg.RepoMergeStrategy,
+			AutoMergeAllowed:           b.cfg.RepoAutoMergeEnabled,
+			Paused:                     b.cfg.IsRepoPaused,
+			ContributorBaseSyncAllowed: func(string) bool { return b.cfg.Review.ContributorPRs.BaseSync },
+			Logger:                     b.logger,
 		})
 		if b.mergeLaneErr != nil && b.logger != nil {
 			b.logger.Error("serialized lane unavailable: hive-serialized repos get no merge", "error", b.mergeLaneErr)

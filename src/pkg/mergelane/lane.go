@@ -44,6 +44,8 @@ const (
 	ActionRestart    = "restart-reset"
 )
 
+const forkWaitCommentMarker = "<!-- hive:lane-fork-wait -->"
+
 // ErrHeadMoved is what a GitHub adapter returns when a pinned call (merge or
 // branch update) is refused because the head is no longer the pinned SHA
 // (HTTP 409 / 422 expected_head_sha mismatch).
@@ -54,6 +56,7 @@ type PullRequest struct {
 	Number         int
 	Head           string
 	Base           string
+	FromFork       bool
 	Open           bool
 	Merged         bool
 	Draft          bool
@@ -83,6 +86,10 @@ type GitHub interface {
 	// UpdateBranch merges the target branch into the PR branch, pinned to
 	// expectedHead; it never rebases or force-pushes.
 	UpdateBranch(ctx context.Context, repo string, number int, expectedHead string) error
+	// ViewerCanUpdateBranch asks whether this token can update the PR branch.
+	ViewerCanUpdateBranch(ctx context.Context, repo string, number int) (bool, error)
+	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
+	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 	// Merge is the REST merge with head pinned, no admin bypass; it returns
 	// the merge commit SHA.
 	Merge(ctx context.Context, repo string, number int, head string) (string, error)
@@ -132,6 +139,9 @@ type Options struct {
 	Strategy         func(repo string) string
 	AutoMergeAllowed func(repo string) bool
 	Paused           func(repo string) bool
+	// ContributorBaseSyncAllowed reports the owner opt-in for syncing fork PR
+	// branches. Nil is off; non-fork PRs never consult it.
+	ContributorBaseSyncAllowed func(repo string) bool
 	// Blocked returns a reason when hold, do-not-merge, exempt or pause
 	// labels are present; nil uses the shared hold/exempt label helpers.
 	Blocked func(repo string, labels []string) string
@@ -577,6 +587,9 @@ func (r *round) run() (Decision, error) {
 		return r.hold(p.Head, tip, "comparing the head with the target branch failed: "+err.Error())
 	}
 	if !contains {
+		if p.FromFork {
+			return r.forkUpdateOrLeave(p.Head, tip)
+		}
 		return r.update(p.Head, tip)
 	}
 	if v := r.l.checks(r.ctx, r.repo, r.branch, p.Head); v.outcome != ghub.CheckPassed {
@@ -640,6 +653,45 @@ func (r *round) finalCheck(head, tip string) (string, bool) {
 		return "the merge path's authorization no longer holds: " + err.Error(), false
 	}
 	return "", false
+}
+
+func (r *round) forkUpdateOrLeave(head, tip string) (Decision, error) {
+	gh := r.l.opts.GitHub
+	canUpdate, err := gh.ViewerCanUpdateBranch(r.ctx, r.repo, r.front.PR)
+	baseSync := r.l.opts.ContributorBaseSyncAllowed != nil && r.l.opts.ContributorBaseSyncAllowed(r.repo)
+	if err == nil && canUpdate && baseSync {
+		return r.update(head, tip)
+	}
+	reason := "fork pull request is behind the target branch and Hive is not allowed to update it"
+	switch {
+	case err != nil:
+		reason += ": reading viewerCanUpdateBranch failed: " + err.Error()
+	case !canUpdate && !baseSync:
+		reason += ": viewerCanUpdateBranch is false and review.contributor_prs.base_sync is disabled"
+	case !canUpdate:
+		reason += ": viewerCanUpdateBranch is false"
+	default:
+		reason += ": review.contributor_prs.base_sync is disabled"
+	}
+	if commentErr := r.ensureForkWaitComment(tip); commentErr != nil {
+		reason += "; author comment not posted: " + commentErr.Error()
+	}
+	return r.leave(head, tip, reason)
+}
+
+func (r *round) ensureForkWaitComment(tip string) error {
+	seen, err := r.l.opts.GitHub.IssueCommentsContain(r.ctx, r.repo, r.front.PR, forkWaitCommentMarker)
+	if err != nil {
+		return err
+	}
+	if seen {
+		return nil
+	}
+	body := fmt.Sprintf(`%s
+Hi! This pull request is from a fork and needs to be updated with the latest %s before Hive can merge it.
+
+Hive cannot update this fork branch unless GitHub says this token can update it and the repository owner has enabled `+"`review.contributor_prs.base_sync`"+`. Please merge the latest target branch tip (%s) into your branch, then let the required checks pass; the pull request will stay eligible for the lane.`, forkWaitCommentMarker, r.branch, short(tip))
+	return r.l.opts.GitHub.CreateIssueComment(r.ctx, r.repo, r.front.PR, body)
 }
 
 func (r *round) update(head, tip string) (Decision, error) {
