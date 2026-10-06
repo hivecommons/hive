@@ -119,10 +119,17 @@ func TestRepoMergeLaneViewShowsFrontWaitingAndEnforcement(t *testing.T) {
 	if lane["recommend_up_to_date_rule"] != true || !strings.Contains(lane["recommendation"].(string), "one CI run per merge") {
 		t.Errorf("recommendation missing: %v / %v", lane["recommend_up_to_date_rule"], lane["recommendation"])
 	}
-	reasons, _ := json.Marshal(lane["reasons"])
+	reasons, _ := lane["reasons"].([]any)
 	for _, want := range []string{holdReason, mergelane.ReasonNotAtFront, exitReason} {
-		if !strings.Contains(string(reasons), want) {
-			t.Errorf("reasons %s do not include %q", reasons, want)
+		found := false
+		for _, r := range reasons {
+			if entry, _ := r.(map[string]any); entry["reason"] == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("reasons %v do not include %q", reasons, want)
 		}
 	}
 	if *calls != 1 {

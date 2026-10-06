@@ -21628,6 +21628,167 @@
         }
       }
     },
+    "/api/repos/merge-lane": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Read one repository's serialized merge lane state",
+        "description": "Returns, for a hive-serialized repository, one entry per target branch lane: the front pull request and its stage, the waiting queue in order, the last exit, whether GitHub enforces up-to-date branches, and the reasons each pull request is held. A direct repository returns only its strategy and makes no GitHub call. Read-only.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Merge lane state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "merge_strategy": {
+                      "type": "string",
+                      "enum": [
+                        "direct",
+                        "hive-serialized"
+                      ]
+                    },
+                    "lane_error": {
+                      "type": "string"
+                    },
+                    "lanes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "branch": {
+                            "type": "string"
+                          },
+                          "front": {
+                            "type": "object",
+                            "properties": {
+                              "pr": {
+                                "type": "integer"
+                              },
+                              "path": {
+                                "type": "string"
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "stage_label": {
+                                "type": "string"
+                              },
+                              "entered_at": {
+                                "type": "string"
+                              },
+                              "deadline_at": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "waiting": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "pr": {
+                                  "type": "integer"
+                                },
+                                "position": {
+                                  "type": "integer"
+                                },
+                                "path": {
+                                  "type": "string"
+                                },
+                                "eligible_at": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "last_exit": {
+                            "type": "object",
+                            "properties": {
+                              "pr": {
+                                "type": "integer"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "enforcement": {
+                            "type": "string"
+                          },
+                          "enforcement_label": {
+                            "type": "string"
+                          },
+                          "enforcement_reason": {
+                            "type": "string"
+                          },
+                          "native_merge_queue": {
+                            "type": "boolean"
+                          },
+                          "recommend_up_to_date_rule": {
+                            "type": "boolean"
+                          },
+                          "recommendation": {
+                            "type": "string"
+                          },
+                          "reasons": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "pr": {
+                                  "type": "integer"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo, or a repo not listed in project.repos"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/merge-strategy": {
       "get": {
         "tags": [
