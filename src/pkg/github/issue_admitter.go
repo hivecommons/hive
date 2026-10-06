@@ -44,6 +44,17 @@ type ReporterTrustNoticeConfig interface {
 	ReporterTrustCommentEnabled() bool
 }
 
+// ReporterTrustClankerConfig is the optional clanker-requested side of
+// ReporterAdmitter (hivecommons/hive#10766): the switch, label and addendum
+// for steering untrusted reporters and PR authors to the contributor relay.
+// A filter that does not implement it leaves the policy off.
+type ReporterTrustClankerConfig interface {
+	ReporterTrustClankerRequestedOn() bool
+	ReporterTrustClankerRequestedLabel() string
+	ReporterTrustClankerRequestedAddendum() string
+	ReporterTrustTrusts(login, association string) bool
+}
+
 // HardSuppressClassifier is the optional configurable form of the issue
 // escalation labels that park an issue outside the actionable queue. It returns
 // the canonical bucket label (needs-human, needs-direction, needs-decision, or

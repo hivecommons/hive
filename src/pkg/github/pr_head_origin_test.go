@@ -72,7 +72,7 @@ func TestFetchPRs_PopulatesForkOrigin(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, "projectbluefin", []string{"testsuite"})
-	actionable, _, _, _, _, _, _, err := c.fetchPRs(t.Context(), "testsuite")
+	actionable, _, _, _, _, _, _, err := c.fetchPRs(t.Context(), "testsuite", nil)
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestFetchPRs_PopulatesHiveAttributed(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, "acme", []string{"app"})
-	actionable, _, heldPRs, _, _, _, _, err := c.fetchPRs(t.Context(), "app")
+	actionable, _, heldPRs, _, _, _, _, err := c.fetchPRs(t.Context(), "app", nil)
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}

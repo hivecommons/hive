@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
@@ -101,6 +103,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	// Relay provenance for the clanker-requested PR parking (#10781). The
+	// ledger is read per call because the client can be configured before
+	// it is built.
+	client.SetRelayContributor(b.relayContributor)
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
@@ -170,6 +176,26 @@ func (b *boot) reporterTrustHoldEnabled(repo string) bool {
 // the PR-side hold.
 func (b *boot) reporterTrusted(login, association string) bool {
 	return b.cfg.Project.IssueFilter.ReporterTrust.Trusted(login, association)
+}
+
+// relayContributor reports whether login holds a live contributor (relay)
+// claim, so its PRs count as relay-originated and are never parked as
+// clanker-requested.
+func (b *boot) relayContributor(login string) bool {
+	return ledgerHasContributor(b.issueClaims, login)
+}
+
+func ledgerHasContributor(ledger *claims.Ledger, login string) bool {
+	login = strings.TrimSpace(login)
+	if ledger == nil || login == "" {
+		return false
+	}
+	for _, c := range ledger.List() {
+		if c.Kind == claims.KindContributor && strings.EqualFold(strings.TrimSpace(c.Holder), login) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyGitHubClientMutationBoundary installs the external-mutation fencing

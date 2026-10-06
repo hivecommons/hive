@@ -131,3 +131,31 @@ func TestRecordAgentStartClaimsOnFirstSignal(t *testing.T) {
 	}
 	recordAgentStart(nil, "myorg", "quality", "repo", 1, github.AgentStartSignalComment, logger)
 }
+
+func TestLedgerHasContributor(t *testing.T) {
+	if ledgerHasContributor(nil, "relay-dev") {
+		t.Error("nil ledger knows no contributors")
+	}
+	l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []claims.Request{
+		{Repo: "o/r", Issue: 1, Holder: "relay-dev", HolderID: "relay-dev/s1", Kind: claims.KindContributor},
+		{Repo: "o/r", Issue: 2, Holder: "person", Kind: claims.KindHuman},
+	} {
+		if _, err := l.Claim(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !ledgerHasContributor(l, " Relay-Dev ") {
+		t.Error("contributor claim holder must count as relay provenance")
+	}
+	if ledgerHasContributor(l, "person") || ledgerHasContributor(l, "") {
+		t.Error("only contributor claims count")
+	}
+	b := &boot{issueClaims: l}
+	if !b.relayContributor("relay-dev") {
+		t.Error("boot predicate must read the ledger")
+	}
+}
