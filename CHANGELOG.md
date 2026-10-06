@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.138.1)
+
+### Fixed
+
+- dashboard: topbar up-next tiles no longer truncate long agent names such as `adjudicator` (regressed by #10770) (#10912)
+
 ## 2026-10-06 (v5.138.0)
 
 ### Added
