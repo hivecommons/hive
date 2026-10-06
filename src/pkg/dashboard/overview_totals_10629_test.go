@@ -214,6 +214,8 @@ func TestOverviewKPIRenderedMathSublineSumsToHeadline(t *testing.T) {
 	block := html[start : start+end]
 	script := `
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+` + jsFunc(t, html, "dashboardDocsHref") + `
+` + jsFunc(t, html, "dashboardDocsHrefFromPath") + `
 ` + block + `
 const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   { key: 'held', label: 'held', count: 10 },

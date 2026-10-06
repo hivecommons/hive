@@ -49,6 +49,8 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewKPIForgeTotals") + `
 ` + jsFunc(t, html, "overviewKPIBreakdownSubline") + `
 ` + jsFunc(t, html, "overviewKPITerm") + `
+` + jsFunc(t, html, "dashboardDocsHref") + `
+` + jsFunc(t, html, "dashboardDocsHrefFromPath") + `
 ` + jsFunc(t, html, "overviewPartitionDocsLink") + `
 ` + jsFunc(t, html, "overviewPartitionSettingsButton") + `
 ` + jsFunc(t, html, "overviewPartitionSummaryLine") + `
