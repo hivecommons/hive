@@ -214,7 +214,12 @@ func validateHubNotificationURL(rawURL, fieldName string) error {
 		return fmt.Errorf("%s must start with https:// or be empty", fieldName)
 	}
 	host := strings.TrimPrefix(rawURL, "https://")
-	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
+	if strings.HasPrefix(host, "[") {
+		// Bracketed IPv6 literal: keep the whole "[...]" so the prefix match sees it.
+		if end := strings.Index(host, "]"); end >= 0 {
+			host = host[:end+1]
+		}
+	} else if idx := strings.IndexAny(host, ":/"); idx >= 0 {
 		host = host[:idx]
 	}
 	host = strings.ToLower(host)
