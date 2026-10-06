@@ -93,7 +93,7 @@ writable layer and the one that wins. See `src/docs/config-layering.md` for the
 full precedence order, and `GET /api/config/provenance` on a running spoke to
 ask which layer set any given field.
 
-#### `hive.yaml.runtime` is a snapshot, not a restore source
+#### `hive.yaml.runtime` is the boot input since #2392
 
 The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
 (`src/deploy/entrypoint.sh:989-992`) — it is a snapshot of the *result*, not an
