@@ -270,12 +270,25 @@ func TestReadUpgradeOutcome(t *testing.T) {
 func TestBuildSpokeReleaseStatusStaleness(t *testing.T) {
 	fresh := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil, "",
 		time.Now().Add(-1*time.Minute), true, 6*time.Minute)
-	if !fresh.HubReachable {
+	if fresh.HubReachable == nil || !*fresh.HubReachable {
 		t.Errorf("a 1-minute-old beat must be reachable")
 	}
 	stale := buildSpokeReleaseStatus("ghcr.io/hivecommons/hive:stable", "", nil, nil, "",
 		time.Now().Add(-30*time.Minute), true, 6*time.Minute)
-	if stale.HubReachable {
+	if stale.HubReachable == nil || *stale.HubReachable {
 		t.Errorf("a 30-minute-old beat must NOT be reachable")
+	}
+	// #10812: with no heartbeat to judge (no hub configured), reachability is
+	// unknown and must be omitted, not reported as "hub not reached".
+	noHub := buildSpokeReleaseStatus("", "", nil, nil, "", time.Time{}, false, 6*time.Minute)
+	if noHub.HubReachable != nil {
+		t.Errorf("no heartbeat: HubReachable = %v, want nil", *noHub.HubReachable)
+	}
+	raw, err := json.Marshal(noHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "hubReachable") {
+		t.Errorf("no heartbeat: JSON %s must omit hubReachable so the stale warning is not shown", raw)
 	}
 }
