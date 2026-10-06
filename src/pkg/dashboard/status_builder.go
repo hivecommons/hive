@@ -1750,6 +1750,7 @@ func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
 		NextKick:   nextKick,
 		NextKickAt: nextKickAt,
 		NextKickIn: nextKickIn,
+		NextAgents: append([]string(nil), state.PendingKicks...),
 	}
 }
 

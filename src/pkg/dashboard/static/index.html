@@ -6059,7 +6059,7 @@
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now()) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -6168,6 +6168,28 @@
       const state = String(a.state || '').toLowerCase();
       return state === 'working';
     }
+    function agentTileRunningLabel(a, nowMs) {
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const started = Date.parse((a && (a.busySince || a.runningSince || a.startedAt)) || '');
+      if (!Number.isFinite(started) || started > now) return 'running';
+      const mins = Math.max(1, Math.floor((now - started) / 60000));
+      if (mins < 60) return `running ${mins}m`;
+      const hrs = Math.floor(mins / 60);
+      const rem = mins % 60;
+      return rem ? `running ${hrs}h ${rem}m` : `running ${hrs}h`;
+    }
+    function agentTileCadenceLabel(a, nowMs) {
+      const nextMs = agentCollapsedNextKickMs(a, nowMs);
+      if (!Number.isFinite(nextMs)) return '';
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      if (nextMs <= now) return '';
+      return formatKickCountdown(nextMs - now);
+    }
+    function agentTileGovernorQueue(governor) {
+      const gov = governor || (typeof window !== 'undefined' && window._lastStatus && window._lastStatus.governor) || {};
+      const raw = Array.isArray(gov.nextAgents) ? gov.nextAgents : (Array.isArray(gov.pendingKicks) ? gov.pendingKicks : []);
+      return raw.map(name => String(name || '').trim()).filter(Boolean);
+    }
     function agentCollapsedSortKey(a, index, nowMs) {
       const disabled = !a || agentIsDisabled(a);
       const active = agentTileIsRunning(a);
@@ -6180,33 +6202,46 @@
       else if (!disabled) group = 3;
       return { group, next: Number.isFinite(next) ? next : Number.POSITIVE_INFINITY, index };
     }
-    function agentTileStates(agents, nowMs) {
+    function agentTileStates(agents, nowMs, governor) {
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const queued = agentTileGovernorQueue(governor);
       const rows = (Array.isArray(agents) ? agents : []).map((agent, index) => {
         const name = (agent && (agent.name || agent.displayName)) || `agent-${index}`;
         const disabled = !agent || agentIsDisabled(agent);
         const running = agentTileIsRunning(agent);
         const nextMs = !disabled ? agentCollapsedNextKickMs(agent, now) : null;
         const continuous = !!agent && !disabled && agent.continuous === true;
-        const canBeNext = !running && !disabled && (Number.isFinite(nextMs) || continuous);
+        const queuedIndex = queued.indexOf(String(name));
+        const canBeNext = queuedIndex >= 0 && !running && !disabled;
         let group = 4;
         if (running) group = 0;
-        else if (Number.isFinite(nextMs)) group = 1;
+        else if (queuedIndex >= 0) group = 1;
+        else if (Number.isFinite(nextMs)) group = 2;
         else if (continuous) group = 2;
         else if (!disabled) group = 3;
         return {
           agent,
           id: String(name),
           label: running ? 'running' : null,
-          countdown: running ? 'now' : agentCollapsedNextLabel(agent, now),
+          countdown: running ? agentTileRunningLabel(agent, now) : agentTileCadenceLabel(agent, now),
           nextMs: Number.isFinite(nextMs) ? nextMs : null,
           running,
           canBeNext,
-          sortKey: { group, next: Number.isFinite(nextMs) ? nextMs : Number.POSITIVE_INFINITY, index }
+          queuedIndex,
+          sortKey: { group, next: queuedIndex >= 0 ? queuedIndex : (Number.isFinite(nextMs) ? nextMs : Number.POSITIVE_INFINITY), index }
         };
       }).sort((a, b) => (a.sortKey.group - b.sortKey.group) || (a.sortKey.next - b.sortKey.next) || (a.sortKey.index - b.sortKey.index));
-      const next = rows.find(row => row.canBeNext);
-      if (next) next.label = 'next';
+      const nextName = queued.find(name => {
+        const row = rows.find(item => item.id === name);
+        return row && row.canBeNext;
+      });
+      if (nextName) {
+        const next = rows.find(row => row.id === nextName);
+        if (next) {
+          next.label = 'next';
+          if (!next.countdown) next.countdown = Number.isFinite(next.nextMs) && next.nextMs > now ? formatKickCountdown(next.nextMs - now) : 'queued';
+        }
+      }
       return rows;
     }
     function sortAgentsForCollapsedTiles(agents, nowMs) {
@@ -6273,7 +6308,7 @@
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
-      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
+      const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const state = agentCollapsedStateLabel(disabled, isDown, auth);
       const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
       const label = tileState.label || null;
@@ -6281,7 +6316,7 @@
       const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
       const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-queue-index="${tileState.queuedIndex >= 0 ? String(tileState.queuedIndex) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
@@ -6292,7 +6327,14 @@
       tiles.forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        let countdown = '';
+        if (tile.getAttribute('data-agent-running') === '1') {
+          countdown = agentTileRunningLabel({ busySince: tile.getAttribute('data-agent-running-since') || '' }, now);
+        } else if (Number.isFinite(nextMs) && nextMs > now) {
+          countdown = formatKickCountdown(nextMs - now);
+        } else if (tile.getAttribute('data-agent-tile-label') === 'next') {
+          countdown = 'queued';
+        }
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
@@ -6301,9 +6343,13 @@
         const bg = Number(b.getAttribute('data-agent-sort-group')) || 0;
         const ar = String(a.getAttribute('data-agent-next-kick-ms') || '').trim();
         const br = String(b.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const aq = Number(a.getAttribute('data-agent-queue-index'));
+        const bq = Number(b.getAttribute('data-agent-queue-index'));
         const an = ar ? Number(ar) : NaN;
         const bn = br ? Number(br) : NaN;
-        return (ag - bg) || ((Number.isFinite(an) ? an : Number.POSITIVE_INFINITY) - (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY));
+        const aOrder = Number.isFinite(aq) ? aq : (Number.isFinite(an) ? an : Number.POSITIVE_INFINITY);
+        const bOrder = Number.isFinite(bq) ? bq : (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY);
+        return (ag - bg) || (aOrder - bOrder);
       });
       let nextAssigned = false;
       sortedTiles.forEach(tile => {
@@ -6329,13 +6375,13 @@
       const active = tileState.running === true || agentTileIsRunning(a);
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
-      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
+      const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const label = tileState.label || null;
       const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = `${name}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
       const labelHtml = agentTileLabelHtml(label);
-      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
     }
     function agentNavbarTileFromHtml(html) {
       const template = document.createElement('template');
@@ -6403,7 +6449,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
       wrap.hidden = list.length === 0;
       wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
       renderAgentNavbarTileDiff(wrap, list, now);
@@ -6416,7 +6462,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        let countdown = '';
+        if (tile.getAttribute('data-agent-running') === '1') {
+          countdown = agentTileRunningLabel({ busySince: tile.getAttribute('data-agent-running-since') || '' }, now);
+        } else if (Number.isFinite(nextMs) && nextMs > now) {
+          countdown = formatKickCountdown(nextMs - now);
+        } else if (tile.getAttribute('data-agent-tile-label') === 'next') {
+          countdown = 'queued';
+        }
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
@@ -6427,8 +6480,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
       ocAfterNavLayoutSettles(['agents-section'], function() { ocScrollSectionIntoView('agents-section'); });
     }
-    function agentsCollapsedTilesHtml(agents, nowMs) {
-      const list = agentTileStates(agents, nowMs);
+    function agentsCollapsedTilesHtml(agents, nowMs, governor) {
+      const list = agentTileStates(agents, nowMs, governor);
       if (!list.length) return '';
       ensureAgentsCollapsedCountdownTicker();
       return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(item => agentCollapsedTileHtml(item.agent, nowMs, item)).join('')}</span>`;
