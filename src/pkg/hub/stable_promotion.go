@@ -36,6 +36,10 @@ type MaintainedHiveSummary struct {
 	ID               string `json:"id"`
 	ImageRef         string `json:"image_ref,omitempty"`
 	GitHash          string `json:"git_hash,omitempty"`
+	// Generation is the docker.yml run number of the build the hive is
+	// running (0 when unknown), so the promotion gate can accept a hive on a
+	// later candidate as smoke evidence for an older eligible build.
+	Generation       int    `json:"generation,omitempty"`
 	LastHeartbeatAt  string `json:"last_heartbeat_at,omitempty"`
 	Healthy          bool   `json:"healthy"`
 	CrashRestarts24h int    `json:"crash_restarts_24h"`
@@ -350,14 +354,24 @@ func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []M
 		if !resolved || channel != ReleaseChannelCandidate {
 			continue
 		}
-		if candidate.SHA != "" && h.GitHash != "" && !sameCommit(h.GitHash, candidate.SHA) {
-			continue
+		// Keep every candidate-channel hive, not only those on the exact
+		// current candidate: on a busy merge day candidate moves faster than
+		// spokes auto-update, so requiring an exact match left the smoke
+		// gate with no evidence at all (#10042). The hive's build generation
+		// lets the promotion script decide whether it is new enough.
+		generation := 0
+		if h.GitHash != "" {
+			generation = ghcrTagGeneration(ghcrRepoSpoke, shortSHA(h.GitHash), s.logger)
+		}
+		if generation == 0 && candidate.SHA != "" && h.GitHash != "" && sameCommit(h.GitHash, candidate.SHA) {
+			generation = candidate.Generation
 		}
 		crashRestarts := recentAgentRestarts(h.Agents)
 		out = append(out, MaintainedHiveSummary{
 			ID:               h.ID,
 			ImageRef:         h.ImageRef,
 			GitHash:          h.GitHash,
+			Generation:       generation,
 			LastHeartbeatAt:  h.LastHeartbeat,
 			Healthy:          stablePromotionHeartbeatHealthy(h, now) && crashRestarts == 0,
 			CrashRestarts24h: crashRestarts,
