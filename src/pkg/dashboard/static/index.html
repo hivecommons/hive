@@ -22674,7 +22674,6 @@ function burnAreaChart() {
       window._lastAgents = data.agents || [];
       window._configuredAgents = data.configuredAgents || [];
       window._lastStatus = data;
-      applyDashboardFeatureVisibility();
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
           window._acmmOverride = null;
@@ -22685,6 +22684,13 @@ function burnAreaChart() {
         }
       }
       window._lastBudget = data.budget || {};
+      // Keep navigation and the live header independent of optional panels.
+      // A panel exception (for example a null collection after an upgrade)
+      // must not leave the agent tree empty or the navbar on an old snapshot.
+      ocUpdateSidebarAgents();
+      renderAgentNavbarUpNext(window._lastAgents, Date.now());
+      renderNavbarHealthBadge(document.getElementById('oc-health'), data);
+      applyDashboardFeatureVisibility();
       // Keep the fleet-breaker toggle in sync with server truth on every status
       // refresh (another operator may have engaged it, or a restart restored it).
       if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
@@ -22696,8 +22702,6 @@ function burnAreaChart() {
       if (hiveIdBadge) hiveIdBadge.textContent = hiveId;
       const ocHiveId = document.getElementById('oc-hive-id');
       if (ocHiveId) ocHiveId.textContent = hiveId;
-      // Update Light health badge with hover detail
-      renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -22725,7 +22729,6 @@ function burnAreaChart() {
       renderHiveAdvice(data.hiveAdvice || null);
       renderFleetReport(data.fleetReport || null);
       renderSystemGauges(data.systemResources || null);
-      ocUpdateSidebarAgents();
       renderDebugSection();
       renderFAQ();
       initializeDashboardSectionCards();

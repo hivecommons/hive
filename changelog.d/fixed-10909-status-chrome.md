@@ -1,0 +1,1 @@
+- Refresh the dashboard agent sidebar, scheduled-agent navbar tiles, and health badge before optional panels, so a panel render error cannot leave those surfaces empty or stale ([#10909](https://github.com/hivecommons/hive/issues/10909)).
