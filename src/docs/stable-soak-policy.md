@@ -45,12 +45,14 @@ The workflow moves `stable` to that build only when these hard gates pass:
    healthy heartbeat with zero crash restarts in the soak window. The preferred
    evidence is a maintained hive on the exact build being promoted. When `v5` is
    busy and the exact build has already been superseded, the workflow may use a
-   healthy maintained hive on the current, later `candidate` in the same
-   monotonic `v5` docker.yml lineage: surviving a later build is conservative
-   smoke evidence for an older build in the same line, and it is never used to
-   justify a younger build. If the hub is reachable but returns no maintained
-   hive summaries, the smoke-signal gate holds the selected build until evidence
-   is available.
+   healthy maintained hive on any later `candidate` build in the same monotonic
+   `v5` docker.yml lineage — not only the current one, since on a busy day
+   `candidate` moves faster than spokes auto-update (#10042). The hub reports
+   each candidate-channel hive's build generation; surviving a later build is
+   conservative smoke evidence for an older build in the same line, and it is
+   never used to justify a younger build. If the hub is reachable but returns no
+   maintained hive summaries, the smoke-signal gate holds the selected build
+   until evidence is available.
 
 If any hard gate fails, the run exits successfully without moving `stable` and
 prints which gate is holding which build. Those gates are the only normal reasons
