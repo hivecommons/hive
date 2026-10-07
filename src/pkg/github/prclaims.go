@@ -1464,6 +1464,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		if claim.ExternalAuthor || claim.Reference {
 			if claim.ExternalAuthor && !claim.MergedPR {
 				suppressed++
+				appendRepoWorkIssueDetail(result, issue, "claimed_by_pr", fmt.Sprintf("Open external PR #%d covers this issue", claim.PRNumber))
 				if logger != nil {
 					logger.Info("suppressing issue: open external PR covers it",
 						"repo", issue.Repo,
@@ -1495,6 +1496,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			continue
 		}
 		suppressed++
+		appendRepoWorkIssueDetail(result, issue, "claimed_by_pr", fmt.Sprintf("Open hive-authored PR #%d already claims this issue", claim.PRNumber))
 		if logger != nil {
 			logger.Info("suppressing issue already claimed by a hive PR",
 				"repo", issue.Repo,

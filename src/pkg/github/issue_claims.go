@@ -174,6 +174,7 @@ func FilterLiveIssueClaims(result *ActionableResult, now time.Time, logger *slog
 			continue
 		}
 		withheld++
+		appendRepoWorkIssueDetail(result, issue, "claimed", "Live issue claim by "+claim.Identity)
 		if logger != nil {
 			logger.Info("withholding issue: live issue claim",
 				"repo", issue.Repo, "issue", issue.Number,
