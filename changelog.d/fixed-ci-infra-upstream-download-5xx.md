@@ -1,1 +1,0 @@
-- The CI infra classifier now recognises a transient HTTP 5xx from a tool download (`curl: (22) ... error: 500` while installing `just` from github.com releases) as `infra:upstream-download-5xx`, so the rerun guard retries the job instead of leaving the branch red; 4xx responses still count as code failures.
