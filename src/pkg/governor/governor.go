@@ -91,6 +91,9 @@ type BudgetInfo struct {
 	CoinLimit     float64          `json:"coin_limit,omitempty"`
 	CoinSpend     float64          `json:"coin_spend,omitempty"`
 	CoinLabel     string           `json:"coin_label,omitempty"`
+	USDLimit      float64          `json:"usd_limit,omitempty"`
+	USDSpend      float64          `json:"usd_spend,omitempty"`
+	ExhaustedUnit string           `json:"exhausted_unit,omitempty"`
 	ByAgent       map[string]int64 `json:"by_agent"`
 	ByModel       map[string]int64 `json:"by_model"`
 	IgnoredAgents []string         `json:"ignored_agents"`
@@ -107,6 +110,9 @@ type BudgetInfo struct {
 	// CoinWindowBaseline is the lifetime coin total observed when the current
 	// window opened, for coin-budget backends such as Bob.
 	CoinWindowBaseline float64 `json:"coin_window_baseline,omitempty"`
+	// USDWindowBaseline is the lifetime Bob-equivalent USD total observed when
+	// the current window opened.
+	USDWindowBaseline float64 `json:"usd_window_baseline,omitempty"`
 }
 
 // BudgetWindowDuration is the DEFAULT length of one budget accounting
@@ -186,7 +192,8 @@ type State struct {
 	// BudgetExhausted mirrors the budget gate as of the last eval: the
 	// weekly limit is set and window spend has reached it, so kicks for
 	// non-exempt agents are suppressed.
-	BudgetExhausted bool `json:"budget_exhausted"`
+	BudgetExhausted     bool   `json:"budget_exhausted"`
+	BudgetExhaustedUnit string `json:"budget_exhausted_unit,omitempty"`
 }
 
 // ContinuousState is the governor's in-memory schedule/backoff for one agent
@@ -466,7 +473,8 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 		}
 	}
 
-	g.state.BudgetExhausted = g.budgetExhausted()
+	g.state.BudgetExhaustedUnit = g.budgetExhaustedUnitLocked()
+	g.state.BudgetExhausted = g.state.BudgetExhaustedUnit != ""
 
 	g.continuousAllowInitialCadence = firstEval
 	due := g.agentsDueForKick()
@@ -839,11 +847,36 @@ func (g *Governor) resolveCadence(modeName, agentName string) (config.Cadence, b
 // WeeklyLimit == 0 means budgeting is entirely off; IgnoreAll keeps the
 // limit and alerts but opens the kick gate. Caller must hold g.mu.
 func (g *Governor) budgetExhausted() bool {
+	return g.budgetExhaustedUnitLocked() != ""
+}
+
+func (g *Governor) budgetExhaustedUnitLocked() string {
 	if g.budget.IgnoreAll {
+		return ""
+	}
+	current := strings.TrimSpace(g.budget.ExhaustedUnit)
+	if current != "" && g.budgetUnitExhaustedLocked(current) {
+		return current
+	}
+	for _, unit := range []string{"tokens", "coins", "usd"} {
+		if g.budgetUnitExhaustedLocked(unit) {
+			return unit
+		}
+	}
+	return ""
+}
+
+func (g *Governor) budgetUnitExhaustedLocked(unit string) bool {
+	switch unit {
+	case "tokens":
+		return g.budget.WeeklyLimit > 0 && g.budget.CurrentSpend >= g.budget.WeeklyLimit
+	case "coins":
+		return g.budget.CoinLimit > 0 && g.budget.CoinSpend >= g.budget.CoinLimit
+	case "usd":
+		return g.budget.USDLimit > 0 && g.budget.USDSpend >= g.budget.USDLimit
+	default:
 		return false
 	}
-	return (g.budget.WeeklyLimit > 0 && g.budget.CurrentSpend >= g.budget.WeeklyLimit) ||
-		(g.budget.CoinLimit > 0 && g.budget.CoinSpend >= g.budget.CoinLimit)
 }
 
 func (g *Governor) agentsDueForKick() []string {
@@ -1112,6 +1145,9 @@ func (g *Governor) continuousBudgetBlockedLocked(ac config.AgentConfig) bool {
 		return false
 	}
 	if g.budget.CoinLimit > 0 && g.budget.CoinSpend >= g.budget.CoinLimit {
+		return true
+	}
+	if g.budget.USDLimit > 0 && g.budget.USDSpend >= g.budget.USDLimit {
 		return true
 	}
 	if g.budget.WeeklyLimit <= 0 {
@@ -1430,18 +1466,19 @@ func (g *Governor) GetState() State {
 		continuous[k] = v
 	}
 	return State{
-		Mode:            g.state.Mode,
-		RepoModes:       repoModes,
-		QueueIssues:     g.state.QueueIssues,
-		QueuePRs:        g.state.QueuePRs,
-		QueueHold:       g.state.QueueHold,
-		Cadences:        cadences,
-		LastKick:        lastKick,
-		Continuous:      continuous,
-		PendingKicks:    append([]string(nil), g.state.PendingKicks...),
-		LastEval:        g.state.LastEval,
-		SLAViolations:   g.state.SLAViolations,
-		BudgetExhausted: g.state.BudgetExhausted,
+		Mode:                g.state.Mode,
+		RepoModes:           repoModes,
+		QueueIssues:         g.state.QueueIssues,
+		QueuePRs:            g.state.QueuePRs,
+		QueueHold:           g.state.QueueHold,
+		Cadences:            cadences,
+		LastKick:            lastKick,
+		Continuous:          continuous,
+		PendingKicks:        append([]string(nil), g.state.PendingKicks...),
+		LastEval:            g.state.LastEval,
+		SLAViolations:       g.state.SLAViolations,
+		BudgetExhausted:     g.state.BudgetExhausted,
+		BudgetExhaustedUnit: g.state.BudgetExhaustedUnit,
 	}
 }
 
@@ -1669,6 +1706,9 @@ func (g *Governor) GetBudget() BudgetInfo {
 		CoinLimit:          g.budget.CoinLimit,
 		CoinSpend:          g.budget.CoinSpend,
 		CoinLabel:          g.budget.CoinLabel,
+		USDLimit:           g.budget.USDLimit,
+		USDSpend:           g.budget.USDSpend,
+		ExhaustedUnit:      g.budgetExhaustedUnitLocked(),
 		ByAgent:            byAgent,
 		ByModel:            byModel,
 		IgnoredAgents:      ignored,
@@ -1676,6 +1716,7 @@ func (g *Governor) GetBudget() BudgetInfo {
 		ResetAt:            g.budget.ResetAt,
 		WindowBaseline:     g.budget.WindowBaseline,
 		CoinWindowBaseline: g.budget.CoinWindowBaseline,
+		USDWindowBaseline:  g.budget.USDWindowBaseline,
 	}
 }
 
@@ -1721,6 +1762,11 @@ func (g *Governor) BudgetLevel() BudgetTransitions {
 		trans.WarnActive = trans.WarnActive || g.budget.CoinSpend >= warnThreshold
 		trans.ExhaustedActive = trans.ExhaustedActive || g.budget.CoinSpend >= g.budget.CoinLimit
 	}
+	if g.budget.USDLimit > 0 {
+		warnThreshold := g.budget.USDLimit * float64(g.budgetWarnPct()) / percentDenominator
+		trans.WarnActive = trans.WarnActive || g.budget.USDSpend >= warnThreshold
+		trans.ExhaustedActive = trans.ExhaustedActive || g.budget.USDSpend >= g.budget.USDLimit
+	}
 	return trans
 }
 
@@ -1734,6 +1780,10 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 }
 
 func (g *Governor) UpdateBudgetFromTotalsAndCoins(totalTokens int64, byAgent map[string]int64, byModel map[string]int64, totalCoins float64) BudgetTransitions {
+	return g.UpdateBudgetFromTotalsCoinsAndUSD(totalTokens, byAgent, byModel, totalCoins, 0)
+}
+
+func (g *Governor) UpdateBudgetFromTotalsCoinsAndUSD(totalTokens int64, byAgent map[string]int64, byModel map[string]int64, totalCoins, totalUSD float64) BudgetTransitions {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -1744,10 +1794,13 @@ func (g *Governor) UpdateBudgetFromTotalsAndCoins(totalTokens int64, byAgent map
 		g.budget.ResetAt = now
 		g.budget.WindowBaseline = totalTokens
 		g.budget.CoinWindowBaseline = totalCoins
+		g.budget.USDWindowBaseline = totalUSD
 	} else if now.Sub(g.budget.ResetAt) >= g.budgetWindowDuration() {
 		g.budget.ResetAt = now
 		g.budget.WindowBaseline = totalTokens
 		g.budget.CoinWindowBaseline = totalCoins
+		g.budget.USDWindowBaseline = totalUSD
+		g.budget.ExhaustedUnit = ""
 		g.budgetWarned = false
 		g.budgetExhaustedAlerted = false
 		trans.Rolled = true
@@ -1767,8 +1820,12 @@ func (g *Governor) UpdateBudgetFromTotalsAndCoins(totalTokens int64, byAgent map
 	if totalCoins < g.budget.CoinWindowBaseline {
 		g.budget.CoinWindowBaseline = totalCoins
 	}
+	if totalUSD < g.budget.USDWindowBaseline {
+		g.budget.USDWindowBaseline = totalUSD
+	}
 	g.budget.CurrentSpend = totalTokens - g.budget.WindowBaseline
 	g.budget.CoinSpend = totalCoins - g.budget.CoinWindowBaseline
+	g.budget.USDSpend = totalUSD - g.budget.USDWindowBaseline
 
 	// ByAgent/ByModel remain lifetime totals: window-relative breakdowns
 	// would need per-key baselines and these maps are informational only.
@@ -1791,9 +1848,19 @@ func (g *Governor) UpdateBudgetFromTotalsAndCoins(totalTokens int64, byAgent map
 		trans.WarnActive = trans.WarnActive || g.budget.CoinSpend >= warnThreshold
 		trans.ExhaustedActive = trans.ExhaustedActive || g.budget.CoinSpend >= g.budget.CoinLimit
 	}
+	if g.budget.USDLimit > 0 {
+		warnThreshold := g.budget.USDLimit * float64(g.budgetWarnPct()) / percentDenominator
+		trans.WarnActive = trans.WarnActive || g.budget.USDSpend >= warnThreshold
+		trans.ExhaustedActive = trans.ExhaustedActive || g.budget.USDSpend >= g.budget.USDLimit
+	}
 	if trans.WarnActive && !g.budgetWarned {
 		g.budgetWarned = true
 		trans.WarnCrossed = true
+	}
+	if unit := g.budgetExhaustedUnitLocked(); unit != "" {
+		g.budget.ExhaustedUnit = unit
+	} else {
+		g.budget.ExhaustedUnit = ""
 	}
 	if trans.ExhaustedActive && !g.budgetExhaustedAlerted {
 		g.budgetExhaustedAlerted = true
@@ -1833,6 +1900,13 @@ func (g *Governor) SeedCoinBudget(spend, baseline float64) {
 	g.budget.CoinWindowBaseline = baseline
 }
 
+func (g *Governor) SeedUSDBudget(spend, baseline float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.budget.USDSpend = spend
+	g.budget.USDWindowBaseline = baseline
+}
+
 func (g *Governor) SetBudgetLimit(limit int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -1844,6 +1918,12 @@ func (g *Governor) SetCoinBudget(limit float64, label string) {
 	defer g.mu.Unlock()
 	g.budget.CoinLimit = limit
 	g.budget.CoinLabel = label
+}
+
+func (g *Governor) SetUSDBudget(limit float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.budget.USDLimit = limit
 }
 
 // ResetBudgetWindow opens a fresh budget window immediately, without waiting
@@ -1864,10 +1944,14 @@ func (g *Governor) ResetBudgetWindow() {
 	g.budget.CurrentSpend = 0
 	g.budget.CoinWindowBaseline += g.budget.CoinSpend
 	g.budget.CoinSpend = 0
+	g.budget.USDWindowBaseline += g.budget.USDSpend
+	g.budget.USDSpend = 0
+	g.budget.ExhaustedUnit = ""
 	g.budget.ResetAt = g.now()
 	g.budgetWarned = false
 	g.budgetExhaustedAlerted = false
 	g.state.BudgetExhausted = false
+	g.state.BudgetExhaustedUnit = ""
 }
 
 // SetBudgetIgnoreAll toggles the global budget-suppression bypass.

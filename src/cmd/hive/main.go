@@ -2450,10 +2450,11 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.gov.SeedLastKicks(b.saved.LastKicks)
 			b.logger.Info("governor last kicks restored", "agents", len(b.saved.LastKicks))
 		}
-		if b.saved.BudgetSpend > 0 || b.saved.CoinBudgetSpend > 0 || !b.saved.BudgetResetAt.IsZero() || len(b.saved.BudgetByAgent) > 0 {
+		if b.saved.BudgetSpend > 0 || b.saved.CoinBudgetSpend > 0 || b.saved.USDBudgetSpend > 0 || !b.saved.BudgetResetAt.IsZero() || len(b.saved.BudgetByAgent) > 0 {
 			b.gov.SeedBudget(b.saved.BudgetSpend, b.saved.BudgetByAgent, b.saved.BudgetByModel, b.saved.BudgetResetAt)
 			b.gov.SeedBudgetWindowBaseline(b.saved.BudgetWindowBaseline)
 			b.gov.SeedCoinBudget(b.saved.CoinBudgetSpend, b.saved.CoinWindowBaseline)
+			b.gov.SeedUSDBudget(b.saved.USDBudgetSpend, b.saved.USDWindowBaseline)
 			b.logger.Info("budget state restored", "spend", b.saved.BudgetSpend, "reset_at", b.saved.BudgetResetAt, "window_baseline", b.saved.BudgetWindowBaseline)
 		}
 		if len(b.saved.KickHistory) > 0 {
@@ -2499,6 +2500,13 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 
 	if b.gov.GetBudget().WeeklyLimit == 0 && b.cfg.Governor.Budget.TotalTokens > 0 {
 		b.gov.SetBudgetLimit(b.cfg.Governor.Budget.TotalTokens)
+	}
+	if b.cfg.Governor.Budget.USD > 0 {
+		limit := b.cfg.Governor.Budget.USD
+		if b.saved != nil && b.saved.USDBudgetLimit > 0 {
+			limit = b.saved.USDBudgetLimit
+		}
+		b.gov.SetUSDBudget(limit)
 	}
 	if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig("bob"); ok {
 		limit := coinCfg.Budget
@@ -3723,6 +3731,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
 			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
 		}
+		b.gov.SetUSDBudget(b.cfg.Governor.Budget.USD)
 		// A reload can add or archive repos, which moves every scaled default
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
@@ -6507,11 +6516,12 @@ func runEvalCycle(
 	trans := gov.BudgetLevel()
 	if tokenCollector != nil {
 		if summary := tokenCollector.Summary(); summary != nil {
-			var bobCoins float64
+			var bobCoins, bobUSD float64
 			if coinCfg, ok := cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
 				bobCoins = coinCfg.TokensToCoins(tokensForBackend(summary, tokens.BackendBob))
+				bobUSD = coinCfg.CoinsToUSD(bobCoins)
 			}
-			trans = gov.UpdateBudgetFromTotalsAndCoins(summary.TotalTokens, summary.ByAgent, summary.ByModel, bobCoins)
+			trans = gov.UpdateBudgetFromTotalsCoinsAndUSD(summary.TotalTokens, summary.ByAgent, summary.ByModel, bobCoins, bobUSD)
 		}
 	}
 	applyBudgetAlerts(gov, trans, dashSrv, notifier)
@@ -7437,8 +7447,11 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 		CoinBudgetLimit:      budget.CoinLimit,
 		CoinBudgetSpend:      budget.CoinSpend,
 		CoinBudgetLabel:      budget.CoinLabel,
+		USDBudgetLimit:       budget.USDLimit,
+		USDBudgetSpend:       budget.USDSpend,
 		BudgetWindowBaseline: budget.WindowBaseline,
 		CoinWindowBaseline:   budget.CoinWindowBaseline,
+		USDWindowBaseline:    budget.USDWindowBaseline,
 		KickHistory:          kickEntries,
 		LastEval:             govState.LastEval,
 		ACMMLevel:            cfg.ACMMLevel,

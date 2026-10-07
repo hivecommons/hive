@@ -61,6 +61,11 @@ type costResponse struct {
 	CoinLabel      string        `json:"coin_label,omitempty"`
 	CoinBudget     *float64      `json:"coin_budget,omitempty"`
 	CoinsRemaining *float64      `json:"coins_remaining,omitempty"`
+	CoinUSD        float64       `json:"coin_usd,omitempty"`
+	CoinBudgetUSD  *float64      `json:"coin_budget_usd,omitempty"`
+	USDBudget      *float64      `json:"usd_budget,omitempty"`
+	USDRemaining   *float64      `json:"usd_remaining,omitempty"`
+	USDBudgetCoins *float64      `json:"usd_budget_coins,omitempty"`
 	// Native per-gateway spend where a metered backend reports it.
 	Gateways []gatewayCost `json:"gateways"`
 	// PriceTableDate / disclaimer travel with the payload so the UI can label
@@ -99,6 +104,11 @@ type costEstimated struct {
 	CoinLabel      string           `json:"coin_label,omitempty"`
 	CoinBudget     *float64         `json:"coin_budget,omitempty"`
 	CoinsRemaining *float64         `json:"coins_remaining,omitempty"`
+	CoinUSD        float64          `json:"coin_usd,omitempty"`
+	CoinBudgetUSD  *float64         `json:"coin_budget_usd,omitempty"`
+	USDBudget      *float64         `json:"usd_budget,omitempty"`
+	USDRemaining   *float64         `json:"usd_remaining,omitempty"`
+	USDBudgetCoins *float64         `json:"usd_budget_coins,omitempty"`
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
@@ -162,6 +172,11 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	resp.CoinLabel = resp.Estimated.CoinLabel
 	resp.CoinBudget = resp.Estimated.CoinBudget
 	resp.CoinsRemaining = resp.Estimated.CoinsRemaining
+	resp.CoinUSD = resp.Estimated.CoinUSD
+	resp.CoinBudgetUSD = resp.Estimated.CoinBudgetUSD
+	resp.USDBudget = resp.Estimated.USDBudget
+	resp.USDRemaining = resp.Estimated.USDRemaining
+	resp.USDBudgetCoins = resp.Estimated.USDBudgetCoins
 
 	// --- Merged-PR / closed-issue counts (for cost-per-PR / cost-per-issue) ---
 	if s.deps != nil && s.deps.MetricsCollector != nil {
@@ -244,6 +259,7 @@ func (s *Server) applyCoinEstimate(summary *tokens.AggregateSummary, est *costEs
 		}
 	}
 	est.CoinLabel = coinCfg.LabelOrDefault()
+	est.CoinUSD = coinCfg.CoinsToUSD(est.Coins)
 	if coinCfg.Budget > 0 {
 		budget := coinCfg.Budget
 		remaining := budget - est.Coins
@@ -252,6 +268,19 @@ func (s *Server) applyCoinEstimate(summary *tokens.AggregateSummary, est *costEs
 		}
 		est.CoinBudget = &budget
 		est.CoinsRemaining = &remaining
+		budgetUSD := coinCfg.CoinsToUSD(budget)
+		est.CoinBudgetUSD = &budgetUSD
+	}
+	if s.deps.Config.Governor.Budget.USD > 0 {
+		budget := s.deps.Config.Governor.Budget.USD
+		remaining := budget - est.CoinUSD
+		if remaining < 0 {
+			remaining = 0
+		}
+		equivCoins := coinCfg.USDToCoins(budget)
+		est.USDBudget = &budget
+		est.USDRemaining = &remaining
+		est.USDBudgetCoins = &equivCoins
 	}
 	for i := range est.ByAgent {
 		est.ByAgent[i].Coins = byAgent[est.ByAgent[i].Name]

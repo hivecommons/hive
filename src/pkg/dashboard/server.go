@@ -997,6 +997,10 @@ type FrontendBudget struct {
 	CoinsUsed       float64 `json:"COINS_USED,omitempty"`
 	CoinsRemaining  float64 `json:"COINS_REMAINING,omitempty"`
 	CoinLabel       string  `json:"COIN_LABEL,omitempty"`
+	USDBudget       float64 `json:"USD_BUDGET,omitempty"`
+	USDUsed         float64 `json:"USD_USED,omitempty"`
+	USDRemaining    float64 `json:"USD_REMAINING,omitempty"`
+	ExhaustedUnit   string  `json:"BUDGET_EXHAUSTED_UNIT,omitempty"`
 	PctUsed         float64 `json:"BUDGET_PCT_USED"`
 	BurnRateHourly  float64 `json:"BURN_RATE_HOURLY"`
 	BurnRateInstant float64 `json:"BURN_RATE_INSTANT"`

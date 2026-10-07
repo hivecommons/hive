@@ -29,10 +29,13 @@ type PersistedState struct {
 	CoinBudgetLimit  float64                              `json:"coin_budget_limit,omitempty"`
 	CoinBudgetSpend  float64                              `json:"coin_budget_spend,omitempty"`
 	CoinBudgetLabel  string                               `json:"coin_budget_label,omitempty"`
+	USDBudgetLimit   float64                              `json:"usd_budget_limit,omitempty"`
+	USDBudgetSpend   float64                              `json:"usd_budget_spend,omitempty"`
 	// BudgetWindowBaseline is the lifetime token total at the start of the
 	// current budget window (see governor.BudgetInfo.WindowBaseline).
 	BudgetWindowBaseline int64            `json:"budget_window_baseline,omitempty"`
 	CoinWindowBaseline   float64          `json:"coin_window_baseline,omitempty"`
+	USDWindowBaseline    float64          `json:"usd_window_baseline,omitempty"`
 	KickHistory          []GovKickEntry   `json:"kick_history,omitempty"`
 	LastEval             time.Time        `json:"last_eval,omitempty"`
 	ACMMLevel            *int             `json:"acmm_level,omitempty"`
