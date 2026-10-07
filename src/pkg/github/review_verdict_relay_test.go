@@ -185,6 +185,26 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWithoutDispatchState(t *testin
 	}
 }
 
+func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 2, review.PerspectiveSecurity, "reviewer"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 || artifact.Items[0].Repo != "o/r" || artifact.Items[0].Number != 1 || artifact.Items[0].HeadSHA != "abc123" {
+		t.Fatalf("advisory verdict with unrelated dispatch state was not collected: %+v", artifact.Items)
+	}
+}
+
 func TestRecordReviewVerdictRejectsAdvisoryVerdictWithoutHead(t *testing.T) {
 	dir := t.TempDir()
 	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath

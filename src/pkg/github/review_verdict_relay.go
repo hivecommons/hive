@@ -183,7 +183,15 @@ func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewReques
 		}
 		return true, "", r.HeadSHA
 	}
-	return false, "no_matching_dispatch", ""
+	// Queue-mode reviewer prompts can reach the relay through the ordinary
+	// PR-list comment path rather than a review-swarm dispatch. That still is
+	// an authorized hive-review request, and with an explicit head SHA it is
+	// precise enough to record as an advisory verdict. Without this fallback,
+	// contributor PRs that were actually reviewed stayed permanently
+	// "awaiting review approval", and combined verdict arrays from the
+	// reviewer recorded only the one perspective whose dispatch happened to be
+	// assigned to that same agent.
+	return advisoryVerdictAuthorized(report, req)
 }
 
 func advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
