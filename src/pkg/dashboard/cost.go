@@ -72,16 +72,20 @@ type costResponse struct {
 	// the estimate without hardcoding the date.
 	PriceTableDate string `json:"price_table_date"`
 	Disclaimer     string `json:"disclaimer"`
-	// MergedPRs / ClosedIssues are hive-attributed all-time counts for the
-	// primary repo. The UI divides the same Estimated.TotalUSD it displays by
-	// these counts to derive cost-per-PR / cost-per-issue (issue #4110).
+	// MergedPRs / ClosedIssues are hive-attributed counts for the primary repo
+	// over the same persisted cost-history window the UI uses as the numerator.
+	// The UI divides the displayed estimate by these counts to derive
+	// cost-per-PR / cost-per-issue (issue #4110).
 	// Zero means "no data yet" (collector hasn't run, GitHub is unreachable, or
 	// no configured hive author has outcomes); the UI shows "—" rather than
 	// treating it as a real zero denominator.
-	MergedPRs    int    `json:"merged_prs"`
-	ClosedIssues int    `json:"closed_issues"`
-	CountAuthor  string `json:"count_author,omitempty"`
-	CountBasis   string `json:"count_basis,omitempty"`
+	MergedPRs        int    `json:"merged_prs"`
+	ClosedIssues     int    `json:"closed_issues"`
+	CountAuthor      string `json:"count_author,omitempty"`
+	CountBasis       string `json:"count_basis,omitempty"`
+	CountWindowStart int64  `json:"count_window_start,omitempty"`
+	CountWindowEnd   int64  `json:"count_window_end,omitempty"`
+	CountUpdatedAt   string `json:"count_updated_at,omitempty"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -179,14 +183,26 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	resp.USDBudgetCoins = resp.Estimated.USDBudgetCoins
 
 	// --- Merged-PR / closed-issue counts (for cost-per-PR / cost-per-issue) ---
+	haveCountSnapshot := false
 	if s.deps != nil && s.deps.MetricsCollector != nil {
 		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); counts != nil {
+			haveCountSnapshot = true
 			resp.MergedPRs = counts.MergedPRs
 			resp.ClosedIssues = counts.ClosedIssues
 			resp.CountAuthor = counts.Author
 			resp.CountBasis = counts.Basis
+			resp.CountUpdatedAt = counts.UpdatedAt
+			if counts.WindowStart != "" {
+				if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
+					resp.CountWindowStart = t.UnixMilli()
+				}
+			}
 		}
 	}
+	if !haveCountSnapshot && resp.CountWindowStart == 0 {
+		resp.CountWindowStart = s.costCountWindowStart()
+	}
+	resp.CountWindowEnd = time.Now().UnixMilli()
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {
@@ -202,6 +218,17 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, resp)
+}
+
+func (s *Server) costCountWindowStart() int64 {
+	history := s.CostHistory()
+	if len(history) > 0 {
+		return history[0].Timestamp
+	}
+	if est := s.estimatedCost(); est.WindowStart > 0 {
+		return est.WindowStart
+	}
+	return 0
 }
 
 // estimatedCost computes the estimated per-model / per-agent breakdown (and the

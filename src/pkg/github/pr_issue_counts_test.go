@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestComputePRIssueCounts(t *testing.T) {
@@ -49,6 +50,32 @@ func TestComputePRIssueCounts(t *testing.T) {
 	}
 	if counts.Author != "hive-bot[bot]" || counts.Basis != "hive-attributed" {
 		t.Errorf("attribution metadata = (%q,%q), want hive author/basis", counts.Author, counts.Basis)
+	}
+}
+
+func TestComputePRIssueCountsSinceScopesOutcomeDates(t *testing.T) {
+	since := time.Date(2026, 7, 31, 9, 17, 0, 0, time.UTC)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "type:pr") && !strings.Contains(q, "merged:>=2026-07-31") {
+			t.Fatalf("merged PR query missing window: %q", q)
+		}
+		if strings.Contains(q, "type:issue") && !strings.Contains(q, "closed:>=2026-07-31") {
+			t.Fatalf("closed issue query missing window: %q", q)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	counts, err := c.ComputePRIssueCountsSince(context.Background(), "repo1", "hive-bot[bot]", since)
+	if err != nil {
+		t.Fatalf("ComputePRIssueCountsSince: %v", err)
+	}
+	if counts.WindowStart != since.Format(time.RFC3339) {
+		t.Fatalf("WindowStart = %q, want %q", counts.WindowStart, since.Format(time.RFC3339))
 	}
 }
 

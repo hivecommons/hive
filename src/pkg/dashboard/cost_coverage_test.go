@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -306,9 +307,10 @@ func TestCov_SourceForPriced(t *testing.T) {
 
 func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	s, deps := covServer(t)
+	window := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
 	deps.MetricsCollector = &MetricsCollector{
 		metrics:       make(map[string]any),
-		prIssueCounts: &ghpkg.PRIssueCounts{MergedPRs: 9, ClosedIssues: 4, UpdatedAt: "2026-08-18T00:00:00Z", Author: "hive-bot[bot]", Basis: "hive-attributed"},
+		prIssueCounts: &ghpkg.PRIssueCounts{MergedPRs: 9, ClosedIssues: 4, UpdatedAt: "2026-08-18T00:00:00Z", Author: "hive-bot[bot]", Basis: "hive-attributed", WindowStart: window.Format(time.RFC3339)},
 	}
 
 	rec := doGet(s, "/api/cost")
@@ -327,6 +329,9 @@ func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	}
 	if resp.CountAuthor != "hive-bot[bot]" || resp.CountBasis != "hive-attributed" {
 		t.Errorf("count metadata = (%q,%q), want hive author/basis", resp.CountAuthor, resp.CountBasis)
+	}
+	if resp.CountWindowStart != window.UnixMilli() || resp.CountUpdatedAt != "2026-08-18T00:00:00Z" {
+		t.Errorf("count window metadata = (%d,%q), want (%d,updated)", resp.CountWindowStart, resp.CountUpdatedAt, window.UnixMilli())
 	}
 }
 

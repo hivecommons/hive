@@ -46,6 +46,9 @@ type MetricsCollector struct {
 	prIssueCounts *ghpkg.PRIssueCounts
 	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
 	prIssueCachePath string
+	// prIssueWindowStart, when set, returns the first cost-history timestamp so
+	// cost-per-outcome divisors use the same persisted window as the numerator.
+	prIssueWindowStart func() time.Time
 	// issuesDisabled is the latest proactive has_issues probe over every
 	// watched repo (#9972); the dashboard banner renders it.
 	issuesDisabledMu sync.RWMutex
@@ -82,6 +85,13 @@ func (mc *MetricsCollector) SetGitHubClientProvider(fn func() *ghpkg.Client) {
 		return
 	}
 	mc.clientFn = fn
+}
+
+func (mc *MetricsCollector) SetPRIssueWindowStartProvider(fn func() time.Time) {
+	if mc == nil {
+		return
+	}
+	mc.prIssueWindowStart = fn
 }
 
 // client returns the GitHub client to use now: the provider's current client
@@ -195,7 +205,11 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 		return
 	}
 
-	result, err := gh.ComputePRIssueCounts(ctx, mc.repo, mc.aiAuthor)
+	var since time.Time
+	if mc.prIssueWindowStart != nil {
+		since = mc.prIssueWindowStart()
+	}
+	result, err := gh.ComputePRIssueCountsSince(ctx, mc.repo, mc.aiAuthor, since)
 	if err != nil {
 		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
 		return

@@ -2825,8 +2825,15 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// nil client + provider: every collect reads the hive's current client,
 	// so a rebuilt (or first-delivered) App client is used without a restart
 	// (#9621).
-	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.Project.AIAuthor, b.cfg.Project.Name, b.logger)
+	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.EffectiveAIAuthor(), b.cfg.Project.Name, b.logger)
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
+	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
+		history := b.dashSrv.CostHistory()
+		if len(history) == 0 || history[0].Timestamp <= 0 {
+			return time.Time{}
+		}
+		return time.UnixMilli(history[0].Timestamp).UTC()
+	})
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
