@@ -1,0 +1,1 @@
+- Fixed the top governor agent strip so additional running-agent tiles use the available navbar space instead of being faded/clipped after the third tile.
