@@ -1510,7 +1510,7 @@
     @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .window-pills-toolbar { justify-self: start; justify-content: flex-start; } }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
-    .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+    .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
     .lc-journey-summary { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(220px, 2fr) minmax(120px, 0.7fr); align-items: center; gap: var(--sp-4); width: 100%; padding: 7px 8px; cursor: pointer; }
     .lc-journey-summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
     .lc-row-heading { min-width: 0; display: grid; grid-template-columns: 1rem minmax(0, 1fr); column-gap: var(--sp-2); align-items: center; }
@@ -1520,10 +1520,10 @@
     .lc-controls { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
     .lc-controls button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); color: var(--blue); }
     .lc-axis { display: grid; grid-template-columns: minmax(170px, 0.9fr) minmax(220px, 2fr) minmax(120px, 0.7fr); gap: var(--sp-4); align-items: end; margin: var(--sp-2) 8px var(--sp-2); color: var(--muted); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em; }
-    .lc-axis-track { min-height: 1.4rem; border-bottom: 1px solid var(--border); }
+    .lc-axis-track { position: relative; min-height: 1.4rem; border-bottom: 1px solid var(--border); }
     .lc-axis-svg { display: block; width: 100%; height: 1.4rem; overflow: visible; }
     .lc-axis-tick-line { stroke: var(--border); stroke-width: 1; }
-    .lc-axis-tick-label { fill: var(--muted); font-size: var(--fs-2xs); text-anchor: middle; }
+    .lc-axis-tick-label { position: absolute; top: 0; transform: translateX(-50%); color: var(--muted); font-size: var(--fs-2xs); white-space: nowrap; }
     @media (max-width: 760px) { .lc-head, .lc-journey-summary, .lc-axis { grid-template-columns: 1fr; } .lc-controls { justify-content: flex-start; } .lc-axis-meta { display: none; } }
     .lc-kind { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
       padding: 2px 7px; border-radius: 8px; }
@@ -18216,9 +18216,11 @@ function burnAreaChart() {
         const at = bounds.start + (bounds.end - bounds.start) * frac;
         const label = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const x = (frac * 100).toFixed(2);
-        return `<line class="lc-axis-tick-line" x1="${x}" x2="${x}" y1="10" y2="20"></line><text class="lc-axis-tick-label" x="${x}" y="8">${escapeHtml(label)}</text>`;
-      }).join('');
-      return `<div class="lc-axis" aria-hidden="true"><div>Work item</div><div class="lc-axis-track"><svg class="lc-axis-svg" viewBox="0 0 100 24" preserveAspectRatio="none">${ticks}</svg></div><div class="lc-axis-meta">Status</div></div>`;
+        return { line: `<line class="lc-axis-tick-line" x1="${x}" x2="${x}" y1="10" y2="20"></line>`, label: `<span class="lc-axis-tick-label" style="left:${x}%">${escapeHtml(label)}</span>` };
+      });
+      const lines = ticks.map((t) => t.line).join('');
+      const labels = ticks.map((t) => t.label).join('');
+      return `<div class="lc-axis" aria-hidden="true"><div>Work item</div><div class="lc-axis-track"><svg class="lc-axis-svg" viewBox="0 0 100 24" preserveAspectRatio="none">${lines}</svg>${labels}</div><div class="lc-axis-meta">Status</div></div>`;
     }
 
     function lcBarHtml(j, bounds) {
