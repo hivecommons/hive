@@ -1,0 +1,1 @@
+- dashboard: Lifecycle Timeline axis labels no longer stretch and journey rows no longer collapse to stripes (#10956)
