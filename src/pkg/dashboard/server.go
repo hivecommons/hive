@@ -900,6 +900,11 @@ type FrontendRepo struct {
 	// issue.
 	HeldIssues []any `json:"heldIssues"`
 	HeldPrs    []any `json:"heldPrs"`
+	// NonActionableIssues are display-only issue records for the counted
+	// buckets that are intentionally outside the agent lane (advisory,
+	// filtered, reporter triage, and similar named exclusions). They keep the
+	// repo card's total honest without adding anything to the queues.
+	NonActionableIssues []any `json:"nonActionableIssues,omitempty"`
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable

@@ -13,7 +13,7 @@ func TestRepoCardIssuePRDividerStaticWiring10565(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		".repo-pill-run-title { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;",
-		"const issueCol = issuePills ? `<div class=\"repo-pill-run-title\">ISSUES</div>${issuePills}` : '';",
+		"const issueCol = (issuePills || nonActionableIssuePills) ? `<div class=\"repo-pill-run-title\">ISSUES</div>${issuePills}${nonActionableIssuePills}` : '';",
 		"const prCol = prPills ? `<div class=\"repo-pill-run-title\">PULL REQUESTS</div>${prPills}` : '';",
 	} {
 		if !strings.Contains(html, want) {

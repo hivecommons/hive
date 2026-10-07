@@ -61,6 +61,31 @@ func TestEnumerateActionable_WorkBreakdown(t *testing.T) {
 	if result.Issues.Count != 2 || result.PRs.Count != 1 || result.Hold.Total != 2 {
 		t.Errorf("existing queue semantics changed: issues=%d PRs=%d hold=%d", result.Issues.Count, result.PRs.Count, result.Hold.Total)
 	}
+	details := result.WorkDetailsByRepo[repo].Issues
+	if len(details) != 4 {
+		t.Fatalf("work details = %d, want 4 non-actionable issue rows: %+v", len(details), details)
+	}
+	gotDetails := map[int]RepoWorkIssue{}
+	for _, detail := range details {
+		gotDetails[detail.Number] = detail
+	}
+	for number, want := range map[int]struct {
+		bucket string
+		reason string
+	}{
+		2: {"hive_advisory", "Hive advisory report"},
+		3: {"dependency_dashboard", "Dependency dashboard control panel"},
+		6: {"filtered", "Exempt label"},
+		7: {"filtered", "Project issue filter"},
+	} {
+		detail, ok := gotDetails[number]
+		if !ok {
+			t.Fatalf("missing work detail for issue #%d in %+v", number, details)
+		}
+		if detail.Bucket != want.bucket || detail.Reason != want.reason || detail.Title == "" {
+			t.Errorf("detail #%d = %+v, want bucket=%q reason=%q and a title", number, detail, want.bucket, want.reason)
+		}
+	}
 }
 
 func TestStandingMetaIssueReason(t *testing.T) {

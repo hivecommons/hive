@@ -1884,6 +1884,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	prsByRepo := make(map[string][]any)
 	heldIssuesByRepo := make(map[string][]any)
 	heldPrsByRepo := make(map[string][]any)
+	nonActionableIssuesByRepo := make(map[string][]any)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
@@ -1911,6 +1912,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			if item.Type == "issue" {
 				key := repoRowKey(repoRows, item.Repo)
 				heldIssuesByRepo[key] = append(heldIssuesByRepo[key], item)
+			}
+		}
+		for repo, details := range actionable.WorkDetailsByRepo {
+			key := repoRowKey(repoRows, repo)
+			for _, issue := range details.Issues {
+				nonActionableIssuesByRepo[key] = append(nonActionableIssuesByRepo[key], issue)
 			}
 		}
 	}
@@ -1942,17 +1949,18 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 
 		r := FrontendRepo{
-			Name:             repoName,
-			Full:             full,
-			Issues:           issueCount,
-			PRs:              prCount,
-			WorkBreakdown:    workBreakdown,
-			Mode:             repoMode(govState, repoName, full),
-			ActionableIssues: issuesByRepo[repoName],
-			OpenPrs:          prsByRepo[repoName],
-			HeldIssues:       heldIssuesByRepo[repoName],
-			HeldPrs:          heldPrsByRepo[repoName],
-			AutoMerge:        cfg.RepoAutoMergeEnabled(repoName),
+			Name:                repoName,
+			Full:                full,
+			Issues:              issueCount,
+			PRs:                 prCount,
+			WorkBreakdown:       workBreakdown,
+			Mode:                repoMode(govState, repoName, full),
+			ActionableIssues:    issuesByRepo[repoName],
+			OpenPrs:             prsByRepo[repoName],
+			HeldIssues:          heldIssuesByRepo[repoName],
+			HeldPrs:             heldPrsByRepo[repoName],
+			NonActionableIssues: nonActionableIssuesByRepo[repoName],
+			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would
@@ -1977,6 +1985,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		if r.HeldPrs == nil {
 			r.HeldPrs = []any{}
+		}
+		if r.NonActionableIssues == nil {
+			r.NonActionableIssues = []any{}
 		}
 		repos = append(repos, r)
 	}
