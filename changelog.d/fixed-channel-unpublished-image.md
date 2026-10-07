@@ -1,1 +1,0 @@
-- Prevent release-channel auto-upgrades from attempting short-SHA images before GHCR publishes them.
