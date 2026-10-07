@@ -405,9 +405,9 @@
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
     .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
-    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; contain: layout paint style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
-    .oc-version-bee--phase-b { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
-    .oc-version-bee--phase-c { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-size: var(--sp-4); --oc-version-bee-orbit-offset-x: 5px; --oc-version-bee-orbit-offset-y: -4px; --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--oc-version-bee-size); height: var(--oc-version-bee-size); display: grid; place-items: center; color: var(--amber); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; contain: layout paint style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
+    .oc-version-bee--phase-b { --oc-version-bee-radius: 15.5px; --oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) * 1.04); animation-delay: calc(var(--oc-version-bee-duration) / -3); }
+    .oc-version-bee--phase-c { --oc-version-bee-radius: 18.5px; --oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) * 0.96); animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
     .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-glyph * { transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--terminal-bg); stroke-width: 1.7; }
@@ -425,14 +425,16 @@
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
     .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
-    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 9.8px; --oc-version-bee-size: 19.25px; --oc-version-bee-orbit-offset-x: 2.7px; --oc-version-bee-orbit-offset-y: -2.5px; font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-bee--phase-b { --oc-version-bee-radius: 8.7px; }
+    .oc-version-navbar-upgrade .oc-version-bee--phase-c { --oc-version-bee-radius: 10.5px; }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
     .oc-version-navbar-upgrade .oc-version-progress-copy { min-width: 0; padding-left: var(--oc-version-bee-lane); line-height: 1.1; overflow: hidden; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
-      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
+      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
+      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
