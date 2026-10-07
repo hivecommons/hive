@@ -211,6 +211,13 @@ Operators can set `require_github_permission: false` only when the
 successful GitHub permission check so non-member forks do not merge through
 this tier.
 
+The same block is editable from the dashboard: **Settings → Features → Auto
+Merge → Trusted-author auto-merge** writes `auto_merge.trusted_authors` through
+owner-only `GET/PUT /api/config/auto-merge`. The form exposes the enabled
+switch, repository allow-list (select none for all watched repos), required
+role (`merger` or `owner`), GitHub permission requirement, and excluded labels
+so hosted spokes can opt in without editing `hive.yaml`.
+
 ## Usage
 
 ```sh

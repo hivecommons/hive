@@ -38,7 +38,35 @@ func TestRepoAutoMergeStaticWiring(t *testing.T) {
 			t.Fatalf("static dashboard missing %q", want)
 		}
 	}
+
 	if strings.Contains(s, "toggleRepoAutoMerge") && (strings.Contains(s, "confirm(") || strings.Contains(s, "alert(")) {
 		t.Fatal("repo auto-merge toggle must not use native browser dialogs")
+	}
+}
+
+func TestTrustedAuthorAutoMergeSettingsStaticWiring(t *testing.T) {
+	html, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	s := string(html)
+	for _, want := range []string{
+		"id=\"am-trusted-authors\"",
+		"id=\"am-trusted-authors-enabled\"",
+		"id=\"am-trusted-authors-require-role\"",
+		"id=\"am-trusted-authors-require-github-permission\"",
+		"id=\"am-trusted-authors-exclude-labels\"",
+		"id=\"am-trusted-authors-repos\"",
+		"function markDirtyTrustedAuthors()",
+		"markDirty('auto-merge', 'trusted_authors'",
+		"Fork PRs from non-members are blocked",
+		"Leave every repo unselected to allow all watched repositories.",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("static dashboard missing %q", want)
+		}
+	}
+	if strings.Contains(s, "am-trusted-authors") && (strings.Contains(s, "confirm(") || strings.Contains(s, "alert(")) {
+		t.Fatal("trusted-author auto-merge controls must not use native browser dialogs")
 	}
 }

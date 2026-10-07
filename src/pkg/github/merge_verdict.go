@@ -43,6 +43,7 @@ const (
 type MergeVerdict struct {
 	State  MergeVerdictState `json:"state"`
 	Reason string            `json:"reason,omitempty"`
+	Tier   string            `json:"tier,omitempty"`
 }
 
 // MergeVerdictKey is the map key the governor records verdicts under and the

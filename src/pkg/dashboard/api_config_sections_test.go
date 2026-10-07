@@ -45,10 +45,18 @@ func TestAutoMergeGet_OwnerSeesDefaults(t *testing.T) {
 		t.Fatalf("GET auto-merge: expected 200, got %d", rec.Code)
 	}
 	var body struct {
-		SelfAuthored    bool `json:"self_authored"`
-		SelfAuthoredSet bool `json:"self_authored_set"`
-		MaxMerges       int  `json:"max_merges"`
-		RequiredChecks  []string
+		SelfAuthored    bool     `json:"self_authored"`
+		SelfAuthoredSet bool     `json:"self_authored_set"`
+		MaxMerges       int      `json:"max_merges"`
+		RequiredChecks  []string `json:"required_checks"`
+		TrustedAuthors  struct {
+			Enabled                 bool     `json:"enabled"`
+			Repos                   []string `json:"repos"`
+			RequireRole             string   `json:"require_role"`
+			RequireGitHubPermission bool     `json:"require_github_permission"`
+			ExcludeLabels           []string `json:"exclude_labels"`
+			Roles                   []string `json:"roles"`
+		} `json:"trusted_authors"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -57,6 +65,15 @@ func TestAutoMergeGet_OwnerSeesDefaults(t *testing.T) {
 	// explicit-choice marker unset.
 	if !body.SelfAuthored || body.SelfAuthoredSet {
 		t.Fatalf("default tri-state wrong: self_authored=%v set=%v", body.SelfAuthored, body.SelfAuthoredSet)
+	}
+	if body.TrustedAuthors.Enabled || body.TrustedAuthors.RequireRole != config.RoleMerger || !body.TrustedAuthors.RequireGitHubPermission {
+		t.Fatalf("trusted_author defaults wrong: %+v", body.TrustedAuthors)
+	}
+	if strings.Join(body.TrustedAuthors.ExcludeLabels, ",") != "hold,do-not-merge,needs-human" {
+		t.Fatalf("trusted_author default labels wrong: %v", body.TrustedAuthors.ExcludeLabels)
+	}
+	if strings.Join(body.TrustedAuthors.Roles, ",") != "merger,owner" {
+		t.Fatalf("trusted_author roles wrong: %v", body.TrustedAuthors.Roles)
 	}
 }
 
@@ -84,12 +101,20 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 
 	// Valid write applies every provided field; required_checks entries are
 	// trimmed and blanks dropped.
+	trustedPermission := false
 	rec := doPut(s, "/api/config/auto-merge", map[string]any{
 		"self_authored":          false,
 		"max_merges":             3,
 		"required_checks":        []string{"  ci/test  ", "", "lint"},
 		"allow_unprotected_base": []string{" repo-one ", ""},
 		"no_ci_ok":               []string{" docs-only "},
+		"trusted_authors": map[string]any{
+			"enabled":                   true,
+			"repos":                     []string{" hive ", "", "docs"},
+			"require_role":              " OWNER ",
+			"require_github_permission": trustedPermission,
+			"exclude_labels":            []string{" hold ", "needs-human"},
+		},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -109,6 +134,18 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	}
 	if len(am.NoCIOK) != 1 || am.NoCIOK[0] != "docs-only" {
 		t.Fatalf("no_ci_ok not normalized: %v", am.NoCIOK)
+	}
+	if !am.TrustedAuthors.Enabled || am.TrustedAuthors.RequireRole != config.RoleOwner {
+		t.Fatalf("trusted_authors role/enabled not applied: %+v", am.TrustedAuthors)
+	}
+	if am.TrustedAuthors.RequireGitHubPermission == nil || *am.TrustedAuthors.RequireGitHubPermission {
+		t.Fatalf("trusted_authors permission not applied: %+v", am.TrustedAuthors.RequireGitHubPermission)
+	}
+	if strings.Join(am.TrustedAuthors.Repos, ",") != "hive,docs" {
+		t.Fatalf("trusted_authors repos not normalized: %v", am.TrustedAuthors.Repos)
+	}
+	if strings.Join(am.TrustedAuthors.ExcludeLabels, ",") != "hold,needs-human" {
+		t.Fatalf("trusted_authors labels not normalized: %v", am.TrustedAuthors.ExcludeLabels)
 	}
 	rec = doOwnerGet(s, "/api/config/auto-merge")
 	if rec.Code != http.StatusOK {
@@ -134,6 +171,36 @@ func TestAutoMergePut_ValidatesAndApplies(t *testing.T) {
 	}
 	if s.deps.Config.AutoMerge.MaxMerges != 3 || len(s.deps.Config.AutoMerge.RequiredChecks) != 2 || len(s.deps.Config.AutoMerge.NoCIOK) != 1 {
 		t.Fatalf("empty put mutated config: %+v", s.deps.Config.AutoMerge)
+	}
+}
+
+func TestAutoMergePut_TrustedAuthorsValidation(t *testing.T) {
+	s := covApiServer(t)
+	valid := map[string]any{
+		"trusted_authors": map[string]any{
+			"enabled":                   true,
+			"require_role":              config.RoleOwner,
+			"require_github_permission": true,
+			"exclude_labels":            []string{"hold"},
+		},
+	}
+	if rec := doPut(s, "/api/config/auto-merge", valid); rec.Code != http.StatusOK {
+		t.Fatalf("valid trusted_authors: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.AutoMerge.TrustedAuthors.Enabled {
+		t.Fatal("valid trusted_authors write did not apply")
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"trusted_authors": map[string]any{"require_role": "read"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid trusted_authors role: expected 400, got %d", rec.Code)
+	}
+	if s.deps.Config.AutoMerge.TrustedAuthors.RequireRole != config.RoleOwner {
+		t.Fatalf("invalid role write mutated config: %+v", s.deps.Config.AutoMerge.TrustedAuthors)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"trusted_authors": map[string]any{"exclude_labels": []string{"hold", " "}}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank trusted_authors label: expected 400, got %d", rec.Code)
+	}
+	if strings.Join(s.deps.Config.AutoMerge.TrustedAuthors.ExcludeLabels, ",") != "hold" {
+		t.Fatalf("invalid label write mutated config: %+v", s.deps.Config.AutoMerge.TrustedAuthors.ExcludeLabels)
 	}
 }
 

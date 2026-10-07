@@ -1,0 +1,1 @@
+- Expose trusted-author auto-merge settings in the dashboard so operators can enable and tune the human-authored PR merge tier without editing `hive.yaml`.
