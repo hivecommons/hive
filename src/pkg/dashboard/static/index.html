@@ -17280,6 +17280,11 @@ function burnAreaChart() {
       };
     }
 
+    function costOutcomeWindowLabel(cost, fallbackTotal) {
+      const start = Number(cost && cost.count_window_start) || 0;
+      return start > 0 ? `since ${fmtCostDateTime(start)}` : 'outcome window pending refresh';
+    }
+
     // Last cost payload, so the range pills can re-render the trend chart
     // instantly (client-only bucketing) without waiting for the next poll.
     let _lastCost = null;
@@ -17655,6 +17660,7 @@ function burnAreaChart() {
       const allTimeCost = costAllTimeEstimate(est);
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const outcomeWindow = costOutcomeWindowLabel(cost, allTimeCost);
       const coinLabel = est.coin_label || '';
       const coinEquiv = Number(est.coin_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_usd)}` : '';
       const coinBudgetEquiv = Number(est.coin_budget_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_budget_usd)}` : '';
@@ -17672,8 +17678,8 @@ function burnAreaChart() {
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}
-            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
-            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs ${esc(outcomeWindow)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues ${esc(outcomeWindow)}</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
