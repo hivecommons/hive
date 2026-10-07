@@ -145,3 +145,23 @@ func TestLifecycleJourneysPanelDropsRawEventList(t *testing.T) {
 		}
 	}
 }
+
+// TestLifecycleTimelineAxisAndRowsKeepNaturalSize (#10956): axis labels must
+// not live in the non-uniformly scaled SVG, and rows must not flex-shrink.
+func TestLifecycleTimelineAxisAndRowsKeepNaturalSize(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`<span class="lc-axis-tick-label" style="left:${x}%">`,
+		"flex-shrink: 0;",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("lifecycle timeline missing %q", snippet)
+		}
+	}
+	if strings.Contains(html, `<text class="lc-axis-tick-label"`) {
+		t.Fatalf("axis tick labels must not be SVG <text> inside the preserveAspectRatio=none SVG")
+	}
+	if !strings.Contains(html, ".lc-journey { font-size: 0.78rem;") || !strings.Contains(html, "overflow: hidden; flex-shrink: 0; }") {
+		t.Fatalf(".lc-journey must set flex-shrink: 0 so rows do not collapse to stripes")
+	}
+}
