@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -24,7 +25,10 @@ const (
 	// selfUpgradeFailureExitCode marks a process exit caused by a FAILED
 	// self-upgrade. Distinct from 0 so the failure is visible in the container's
 	// termination state instead of looking like a clean shutdown.
-	selfUpgradeFailureExitCode = 17
+	selfUpgradeFailureExitCode   = 17
+	selfUpgradeImageCheckTimeout = 5 * time.Second
+	selfUpgradeGHCRBase          = "https://ghcr.io"
+	selfUpgradeSpokeRepo         = "hivecommons/hive"
 )
 
 // upgradeMarker is the on-PVC record at /data/upgrade-requested. It survives
@@ -181,4 +185,55 @@ func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
 	}
 	m.LastError = upgradeErr.Error()
 	writeUpgradeMarker(path, m, logger)
+}
+
+var selfUpgradeTargetImageAvailable = probeSelfUpgradeTargetImage
+
+func probeSelfUpgradeTargetImage(targetSHA string, logger *slog.Logger) (exists bool, verified bool) {
+	targetSHA = strings.TrimSpace(targetSHA)
+	if targetSHA == "" {
+		return false, false
+	}
+	client := &http.Client{Timeout: selfUpgradeImageCheckTimeout}
+	tokenResp, err := client.Get(selfUpgradeGHCRBase + "/token?scope=repository:" + selfUpgradeSpokeRepo + ":pull")
+	if err != nil {
+		logger.Warn("self-upgrade image check: GHCR token request failed", "target", targetSHA, "error", err)
+		return false, false
+	}
+	defer func() { _ = tokenResp.Body.Close() }()
+	if tokenResp.StatusCode != http.StatusOK {
+		logger.Warn("self-upgrade image check: GHCR token request returned non-OK",
+			"target", targetSHA, "status", tokenResp.StatusCode)
+		return false, false
+	}
+	var tok struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(tokenResp.Body).Decode(&tok); err != nil || strings.TrimSpace(tok.Token) == "" {
+		logger.Warn("self-upgrade image check: GHCR token response was not decodable",
+			"target", targetSHA, "error", err)
+		return false, false
+	}
+	req, err := http.NewRequest(http.MethodHead, selfUpgradeGHCRBase+"/v2/"+selfUpgradeSpokeRepo+"/manifests/"+targetSHA, nil)
+	if err != nil {
+		return false, false
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Warn("self-upgrade image check: GHCR manifest HEAD failed", "target", targetSHA, "error", err)
+		return false, false
+	}
+	_ = resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, true
+	case http.StatusNotFound:
+		return false, true
+	default:
+		logger.Warn("self-upgrade image check: GHCR manifest HEAD returned non-OK",
+			"target", targetSHA, "status", resp.StatusCode)
+		return false, false
+	}
 }

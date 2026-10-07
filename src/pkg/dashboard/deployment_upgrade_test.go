@@ -281,6 +281,46 @@ func TestHandleSelfUpgradePersistsHubAcceptedState(t *testing.T) {
 	}
 }
 
+func TestHandleSelfUpgradeQueuesUnpublishedTargetWithoutFailure(t *testing.T) {
+	const target = "abc1234"
+	statePath := filepath.Join(t.TempDir(), "dashboard-upgrade-state.json")
+	oldStatePath := dashboardUpgradeStatePath
+	dashboardUpgradeStatePath = statePath
+	ghcrCacheMu.Lock()
+	ghcrCacheResult[target] = false
+	ghcrCacheExpiry[target] = time.Now().Add(time.Hour)
+	ghcrCacheMu.Unlock()
+	t.Cleanup(func() {
+		dashboardUpgradeStatePath = oldStatePath
+		ghcrCacheMu.Lock()
+		delete(ghcrCacheResult, target)
+		delete(ghcrCacheExpiry, target)
+		ghcrCacheMu.Unlock()
+	})
+
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: &config.Config{
+		Hub:        config.HubConfig{URL: "https://hub.example.test"},
+		HiveID:     "hosted-test-hive",
+		Dashboard:  config.DashboardConfig{AuthToken: "spoke-token"},
+		Deployment: config.DeploymentConfig{Runtime: "kubernetes"},
+	}, Logger: slog.Default()}
+	req := httptest.NewRequest(http.MethodPost, "/api/self-upgrade?target="+target, nil)
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	srv.handleSelfUpgrade(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", w.Code, w.Body.String())
+	}
+	st := readDashboardUpgradeState()
+	if st == nil || st.State != dashboardUpgradeStateQueued || st.Target != target {
+		t.Fatalf("dashboard upgrade state = %+v, want queued target %s", st, target)
+	}
+	if attempt := upgradeAttemptFromDashboardState(st); attempt.State != upgradeAttemptInProgress || !strings.Contains(attempt.Detail, "queued — image building") {
+		t.Fatalf("attempt = %+v, want neutral queued/building detail", attempt)
+	}
+}
+
 func TestHandleVersionSurfacesPersistedManualUpgradeFailure(t *testing.T) {
 	dir := t.TempDir()
 	oldStatePath, oldMarkerPath, oldOutcomePath := dashboardUpgradeStatePath, upgradeMarkerPath, upgradeOutcomePath

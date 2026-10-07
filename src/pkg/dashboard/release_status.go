@@ -170,6 +170,12 @@ func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any, r
 		}
 		failed, _ := marker["failed"].(bool)
 		if failed {
+			if upgradeImageBuildingReason(st.Reason) {
+				st.State = upgradeAttemptInProgress
+				st.Detail = fmt.Sprintf("Upgrade to %s queued — image building.",
+					orUnknownSHA(st.Target))
+				return st
+			}
 			st.State = upgradeAttemptFailed
 			why := strings.TrimSpace(st.Reason)
 			if why == "" {

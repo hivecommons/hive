@@ -4761,6 +4761,16 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 
+				if exists, verified := selfUpgradeTargetImageAvailable(targetSHA, b.logger); verified && !exists {
+					b.logger.Info("self-upgrade queued: target image is not published yet",
+						"target", targetSHA,
+						"current", gitShort)
+					if err := os.Remove(upgradeMarkerPath); err != nil && !os.IsNotExist(err) {
+						b.logger.Warn("failed to clear upgrade marker for unpublished target", "path", upgradeMarkerPath, "error", err)
+					}
+					return
+				}
+
 				// Record the attempt BEFORE acting: if the process dies mid-upgrade the
 				// next boot must still see an incremented count, otherwise a crash loop
 				// would retry without ever exhausting the budget.
