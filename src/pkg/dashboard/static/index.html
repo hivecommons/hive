@@ -15925,6 +15925,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const dailyRate = burnRate * HOURS_PER_DAY;
       const PCT_BUDGET_WARN = 90; // mirrors governor.BudgetWarnPct: soft-warning threshold
       const exhausted = !!budget.BUDGET_EXHAUSTED;
+      const useCoinPrimary = !!primary && primary.name !== 'tokens'; // projection is token-based
       // Red is reserved for exhausted (kicks suspended); >=90% shows amber.
       const usedFillCls = budgetIgnored ? 'safe' : exhausted ? 'danger' : pctUsed >= PCT_SAFE ? 'warning' : 'safe';
 
@@ -17422,7 +17423,7 @@ function burnAreaChart() {
       const coinLabel = (budget && budget.COIN_LABEL) || 'coins';
       const usdLimit = Number(budget && budget.USD_BUDGET) || 0;
       if (!limit && !coinLimit && !usdLimit) {
-        return `<div class="cost-subtitle" style="margin-top:10px">No token, dollar, or coin budget configured — set <b>Total Tokens</b>, <b>USD Budget</b>, or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are tokens; Bob dollar/coin budgets use the configured backend conversion.</div>`;
+        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured (and no dollar or coin budget) — set <b>Total Tokens</b>, <b>USD Budget</b>, or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are enforced in tokens, not dollars; Bob dollar/coin budgets use the configured backend conversion.</div>`;
       }
       const used = budget.BUDGET_USED || 0;
       const coinUsed = Number(budget.COINS_USED) || 0;
@@ -17444,7 +17445,7 @@ function burnAreaChart() {
       const PCT_BUDGET_WARN = 90;
       const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
       return `<div class="cost-token-budget" style="margin-top:14px;padding-top:var(--sp-5);border-top:1px solid var(--border)">
-        <div class="cost-subtitle mb-3"><b>${esc(primary.unit)} budget</b> — this is the most-used enforced limit. Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
+        <div class="cost-subtitle mb-3"><b>${esc(primary.unit)} budget</b> — this is the most-used enforced limit (token limits are in tokens, not dollars). Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
         <div class="budget-bar">
           <div class="budget-bar-label">
             <span>Used this budget period: ${usedLabel} (${Math.round(pctUsed)}%)${secondaryBudgetText}</span>
