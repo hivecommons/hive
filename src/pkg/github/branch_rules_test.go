@@ -39,6 +39,7 @@ func branchRulesClient(t *testing.T, classicStatus int, classicBody string, rule
 
 const (
 	classicNotProtected = `{"message":"Branch not protected"}`
+	classicForbidden    = `{"message":"Resource not accessible by integration"}`
 	classicOnly         = `{"strict":true,"contexts":["lint"],"checks":[{"context":"build"}]}`
 	rulesetStrict       = `[{"type":"required_status_checks","ruleset_id":1,"parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"test"}]}}]`
 	rulesetLoose        = `[{"type":"required_status_checks","ruleset_id":1,"parameters":{"strict_required_status_checks_policy":false,"required_status_checks":[{"context":"test"}]}}]`
@@ -95,6 +96,25 @@ func TestReadBranchRules(t *testing.T) {
 			wantReason: "classic branch protection unreadable: ",
 		},
 		{
+			name: "classic forbidden, ruleset checks", classicCode: 403, classicBody: classicForbidden,
+			rulesCode: 200, rulesBody: rulesetStrict,
+			wantKnown: true, wantRequired: []string{"test"}, wantUpToDate: UpToDateServerEnforced, wantQueueOK: true,
+			wantReason: "classic branch protection unreadable (",
+		},
+		{
+			name: "classic forbidden, no ruleset checks", classicCode: 403, classicBody: classicForbidden,
+			rulesCode: 200, rulesBody: `[]`,
+			config: map[string]bool{"ci": true}, configKnown: true,
+			wantRequired: []string{"ci"}, wantUpToDate: UpToDateUnknown, wantQueueOK: true,
+			wantReason: "classic branch protection unreadable: ",
+		},
+		{
+			name: "classic forbidden, rules error", classicCode: 403, classicBody: classicForbidden,
+			rulesCode: 500, rulesBody: `{"message":"boom"}`,
+			wantUpToDate: UpToDateUnknown,
+			wantReason:   "classic branch protection unreadable: ",
+		},
+		{
 			name: "rules error", classicCode: 404, classicBody: classicNotProtected,
 			rulesCode: 500, rulesBody: `{"message":"boom"}`,
 			wantUpToDate: UpToDateUnknown,
@@ -120,10 +140,10 @@ func TestReadBranchRules(t *testing.T) {
 			if got.Known != tt.wantKnown {
 				t.Fatalf("Known = %v, want %v (reason %q)", got.Known, tt.wantKnown, got.Reason)
 			}
-			if tt.wantKnown && got.Reason != "" {
+			if tt.wantKnown && tt.wantReason == "" && got.Reason != "" {
 				t.Fatalf("Reason = %q, want empty", got.Reason)
 			}
-			if !tt.wantKnown && (got.Reason == "" || len(got.Reason) < len(tt.wantReason) || got.Reason[:len(tt.wantReason)] != tt.wantReason) {
+			if (!tt.wantKnown || tt.wantReason != "") && (got.Reason == "" || len(got.Reason) < len(tt.wantReason) || got.Reason[:len(tt.wantReason)] != tt.wantReason) {
 				t.Fatalf("Reason = %q, want prefix %q", got.Reason, tt.wantReason)
 			}
 			want := tt.wantRequired

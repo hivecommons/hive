@@ -23,14 +23,19 @@ const (
 
 // acmmMergeQueueCapability decides capability credit for acmm:merge-queue on
 // the default branch: GitHub's native merge queue, or the hive-serialized
-// strategy together with a known, non-empty required-check set.
+// strategy together with a known, non-empty required-check set. When the lane
+// is on but earns no credit, reason carries rules.Reason so the row can say
+// why.
 func acmmMergeQueueCapability(strategy, branch string, rules github.BranchRulesResult) (provider, reason string, ok bool) {
 	if rules.MergeQueueKnown && rules.MergeQueue {
 		return acmmMergeQueueProviderNative, fmt.Sprintf("GitHub merge queue is on for %s", branch), true
 	}
-	if strategy == config.MergeStrategyHiveSerialized && rules.Known && len(rules.Required) > 0 {
-		return acmmMergeQueueProviderLane, fmt.Sprintf("merge_strategy %s with required checks on %s: %s",
-			config.MergeStrategyHiveSerialized, branch, strings.Join(rules.SortedRequired(), ", ")), true
+	if strategy == config.MergeStrategyHiveSerialized {
+		if rules.Known && len(rules.Required) > 0 {
+			return acmmMergeQueueProviderLane, fmt.Sprintf("merge_strategy %s with required checks on %s: %s",
+				config.MergeStrategyHiveSerialized, branch, strings.Join(rules.SortedRequired(), ", ")), true
+		}
+		return "", rules.Reason, false
 	}
 	return "", "", false
 }
@@ -59,7 +64,8 @@ func (s *Server) acmmMergeQueueCredit(ctx context.Context, client *gh.Client, ow
 // rests only on a marker file. A file-only pass keeps passing (no readiness
 // regression); it is only labelled.
 func (s *Server) applyMergeQueueCredit(ctx context.Context, client *gh.Client, owner, repo string, res *CriterionResult) {
-	if provider, reason, ok := s.acmmMergeQueueCredit(ctx, client, owner, repo); ok {
+	provider, reason, ok := s.acmmMergeQueueCredit(ctx, client, owner, repo)
+	if ok {
 		res.Passed = true
 		res.SatisfiedBy = provider
 		res.SatisfiedReason = reason
@@ -67,7 +73,9 @@ func (s *Server) applyMergeQueueCredit(ctx context.Context, client *gh.Client, o
 	}
 	if res.Passed {
 		res.FileOnly = true
+		return
 	}
+	res.UnsatisfiedReason = reason
 }
 
 // acmmRepoOwnedByUser reports whether owner/repo belongs to a personal

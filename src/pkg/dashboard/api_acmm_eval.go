@@ -138,6 +138,9 @@ type CriterionResult struct {
 	// Unlike waivers, this is not repository-authored and can advance a level.
 	SatisfiedBy     string `json:"satisfied_by,omitempty"`
 	SatisfiedReason string `json:"satisfied_reason,omitempty"`
+	// UnsatisfiedReason says why a failing capability check (today only
+	// acmm:merge-queue with the serialized lane on) earned no credit.
+	UnsatisfiedReason string `json:"unsatisfied_reason,omitempty"`
 	// FileOnly is true when a criterion that Hive can verify (today only
 	// acmm:merge-queue) passed solely because a marker file exists. It still
 	// counts toward the level; the dashboard labels it "file only, not

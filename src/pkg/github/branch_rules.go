@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -32,7 +33,8 @@ type BranchRulesResult struct {
 	// checks. Only meaningful when Known is true.
 	Required map[string]bool
 	// Known is false when the set could not be established or is empty; the
-	// lane must not merge and Reason says why.
+	// lane must not merge and Reason says why. When Known is true, Reason may
+	// still carry an informational note (classic protection unreadable).
 	Known  bool
 	Reason string
 	// UpToDate is how the up-to-date requirement is enforced.
@@ -49,6 +51,11 @@ type BranchRulesResult struct {
 // "branch not protected" is not read as "nothing required". Native merge-queue
 // detection uses the merge_queue rule only; the GraphQL mergeQueue field was
 // not verified for App installation tokens and is not used.
+//
+// Classic protection needs Administration permission the App usually lacks.
+// A 403 from it does not discard the set when the rulesets endpoint was read
+// and lists required checks: GitHub still enforces any classic rule at merge
+// time, so the lane's check stays additive. Other errors fail closed.
 func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) BranchRulesResult {
 	res := BranchRulesResult{Required: map[string]bool{}, UpToDate: UpToDateUnknown}
 	if client == nil || strings.TrimSpace(branch) == "" {
@@ -62,6 +69,7 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 	}
 
 	var problems []string
+	var classicErr error
 
 	rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 	switch {
@@ -79,10 +87,13 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 			}
 		}
 	case err == nil, errors.Is(err, gh.ErrBranchNotProtected):
+	case isBranchRulesForbidden(err):
+		classicErr = err
 	default:
 		problems = append(problems, fmt.Sprintf("classic branch protection unreadable: %v", err))
 	}
 
+	rulesetChecks := 0
 	rules, _, err := client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("branch rulesets unreadable: %v", err))
@@ -102,11 +113,21 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 			for _, check := range rule.Parameters.RequiredStatusChecks {
 				if check != nil {
 					res.Required[check.Context] = true
+					rulesetChecks++
 				}
 			}
 		}
 	} else {
 		res.MergeQueueKnown = true
+	}
+
+	var note string
+	if classicErr != nil {
+		if err == nil && rulesetChecks > 0 {
+			note = fmt.Sprintf("classic branch protection unreadable (%v); using ruleset required checks, GitHub enforces classic rules at merge time", classicErr)
+		} else {
+			problems = append([]string{fmt.Sprintf("classic branch protection unreadable: %v", classicErr)}, problems...)
+		}
 	}
 
 	switch {
@@ -116,8 +137,17 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 		res.Reason = "no required checks found in config, branch protection or rulesets"
 	default:
 		res.Known = true
+		res.Reason = note
 	}
 	return res
+}
+
+// isBranchRulesForbidden reports a 403 from GitHub, which an App without
+// Administration permission gets from the classic protection endpoint
+// ("Resource not accessible by integration").
+func isBranchRulesForbidden(err error) bool {
+	var er *gh.ErrorResponse
+	return errors.As(err, &er) && er.Response != nil && er.Response.StatusCode == http.StatusForbidden
 }
 
 // CheckOutcome is how a required check's result counts toward merging.
