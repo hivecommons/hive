@@ -120,8 +120,9 @@ are matters of style and process — not documentation defects.
 Two corollaries:
 
 - **Search closed issues and the code before claiming nothing tracks this.** A
-  gap that was fixed yesterday is not a gap. `gh issue list --state all` and read
-  the current source, not just the doc.
+  gap that was fixed yesterday is not a gap. `gh search issues --repo <owner/repo> --state closed
+  "<key terms>"` (`gh issue list` is blocked for agents) and read the current
+  source, not just the doc.
 - **Follow cross-references before concluding something is undocumented.** A page
   that links onward to a deeper treatment has documented the thing.
 
