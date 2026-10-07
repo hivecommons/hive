@@ -4558,6 +4558,7 @@
       <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
       <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Agent activity</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
+      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">Lifecycle Timeline</span></a>
       <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
     <div class="oc-nav-group">
@@ -7618,6 +7619,48 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       };
       ocAfterNavLayoutSettles(affected, after);
     }
+    function lifecycleEmptyStateHtml() {
+      return '<div class="lc-empty">No pull requests in the window yet.</div>';
+    }
+    function lifecycleRenderNavEmptyState() {
+      const card = document.getElementById('lifecycle-card');
+      if (!card || card.innerHTML.trim()) return;
+      refreshSectionCardShell('lifecycle-section');
+      setSectionSummary('lifecycle-section', '0 in flight · 0 merged');
+      card.innerHTML = `<div class="lc-head"><div class="lc-fleet">
+        <div class="lc-fleet-stat"><div class="val inflight">0</div><div class="lbl">In flight</div></div>
+        <div class="lc-fleet-stat"><div class="val merged">0</div><div class="lbl">Merged</div></div>
+        <div class="lc-fleet-stat"><div class="val blocked">0</div><div class="lbl">Blocked</div></div>
+      </div></div>${lifecycleEmptyStateHtml()}`;
+      applySectionCollapse('lifecycle-section');
+    }
+    function ocEnsureSectionVisibleForNav(section) {
+      if (section !== 'lifecycle-section') return [];
+      const affected = [];
+      const parent = document.getElementById('advisory-section');
+      const target = document.getElementById('lifecycle-section');
+      if (parent) {
+        if (dashboardSectionHidden('advisory-section')) dashboardSetSectionHidden('advisory-section', false);
+        parent.style.display = '';
+        if (isSectionCollapsed('advisory-section')) {
+          toggleSection('advisory-section', { collapsed: false, persist: false, navPeek: true });
+          affected.push('advisory-section');
+        }
+      }
+      if (target) {
+        target.style.display = '';
+        if (isSectionCollapsed('lifecycle-section')) {
+          toggleSection('lifecycle-section', { collapsed: false, persist: false, navPeek: true });
+          affected.push('lifecycle-section');
+        }
+      }
+      lifecycleRenderNavEmptyState();
+      if (typeof lcScheduleLayout === 'function') {
+        lcScheduleLayout();
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(lcScheduleLayout);
+      }
+      return affected;
+    }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
       if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);
@@ -7630,10 +7673,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const previousPeekSection = navPeekSectionId();
       const restored = navPeekRestore(section, { instant: true });
       const expanded = navPeekExpand(section);
+      const revealed = ocEnsureSectionVisibleForNav(section);
       if (!skipScroll) {
         const affectedSections = [];
         if (restored && previousPeekSection) affectedSections.push(previousPeekSection);
         if (expanded) affectedSections.push(section);
+        revealed.forEach(id => { if (affectedSections.indexOf(id) < 0) affectedSections.push(id); });
         ocAfterNavLayoutSettles(affectedSections, function() { ocScrollSectionIntoView(section); });
       }
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
@@ -19215,7 +19260,7 @@ function burnAreaChart() {
 
       let listHtml;
       if (journeys.length === 0) {
-        listHtml = `<div class="lc-empty">No lifecycle events in the last 6h.</div>`;
+        listHtml = lifecycleEmptyStateHtml();
       } else {
         const visibleJourneys = lcShowAllRows ? journeys : journeys.slice(0, LC_COLLAPSED_ROW_LIMIT);
         const bounds = lcTimelineBounds(visibleJourneys);

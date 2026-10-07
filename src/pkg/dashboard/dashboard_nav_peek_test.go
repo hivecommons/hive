@@ -185,7 +185,7 @@ let _ocSelectedAgent = 'agent';
 function ocStopPanePoll(){}
 function ocUpdateFocusedState(){}
 function assert(cond, msg){ if (!cond) throw new Error(msg + ' :: ' + JSON.stringify(calls)); }
-` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocNavigate") + `
+` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocEnsureSectionVisibleForNav") + "\n" + jsFunc(t, html, "ocNavigate") + `
 localStorage.setItem(SECTION_LS_PREFIX + 'repos-section', '1');
 localStorage.setItem(SECTION_LS_PREFIX + 'contributors-section', '1');
 assert(navPeekExpand('repos-section') === true, 'setup peek failed');
