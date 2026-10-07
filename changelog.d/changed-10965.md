@@ -1,0 +1,1 @@
+- docs: note OpenHands CLI is legacy upstream; backend stays T3 (#10965)
