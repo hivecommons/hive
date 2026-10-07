@@ -132,6 +132,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
 		return err
 	}
+	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
 		return err
 	} else {

@@ -2267,8 +2267,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:           b.logger,
-		MergerAuthorizer: trustedMergerFunc(b.cfg),
+		Logger:              b.logger,
+		MergerAuthorizer:    trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -8283,22 +8285,30 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if lastRun != nil {
 		*lastRun = now
 	}
-	opts := automerge.Options{Logger: logger, MergerAuthorizer: trustedMergerFunc(cfg)}
+	opts := automerge.Options{
+		Logger:              logger,
+		MergerAuthorizer:    trustedMergerFunc(cfg),
+		TrustedAuthorizer:   trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
+	}
 	if cfg != nil {
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
+		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
+		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
+	}
+	audit := func(event automerge.AutoMergeSweepEvent) {
+		if dashSrv == nil {
+			return
+		}
+		detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, tier=%s, head_sha=%s, merge_sha=%s",
+			event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.Tier, event.HeadSHA, event.MergeSHA)
+		dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
 	}
 	result, err := automerge.SweepQueuedAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
 		MaxMerges: automerge.DefaultAutoMergeSweepMaxMerges,
-		Audit: func(event automerge.AutoMergeSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
-				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
-			dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
-		},
+		Audit:     audit,
 	})
 	if err != nil {
 		logger.Warn("automerge sweep failed", "error", err)
@@ -8306,6 +8316,23 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	}
 	if len(result.Merged) > 0 || result.Seen > 0 {
 		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
+	}
+	remaining := automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
+	if remaining > 0 && opts.TrustedAuthorPolicy().Enabled {
+		trustedResult, trustedErr := automerge.SweepTrustedAuthorAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+			MaxMerges: remaining,
+			Audit:     audit,
+		})
+		if trustedErr != nil {
+			logger.Warn("trusted-author automerge sweep failed", "error", trustedErr)
+		} else {
+			result.Seen += trustedResult.Seen
+			result.Skipped += trustedResult.Skipped
+			result.Merged = append(result.Merged, trustedResult.Merged...)
+			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
+				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
+			}
+		}
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
