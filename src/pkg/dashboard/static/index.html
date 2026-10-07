@@ -1612,9 +1612,9 @@
       outline: 2px solid var(--amber); outline-offset: -2px;
     }
     .repo-provider-label { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.08em; color:var(--muted); text-transform:uppercase; margin-bottom:var(--sp-2); }
-    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-3); min-height: 1.75rem; min-width: 0; text-align: left; }
-    .repo-name a { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }
+    .repo-name a { flex: 1 1 8rem; min-width: 0; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-header-actions { justify-content: flex-end; }
     .repo-header-spacer { min-width: var(--sp-2); }
     .repo-card-order-handle { margin-right:var(--sp-0); cursor:grab; }
