@@ -56,7 +56,11 @@ type gatewayCost struct {
 // costResponse is the full /api/cost payload.
 type costResponse struct {
 	// Estimated cost derived from token counts × list prices.
-	Estimated costEstimated `json:"estimated"`
+	Estimated      costEstimated `json:"estimated"`
+	Coins          float64       `json:"coins,omitempty"`
+	CoinLabel      string        `json:"coin_label,omitempty"`
+	CoinBudget     *float64      `json:"coin_budget,omitempty"`
+	CoinsRemaining *float64      `json:"coins_remaining,omitempty"`
 	// Native per-gateway spend where a metered backend reports it.
 	Gateways []gatewayCost `json:"gateways"`
 	// PriceTableDate / disclaimer travel with the payload so the UI can label
@@ -81,6 +85,7 @@ type costResponse struct {
 type costModelEntry struct {
 	Name        string  `json:"name"`
 	USD         float64 `json:"usd"`
+	Coins       float64 `json:"coins,omitempty"`
 	Source      string  `json:"source"` // "estimated" | "unpriced"
 	Input       int64   `json:"input"`
 	Output      int64   `json:"output"`
@@ -90,6 +95,10 @@ type costModelEntry struct {
 
 type costEstimated struct {
 	TotalUSD       float64          `json:"total_usd"`
+	Coins          float64          `json:"coins,omitempty"`
+	CoinLabel      string           `json:"coin_label,omitempty"`
+	CoinBudget     *float64         `json:"coin_budget,omitempty"`
+	CoinsRemaining *float64         `json:"coins_remaining,omitempty"`
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
@@ -115,6 +124,7 @@ type costSessionEntry struct {
 	Agent     string  `json:"agent"`
 	Model     string  `json:"model"`
 	USD       float64 `json:"usd"`
+	Coins     float64 `json:"coins,omitempty"`
 	Source    string  `json:"source"` // "estimated" | "unpriced"
 	Input     int64   `json:"input"`
 	Output    int64   `json:"output"`
@@ -148,6 +158,10 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 
 	// --- Estimated cost from token counts ---
 	resp.Estimated = s.estimatedCost()
+	resp.Coins = resp.Estimated.Coins
+	resp.CoinLabel = resp.Estimated.CoinLabel
+	resp.CoinBudget = resp.Estimated.CoinBudget
+	resp.CoinsRemaining = resp.Estimated.CoinsRemaining
 
 	// --- Merged-PR / closed-issue counts (for cost-per-PR / cost-per-issue) ---
 	if s.deps != nil && s.deps.MetricsCollector != nil {
@@ -187,11 +201,13 @@ func (s *Server) estimatedCost() costEstimated {
 			est = flattenEstimated(tokens.EstimateFromSummary(summary))
 			est.BySession = estimatedSessions(summary)
 			est.WindowStart, est.WindowEnd = estimatedWindow(summary)
+			s.applyCoinEstimate(summary, &est)
 		}
 	}
 	if est.ByModel == nil {
 		est.ByModel = []costModelEntry{}
 	}
+
 	if est.ByAgent == nil {
 		est.ByAgent = []costModelEntry{}
 	}
@@ -202,6 +218,44 @@ func (s *Server) estimatedCost() costEstimated {
 		est.BySession = []costSessionEntry{}
 	}
 	return est
+}
+
+func (s *Server) applyCoinEstimate(summary *tokens.AggregateSummary, est *costEstimated) {
+	if summary == nil || est == nil || s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	coinCfg, ok := s.deps.Config.Governor.Budget.CoinConfig(tokens.BackendBob)
+	if !ok {
+		return
+	}
+	byAgent := map[string]float64{}
+	for _, sess := range summary.Sessions {
+		if !strings.EqualFold(sess.Backend, tokens.BackendBob) {
+			continue
+		}
+		coins := coinCfg.TokensToCoins(sess.TotalTokens)
+		est.Coins += coins
+		byAgent[sess.Agent] += coins
+		for i := range est.BySession {
+			if est.BySession[i].SessionID == sess.SessionID {
+				est.BySession[i].Coins = coins
+				break
+			}
+		}
+	}
+	est.CoinLabel = coinCfg.LabelOrDefault()
+	if coinCfg.Budget > 0 {
+		budget := coinCfg.Budget
+		remaining := budget - est.Coins
+		if remaining < 0 {
+			remaining = 0
+		}
+		est.CoinBudget = &budget
+		est.CoinsRemaining = &remaining
+	}
+	for i := range est.ByAgent {
+		est.ByAgent[i].Coins = byAgent[est.ByAgent[i].Name]
+	}
 }
 
 func estimatedWindow(summary *tokens.AggregateSummary) (start, end int64) {

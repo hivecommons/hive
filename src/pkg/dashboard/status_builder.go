@@ -2225,8 +2225,17 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	fb := FrontendBudget{
 		WeeklyBudget:         budget.WeeklyLimit,
 		Used:                 used,
+		CoinBudget:           budget.CoinLimit,
+		CoinsUsed:            budget.CoinSpend,
+		CoinLabel:            budget.CoinLabel,
 		LastUpdated:          now.UTC().Format(time.RFC3339),
 		WindowHoursRemaining: windowHoursRemaining,
+	}
+	if budget.CoinLimit > 0 {
+		fb.CoinsRemaining = budget.CoinLimit - budget.CoinSpend
+		if fb.CoinsRemaining < 0 {
+			fb.CoinsRemaining = 0
+		}
 	}
 
 	if budget.WeeklyLimit > 0 {
@@ -2255,6 +2264,18 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		fb.HoursElapsed = hoursElapsed
 
 		fb.Exhausted = used >= budget.WeeklyLimit
+		if budget.CoinLimit > 0 && budget.CoinSpend >= budget.CoinLimit {
+			fb.Exhausted = true
+		}
+		if hasWindow {
+			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
+			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)
+		}
+	}
+	if budget.WeeklyLimit == 0 && budget.CoinLimit > 0 {
+		const pctMultiplier = 100.0
+		fb.PctUsed = budget.CoinSpend / budget.CoinLimit * pctMultiplier
+		fb.Exhausted = budget.CoinSpend >= budget.CoinLimit
 		if hasWindow {
 			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
 			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)
