@@ -11,6 +11,73 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.143.0)
+
+### Added
+
+- Expose trusted-author auto-merge settings in the dashboard so operators can enable and tune the human-authored PR merge tier without editing `hive.yaml`.
+
+### Fixed
+
+- Add a left-sidebar link and empty state for the dashboard Lifecycle Timeline.
+- Reconcile dashboard repo-card issue buckets with their header counts and make long repo issue/PR columns scrollable.
+- Reviewer verdict relay now records head-bound advisory verdicts even when they did not originate from the review-swarm dispatch state, so contributor PR reviews and combined perspective arrays can satisfy the review gate.
+
+### Security
+
+- Remove kubelet proxy and cluster-wide pod access from SaaS tenant node-health roles, reconcile existing registered roles on hub-reachable clusters, and document administrator remediation for push-reported clusters; tenant disk usage, pod counts and request-based capacity remain unavailable rather than exposing other tenants ([#10902](https://github.com/hivecommons/hive/issues/10902)).
+
+## 2026-10-07 (v5.142.0)
+
+### Added
+
+- Owners can set issue-claim lifetimes from the dashboard ([#10981](https://github.com/hivecommons/hive/issues/10981)). Governor Config → Features → Issue claims now has minute/hour inputs for human, agent and contributor claims and the maximum, each showing its default with a reset-to-default option, read-only below the owner role. `PUT /api/config/governor/features` accepts `claimsHumanTtlS`, `claimsAgentTtlS`, `claimsContributorTtlS` and `claimsMaxTtlS` (0 means the default; negative values and lifetimes above the effective max are rejected), and the governor config GET reports the effective values. A saved change, or a `governor.claims.*_ttl_s` edit picked up by config reload, updates the live claim ledger without a restart: claims made or renewed afterwards use the new lifetimes, existing claims keep their expiry.
+- Add an opt-in trusted-author auto-merge tier for green human-authored PRs whose author already holds Hive merger/owner authority and repository merge permission.
+
+### Fixed
+
+- The CI infra classifier now recognises a transient HTTP 5xx from a tool download (`curl: (22) ... error: 500` while installing `just` from github.com releases) as `infra:upstream-download-5xx`, so the rerun guard retries the job instead of leaving the branch red; 4xx responses still count as code failures.
+
+## 2026-10-07 (v5.141.2)
+
+### Fixed
+
+- Fix the Cost panel per-PR and per-issue divisors on App-authored hosted hives by counting the effective Hive bot identity over the persisted cost-history window.
+
+## 2026-10-07 (v5.141.1)
+
+### Fixed
+
+- Fixed the v5 dashboard Swarm repo card header so long repo names no longer overlap the `auto-merge` toggle or the `swarm`/`pause` chips: the header row now wraps, the name truncates with an ellipsis in its own space, and chips stay inside the card (#10968).
+
+## 2026-10-07 (v5.141.0)
+
+### Added
+
+- Add configurable Bob coin usage metrics and coin-budget enforcement to the governor budget gate.
+- Add first-class Bob USD budget caps alongside Bob coin caps, with dashboard editing and equivalent-unit cost reporting.
+
+### Changed
+
+- docs: the Agents entry in [Dashboard sections explained](src/docs/dashboard-sections.md#agents) now explains every phrase of the agent card's "Now:" line — "Now:", "just now" / "N min ago", "working — no issue or pull request yet · started … ago", "Idle", "last:", "Paused", "Off", "Stopped — see the agent's log", "Not started yet", "reserved until", "still reserved:", "and N more" and "information may be out of date" — what counts as the item an agent is on, that the line only sees what agents do through the hive, and that a reservation (claim) is not proof an agent is still working ([#10936](https://github.com/hivecommons/hive/issues/10936)).
+- docs: note OpenHands CLI is legacy upstream; backend stays T3 (#10965)
+- Make the dashboard navbar upgrade bees larger and move their orbit off-centre so they read more like a swarm.
+
+### Fixed
+
+- guide templates: use gh search issues instead of blocked gh issue list (#10946)
+- dashboard: Projects "Clear filter" actually clears the filter (#10953)
+- Prevent release-channel auto-upgrades from attempting short-SHA images before GHCR publishes them.
+- Fixed the top governor agent strip so additional running-agent tiles use the available navbar space instead of being faded/clipped after the third tile.
+- dashboard: Lifecycle Timeline axis labels no longer stretch and journey rows no longer collapse to stripes (#10956)
+- Show repo-card issue rows for counted non-actionable buckets such as advisory, filtered, and reporter-triage issues so the issue total can be reconciled from the card.
+
+## 2026-10-07 (v5.140.0)
+
+### Added
+
+- dashboard: a new **Agent activity** section lists every agent on one screen, one row each: its name, the same state word and "Now:" line as its card, the time since its last action (or since it started, for "working — no issue or pull request yet"), and every issue it has reserved with the time each reservation ends. Rows are built from the same agent list and helpers as the cards, so a row and its card always agree, and they show only agents the viewer can already see. The section can be collapsed, moved and hidden like other sections, keeps those settings across reloads, has a sidebar entry under Admin, and has a **?** help entry ([#10935](https://github.com/hivecommons/hive/issues/10935), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+
 ## 2026-10-06 (v5.139.0)
 
 ### Added

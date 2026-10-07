@@ -155,6 +155,9 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	beeRule := cssRule(t, html, ".oc-version-bee")
 	for _, want := range []string{
 		"--oc-version-bee-duration: var(--bee-orbit-duration, 11s)",
+		"--oc-version-bee-size: var(--sp-4)",
+		"--oc-version-bee-orbit-offset-x: 5px",
+		"--oc-version-bee-orbit-offset-y: -4px",
 		"animation-duration: var(--oc-version-bee-duration)",
 		"animation-timing-function: linear",
 		"animation-iteration-count: infinite",
@@ -169,8 +172,31 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	}
 	for _, selector := range []string{".oc-version-bee--phase-b", ".oc-version-bee--phase-c"} {
 		rule := cssRule(t, html, selector)
+		if !strings.Contains(rule, "--oc-version-bee-radius:") {
+			t.Fatalf("%s should vary orbit radius for a looser swarm path: %s", selector, rule)
+		}
+		if !strings.Contains(rule, "--oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) *") {
+			t.Fatalf("%s should vary orbit speed for a looser swarm path: %s", selector, rule)
+		}
 		if !strings.Contains(rule, "animation-delay: calc(var(--oc-version-bee-duration)") {
 			t.Fatalf("%s should phase the persistent bee node without touching JS render state: %s", selector, rule)
+		}
+	}
+	navbarBeeRule := cssRule(t, html, ".oc-version-navbar-upgrade .oc-version-bee")
+	for _, want := range []string{
+		"--oc-version-bee-radius: 9.8px",
+		"--oc-version-bee-size: 19.25px",
+		"--oc-version-bee-orbit-offset-x: 2.7px",
+		"--oc-version-bee-orbit-offset-y: -2.5px",
+	} {
+		if !strings.Contains(navbarBeeRule, want) {
+			t.Fatalf("navbar bee rule should make larger bees orbit off-centre with %q in %s", want, navbarBeeRule)
+		}
+	}
+	for _, selector := range []string{".oc-version-navbar-upgrade .oc-version-bee--phase-b", ".oc-version-navbar-upgrade .oc-version-bee--phase-c"} {
+		rule := cssRule(t, html, selector)
+		if !strings.Contains(rule, "--oc-version-bee-radius:") {
+			t.Fatalf("%s should tune navbar swarm radius: %s", selector, rule)
 		}
 	}
 	glyphRule := cssRule(t, html, ".oc-version-bee-glyph")
@@ -182,8 +208,8 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 
 	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
 	for _, want := range []string{
-		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
-		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
+		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
+		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
 	} {
 		if !strings.Contains(orbit, want) {
 			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)

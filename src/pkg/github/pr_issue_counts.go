@@ -20,6 +20,7 @@ type PRIssueCounts struct {
 	UpdatedAt    string `json:"updated_at"`
 	Author       string `json:"author,omitempty"`
 	Basis        string `json:"basis,omitempty"`
+	WindowStart  string `json:"window_start,omitempty"`
 }
 
 // ComputePRIssueCounts fetches the hive-attributed number of merged pull
@@ -27,21 +28,38 @@ type PRIssueCounts struct {
 // author is the configured hive actor (usually a GitHub App bot), keeping the
 // per-unit tiles auditable: estimated hive spend ÷ hive-authored outcomes.
 func (c *Client) ComputePRIssueCounts(ctx context.Context, repo, author string) (*PRIssueCounts, error) {
+	return c.ComputePRIssueCountsSince(ctx, repo, author, time.Time{})
+}
+
+// ComputePRIssueCountsSince is ComputePRIssueCounts scoped to outcomes that
+// landed no earlier than since. A zero since preserves the historical all-time
+// behavior.
+func (c *Client) ComputePRIssueCountsSince(ctx context.Context, repo, author string, since time.Time) (*PRIssueCounts, error) {
 	owner, repoName := c.splitRepo(repo)
 	author = strings.TrimSpace(author)
+	mergedQualifier := fmt.Sprintf("repo:%s/%s type:pr is:merged", owner, repoName)
+	closedQualifier := fmt.Sprintf("repo:%s/%s type:issue is:closed", owner, repoName)
+	windowStart := ""
+	if !since.IsZero() {
+		day := since.UTC().Format("2006-01-02")
+		mergedQualifier += " merged:>=" + day
+		closedQualifier += " closed:>=" + day
+		windowStart = since.UTC().Format(time.RFC3339)
+	}
 	if author == "" {
 		return &PRIssueCounts{
-			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-			Basis:     "hive-attributed",
+			UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+			Basis:       "hive-attributed",
+			WindowStart: windowStart,
 		}, nil
 	}
 
-	merged, err := c.searchAuthorTotal(ctx, fmt.Sprintf("repo:%s/%s type:pr is:merged", owner, repoName), author)
+	merged, err := c.searchAuthorTotal(ctx, mergedQualifier, author)
 	if err != nil {
 		return nil, fmt.Errorf("counting merged PRs for %s/%s: %w", owner, repoName, err)
 	}
 
-	closed, err := c.searchAuthorTotal(ctx, fmt.Sprintf("repo:%s/%s type:issue is:closed", owner, repoName), author)
+	closed, err := c.searchAuthorTotal(ctx, closedQualifier, author)
 	if err != nil {
 		return nil, fmt.Errorf("counting closed issues for %s/%s: %w", owner, repoName, err)
 	}
@@ -52,6 +70,7 @@ func (c *Client) ComputePRIssueCounts(ctx context.Context, repo, author string) 
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
 		Author:       author,
 		Basis:        "hive-attributed",
+		WindowStart:  windowStart,
 	}, nil
 }
 

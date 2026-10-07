@@ -18,7 +18,7 @@ func TestRepoPillFilterStaticWiring(t *testing.T) {
 		"repo-filtered-chip",
 		"data-pill-kinds",
 		"aria-pressed=\"${active ? 'true' : 'false'}\"",
-		"repoPillFilterRowCounts(repoIssueFilterRows.concat(repoPRFilterRows), pillFilter)",
+		"repoPillFilterRowCounts(repoIssueFilterRows.concat(repoNonActionableFilterRows, repoPRFilterRows), pillFilter)",
 		"repoPillFilterActive() && document.activeElement && document.activeElement.closest && document.activeElement.closest('#repos-section')",
 		"k.indexOf('hive-repos-pill-filter:')===0",
 	} {

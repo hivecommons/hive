@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
@@ -95,4 +97,61 @@ func (c ClaimsConfig) TTLs() (human, agent, contributor, max time.Duration) {
 		human = sec(c.TTLS)
 	}
 	return human, sec(c.AgentTTLS), sec(c.ContributorTTLS), sec(c.MaxTTLS)
+}
+
+// Policy returns the ledger TTL policy for these lifetimes. The dashboard and
+// the config reload apply it to the live ledger, so a change takes effect
+// without a restart (hivecommons/hive#10981).
+func (c ClaimsConfig) Policy() claims.Policy {
+	return claims.PolicyWith(c.TTLs())
+}
+
+// EffectiveTTLs returns the ranked-claim lifetimes in force: TTLs with the
+// pkg/claims defaults applied.
+func (c ClaimsConfig) EffectiveTTLs() (human, agent, contributor, max time.Duration) {
+	p := c.Policy()
+	return p.TTL[claims.KindHuman], p.TTL[claims.KindAgent], p.TTL[claims.KindContributor], p.MaxTTL
+}
+
+// DefaultTTLs returns what each ranked-claim lifetime falls back to when its
+// own key is unset: human_ttl_s falls back to ttl_s, then the package default.
+func (c ClaimsConfig) DefaultTTLs() (human, agent, contributor, max time.Duration) {
+	human = claims.DefaultHumanTTL
+	if c.TTLS > 0 {
+		human = time.Duration(c.TTLS) * time.Second
+	}
+	return human, claims.DefaultAgentTTL, claims.DefaultContributorTTL, claims.DefaultMaxTTL
+}
+
+// ValidateTTLs rejects a negative lifetime (0 means the default) and a human,
+// agent or contributor lifetime above the effective max_ttl_s.
+func (c ClaimsConfig) ValidateTTLs() error {
+	for _, f := range []struct {
+		key string
+		v   int
+	}{
+		{"ttl_s", c.TTLS},
+		{"human_ttl_s", c.HumanTTLS},
+		{"agent_ttl_s", c.AgentTTLS},
+		{"contributor_ttl_s", c.ContributorTTLS},
+		{"max_ttl_s", c.MaxTTLS},
+	} {
+		if f.v < 0 {
+			return fmt.Errorf("claims %s must be zero (default) or positive", f.key)
+		}
+	}
+	human, agent, contributor, max := c.EffectiveTTLs()
+	for _, f := range []struct {
+		key string
+		d   time.Duration
+	}{
+		{"human_ttl_s", human},
+		{"agent_ttl_s", agent},
+		{"contributor_ttl_s", contributor},
+	} {
+		if f.d > max {
+			return fmt.Errorf("claims %s (%s) must not exceed max_ttl_s (%s)", f.key, f.d, max)
+		}
+	}
+	return nil
 }

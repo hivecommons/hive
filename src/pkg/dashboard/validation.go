@@ -292,9 +292,15 @@ func validateGovernorThresholds(body map[string]int) error {
 // cannot tell a number the operator just typed from one already in the config.
 // The floor must only judge what a request actually SUPPLIED — see
 // validateSuppliedBudgetFloor, called from handleGovernorBudget.
-func validateGovernorBudget(totalTokens int64, periodDays, criticalPct int) error {
+func validateGovernorBudget(totalTokens int64, usd float64, coinBudget float64, periodDays, criticalPct int) error {
 	if totalTokens < 0 {
 		return fmt.Errorf("totalTokens must be >= 0")
+	}
+	if usd < 0 {
+		return fmt.Errorf("usd must be >= 0")
+	}
+	if coinBudget < 0 {
+		return fmt.Errorf("coinBudget must be >= 0")
 	}
 	if periodDays < minBudgetPeriodDays || periodDays > maxBudgetPeriodDays {
 		return fmt.Errorf("periodDays must be between %d and %d", minBudgetPeriodDays, maxBudgetPeriodDays)

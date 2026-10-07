@@ -391,6 +391,21 @@ func (l *Ledger) SetHooks(h Hooks) {
 	l.mu.Unlock()
 }
 
+// SetPolicy replaces the TTL policy so a config change applies without a
+// restart (hivecommons/hive#10981). Claims made or renewed afterwards use the
+// new lifetimes; live claims keep the expiry they already have.
+func (l *Ledger) SetPolicy(p Policy) {
+	if l == nil {
+		return
+	}
+	if p.TTL == nil && p.Default == 0 {
+		p = DefaultPolicy()
+	}
+	l.mu.Lock()
+	l.policy = p
+	l.mu.Unlock()
+}
+
 // SetAdmissionCheck installs a non-human claim gate. An empty reason admits
 // the request; an error leaves the ledger unchanged. The check runs outside
 // the ledger lock so a forge lookup never blocks other ledger operations.

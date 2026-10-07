@@ -337,7 +337,7 @@ func TestValidateGovernorBudget(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateGovernorBudget(tt.totalTokens, tt.periodDays, tt.criticalPct)
+			err := validateGovernorBudget(tt.totalTokens, 0, 0, tt.periodDays, tt.criticalPct)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateGovernorBudget() error = %v, wantErr %v", err, tt.wantErr)
 			}

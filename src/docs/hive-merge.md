@@ -172,6 +172,52 @@ underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
 response carries `bot_authors: [{login, source: known|discovered|custom,
 trusted}]`.
 
+### Trusted-author auto-merge
+
+`auto_merge.trusted_authors` is a third, default-off sweep tier for
+human-authored PRs. It exists for hives whose maintainers want Hive to land a
+maintainer's own green PR without waiting for Prow/tide's distinct
+`lgtm`+`approved` path. It is not a privilege escalation: the PR author must be
+in the hive's `dashboard.authorized_users` allowlist at the configured role
+(`merger` by default, or `owner`), and by default GitHub must also report that
+the author has write/maintain/admin permission on that repository. If that
+GitHub permission lookup errors, the PR does not merge.
+
+The tier uses the same merge mechanics as the self-authored sweep: required CI
+must be green, the PR must be open, non-draft, mergeable, SHA-pinned at the
+evaluated head, and the merge method follows `hive-merge` semantics (forward
+merges use merge commits; other PRs squash). It refuses excluded labels
+(`hold`, `do-not-merge`, and `needs-human` by default), existing hold/exempt
+labels, fork PRs whose author is not a repo member, and any PR with an
+outstanding `CHANGES_REQUESTED` review. Each merge records the tier as
+`trusted-author` and leaves an audit comment naming the author role, GitHub
+permission, and green head SHA.
+
+```yaml
+auto_merge:
+  trusted_authors:
+    enabled: false
+    repos: []                    # optional allow-list; empty = all managed repos
+    require_role: merger          # merger or owner
+    require_github_permission: true
+    exclude_labels:
+      - hold
+      - do-not-merge
+      - needs-human
+```
+
+Operators can set `require_github_permission: false` only when the
+`authorized_users` role list is the desired authority, but fork PRs still need a
+successful GitHub permission check so non-member forks do not merge through
+this tier.
+
+The same block is editable from the dashboard: **Settings → Features → Auto
+Merge → Trusted-author auto-merge** writes `auto_merge.trusted_authors` through
+owner-only `GET/PUT /api/config/auto-merge`. The form exposes the enabled
+switch, repository allow-list (select none for all watched repos), required
+role (`merger` or `owner`), GitHub permission requirement, and excluded labels
+so hosted spokes can opt in without editing `hive.yaml`.
+
 ## Usage
 
 ```sh

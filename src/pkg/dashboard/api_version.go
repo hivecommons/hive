@@ -715,6 +715,23 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	target := dashboardUpgradeTargetFromRequest(r)
 	if target != "" {
 		if err := s.precheckKubernetesSelfUpgrade(target); err != nil {
+			if upgradeImageBuildingReason(err.Error()) {
+				s.rememberDashboardUpgradeState(dashboardUpgradeState{
+					State:     dashboardUpgradeStateQueued,
+					Target:    target,
+					UpdatedAt: time.Now().UTC(),
+					Reason:    err.Error(),
+				})
+				s.logger.Info("self-upgrade queued until target image is published", "target", target, "reason", err.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status":  "queued",
+					"target":  target,
+					"message": "Upgrade to " + shortSHADashboard(target) + " queued — image building",
+				})
+				return
+			}
 			s.rememberDashboardUpgradeState(dashboardUpgradeState{
 				State:     dashboardUpgradeStateFailed,
 				Target:    target,

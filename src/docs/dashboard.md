@@ -75,6 +75,13 @@ subtitles show the per-kind reconciliation from total open work to the
 actionable split, and those two results always add back to the Overview
 **Actionable now** total.
 
+Governor settings **Features → Auto-Merge** includes the owner-only
+**Trusted-author auto-merge** block. It edits
+`auto_merge.trusted_authors.{enabled,repos,require_role,require_github_permission,exclude_labels}`
+through `/api/config/auto-merge`, with a watched-repo multi-select (no
+selection means all watched repositories), role selector, GitHub permission
+switch, and excluded-label list.
+
 The cadence table starts each agent row with the same `1`/`0` Agent power
 rocker used in the agent settings panel, so owners can enable or disable an
 agent from the table; disabled rows are dimmed, and read-only viewers see the

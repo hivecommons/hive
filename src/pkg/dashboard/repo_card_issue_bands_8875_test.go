@@ -14,7 +14,16 @@ func TestRepoCardIssueBandsStaticWiring(t *testing.T) {
 		`<div id="repos-legend" class="repo-legend"></div>`,
 		"function renderRepoLegend()",
 		"function groupedRepoIssues(issues)",
-		"const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {",
+		"function groupedRepoNonActionableIssues(issues)",
+		"function repoCardIssueGroups(repo, overviewIssueKeys)",
+		"function repoCardIssueRenderedCount(groups)",
+		"const repoIssueGroups = repoCardIssueGroups(r, overviewIssueKeys);",
+		"${r.issues >= 0 ? r.issues : '?'}",
+		"const issuePills = repoIssueGroups.issueGroups.map(g => {",
+		"const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {",
+		"repoNonActionableIssueBucketSpec(i).key",
+		"bucket === 'claimed_by_pr'",
+		"Claimed by PR",
 		"repoStaleIssueCount(r.actionableIssues || [])",
 		"window._repoIssueBandConfig = normalizeIssueBandConfig(cfg.dashboard_issue_bands || {});",
 		".repo-issue-pill.waiting",
@@ -128,6 +137,98 @@ assert.equal((out.match(/aligned row/g) || []).length, 0);
 `)
 	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {
 		t.Fatalf("repository legend redesign check failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestRepoCardIssueGroupsCoverHeaderIssueTotal(t *testing.T) {
+	html := indexHTML(t)
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: repo-card issue grouping behavior was not executed")
+	}
+	funcs := []string{
+		"repoItemNeedsHuman",
+		"gHasNeedsHuman",
+		"issueBandRank",
+		"issueUpdatedAt",
+		"groupedRepoIssues",
+		"repoNonActionableIssueBucketSpec",
+		"groupedRepoNonActionableIssues",
+		"repoCardIssueGroups",
+		"repoCardIssueRenderedCount",
+	}
+	var script strings.Builder
+	script.WriteString(`
+const assert = require('node:assert/strict');
+const window = { _lastStatus: { overview_bands: { issues: [
+  { key: 'ready', label: 'Ready', short: 'ready', rule: 'ready work' },
+  { key: 'in-progress', label: 'In progress', short: 'claimed', rule: 'claimed work' },
+  { key: 'waiting', label: 'Needs human', short: 'human', rule: 'human gate' },
+  { key: 'agent-filed', label: 'Agent filed', short: 'agent', rule: 'agent filed' },
+  { key: 'done', label: 'Done', short: 'done', rule: 'done' }
+] } } };
+function issueBandSpec(band) {
+  return window._lastStatus.overview_bands.issues.find(spec => spec.key === band) || { label: band, short: band, rule: '' };
+}
+function issueBandLabel(band) { return issueBandSpec(band).label; }
+function issueBandTip(band) { const spec = issueBandSpec(band); return spec.label + ': ' + spec.rule; }
+`)
+	for _, name := range funcs {
+		script.WriteString(jsFunc(t, html, name))
+		script.WriteByte('\n')
+	}
+	script.WriteString(`
+const repo = {
+  issues: 14,
+  workBreakdown: { issues: { actionable: 7, hold: 2, hive_advisory: 1, filtered: 3, reporter_triage: 1 } },
+  actionableIssues: [
+    { number: 1, title: 'ready one', band: 'ready', updated_at: '2026-01-01T00:00:00Z' },
+    { number: 2, title: 'claimed one', band: 'in-progress', assignees: ['bot'], updated_at: '2026-01-02T00:00:00Z' },
+    { number: 3, title: 'agent filed', band: 'agent-filed', updated_at: '2026-01-03T00:00:00Z' },
+    { number: 4, title: 'needs human', band: 'waiting', labels: ['needs-human'], updated_at: '2026-01-04T00:00:00Z' },
+    { number: 5, title: 'done', band: 'done', labels: ['hive/covered-by-pr'], updated_at: '2026-01-05T00:00:00Z' }
+  ],
+  heldIssues: [
+    { number: 6, title: 'held ready', band: 'ready', labels: ['hold'], updated_at: '2026-01-06T00:00:00Z' },
+    { number: 7, title: 'held claimed', band: 'in-progress', labels: ['hold'], updated_at: '2026-01-07T00:00:00Z' }
+  ],
+  nonActionableIssues: [
+    { number: 8, title: 'advisory', bucket: 'hive_advisory', updated_at: '2026-01-08T00:00:00Z' },
+    { number: 9, title: 'filtered one', bucket: 'filtered', updated_at: '2026-01-09T00:00:00Z' },
+    { number: 10, title: 'filtered two', bucket: 'filtered', updated_at: '2026-01-10T00:00:00Z' },
+    { number: 11, title: 'filtered three', bucket: 'filtered', updated_at: '2026-01-11T00:00:00Z' },
+    { number: 12, title: 'triage', bucket: 'reporter_triage', updated_at: '2026-01-12T00:00:00Z' },
+    { number: 13, title: 'claimed by pr one', bucket: 'claimed_by_pr', reason: 'Open hive-authored PR #130 already claims this issue', updated_at: '2026-01-13T00:00:00Z' },
+    { number: 14, title: 'claimed by pr two', bucket: 'claimed_by_pr', reason: 'Open hive-authored PR #131 already claims this issue', updated_at: '2026-01-14T00:00:00Z' }
+  ]
+};
+const groups = repoCardIssueGroups(repo, null);
+const headerTotal = Object.values(repo.workBreakdown.issues).reduce((n, v) => n + Number(v || 0), 0);
+assert.equal(headerTotal, repo.issues);
+assert.equal(repoCardIssueRenderedCount(groups), headerTotal);
+assert.deepEqual(groups.issueGroups.map(g => [g.band, g.issues.length]), [['waiting', 1], ['ready', 2], ['in-progress', 2], ['agent-filed', 1], ['done', 1]]);
+assert.deepEqual(groups.nonActionableIssueGroups.map(g => [g.key, g.issues.length]), [['hive_advisory', 1], ['filtered', 3], ['reporter_triage', 1], ['claimed_by_pr', 2]]);
+const seen = new Set();
+for (const group of groups.issueGroups) for (const entry of group.issues) assert.equal(seen.has(entry.issue.number), false), seen.add(entry.issue.number);
+for (const group of groups.nonActionableIssueGroups) for (const issue of group.issues) assert.equal(seen.has(issue.number), false), seen.add(issue.number);
+assert.equal(seen.size, headerTotal);
+`)
+	if out, err := exec.Command(node, "-e", script.String()).CombinedOutput(); err != nil {
+		t.Fatalf("repo-card issue grouping check failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestRepoCardPillColumnsScrollLongLists(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		".repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow-x: hidden; overflow-y: auto;",
+		"max-height: min(42rem, 62vh);",
+		"scrollbar-gutter: stable;",
+		"overscroll-behavior: contain;",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("repo-card scroll CSS missing %q", want)
+		}
 	}
 }
 

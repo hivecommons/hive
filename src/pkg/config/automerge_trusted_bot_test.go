@@ -37,3 +37,33 @@ func TestTrustedBotAuthorSetNormalizes(t *testing.T) {
 		t.Fatalf("expected lower-cased, trimmed, blank-dropped set, got %v", got)
 	}
 }
+
+func TestTrustedAuthorAutoMergeConfigDefaultsAndValidation(t *testing.T) {
+	var cfg TrustedAuthorAutoMergeConfig
+	if cfg.Enabled {
+		t.Fatal("trusted-author automerge must default off")
+	}
+	if got := cfg.EffectiveRequireRole(); got != RoleMerger {
+		t.Fatalf("default require role = %q, want %q", got, RoleMerger)
+	}
+	if !cfg.EffectiveRequireGitHubPermission() {
+		t.Fatal("default require_github_permission must be true")
+	}
+	labels := cfg.ExcludeLabelSet()
+	for _, want := range DefaultTrustedAuthorExcludeLabels {
+		if !labels[want] {
+			t.Fatalf("default exclude labels = %v, missing %q", labels, want)
+		}
+	}
+	if err := (TrustedAuthorAutoMergeConfig{Enabled: true, RequireRole: RoleOwner}).Validate(); err != nil {
+		t.Fatalf("owner require_role should validate: %v", err)
+	}
+	if err := (TrustedAuthorAutoMergeConfig{Enabled: true, RequireRole: RoleReadWrite}).Validate(); err == nil {
+		t.Fatal("read-write require_role should fail validation")
+	}
+	disabled := false
+	cfg = TrustedAuthorAutoMergeConfig{RequireGitHubPermission: &disabled}
+	if cfg.EffectiveRequireGitHubPermission() {
+		t.Fatal("explicit require_github_permission: false should be honored")
+	}
+}

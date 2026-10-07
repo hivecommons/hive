@@ -122,8 +122,8 @@ func TestDashboardSectionHelpCoverage(t *testing.T) {
 		t.Error("Lifecycle Timeline is missing from the dashboard sidebar nav")
 	}
 
-	// Runs is documented for the v6 line but is not a v5 section.
-	v6Only := map[string]bool{"Runs": true}
+	// Runs and Platform are documented for the v6 line but are not v5 sections.
+	v6Only := map[string]bool{"Runs": true, "Platform": true}
 	for heading := range docEntries {
 		if heading != "Words used on this page" && !v6Only[heading] && !headings[heading] {
 			t.Errorf("help page entry %q has no matching section in DASHBOARD_SECTION_HELP", heading)

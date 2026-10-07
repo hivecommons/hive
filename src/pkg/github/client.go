@@ -798,6 +798,7 @@ type ActionableResult struct {
 	Clusters            []IssueCluster               `json:"clusters,omitempty"`
 	TotalByRepo         map[string]RepoCounts        `json:"total_by_repo,omitempty"`
 	WorkBreakdownByRepo map[string]RepoWorkBreakdown `json:"work_breakdown_by_repo,omitempty"`
+	WorkDetailsByRepo   map[string]RepoWorkDetails   `json:"work_details_by_repo,omitempty"`
 }
 
 type RepoCounts struct {
@@ -1027,6 +1028,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	var allStaleDrafts []PullRequest
 	totalByRepo := make(map[string]RepoCounts)
 	workBreakdownByRepo := make(map[string]RepoWorkBreakdown)
+	workDetailsByRepo := make(map[string]RepoWorkDetails)
 
 	// activeRepos, not getRepos: a paused repo must produce no actionable
 	// issues or PRs, so no kick, claim or advisory built from this result can
@@ -1038,7 +1040,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
-		issues, held, issueTotal, issueBreakdown, err := c.fetchIssues(ctx, repo, now, reporterTrustWaitBudget)
+		issues, held, issueTotal, issueBreakdown, issueDetails, err := c.fetchIssues(ctx, repo, now, reporterTrustWaitBudget)
 		if err != nil {
 			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
 			failedRepos++
@@ -1064,6 +1066,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
 		workBreakdownByRepo[repo] = RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown}
+		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails}
 	}
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a
@@ -1109,6 +1112,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	}
 	result.TotalByRepo = totalByRepo
 	result.WorkBreakdownByRepo = workBreakdownByRepo
+	result.WorkDetailsByRepo = workDetailsByRepo
 
 	return result, nil
 }
@@ -1122,7 +1126,7 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 	return c.org, repo
 }
 
-func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, err error) {
+func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, details []RepoWorkIssue, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
 
@@ -1131,7 +1135,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 	// dependency fetch below.
 	allIssues, blockedCounts, err := c.listOpenIssuesWithBlockedCounts(ctx, owner, repoName)
 	if err != nil {
-		return nil, nil, 0, RepoIssueBreakdown{}, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+		return nil, nil, 0, RepoIssueBreakdown{}, nil, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
 	}
 
 	// #9840: a hive-filed child the relay split out of a human-filed (or
@@ -1161,9 +1165,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		switch standingMetaIssueKindFor(issue.GetTitle(), safeGetLogin(issue.GetUser()), labels) {
 		case standingMetaHiveAdvisory:
 			breakdown.HiveAdvisory++
+			details = append(details, repoWorkIssue(repo, issue, labels, "hive_advisory", "Hive advisory report"))
 			continue
 		case standingMetaDependencyDashboard:
 			breakdown.DependencyDashboard++
+			details = append(details, repoWorkIssue(repo, issue, labels, "dependency_dashboard", "Dependency dashboard control panel"))
 			continue
 		}
 
@@ -1195,16 +1201,19 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		if c.isExempt(labels) {
 			breakdown.Filtered++
 			breakdown.Exempt++
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Exempt label"))
 			continue
 		}
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
 			continue
 		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", suppress))
 			continue
 		}
 
@@ -1229,6 +1238,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
 				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
+				details = append(details, repoWorkIssue(repo, issue, labels, "reporter_triage", "Awaiting maintainer triage label"))
 				continue
 			}
 			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
@@ -1236,6 +1246,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 
 		if !issueFilter.Admits(labels) {
 			breakdown.Filtered++
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Project issue filter"))
 			continue
 		}
 
@@ -1296,7 +1307,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 	// #8380: decorate the actionable set with any live issue claim. A no-op
 	// (no fetch, no fields) unless governor.claims.enabled is on.
 	c.annotateIssueClaims(ctx, owner, repoName, actionable, now)
-	return actionable, held, totalIssues, breakdown, nil
+	return actionable, held, totalIssues, breakdown, details, nil
 }
 
 // staleDraftAfter matches the age threshold the scanner kick prompt already
@@ -3193,6 +3204,74 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 type RepoWorkBreakdown struct {
 	Issues RepoIssueBreakdown `json:"issues"`
 	PRs    RepoPRBreakdown    `json:"prs"`
+}
+
+// RepoWorkDetails carries display-only records for counted repository work that
+// is not present in the actionable or held lists. It lets the dashboard explain
+// every non-actionable bucket without making those items selectable by agents.
+type RepoWorkDetails struct {
+	Issues []RepoWorkIssue `json:"issues,omitempty"`
+}
+
+type RepoWorkIssue struct {
+	Repo      string    `json:"repo"`
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Author    string    `json:"author,omitempty"`
+	Labels    []string  `json:"labels,omitempty"`
+	Assignees []string  `json:"assignees,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitzero"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	URL       string    `json:"url,omitempty"`
+	Bucket    string    `json:"bucket"`
+	Reason    string    `json:"reason,omitempty"`
+}
+
+func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
+	return RepoWorkIssue{
+		Repo:      issue.Repo,
+		Number:    issue.Number,
+		Title:     issue.Title,
+		Author:    issue.Author,
+		Labels:    append([]string(nil), issue.Labels...),
+		Assignees: append([]string(nil), issue.Assignees...),
+		CreatedAt: issue.CreatedAt,
+		UpdatedAt: issue.UpdatedAt,
+		URL:       issue.URL,
+		Bucket:    bucket,
+		Reason:    reason,
+	}
+}
+
+func appendRepoWorkIssueDetail(result *ActionableResult, issue Issue, bucket, reason string) {
+	if result == nil {
+		return
+	}
+	if result.WorkDetailsByRepo == nil {
+		result.WorkDetailsByRepo = make(map[string]RepoWorkDetails)
+	}
+	details := result.WorkDetailsByRepo[issue.Repo]
+	details.Issues = append(details.Issues, repoWorkIssueFromIssue(issue, bucket, reason))
+	result.WorkDetailsByRepo[issue.Repo] = details
+}
+
+func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
+	if issue == nil {
+		return RepoWorkIssue{Repo: repo, Labels: append([]string(nil), labels...), Bucket: bucket, Reason: reason}
+	}
+	return RepoWorkIssue{
+		Repo:      repo,
+		Number:    issue.GetNumber(),
+		Title:     issue.GetTitle(),
+		Author:    safeGetLogin(issue.GetUser()),
+		Labels:    append([]string(nil), labels...),
+		Assignees: extractAssignees(issue.Assignees),
+		CreatedAt: issue.GetCreatedAt().Time,
+		UpdatedAt: issue.GetUpdatedAt().Time,
+		URL:       issue.GetHTMLURL(),
+		Bucket:    bucket,
+		Reason:    reason,
+	}
 }
 
 type RepoIssueBreakdown struct {

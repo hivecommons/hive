@@ -1943,6 +1943,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	prsByRepo := make(map[string][]any)
 	heldIssuesByRepo := make(map[string][]any)
 	heldPrsByRepo := make(map[string][]any)
+	nonActionableIssuesByRepo := make(map[string][]any)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
@@ -1970,6 +1971,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			if item.Type == "issue" {
 				key := repoRowKey(repoRows, item.Repo)
 				heldIssuesByRepo[key] = append(heldIssuesByRepo[key], item)
+			}
+		}
+		for repo, details := range actionable.WorkDetailsByRepo {
+			key := repoRowKey(repoRows, repo)
+			for _, issue := range details.Issues {
+				nonActionableIssuesByRepo[key] = append(nonActionableIssuesByRepo[key], issue)
 			}
 		}
 	}
@@ -2001,18 +2008,19 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 
 		r := FrontendRepo{
-			Name:             repoName,
-			Full:             full,
-			Issues:           issueCount,
-			PRs:              prCount,
-			WorkBreakdown:    workBreakdown,
-			Mode:             repoMode(govState, repoName, full),
-			ActionableIssues: issuesByRepo[repoName],
-			OpenPrs:          prsByRepo[repoName],
-			HeldIssues:       heldIssuesByRepo[repoName],
-			HeldPrs:          heldPrsByRepo[repoName],
-			AutoMerge:        cfg.RepoAutoMergeEnabled(repoName),
-			MergeStrategy:    cfg.RepoMergeStrategy(repoName),
+			Name:                repoName,
+			Full:                full,
+			Issues:              issueCount,
+			PRs:                 prCount,
+			WorkBreakdown:       workBreakdown,
+			Mode:                repoMode(govState, repoName, full),
+			ActionableIssues:    issuesByRepo[repoName],
+			OpenPrs:             prsByRepo[repoName],
+			HeldIssues:          heldIssuesByRepo[repoName],
+			HeldPrs:             heldPrsByRepo[repoName],
+			NonActionableIssues: nonActionableIssuesByRepo[repoName],
+			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
+			MergeStrategy:       cfg.RepoMergeStrategy(repoName),
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would
@@ -2037,6 +2045,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		if r.HeldPrs == nil {
 			r.HeldPrs = []any{}
+		}
+		if r.NonActionableIssues == nil {
+			r.NonActionableIssues = []any{}
 		}
 		repos = append(repos, r)
 	}
@@ -2274,8 +2285,26 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	fb := FrontendBudget{
 		WeeklyBudget:         budget.WeeklyLimit,
 		Used:                 used,
+		CoinBudget:           budget.CoinLimit,
+		CoinsUsed:            budget.CoinSpend,
+		CoinLabel:            budget.CoinLabel,
+		USDBudget:            budget.USDLimit,
+		USDUsed:              budget.USDSpend,
+		ExhaustedUnit:        budget.ExhaustedUnit,
 		LastUpdated:          now.UTC().Format(time.RFC3339),
 		WindowHoursRemaining: windowHoursRemaining,
+	}
+	if budget.CoinLimit > 0 {
+		fb.CoinsRemaining = budget.CoinLimit - budget.CoinSpend
+		if fb.CoinsRemaining < 0 {
+			fb.CoinsRemaining = 0
+		}
+	}
+	if budget.USDLimit > 0 {
+		fb.USDRemaining = budget.USDLimit - budget.USDSpend
+		if fb.USDRemaining < 0 {
+			fb.USDRemaining = 0
+		}
 	}
 
 	if budget.WeeklyLimit > 0 {
@@ -2304,6 +2333,30 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		fb.HoursElapsed = hoursElapsed
 
 		fb.Exhausted = used >= budget.WeeklyLimit
+		if budget.CoinLimit > 0 && budget.CoinSpend >= budget.CoinLimit {
+			fb.Exhausted = true
+		}
+		if budget.USDLimit > 0 && budget.USDSpend >= budget.USDLimit {
+			fb.Exhausted = true
+		}
+		if hasWindow {
+			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
+			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)
+		}
+	}
+	if budget.WeeklyLimit == 0 && (budget.CoinLimit > 0 || budget.USDLimit > 0) {
+		const pctMultiplier = 100.0
+		if budget.CoinLimit > 0 {
+			fb.PctUsed = budget.CoinSpend / budget.CoinLimit * pctMultiplier
+			fb.Exhausted = budget.CoinSpend >= budget.CoinLimit
+		}
+		if budget.USDLimit > 0 {
+			usdPct := budget.USDSpend / budget.USDLimit * pctMultiplier
+			if usdPct > fb.PctUsed {
+				fb.PctUsed = usdPct
+			}
+			fb.Exhausted = fb.Exhausted || budget.USDSpend >= budget.USDLimit
+		}
 		if hasWindow {
 			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
 			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)

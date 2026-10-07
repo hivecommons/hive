@@ -484,3 +484,34 @@ func TestClaimAfterExpiryDoesNotReleaseSameIssueMirror(t *testing.T) {
 		t.Fatalf("expired release hooks = %v, want only unrelated expired issue", released)
 	}
 }
+
+// #10981: SetPolicy applies to claims made or renewed after the change and
+// leaves a live claim's expiry alone.
+func TestSetPolicyAppliesToNewAndRenewedClaims(t *testing.T) {
+	l, now := newTestLedger(t, Hooks{})
+	held, err := l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: KindHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.SetPolicy(PolicyWith(time.Hour, 10*time.Minute, 0, 0))
+	if c, ok := l.Lookup("o/r", 1); !ok || c.ExpiresAt != held.Claim.ExpiresAt {
+		t.Fatalf("live claim expiry changed: %+v", c)
+	}
+	res, err := l.Claim(Request{Repo: "o/r", Issue: 2, Holder: "bot", Kind: KindAgent})
+	if err != nil || res.Claim.ExpiresAt != now.Add(10*time.Minute) {
+		t.Fatalf("new agent claim expires=%v err=%v, want +10m", res.Claim.ExpiresAt, err)
+	}
+	res, err = l.Claim(Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: KindHuman})
+	if err != nil || res.Outcome != OutcomeRenewed || res.Claim.ExpiresAt != now.Add(time.Hour) {
+		t.Fatalf("renewal outcome=%s expires=%v err=%v, want +1h", res.Outcome, res.Claim.ExpiresAt, err)
+	}
+	res, err = l.Claim(Request{Repo: "o/r", Issue: 3, Holder: "relay", Kind: KindContributor})
+	if err != nil || res.Claim.ExpiresAt != now.Add(DefaultContributorTTL) {
+		t.Fatalf("contributor expires=%v err=%v, want the default", res.Claim.ExpiresAt, err)
+	}
+	l.SetPolicy(Policy{})
+	res, err = l.Claim(Request{Repo: "o/r", Issue: 4, Holder: "bot", Kind: KindAgent})
+	if err != nil || res.Claim.ExpiresAt != now.Add(DefaultAgentTTL) {
+		t.Fatalf("empty policy must fall back to defaults: expires=%v err=%v", res.Claim.ExpiresAt, err)
+	}
+}

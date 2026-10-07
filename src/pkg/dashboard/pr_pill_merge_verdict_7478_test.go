@@ -183,6 +183,9 @@ check('fallback tooltip on unstable warns about non-required checks', prMergeNot
 const green = { mergeable: 'yes', mergeable_state: 'clean', merge_verdict: { state: 'eligible', reason: 'the sweep would merge this now' } };
 check('eligible tooltip says merge eligible', prMergeNote(green).includes('merge eligible'));
 check('eligible tooltip carries the reason', prMergeNote(green).includes('would merge this now'));
+const trustedAuthorGreen = { mergeable: 'yes', mergeable_state: 'clean', merge_verdict: { state: 'eligible', tier: 'trusted-author', reason: 'author @alice holds role merger and GitHub permission maintain on repo; CI green' } };
+check('eligible trusted-author tooltip names tier', prMergeNote(trustedAuthorGreen).includes('tier=trusted-author'));
+check('eligible trusted-author tooltip keeps reason', prMergeNote(trustedAuthorGreen).includes('GitHub permission maintain'));
 const greenOptionalRed = { mergeable: 'yes', mergeable_state: 'unstable', merge_verdict: { state: 'eligible', reason: 'the sweep would merge this now — only non-required checks are red (playwright)' } };
 check('eligible beside a red optional check names it', prMergeNote(greenOptionalRed).includes('playwright'));
 check('eligible without a reason still reads sensibly', prMergeNote({ mergeable: 'yes', merge_verdict: { state: 'eligible' } }).includes('would merge this now'));

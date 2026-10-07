@@ -1,0 +1,1 @@
+- Documented that the OpenHands CLI backend stays T3 experimental because upstream treats the CLI/headless path as legacy and no longer actively maintained (OpenHands/OpenHands#18046).

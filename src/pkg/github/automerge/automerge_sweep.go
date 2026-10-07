@@ -63,6 +63,12 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// TrustedAuthorPolicy returns the live, operator opt-in policy for the
+	// human-authored tier. nil or disabled means the tier is off.
+	TrustedAuthorPolicy func() TrustedAuthorPolicy
+	// TrustedAuthorizer reports whether a PR author holds the policy's required
+	// authorized-users role. nil fails closed.
+	TrustedAuthorizer TrustedAuthorizer
 	// MinHeadAge is the youngest PR head commit age the sweep may merge when
 	// the required-check set is not config-declared and fully green.
 	MinHeadAge time.Duration
@@ -91,6 +97,8 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	trustedAuthorPolicy               func() TrustedAuthorPolicy
+	trustedAuthorizer                 TrustedAuthorizer
 	minHeadAge                        time.Duration
 	now                               func() time.Time
 	evaluatedHeadsMu                  sync.Mutex
@@ -116,6 +124,8 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
+		trustedAuthorizer:                 opts.TrustedAuthorizer,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
 		evaluatedHeads:                    make(map[string]string),
@@ -168,6 +178,10 @@ func SweepQueuedAutoMerges(ctx context.Context, transport Transport, opts Option
 // method).
 func StartSelfAuthoredAutoMergeSweep(ctx context.Context, transport Transport, maxMerges int, acmmAllowed bool, acmmLevel *int, opts Options) <-chan struct{} {
 	return New(transport, opts).StartSelfAuthoredAutoMergeSweep(ctx, maxMerges, acmmAllowed, acmmLevel)
+}
+
+func SweepTrustedAuthorAutoMerges(ctx context.Context, transport Transport, opts Options, sweepOpts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	return New(transport, opts).SweepTrustedAuthorAutoMerges(ctx, sweepOpts)
 }
 
 // selfMergeMinACMMLevel mirrors config.SelfMergeMinACMMLevel. It is duplicated
@@ -305,6 +319,29 @@ func mergeMethodFor(pr *gh.PullRequest) string {
 type AutoMergeSweepOptions struct {
 	MaxMerges int
 	Audit     func(AutoMergeSweepEvent)
+}
+
+type TrustedAuthorPolicy struct {
+	Enabled                 bool
+	Repos                   map[string]bool
+	RequireRole             string
+	RequireGitHubPermission bool
+	ExcludeLabels           map[string]bool
+}
+
+type TrustedAuthorDecision struct {
+	Allowed bool
+	Role    string
+}
+
+// TrustedAuthorizer reports whether a PR author holds the configured
+// authorized-users role for the trusted-author tier. The concrete role is
+// returned for audit comments. Unknown actors fail closed.
+type TrustedAuthorizer func(login, requireRole string) TrustedAuthorDecision
+
+type trustedAuthorPermission struct {
+	Allowed bool
+	Level   string
 }
 
 type expectedCheckCache struct {
@@ -513,6 +550,47 @@ func (c *Engine) isTrustedMerger(login string) (allowed, configured bool) {
 	return fn(login), true
 }
 
+func (c *Engine) currentTrustedAuthorPolicy() TrustedAuthorPolicy {
+	if c == nil || c.trustedAuthorPolicy == nil {
+		return TrustedAuthorPolicy{}
+	}
+	p := c.trustedAuthorPolicy()
+	if p.RequireRole == "" {
+		p.RequireRole = "merger"
+	}
+	if p.ExcludeLabels == nil {
+		p.ExcludeLabels = map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true}
+	}
+	return p
+}
+
+func (c *Engine) trustedAuthorDecision(login, requireRole string) TrustedAuthorDecision {
+	if c == nil || c.trustedAuthorizer == nil || strings.TrimSpace(login) == "" {
+		return TrustedAuthorDecision{}
+	}
+	return c.trustedAuthorizer(login, requireRole)
+}
+
+func (p TrustedAuthorPolicy) repoAllowed(repo string) bool {
+	if !p.Enabled {
+		return false
+	}
+	if len(p.Repos) == 0 {
+		return true
+	}
+	return p.Repos[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+func (p TrustedAuthorPolicy) excludedLabel(labels []string) string {
+	for _, label := range labels {
+		key := strings.ToLower(strings.TrimSpace(label))
+		if p.ExcludeLabels[key] {
+			return key
+		}
+	}
+	return ""
+}
+
 func (c *Engine) consultApprovalDesk(ctx context.Context, req hgithub.ApprovalDeskRequest) (bool, string) {
 	if c == nil || c.approvalDesk == nil {
 		return true, ""
@@ -532,6 +610,7 @@ type AutoMergeSweepEvent struct {
 	HeadSHA  string
 	MergeSHA string
 	Label    string
+	Tier     string
 }
 
 type AutoMergeSweepResult struct {
@@ -698,7 +777,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			continue
 		}
 		owner, repoName := c.transport.SplitRepo(repo)
-		prs, err := c.listOpenAppAuthoredPullRequests(ctx, owner, repoName)
+		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
 		if err != nil {
 			return result, err
 		}
@@ -815,6 +894,76 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 	return result, nil
 }
 
+// SweepTrustedAuthorAutoMerges merges green PRs whose human author already
+// holds the configured authorized-users role and, by default, GitHub
+// repository write/maintain/admin permission. This is an operator opt-in tier:
+// unlike App self-merge, a human PR has no structural self-approval problem, so
+// the sweep must prove Hive is only executing a merge the author could perform
+// themselves.
+func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	if !c.ready() {
+		return nil, hgithub.ErrNoGitHubClient
+	}
+	policy := c.currentTrustedAuthorPolicy()
+	result := &AutoMergeSweepResult{}
+	if !policy.Enabled {
+		return result, nil
+	}
+	maxMerges := opts.MaxMerges
+	if maxMerges <= 0 {
+		maxMerges = DefaultAutoMergeSweepMaxMerges
+	}
+	expectedChecks := newExpectedCheckCache()
+	ctx = contextWithExpectedCheckCache(ctx, expectedChecks)
+	for _, displayRepo := range c.activeRepos() {
+		if len(result.Merged) >= maxMerges {
+			break
+		}
+		if !policy.repoAllowed(displayRepo) {
+			continue
+		}
+		if !c.repoAutoMergeAllowed(displayRepo) {
+			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled")
+			continue
+		}
+		owner, repoName := c.transport.SplitRepo(displayRepo)
+		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
+		if err != nil {
+			return result, err
+		}
+		for _, pr := range prs {
+			if len(result.Merged) >= maxMerges {
+				break
+			}
+			number := 0
+			if pr != nil {
+				number = pr.GetNumber()
+			}
+			result.Seen++
+			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
+				result.Skipped++
+				continue
+			}
+			result.Candidates++
+			event, reason, err := c.trySweepTrustedAuthorPR(ctx, displayRepo, owner, repoName, number, policy)
+			if err != nil {
+				c.warn("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
+				result.Skipped++
+				continue
+			}
+			if reason != "" {
+				result.Skipped++
+				continue
+			}
+			result.Merged = append(result.Merged, event)
+			if opts.Audit != nil {
+				opts.Audit(event)
+			}
+		}
+	}
+	return result, nil
+}
+
 // StartSelfAuthoredAutoMergeSweep runs a loop that periodically calls
 // SweepSelfAuthoredAutoMerges. It returns immediately; the loop runs until ctx
 // is cancelled. A nil client is a no-op. maxMerges is passed straight through
@@ -886,7 +1035,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		close(done)
 		return done
 	}
-	if !acmmAllowed {
+	if !acmmAllowed && !c.currentTrustedAuthorPolicy().Enabled {
 		level := "unset"
 		if acmmLevel != nil {
 			level = fmt.Sprintf("%d", *acmmLevel)
@@ -907,18 +1056,41 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				result, err := c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges})
-				if err != nil {
-					c.warn("self-authored automerge sweep failed", "error", err)
-					// A rate-limit refusal may be go-github's cached verdict
-					// from a token that has since rotated. Re-read the real
-					// limits (free, and it updates that cache) so the next tick
-					// is decided on current truth instead of repeating a stale
-					// refusal for the rest of the window.
-					if isRateLimited(err) {
-						c.refreshRateLimitCache(ctx)
+				result := &AutoMergeSweepResult{}
+				if acmmAllowed {
+					var err error
+					result, err = c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges})
+					if err != nil {
+						c.warn("self-authored automerge sweep failed", "error", err)
+						// A rate-limit refusal may be go-github's cached verdict
+						// from a token that has since rotated. Re-read the real
+						// limits (free, and it updates that cache) so the next tick
+						// is decided on current truth instead of repeating a stale
+						// refusal for the rest of the window.
+						if isRateLimited(err) {
+							c.refreshRateLimitCache(ctx)
+						}
+						continue
 					}
-					continue
+				}
+				remaining := maxMerges
+				if remaining <= 0 {
+					remaining = DefaultAutoMergeSweepMaxMerges
+				}
+				remaining -= len(result.Merged)
+				if remaining > 0 && c.currentTrustedAuthorPolicy().Enabled {
+					trustedResult, trustedErr := c.SweepTrustedAuthorAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining})
+					if trustedErr != nil {
+						c.warn("trusted-author automerge sweep failed", "error", trustedErr)
+						if isRateLimited(trustedErr) {
+							c.refreshRateLimitCache(ctx)
+						}
+					} else {
+						result.Seen += trustedResult.Seen
+						result.Skipped += trustedResult.Skipped
+						result.Candidates += trustedResult.Candidates
+						result.Merged = append(result.Merged, trustedResult.Merged...)
+					}
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
@@ -943,7 +1115,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // run before paying for PullRequests.Get. It does not populate MergeableState;
 // PRs that survive the cheap gates are fetched once for that safety-critical
 // evaluation data and fetched again immediately before merge to re-verify SHA.
-func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+func (c *Engine) listOpenPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
 		ListOptions: gh.ListOptions{PerPage: 100},
@@ -1185,6 +1357,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		QueuedBy: "", // no queuer in the self-authored path — the App merges its own PR
 		HeadSHA:  evaluatedHeadSHA,
 		MergeSHA: mergeResult.GetSHA(),
+		Tier:     lane,
 	}
 	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "lane", lane, "merge_sha", event.MergeSHA)
 	return event, "", nil
@@ -1371,6 +1544,35 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	return ""
 }
 
+func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuthorPolicy) string {
+	if pr == nil {
+		return "missing-head-sha"
+	}
+	if state := pr.GetState(); state != "" && !strings.EqualFold(state, "open") {
+		return "closed"
+	}
+	if pr.GetDraft() {
+		return "draft"
+	}
+	labels := labelNames(pr.Labels)
+	if excluded := policy.excludedLabel(labels); excluded != "" {
+		return "excluded-label:" + excluded
+	}
+	if c.isHeld(labels) {
+		return "held"
+	}
+	if c.transport.IsExemptLabels(labels) {
+		return "exempt-label"
+	}
+	if pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
+		return "missing-head-sha"
+	}
+	if decision := c.trustedAuthorDecision(hgithub.SafeGetLogin(pr.GetUser()), policy.RequireRole); !decision.Allowed {
+		return "untrusted-author-role"
+	}
+	return ""
+}
+
 func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -1389,6 +1591,202 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 		}
 		opts.ListOptions.Page = resp.NextPage
 	}
+}
+
+func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner, repo string, number int, policy TrustedAuthorPolicy) (AutoMergeSweepEvent, string, error) {
+	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		return AutoMergeSweepEvent{}, "fetch-pr", err
+	}
+	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
+	author := hgithub.SafeGetLogin(pr.GetUser())
+	decision := c.trustedAuthorDecision(author, policy.RequireRole)
+	if !decision.Allowed {
+		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
+	}
+	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
+	if policy.RequireGitHubPermission {
+		var err error
+		permission, err = c.authorRepoPermission(ctx, owner, repo, author)
+		if err != nil {
+			return AutoMergeSweepEvent{}, "author-permission-check", err
+		}
+		if !permission.Allowed {
+			return AutoMergeSweepEvent{}, "author-permission-missing", nil
+		}
+	}
+	if c.isForkPR(pr) && !policy.RequireGitHubPermission {
+		var err error
+		permission, err = c.authorRepoPermission(ctx, owner, repo, author)
+		if err != nil {
+			return AutoMergeSweepEvent{}, "author-permission-check", err
+		}
+		if !permission.Allowed {
+			return AutoMergeSweepEvent{}, "fork-non-member", nil
+		}
+	}
+	if blocked, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number); err != nil {
+		return AutoMergeSweepEvent{}, "review-state-check", err
+	} else if blocked {
+		return AutoMergeSweepEvent{}, "changes-requested", nil
+	}
+	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	if mergeable != hgithub.MergeableYes {
+		return AutoMergeSweepEvent{}, "not-mergeable", nil
+	}
+	headSHA := ""
+	if pr.GetHead() != nil {
+		headSHA = pr.GetHead().GetSHA()
+	}
+	if headSHA == "" {
+		return AutoMergeSweepEvent{}, "missing-head-sha", nil
+	}
+	baseBranch := ""
+	if pr.GetBase() != nil {
+		baseBranch = pr.GetBase().GetRef()
+	}
+	if held, reason, err := c.releaseHoldActive(ctx, owner, repo, baseBranch); err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	} else if held {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
+	var headPushedAt time.Time
+	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
+		headPushedAt = updatedAt.Time
+	}
+	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
+	if err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	}
+	if !green {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
+	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		return AutoMergeSweepEvent{}, "fetch-pr-recheck", err
+	}
+	currentHeadSHA := ""
+	if current.GetHead() != nil {
+		currentHeadSHA = current.GetHead().GetSHA()
+	}
+	if currentHeadSHA == "" || currentHeadSHA != headSHA {
+		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+	}
+
+	method := mergeMethodFor(pr)
+	var mergeResult *gh.PullRequestMergeResult
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindPullRequestMerge,
+		Target: fmt.Sprintf("%d", number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": method, "expect_sha": headSHA, "lane": "trusted-author"},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+			SHA:         headSHA,
+			MergeMethod: method,
+		})
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
+	})
+	if err != nil {
+		return AutoMergeSweepEvent{}, "merge-failed", err
+	}
+	if !mergeResult.GetMerged() {
+		return AutoMergeSweepEvent{}, "merge-not-applied", nil
+	}
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, method, mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
+	if err := c.commentTrustedAuthorMerge(ctx, owner, repo, number, author, decision.Role, permission.Level, headSHA); err != nil {
+		c.warn("trusted-author automerge audit comment failed", "repo", displayRepo, "pr", number, "error", err)
+	}
+	event := AutoMergeSweepEvent{
+		Repo:     displayRepo,
+		Number:   number,
+		Author:   author,
+		HeadSHA:  headSHA,
+		MergeSHA: mergeResult.GetSHA(),
+		Tier:     "trusted-author",
+	}
+	c.info("trusted-author automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "role", decision.Role, "permission", permission.Level, "merge_sha", event.MergeSHA)
+	return event, "", nil
+}
+
+func (c *Engine) authorRepoPermission(ctx context.Context, owner, repo, author string) (trustedAuthorPermission, error) {
+	level, _, err := c.gh.Repositories.GetPermissionLevel(ctx, owner, repo, author)
+	if err != nil {
+		return trustedAuthorPermission{}, err
+	}
+	permission := strings.ToLower(strings.TrimSpace(level.GetPermission()))
+	roleName := strings.ToLower(strings.TrimSpace(level.GetRoleName()))
+	display := roleName
+	if display == "" {
+		display = permission
+	}
+	allowed := permission == "admin" || permission == "write" || roleName == "admin" || roleName == "maintain" || roleName == "write"
+	return trustedAuthorPermission{Allowed: allowed, Level: display}, nil
+}
+
+func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
+	if pr == nil || pr.GetHead() == nil || pr.GetBase() == nil {
+		return false
+	}
+	headRepo := ""
+	if pr.GetHead().GetRepo() != nil {
+		headRepo = pr.GetHead().GetRepo().GetFullName()
+	}
+	baseRepo := ""
+	if pr.GetBase().GetRepo() != nil {
+		baseRepo = pr.GetBase().GetRepo().GetFullName()
+	}
+	return headRepo != "" && baseRepo != "" && !strings.EqualFold(headRepo, baseRepo)
+}
+
+func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo string, number int) (bool, error) {
+	opts := &gh.ListOptions{PerPage: 100}
+	latest := map[string]string{}
+	for {
+		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+		if err != nil {
+			return false, err
+		}
+		for _, review := range reviews {
+			login := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(review.GetUser())))
+			if login == "" {
+				continue
+			}
+			state := strings.ToUpper(strings.TrimSpace(review.GetState()))
+			if state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "DISMISSED" {
+				latest[login] = state
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	for _, state := range latest {
+		if state == "CHANGES_REQUESTED" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo string, number int, author, role, permission, sha string) error {
+	body := fmt.Sprintf("merged by Hive trusted-author auto-merge: author @%s holds role %s and GitHub permission %s on repo; CI green at %s.", author, role, permission, sha)
+	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
 }
 
 func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
@@ -1564,6 +1962,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		HeadSHA:  headSHA,
 		MergeSHA: mergeResult.GetSHA(),
 		Label:    label,
+		Tier:     "queued",
 	}
 	c.info("automerge sweep merged PR", "repo", displayRepo, "pr", number, "queued_by", queuedBy, "merge_sha", event.MergeSHA)
 	return event, "", nil
