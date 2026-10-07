@@ -1,1 +1,0 @@
-Guide agent templates no longer instruct the agent to run `gh issue list --state all` for duplicate checks — that command is blocked for agents by the default proxy restrictions (`src/deploy/data/restrictions.conf`). They now use `gh search issues --repo <owner/repo> --state closed "<key terms>"`, which is allowed. (hivecommons/hive#10913)
