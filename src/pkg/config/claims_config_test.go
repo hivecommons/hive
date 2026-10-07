@@ -54,3 +54,35 @@ func TestClaimsEscalationThreshold(t *testing.T) {
 		}
 	}
 }
+
+// #10981: the dashboard reports effective lifetimes and their defaults, and
+// rejects negative values or a lifetime above the effective max.
+func TestClaimsConfigEffectiveTTLsAndValidate(t *testing.T) {
+	var c ClaimsConfig
+	h, a, ct, m := c.EffectiveTTLs()
+	if h != 4*time.Hour || a != 2*time.Hour || ct != 30*time.Minute || m != 24*time.Hour {
+		t.Fatalf("zero config effective TTLs = %v %v %v %v", h, a, ct, m)
+	}
+	c.TTLS = 3600
+	if dh, _, _, _ := c.DefaultTTLs(); dh != time.Hour {
+		t.Fatalf("human default with ttl_s set = %v, want 1h", dh)
+	}
+	c.AgentTTLS = 600
+	if _, a, _, _ = c.EffectiveTTLs(); a != 10*time.Minute {
+		t.Fatalf("agent effective = %v", a)
+	}
+	if err := c.ValidateTTLs(); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	for _, bad := range []ClaimsConfig{
+		{HumanTTLS: -1},
+		{MaxTTLS: -1},
+		{MaxTTLS: 3600, AgentTTLS: 7200},
+		{TTLS: 90000},
+		{MaxTTLS: 600},
+	} {
+		if err := bad.ValidateTTLs(); err == nil {
+			t.Fatalf("%+v accepted", bad)
+		}
+	}
+}

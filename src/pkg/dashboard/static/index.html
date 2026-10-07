@@ -2775,6 +2775,11 @@
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+    .claims-ttl-fields { margin-top: var(--sp-3); }
+    .claims-ttl-controls { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+    .claims-ttl-input { width: 80px; }
+    .claims-ttl-note { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .claims-ttl-footnote { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-3) var(--sp-0) var(--sp-0); }
     .config-stat-row .config-field { min-width: 0; }
     .config-stat-row .config-field label { font-size: 0.65rem; margin-bottom: var(--sp-1); }
     /* compact stat-row inputs — size step re-declared after the input recipe */
@@ -34857,6 +34862,105 @@ function burnAreaChart() {
       renderConfigTab('Features');
     }
 
+    // Claim lifetimes (#10981): duration inputs for governor.claims.*_ttl_s
+    // under the Issue claims toggle. Reset sends 0, which the server treats as
+    // "use the default"; a saved change applies to claims made or renewed
+    // afterwards without a restart. Owner-only, like the PUT it feeds.
+    const CLAIMS_TTL_FIELDS = [
+      { key: 'claimsHumanTtlS', label: 'Human claims', yaml: 'human_ttl_s', tip: 'How long a person\'s claim holds an issue before it lapses unless renewed. Falls back to ttl_s, then 4 hours.' },
+      { key: 'claimsAgentTtlS', label: 'Agent claims', yaml: 'agent_ttl_s', tip: 'How long the claim recorded when one of this hive\'s agents starts on a kicked issue lasts. Defaults to 2 hours.' },
+      { key: 'claimsContributorTtlS', label: 'Contributor claims', yaml: 'contributor_ttl_s', tip: 'How long a relay contributor\'s claim lasts. Defaults to 30 minutes, the relay lease length.' },
+      { key: 'claimsMaxTtlS', label: 'Maximum claim', yaml: 'max_ttl_s', tip: 'Cap on any requested claim lifetime; the three lifetimes above may not exceed it. Defaults to 24 hours.' },
+    ];
+
+    function claimsTTLSplit(secs) {
+      const n = Math.max(0, Math.round(Number(secs) || 0));
+      if (n > 0 && n % 3600 === 0) return { value: n / 3600, unit: 'h' };
+      return { value: Math.round(n / 60), unit: 'm' };
+    }
+
+    function claimsTTLText(secs) {
+      const d = claimsTTLSplit(secs);
+      const word = d.unit === 'h' ? 'hour' : 'minute';
+      return d.value + ' ' + word + (d.value === 1 ? '' : 's');
+    }
+
+    function claimsTTLNote(key, isSet) {
+      const f = (_configState.data && _configState.data.features) || {};
+      const def = (f.claimsTtlDefaults || {})[key] || 0;
+      return isSet ? 'Default: ' + claimsTTLText(def) : 'Using the default';
+    }
+
+    function renderClaimsTTLFields(f) {
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const defaults = f.claimsTtlDefaults || {};
+      const set = f.claimsTtlSet || {};
+      const off = canEdit ? '' : ' disabled';
+      const fields = CLAIMS_TTL_FIELDS.map(fd => {
+        const d = claimsTTLSplit(f[fd.key] || defaults[fd.key] || 0);
+        const isSet = !!set[fd.key];
+        return `<div class="config-field" data-claims-ttl="${fd.key}">
+            <label>${esc(fd.label)} <span class="config-info">i<span class="config-tooltip">${esc(fd.tip)} (governor.claims.${fd.yaml})</span></span></label>
+            <div class="claims-ttl-controls">
+              <input type="number" min="1" step="1" class="claims-ttl-input" value="${d.value}" aria-label="${esc(fd.label)} lifetime"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
+              <select aria-label="${esc(fd.label)} unit"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
+                <option value="m"${d.unit === 'm' ? ' selected' : ''}>minutes</option>
+                <option value="h"${d.unit === 'h' ? ' selected' : ''}>hours</option>
+              </select>
+              ${canEdit ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="claimsTTLReset" data-arg0="${fd.key}" data-arg-types="s"${isSet ? '' : ' hidden'}>Reset to default</button>` : ''}
+            </div>
+            <p class="claims-ttl-note">${esc(claimsTTLNote(fd.key, isSet))}</p>
+          </div>`;
+      }).join('');
+      return `<div class="config-field-row claims-ttl-fields">${fields}</div>
+          <p class="claims-ttl-footnote">${canEdit
+            ? 'Changes apply to claims made or renewed after Save; existing claims keep their expiry.'
+            : 'Only the hive owner can change claim lifetimes.'}</p>`;
+    }
+
+    function claimsTTLRow(key) {
+      return document.querySelector('#config-body [data-claims-ttl="' + key + '"]');
+    }
+
+    function claimsTTLStage(key, secs, isSet) {
+      const f = rotationFeaturesState();
+      const defaults = f.claimsTtlDefaults || {};
+      f[key] = isSet ? secs : (defaults[key] || 0);
+      f.claimsTtlSet = Object.assign({}, f.claimsTtlSet, { [key]: isSet });
+      markDirty('features', key, isSet ? secs : 0);
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const btn = row.querySelector('[data-action="claimsTTLReset"]');
+      if (btn) btn.hidden = !isSet;
+      const note = row.querySelector('.claims-ttl-note');
+      if (note) note.textContent = claimsTTLNote(key, isSet);
+    }
+
+    function claimsTTLChanged(key) {
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const input = row.querySelector('input[type="number"]');
+      const unit = row.querySelector('select');
+      const n = Math.round(Number(input && input.value));
+      if (!input || input.value === '' || !(n > 0)) {
+        claimsTTLReset(key);
+        return;
+      }
+      claimsTTLStage(key, n * (unit && unit.value === 'h' ? 3600 : 60), true);
+    }
+
+    function claimsTTLReset(key) {
+      claimsTTLStage(key, 0, false);
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const f = rotationFeaturesState();
+      const d = claimsTTLSplit((f.claimsTtlDefaults || {})[key] || 0);
+      const input = row.querySelector('input[type="number"]');
+      const unit = row.querySelector('select');
+      if (input) input.value = d.value;
+      if (unit) unit.value = d.unit;
+    }
+
     async function loadRotationHeadroom() {
       const host = document.getElementById('rotation-headroom-host');
       if (!host) return;
@@ -35446,7 +35550,7 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
             <span class="config-toggle-label">Issue claims <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.</span></span></span>
           </div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Claims expire after ${Math.round(Number(f.claimsTtlS || 0) / 60)} minutes.</p>
+          ${renderClaimsTTLFields(f)}
         </div>
 
         <div style="margin-top:18px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
