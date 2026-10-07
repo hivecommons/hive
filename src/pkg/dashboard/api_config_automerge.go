@@ -150,6 +150,13 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
+		TrustedAuthors    *struct {
+			Enabled                 *bool    `json:"enabled"`
+			Repos                   []string `json:"repos"`
+			RequireRole             *string  `json:"require_role"`
+			RequireGitHubPermission *bool    `json:"require_github_permission"`
+			ExcludeLabels           []string `json:"exclude_labels"`
+		} `json:"trusted_authors"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -169,6 +176,29 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		minHeadAge = parsed
+	}
+	var trustedAuthorRepos []string
+	var trustedAuthorLabels []string
+	if body.TrustedAuthors != nil {
+		if body.TrustedAuthors.RequireRole != nil {
+			role := strings.ToLower(strings.TrimSpace(*body.TrustedAuthors.RequireRole))
+			if role != config.RoleMerger && role != config.RoleOwner {
+				jsonError(w, "trusted_authors.require_role must be merger or owner", http.StatusBadRequest)
+				return
+			}
+		}
+		if body.TrustedAuthors.Repos != nil {
+			trustedAuthorRepos = normalizeAutoMergeRepoList(body.TrustedAuthors.Repos)
+		}
+		if body.TrustedAuthors.ExcludeLabels != nil {
+			for _, label := range body.TrustedAuthors.ExcludeLabels {
+				if strings.TrimSpace(label) == "" {
+					jsonError(w, "trusted_authors.exclude_labels entries must be non-empty strings", http.StatusBadRequest)
+					return
+				}
+			}
+			trustedAuthorLabels = normalizeAutoMergeRepoList(body.TrustedAuthors.ExcludeLabels)
+		}
 	}
 
 	// --- apply ---
@@ -201,6 +231,24 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
+	}
+	if body.TrustedAuthors != nil {
+		if body.TrustedAuthors.Enabled != nil {
+			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
+		}
+		if body.TrustedAuthors.Repos != nil {
+			cfg.AutoMerge.TrustedAuthors.Repos = trustedAuthorRepos
+		}
+		if body.TrustedAuthors.RequireRole != nil {
+			cfg.AutoMerge.TrustedAuthors.RequireRole = strings.ToLower(strings.TrimSpace(*body.TrustedAuthors.RequireRole))
+		}
+		if body.TrustedAuthors.RequireGitHubPermission != nil {
+			v := *body.TrustedAuthors.RequireGitHubPermission
+			cfg.AutoMerge.TrustedAuthors.RequireGitHubPermission = &v
+		}
+		if body.TrustedAuthors.ExcludeLabels != nil {
+			cfg.AutoMerge.TrustedAuthors.ExcludeLabels = trustedAuthorLabels
+		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
 
@@ -239,6 +287,15 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if trustedBots == nil {
 		trustedBots = append([]string{}, config.DefaultTrustedBotAuthors...)
 	}
+	ta := am.TrustedAuthors
+	trustedAuthorRepos := ta.Repos
+	if trustedAuthorRepos == nil {
+		trustedAuthorRepos = []string{}
+	}
+	trustedAuthorLabels := ta.ExcludeLabels
+	if trustedAuthorLabels == nil {
+		trustedAuthorLabels = append([]string{}, config.DefaultTrustedAuthorExcludeLabels...)
+	}
 	return map[string]interface{}{
 		"self_authored":           selfAuthored,
 		"self_authored_set":       am.SelfAuthored != nil,
@@ -249,6 +306,14 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"no_ci_ok":                noCIOK,
 		"trusted_bot_authors":     trustedBots,
 		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"trusted_authors": map[string]interface{}{
+			"enabled":                   ta.Enabled,
+			"repos":                     trustedAuthorRepos,
+			"require_role":              ta.EffectiveRequireRole(),
+			"require_github_permission": ta.EffectiveRequireGitHubPermission(),
+			"exclude_labels":            trustedAuthorLabels,
+			"roles":                     []string{config.RoleMerger, config.RoleOwner},
+		},
 	}
 }
 

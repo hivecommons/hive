@@ -12562,9 +12562,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const v = p && p.merge_verdict ? p.merge_verdict : null;
       const state = p && p.mergeable_state ? String(p.mergeable_state) : '';
       const reason = v && v.reason ? String(v.reason) : '';
+      const tier = v && v.tier ? String(v.tier) : '';
+      const tierNote = tier ? ' tier=' + tier + ': ' : ' ';
       switch (prMergeState(p)) {
         case 'eligible':
-          return ' (merge eligible: ' + (reason || 'the sweep would merge this now') + ')';
+          return ' (merge eligible:' + tierNote + (reason || 'the sweep would merge this now') + ')';
         case 'outstanding':
           if (reason) return ' (mergeable on GitHub, not yet eligible: ' + reason + ')';
           if (state === 'unstable') return ' (mergeable on GitHub, sweep verdict not available — GitHub state: unstable; non-required checks may be red)';
@@ -35395,6 +35397,15 @@ function burnAreaChart() {
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
+      const amTrustedAuthors = am.trusted_authors || {};
+      const amTrustedAuthorRoles = Array.isArray(amTrustedAuthors.roles) && amTrustedAuthors.roles.length ? amTrustedAuthors.roles : ['merger','owner'];
+      const amTrustedAuthorRole = amTrustedAuthors.require_role || 'merger';
+      const amTrustedAuthorLabels = Array.isArray(amTrustedAuthors.exclude_labels) ? amTrustedAuthors.exclude_labels : ['hold','do-not-merge','needs-human'];
+      const amTrustedAuthorRepos = Array.isArray(amTrustedAuthors.repos) ? amTrustedAuthors.repos : [];
+      const watchedRepos = Array.isArray((_configState.data || {}).repos) ? (_configState.data || {}).repos : [];
+      const amTrustedAuthorRepoSet = new Set(amTrustedAuthorRepos.map(r => String(r).toLowerCase()));
+      const amTrustedAuthorRoleOptions = amTrustedAuthorRoles.map(r => `<option value="${esc(r)}"${r === amTrustedAuthorRole ? ' selected' : ''}>${esc(r)}</option>`).join('');
+      const amTrustedAuthorRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amTrustedAuthorRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
       const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
@@ -35617,6 +35628,36 @@ function burnAreaChart() {
             <div class="am-bot-add">
               <input type="text" id="am-new-bot" placeholder="another bot login, e.g. snyk-bot">
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
+            </div>
+          </div>
+          <div class="config-field" id="am-trusted-authors" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <label>Trusted-author auto-merge <span class="config-info">i<span class="config-tooltip">Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.</span></span></label>
+            <div class="config-toggle" style="margin-top:8px">
+              <div id="am-trusted-authors-enabled" class="config-toggle-switch ${amTrustedAuthors.enabled ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable trusted-author tier</span>
+            </div>
+            <div class="config-field-row" style="margin-top:10px">
+              <div class="config-field">
+                <label for="am-trusted-authors-require-role">Required author role</label>
+                <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
+              </div>
+              <div class="config-field">
+                <label>GitHub permission check</label>
+                <div class="config-toggle">
+                  <div id="am-trusted-authors-require-github-permission" class="config-toggle-switch ${amTrustedAuthors.require_github_permission !== false ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.require_github_permission !== false ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Require push/maintain/admin</span>
+                </div>
+              </div>
+            </div>
+            <div class="config-field" style="margin-top:10px">
+              <label for="am-trusted-authors-exclude-labels">Excluded labels</label>
+              <input id="am-trusted-authors-exclude-labels" type="text" value="${esc(amTrustedAuthorLabels.join(', '))}" placeholder="hold, do-not-merge, needs-human" data-change-action="gh102">
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
+            </div>
+            <div class="config-field" style="margin-top:10px">
+              <label for="am-trusted-authors-repos">Repositories</label>
+              <select id="am-trusted-authors-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh102" style="min-height:72px">${amTrustedAuthorRepoOptions}</select>
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Leave every repo unselected to allow all watched repositories. Eligibility still requires green CI, mergeable state, no excluded label, no outstanding CHANGES_REQUESTED review, and no fork non-member.</p>
             </div>
           </div>
         </div>
@@ -36449,6 +36490,21 @@ function burnAreaChart() {
         .map(r => r.dataset.botLogin)
         .filter(Boolean);
       markDirty('auto-merge', 'trusted_bot_authors', list);
+    }
+
+    function markDirtyTrustedAuthors() {
+      const enabled = document.getElementById('am-trusted-authors-enabled');
+      const permission = document.getElementById('am-trusted-authors-require-github-permission');
+      const role = document.getElementById('am-trusted-authors-require-role');
+      const labels = document.getElementById('am-trusted-authors-exclude-labels');
+      const repos = document.getElementById('am-trusted-authors-repos');
+      markDirty('auto-merge', 'trusted_authors', {
+        enabled: !!(enabled && enabled.classList.contains('on')),
+        require_role: role ? role.value : 'merger',
+        require_github_permission: !!(permission && permission.classList.contains('on')),
+        exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
+        repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : []
+      });
     }
 
     function markDirtyPerspectives() {
@@ -39958,6 +40014,13 @@ function burnAreaChart() {
         if (row) row.remove();
         markDirtyTrustedBots();
       },
+      gh100: function (event, A) {
+        const isOn = this.classList.toggle('on');
+        this.setAttribute('aria-checked', isOn ? 'true' : 'false');
+        markDirtyTrustedAuthors();
+      },
+      gh101: function (event, A) { markDirtyTrustedAuthors(); },
+      gh102: function (event, A) { markDirtyTrustedAuthors(); },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();
