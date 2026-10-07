@@ -123,7 +123,7 @@ agent needs.
 
 These keys parse and validate today. They are documented here because they are
 real and you will find them in the source — **not** because setting them makes a
-non-GitHub hive work. They have two consumers: the dashboard's Platform card,
+non-GitHub hive work. They have two consumers: the dashboard Diagnostics Platform tile,
 which reads them to display a forge name and instance URL, and the governor's
 escalation writes, which build an adapter from them (see the table above for why
 that caller is not reached on a non-GitHub hive today).

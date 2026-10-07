@@ -126,7 +126,6 @@ func TestDashboardSectionRenderersRefreshSharedShell(t *testing.T) {
 		"function renderAuditTable(entries)":        "audit-section",
 		"function renderReviewQueue(data)":          "review-queue-section",
 		"function renderFAQ()":                      "faq-section",
-		"function renderPlatform(plat)":             "platform-section",
 		"function renderInception()":                "inception-section",
 		"function renderKnowledge()":                "knowledge-section",
 		"function renderDebugSection()":             "debug-section",
@@ -166,8 +165,8 @@ func TestDashboardSectionChromeHasNoSectionSpecificOverrides(t *testing.T) {
 
 func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, `'platform-section':`) || !strings.Contains(html, `id="platform-section"`) || !strings.Contains(strings.Join(dashboardLayoutTemplateIDs(t, html), ","), "platform-section") {
-		t.Fatal("Platform must remain a top-level v6 dashboard section")
+	if strings.Contains(html, `'platform-section':`) || strings.Contains(html, `id="platform-section"`) || strings.Contains(strings.Join(dashboardLayoutTemplateIDs(t, html), ","), "platform-section") {
+		t.Fatal("Platform must not be a top-level dashboard section")
 	}
 	for _, want := range []string{
 		"function platformFactTiles(plat)",

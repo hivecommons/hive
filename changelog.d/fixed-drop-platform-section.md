@@ -1,0 +1,1 @@
+- Removed the v6 dashboard Platform top-level section so platform details stay in Diagnostics, matching v5.

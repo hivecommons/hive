@@ -34,7 +34,7 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | Admin | Tokens, Cost, Review Queue, Agents, Agent activity, Audit Log, Diagnostics |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Join our Discord, Report an Issue |
 
-On the v6 line the sidebar also lists Runs and Platform. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
+On the v6 line the sidebar also lists Runs. Sections hidden by the ACMM level or a feature setting are hidden from the sidebar too.
 
 Count badges use the shared `.badge-count` recipe. Zero counts render as dimmed `0` badges with `data-zero`.
 
