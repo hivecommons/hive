@@ -1,1 +1,0 @@
-- Add first-class Bob USD budget caps alongside Bob coin caps, with dashboard editing and equivalent-unit cost reporting.

@@ -1,1 +1,0 @@
-- Show repo-card issue rows for counted non-actionable buckets such as advisory, filtered, and reporter-triage issues so the issue total can be reconciled from the card.

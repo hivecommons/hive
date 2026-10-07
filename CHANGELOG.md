@@ -11,6 +11,28 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.141.0)
+
+### Added
+
+- Add configurable Bob coin usage metrics and coin-budget enforcement to the governor budget gate.
+- Add first-class Bob USD budget caps alongside Bob coin caps, with dashboard editing and equivalent-unit cost reporting.
+
+### Changed
+
+- docs: the Agents entry in [Dashboard sections explained](src/docs/dashboard-sections.md#agents) now explains every phrase of the agent card's "Now:" line — "Now:", "just now" / "N min ago", "working — no issue or pull request yet · started … ago", "Idle", "last:", "Paused", "Off", "Stopped — see the agent's log", "Not started yet", "reserved until", "still reserved:", "and N more" and "information may be out of date" — what counts as the item an agent is on, that the line only sees what agents do through the hive, and that a reservation (claim) is not proof an agent is still working ([#10936](https://github.com/hivecommons/hive/issues/10936)).
+- docs: note OpenHands CLI is legacy upstream; backend stays T3 (#10965)
+- Make the dashboard navbar upgrade bees larger and move their orbit off-centre so they read more like a swarm.
+
+### Fixed
+
+- guide templates: use gh search issues instead of blocked gh issue list (#10946)
+- dashboard: Projects "Clear filter" actually clears the filter (#10953)
+- Prevent release-channel auto-upgrades from attempting short-SHA images before GHCR publishes them.
+- Fixed the top governor agent strip so additional running-agent tiles use the available navbar space instead of being faded/clipped after the third tile.
+- dashboard: Lifecycle Timeline axis labels no longer stretch and journey rows no longer collapse to stripes (#10956)
+- Show repo-card issue rows for counted non-actionable buckets such as advisory, filtered, and reporter-triage issues so the issue total can be reconciled from the card.
+
 ## 2026-10-07 (v5.140.0)
 
 ### Added
