@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.140.0)
+
+### Added
+
+- dashboard: a new **Agent activity** section lists every agent on one screen, one row each: its name, the same state word and "Now:" line as its card, the time since its last action (or since it started, for "working — no issue or pull request yet"), and every issue it has reserved with the time each reservation ends. Rows are built from the same agent list and helpers as the cards, so a row and its card always agree, and they show only agents the viewer can already see. The section can be collapsed, moved and hidden like other sections, keeps those settings across reloads, has a sidebar entry under Admin, and has a **?** help entry ([#10935](https://github.com/hivecommons/hive/issues/10935), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+
 ## 2026-10-06 (v5.139.0)
 
 ### Added
