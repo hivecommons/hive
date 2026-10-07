@@ -13751,7 +13751,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewProjectFilterState() {
-      const key = overviewProjectFilterSpec(_overviewProjectFilterKey) ? _overviewProjectFilterKey : overviewProjectFilterKeyFromURL();
+      const key = _overviewProjectFilterKey == null ? overviewProjectFilterKeyFromURL() : _overviewProjectFilterKey;
       const spec = overviewProjectFilterSpec(key);
       return spec ? Object.assign({ key, selectedCount: _overviewProjectFilterCount }, spec) : null;
     }
@@ -13851,7 +13851,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewSetProjectFilterHash(key) {
       const hash = key ? ('#projects?band=' + encodeURIComponent(key)) : '#section-repos-section';
-      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(hash) : hash);
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('band');
+        u.searchParams.delete('kpi');
+        const qs = u.searchParams.toString();
+        history.replaceState(null, '', u.pathname + (qs ? '?' + qs : '') + hash);
+      } catch {
+        history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(hash) : hash);
+      }
     }
 
     function overviewApplyKPIProjectFilter(key, count) {
@@ -13866,6 +13874,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function clearOverviewProjectFilter() {
+      _overviewProjectFilterKey = '';
+      _overviewProjectFilterCount = null;
+      overviewSetProjectFilterHash('');
+      repaintReposForWidth();
+    }
+
+    function clearProjectsFilter() {
+      writeRepoPillFilterState({ mode: repoPillFilterState().mode, kinds: [], repo: '' });
       _overviewProjectFilterKey = '';
       _overviewProjectFilterCount = null;
       overviewSetProjectFilterHash('');
@@ -15115,7 +15131,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const resetBtn = document.getElementById('repos-reset-layout-btn');
       if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       const clearFilterBtn = document.getElementById('repos-clear-pill-filter-btn');
-      if (clearFilterBtn) clearFilterBtn.hidden = !pillFilterIsActive;
+      if (clearFilterBtn) {
+        clearFilterBtn.hidden = !(pillFilterIsActive || overviewFilter);
+        clearFilterBtn.dataset.action = overviewFilter ? 'clearProjectsFilter' : 'clearRepoPillFilter';
+        clearFilterBtn.title = overviewFilter ? 'Clear the active Projects filter' : 'Clear the active repository pill filter';
+      }
       const overviewFilterChip = document.getElementById('repos-overview-filter-chip');
       if (overviewFilterChip) {
         overviewFilterChip.hidden = !overviewFilter;
