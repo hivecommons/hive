@@ -294,8 +294,8 @@ governor:
     usd: 25.00                    # optional period cap in Bob-equivalent USD
     coins:
       bob:
-        tokens_per_coin: 500000   # example placeholder; confirm with your Bob team
-        usd_per_coin: 0.50        # example placeholder; confirm with your Bob team
+        tokens_per_coin: 1000000  # illustrative only; use the conversion your Bob team gives you
+        usd_per_coin: 1.00        # illustrative only; use the conversion your Bob team gives you
         label: "BC"
         budget: 50                # optional period cap in Bob coins
 ```
