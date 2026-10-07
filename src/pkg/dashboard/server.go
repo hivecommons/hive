@@ -595,7 +595,7 @@ type FrontendSecurity struct {
 }
 
 // FrontendPlatform reports the v4 spoke capabilities (forge, mint, skills) for
-// the dashboard Platform card. Every field is honest-empty when unconfigured;
+// the dashboard Diagnostics Platform tile. Every field is honest-empty when unconfigured;
 // building it never panics on a nil or zero-value config.
 type FrontendPlatform struct {
 	Forge  FrontendForge  `json:"forge"`

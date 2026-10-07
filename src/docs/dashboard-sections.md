@@ -485,7 +485,7 @@ Health checks for Hive itself, such as its connections, credentials and safety s
 
 - Each tile reads the latest health data from the hive.
 - A red or amber tile explains what failed and what to try.
-- On v5, a **Platform** tile shows which code hosting service is connected and which optional services are on. On v6 this is its own section.
+- A **Platform** tile shows which code hosting service is connected and which optional services are on.
 - **Quality stats** come from the checks your quality worker is set up to run.
 
 **What it is good for.** Open it when something stops working. Fix the first red tile first.
@@ -598,21 +598,3 @@ This section exists on the v6 line only.
 **When it appears.** On v6 only, always.
 
 **Settings that change it.** Which workers can take staged work changes what appears. See [Runs](runs.md).
-
-## Platform
-
-Which code hosting service Hive is connected to and which optional platform services are switched on.
-
-This section exists on the v6 line only. On v5 the same facts are in the Diagnostics section.
-
-**What it tells you.** It shows the code hosting service, such as GitHub, GitLab or Gitea, and how many repositories Hive watches. It also shows whether optional services, such as the token minting service, are on.
-
-**How the numbers are worked out.** The repository count is the number of repositories Hive watches. The other tiles show on or off.
-
-**What it is good for.** Check it after setup to confirm Hive is connected where you expect.
-
-**Example.** It shows `GitHub · 3 repos` and "Mint on". Hive watches three GitHub repositories and the token service runs.
-
-**When it appears.** On v6 only, when the hive reports platform data.
-
-**Settings that change it.** Your code hosting settings and optional service settings change it.
