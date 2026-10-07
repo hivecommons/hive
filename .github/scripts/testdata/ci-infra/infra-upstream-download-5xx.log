@@ -1,0 +1,17 @@
+2026-10-07T14:42:45.9796511Z ##[group]Run set -euo pipefail
+2026-10-07T14:42:45.9796918Z set -euo pipefail
+2026-10-07T14:42:45.9797276Z JUST_VERSION=1.58.0
+2026-10-07T14:42:45.9797762Z JUST_SHA256=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+2026-10-07T14:42:45.9798749Z curl -fsSL -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+2026-10-07T14:42:45.9799436Z echo "${JUST_SHA256}  /tmp/just.tgz" | sha256sum -c -
+2026-10-07T14:42:45.9799821Z tar -xzf /tmp/just.tgz -C /tmp just
+2026-10-07T14:42:45.9800281Z sudo install -m 0755 /tmp/just /usr/local/bin/just
+2026-10-07T14:42:45.9800684Z just --version
+2026-10-07T14:42:45.9813093Z shell: /usr/bin/bash -e {0}
+2026-10-07T14:42:45.9813429Z env:
+2026-10-07T14:42:45.9813879Z   ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+2026-10-07T14:42:45.9814228Z   GO_CACHE_GUARD_BUILD_CACHE: job
+2026-10-07T14:42:45.9814502Z   GOTOOLCHAIN: local
+2026-10-07T14:42:45.9814671Z ##[endgroup]
+2026-10-07T14:42:46.0643179Z curl: (22) The requested URL returned error: 500
+2026-10-07T14:42:46.0674952Z ##[error]Process completed with exit code 22.

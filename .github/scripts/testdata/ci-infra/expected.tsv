@@ -12,6 +12,7 @@ infra-test-list-empty	infra:test-list-empty
 infra-toolcache-clobbered-go	infra:toolcache-clobbered
 infra-toolcache-clobbered-copyfile	infra:toolcache-clobbered
 infra-toolcache-clobbered-npm	infra:toolcache-clobbered
+infra-upstream-download-5xx	infra:upstream-download-5xx
 derived-shard-gate	derived
 code-compile-redeclared	code
 code-vet-undefined	code
