@@ -2775,6 +2775,11 @@
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+    .claims-ttl-fields { margin-top: var(--sp-3); }
+    .claims-ttl-controls { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+    .claims-ttl-input { width: 80px; }
+    .claims-ttl-note { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .claims-ttl-footnote { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-3) var(--sp-0) var(--sp-0); }
     .config-stat-row .config-field { min-width: 0; }
     .config-stat-row .config-field label { font-size: 0.65rem; margin-bottom: var(--sp-1); }
     /* compact stat-row inputs — size step re-declared after the input recipe */
@@ -34896,19 +34901,19 @@ function burnAreaChart() {
         const isSet = !!set[fd.key];
         return `<div class="config-field" data-claims-ttl="${fd.key}">
             <label>${esc(fd.label)} <span class="config-info">i<span class="config-tooltip">${esc(fd.tip)} (governor.claims.${fd.yaml})</span></span></label>
-            <div style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap">
-              <input type="number" min="1" step="1" style="width:80px" value="${d.value}" aria-label="${esc(fd.label)} lifetime"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
+            <div class="claims-ttl-controls">
+              <input type="number" min="1" step="1" class="claims-ttl-input" value="${d.value}" aria-label="${esc(fd.label)} lifetime"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
               <select aria-label="${esc(fd.label)} unit"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
                 <option value="m"${d.unit === 'm' ? ' selected' : ''}>minutes</option>
                 <option value="h"${d.unit === 'h' ? ' selected' : ''}>hours</option>
               </select>
               ${canEdit ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="claimsTTLReset" data-arg0="${fd.key}" data-arg-types="s"${isSet ? '' : ' hidden'}>Reset to default</button>` : ''}
             </div>
-            <p class="claims-ttl-note" style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">${esc(claimsTTLNote(fd.key, isSet))}</p>
+            <p class="claims-ttl-note">${esc(claimsTTLNote(fd.key, isSet))}</p>
           </div>`;
       }).join('');
-      return `<div class="config-field-row" style="margin-top:10px">${fields}</div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">${canEdit
+      return `<div class="config-field-row claims-ttl-fields">${fields}</div>
+          <p class="claims-ttl-footnote">${canEdit
             ? 'Changes apply to claims made or renewed after Save; existing claims keep their expiry.'
             : 'Only the hive owner can change claim lifetimes.'}</p>`;
     }
