@@ -1,0 +1,1 @@
+- Fixed the Projects Clear filter controls so Overview KPI filters clear from both the toolbar button and filter chip without being restored from URL query parameters.
