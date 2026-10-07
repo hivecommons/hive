@@ -70,11 +70,33 @@ func TestRecordReviewVerdictRejectsWholeArrayOnOneBadElement(t *testing.T) {
 }
 
 // Dispatch binding is per element, not per array. A combined kick records one
-// pending entry per perspective, so a verdict for a perspective that kick never
-// covered has nothing to bind to and is dropped — while the ones that were
-// dispatched are still recorded. An agent cannot smuggle an extra judgment in
-// by bundling it with legitimate ones.
+// pending entry per perspective, and a head-bound advisory verdict can fill in
+// any remaining perspectives without depending on that dispatch state.
 func TestRecordReviewVerdictBindsEachArrayElementToItsDispatch(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 7, "correctness", "reviewer"),
+		pendingVerdict("o/r", 7, "security", "reviewer"),
+	}})
+	head := "abc123"
+	raw := "[" + strings.Join([]string{
+		validVerdictJSONWithHead(t, "o/r", 7, "correctness", "approve", head),
+		validVerdictJSONWithHead(t, "o/r", 7, "security", "approve", head),
+		validVerdictJSONWithHead(t, "o/r", 7, "style", "approve", head), // advisory fallback
+	}, ",") + "]"
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
+	if len(matches) != 3 {
+		t.Fatalf("want dispatched perspectives plus head-bound advisory fallback recorded, got %v", matches)
+	}
+	if stray, _ := filepath.Glob(filepath.Join(dir, "*style*")); len(stray) != 1 {
+		t.Fatalf("head-bound advisory perspective was not recorded: %v", stray)
+	}
+}
+
+func TestRecordReviewVerdictRejectsUndispatchedArrayElementWithoutHead(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
 	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
@@ -84,16 +106,16 @@ func TestRecordReviewVerdictBindsEachArrayElementToItsDispatch(t *testing.T) {
 	raw := "[" + strings.Join([]string{
 		validVerdictJSON(t, "o/r", 7, "correctness", "approve"),
 		validVerdictJSON(t, "o/r", 7, "security", "approve"),
-		validVerdictJSON(t, "o/r", 7, "style", "reject"), // never dispatched
+		validVerdictJSON(t, "o/r", 7, "style", "reject"),
 	}, ",") + "]"
 	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 2 {
-		t.Fatalf("want the two dispatched perspectives recorded, got %v", matches)
+		t.Fatalf("want only dispatched perspectives without advisory head SHA, got %v", matches)
 	}
 	if stray, _ := filepath.Glob(filepath.Join(dir, "*style*")); len(stray) != 0 {
-		t.Fatalf("undispatched perspective was recorded: %v", stray)
+		t.Fatalf("headless advisory perspective was recorded: %v", stray)
 	}
 }
 

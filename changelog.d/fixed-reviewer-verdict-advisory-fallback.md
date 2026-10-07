@@ -1,0 +1,1 @@
+- Reviewer verdict relay now records head-bound advisory verdicts even when they did not originate from the review-swarm dispatch state, so contributor PR reviews and combined perspective arrays can satisfy the review gate.
