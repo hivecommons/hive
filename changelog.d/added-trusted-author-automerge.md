@@ -1,1 +1,0 @@
-- Add an opt-in trusted-author auto-merge tier for green human-authored PRs whose author already holds Hive merger/owner authority and repository merge permission.

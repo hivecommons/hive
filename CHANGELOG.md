@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.142.0)
+
+### Added
+
+- Owners can set issue-claim lifetimes from the dashboard ([#10981](https://github.com/hivecommons/hive/issues/10981)). Governor Config → Features → Issue claims now has minute/hour inputs for human, agent and contributor claims and the maximum, each showing its default with a reset-to-default option, read-only below the owner role. `PUT /api/config/governor/features` accepts `claimsHumanTtlS`, `claimsAgentTtlS`, `claimsContributorTtlS` and `claimsMaxTtlS` (0 means the default; negative values and lifetimes above the effective max are rejected), and the governor config GET reports the effective values. A saved change, or a `governor.claims.*_ttl_s` edit picked up by config reload, updates the live claim ledger without a restart: claims made or renewed afterwards use the new lifetimes, existing claims keep their expiry.
+- Add an opt-in trusted-author auto-merge tier for green human-authored PRs whose author already holds Hive merger/owner authority and repository merge permission.
+
+### Fixed
+
+- The CI infra classifier now recognises a transient HTTP 5xx from a tool download (`curl: (22) ... error: 500` while installing `just` from github.com releases) as `infra:upstream-download-5xx`, so the rerun guard retries the job instead of leaving the branch red; 4xx responses still count as code failures.
+
 ## 2026-10-07 (v5.141.2)
 
 ### Fixed
