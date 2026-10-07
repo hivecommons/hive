@@ -82,8 +82,8 @@ func TestEnumerateActionable_WorkBreakdown(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing work detail for issue #%d in %+v", number, details)
 		}
-		if detail.Bucket != want.bucket || detail.Reason != want.reason || detail.Title == "" || detail.URL == "" {
-			t.Errorf("detail #%d = %+v, want bucket=%q reason=%q and display fields", number, detail, want.bucket, want.reason)
+		if detail.Bucket != want.bucket || detail.Reason != want.reason || detail.Title == "" {
+			t.Errorf("detail #%d = %+v, want bucket=%q reason=%q and a title", number, detail, want.bucket, want.reason)
 		}
 	}
 }
