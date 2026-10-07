@@ -2691,6 +2691,9 @@
     .am-trusted-bots { margin-top: 12px; }
     .am-bot-row { margin-top: 6px; }
     .am-bot-source { color: var(--muted); font-weight: 400; }
+    #am-trusted-authors { margin-top: var(--sp-5); border-top: 1px solid var(--border); }
+    .am-trusted-authors-note { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
     .am-bot-add input { flex: 1; }
@@ -35630,34 +35633,34 @@ function burnAreaChart() {
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
             </div>
           </div>
-          <div class="config-field" id="am-trusted-authors" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge <span class="config-info">i<span class="config-tooltip">Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.</span></span></label>
-            <div class="config-toggle" style="margin-top:8px">
+            <div class="config-toggle mt-3">
               <div id="am-trusted-authors-enabled" class="config-toggle-switch ${amTrustedAuthors.enabled ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.enabled ? 'true' : 'false'}"></div>
-              <span class="config-toggle-label">Enable trusted-author tier</span>
+              <span class="config-toggle-label">Enable trusted-author tier <span class="config-info">i<span class="config-tooltip">Default off. Lets Hive merge green human-authored PRs whose author already holds merge authority in authorized_users at the configured role; it never creates new authority.</span></span></span>
             </div>
-            <div class="config-field-row" style="margin-top:10px">
+            <div class="config-field-row mt-4">
               <div class="config-field">
                 <label for="am-trusted-authors-require-role">Required author role</label>
                 <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
               </div>
               <div class="config-field">
-                <label>GitHub permission check</label>
+                <label>GitHub permission check <span class="config-info">i<span class="config-tooltip">When on (the default), GitHub must also report push, maintain, or admin permission for the author on the repository.</span></span></label>
                 <div class="config-toggle">
                   <div id="am-trusted-authors-require-github-permission" class="config-toggle-switch ${amTrustedAuthors.require_github_permission !== false ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.require_github_permission !== false ? 'true' : 'false'}"></div>
-                  <span class="config-toggle-label">Require push/maintain/admin</span>
+                  <span class="config-toggle-label">Require push/maintain/admin <span class="config-info">i<span class="config-tooltip">When on (the default), GitHub must also report push, maintain, or admin permission for the author on the repository.</span></span></span>
                 </div>
               </div>
             </div>
-            <div class="config-field" style="margin-top:10px">
+            <div class="config-field mt-4">
               <label for="am-trusted-authors-exclude-labels">Excluded labels</label>
               <input id="am-trusted-authors-exclude-labels" type="text" value="${esc(amTrustedAuthorLabels.join(', '))}" placeholder="hold, do-not-merge, needs-human" data-change-action="gh102">
-              <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
+              <p class="am-trusted-authors-note">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
             </div>
-            <div class="config-field" style="margin-top:10px">
+            <div class="config-field mt-4">
               <label for="am-trusted-authors-repos">Repositories</label>
-              <select id="am-trusted-authors-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh102" style="min-height:72px">${amTrustedAuthorRepoOptions}</select>
-              <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Leave every repo unselected to allow all watched repositories. Eligibility still requires green CI, mergeable state, no excluded label, no outstanding CHANGES_REQUESTED review, and no fork non-member.</p>
+              <select id="am-trusted-authors-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh102" class="am-trusted-authors-repos">${amTrustedAuthorRepoOptions}</select>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Eligibility still requires green CI, mergeable state, no excluded label, no outstanding CHANGES_REQUESTED review, and no fork non-member.</p>
             </div>
           </div>
         </div>
