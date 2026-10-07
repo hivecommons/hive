@@ -145,6 +145,16 @@ func TestBuildUpgradeAttemptStatus(t *testing.T) {
 			detailSubstr: []string{"FAILED", "403 patching deployment"},
 		},
 		{
+			name: "unpublished image waits instead of failing",
+			marker: map[string]any{
+				"target": "abc1234", "attempts": 1, "maxAttempts": 5,
+				"failed": true, "lastError": "target image ghcr.io/hivecommons/hive:abc1234 is not published yet",
+			},
+			wantState:    upgradeAttemptInProgress,
+			detailSubstr: []string{"queued", "image building", "abc1234"},
+			detailAbsent: []string{"FAILED"},
+		},
+		{
 			name: "failed without a reason",
 			marker: map[string]any{
 				"target": "abc1234", "attempts": 5, "maxAttempts": 5,
