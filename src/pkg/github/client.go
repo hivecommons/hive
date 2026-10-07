@@ -3221,6 +3221,34 @@ type RepoWorkIssue struct {
 	Reason    string    `json:"reason,omitempty"`
 }
 
+func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
+	return RepoWorkIssue{
+		Repo:      issue.Repo,
+		Number:    issue.Number,
+		Title:     issue.Title,
+		Author:    issue.Author,
+		Labels:    append([]string(nil), issue.Labels...),
+		Assignees: append([]string(nil), issue.Assignees...),
+		CreatedAt: issue.CreatedAt,
+		UpdatedAt: issue.UpdatedAt,
+		URL:       issue.URL,
+		Bucket:    bucket,
+		Reason:    reason,
+	}
+}
+
+func appendRepoWorkIssueDetail(result *ActionableResult, issue Issue, bucket, reason string) {
+	if result == nil {
+		return
+	}
+	if result.WorkDetailsByRepo == nil {
+		result.WorkDetailsByRepo = make(map[string]RepoWorkDetails)
+	}
+	details := result.WorkDetailsByRepo[issue.Repo]
+	details.Issues = append(details.Issues, repoWorkIssueFromIssue(issue, bucket, reason))
+	result.WorkDetailsByRepo[issue.Repo] = details
+}
+
 func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
 	if issue == nil {
 		return RepoWorkIssue{Repo: repo, Labels: append([]string(nil), labels...), Bucket: bucket, Reason: reason}

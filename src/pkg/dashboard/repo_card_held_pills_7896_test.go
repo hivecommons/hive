@@ -177,7 +177,8 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		// Held tint, distinct from every merge-state and from needs-human.
 		".repo-issue-pill.held, .repo-pr-pill.held { --pill-c: var(--muted); border-style: dashed; }",
 		"const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));",
-		"groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {",
+		"const repoIssueGroups = repoCardIssueGroups(r, overviewIssueKeys);",
+		"const issuePills = repoIssueGroups.issueGroups.map(g => {",
 		"const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {",
 		`<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}"`,
 		`<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}"`,

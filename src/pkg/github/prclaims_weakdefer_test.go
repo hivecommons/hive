@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -266,6 +267,47 @@ func TestLoadClaimLedgerAnchorsPreUpgradeClaims(t *testing.T) {
 // for as long as it stands. The window applies only to the weak tiers; a PR
 // that says it closes the issue must not start handing the issue back after
 // three days just because the reviewer is slow.
+
+func TestStrongClaimAddsDashboardDetailForSuppressedIssue(t *testing.T) {
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+	ledger.Reconcile([]IssueClaim{{
+		Repo: "projectbluefin/dakota", Issue: 362,
+		PRNumber: 1411, PRRepo: "projectbluefin/dakota", PRURL: "https://example.test/pull/1411",
+		PRAuthor: "kubestellar-hive[bot]", ObservedAt: time.Now(), FirstObservedAt: time.Now().Add(-time.Hour),
+	}}, true)
+	result := scannerActionable("projectbluefin/dakota")
+	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 1 {
+		t.Fatalf("suppressed = %d, want 1", suppressed)
+	}
+	if len(result.Issues.Items) != 0 {
+		t.Fatalf("kept issues = %+v, want none", result.Issues.Items)
+	}
+	details := result.WorkDetailsByRepo["projectbluefin/dakota"].Issues
+	if len(details) != 1 {
+		t.Fatalf("suppressed details = %+v, want one", details)
+	}
+	if details[0].Number != 362 || details[0].Bucket != "claimed_by_pr" || !strings.Contains(details[0].Reason, "PR #1411") {
+		t.Fatalf("suppressed detail = %+v, want issue 362 claimed_by_pr with PR reason", details[0])
+	}
+}
+
+func TestExternalClaimAddsDashboardDetailForSuppressedIssue(t *testing.T) {
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+	ledger.Reconcile([]IssueClaim{{
+		Repo: "projectbluefin/dakota", Issue: 362,
+		PRNumber: 1402, PRRepo: "projectbluefin/dakota", PRURL: "https://example.test/pull/1402",
+		PRAuthor: "human", ExternalAuthor: true, ObservedAt: time.Now(), FirstObservedAt: time.Now().Add(-time.Hour),
+	}}, true)
+	result := scannerActionable("projectbluefin/dakota")
+	if suppressed := FilterClaimedIssues(result, ledger, nil, testLogger()); suppressed != 1 {
+		t.Fatalf("suppressed = %d, want 1", suppressed)
+	}
+	details := result.WorkDetailsByRepo["projectbluefin/dakota"].Issues
+	if len(details) != 1 || details[0].Bucket != "claimed_by_pr" || !strings.Contains(details[0].Reason, "external PR #1402") {
+		t.Fatalf("external claim details = %+v, want claimed_by_pr bucket naming external PR", details)
+	}
+}
+
 func TestStrongClaimUnaffectedByWindow(t *testing.T) {
 	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
 	old := time.Now().Add(-30 * 24 * time.Hour)
