@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.141.2)
+
+### Fixed
+
+- Fix the Cost panel per-PR and per-issue divisors on App-authored hosted hives by counting the effective Hive bot identity over the persisted cost-history window.
+
 ## 2026-10-07 (v5.141.1)
 
 ### Fixed
