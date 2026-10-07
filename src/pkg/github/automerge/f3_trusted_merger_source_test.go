@@ -193,7 +193,9 @@ func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 func TestF3AuthorizerIsWiredInMain(t *testing.T) {
 	src := f3ReadSource(t, "../../../cmd/hive/main.go")
 
-	if !strings.Contains(src, "MergerAuthorizer: trustedMergerFunc(cfg)") {
+	// Whitespace-tolerant: gofmt column-aligns the key when sibling fields
+	// (TrustedAuthorizer, TrustedAuthorPolicy) are longer.
+	if !regexp.MustCompile(`MergerAuthorizer:\s+trustedMergerFunc\(cfg\)`).MatchString(src) {
 		t.Error("cmd/hive main() does not install the trusted-merger authorizer — the F3 gate in " +
 			"trySweepQueuedPR is present but INERT (audit F3, standing). Restore " +
 			"MergerAuthorizer: trustedMergerFunc(cfg) beside StartMergeRequestWatcher.")
