@@ -157,6 +157,21 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
 	}
+	for backend, coin := range c.Governor.Budget.Coins {
+		name := strings.TrimSpace(backend)
+		if name == "" {
+			return fmt.Errorf("governor.budget.coins: backend name is required")
+		}
+		if coin.TokensPerCoin <= 0 {
+			return fmt.Errorf("governor.budget.coins.%s.tokens_per_coin must be positive", name)
+		}
+		if coin.USDPerCoin <= 0 {
+			return fmt.Errorf("governor.budget.coins.%s.usd_per_coin must be positive", name)
+		}
+		if coin.Budget < 0 {
+			return fmt.Errorf("governor.budget.coins.%s.budget must be non-negative", name)
+		}
+	}
 	for modeName, mode := range c.Governor.Modes {
 		for agentName, cadence := range mode.Cadences {
 			if err := cadence.Validate(); err != nil {

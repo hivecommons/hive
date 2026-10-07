@@ -993,6 +993,10 @@ type FrontendBudget struct {
 	WeeklyBudget    int64   `json:"BUDGET_WEEKLY"`
 	Used            int64   `json:"BUDGET_USED"`
 	Remaining       int64   `json:"BUDGET_REMAINING"`
+	CoinBudget      float64 `json:"COIN_BUDGET,omitempty"`
+	CoinsUsed       float64 `json:"COINS_USED,omitempty"`
+	CoinsRemaining  float64 `json:"COINS_REMAINING,omitempty"`
+	CoinLabel       string  `json:"COIN_LABEL,omitempty"`
 	PctUsed         float64 `json:"BUDGET_PCT_USED"`
 	BurnRateHourly  float64 `json:"BURN_RATE_HOURLY"`
 	BurnRateInstant float64 `json:"BURN_RATE_INSTANT"`

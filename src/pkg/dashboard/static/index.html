@@ -15896,12 +15896,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderBudgetBar(budget) {
-      if (!budget || !budget.BUDGET_WEEKLY) return '';
+      if (!budget || (!budget.BUDGET_WEEKLY && !budget.COIN_BUDGET)) return '';
       const PCT_SAFE = 50;
       const PCT_WARN = 85;
+      const coinBudget = Number(budget.COIN_BUDGET) || 0;
+      const coinUsed = Number(budget.COINS_USED) || 0;
+      const coinLabel = budget.COIN_LABEL || 'coins';
       const used = budget.BUDGET_USED || 0;
       const weekly = budget.BUDGET_WEEKLY;
-      const pctUsed = budget.BUDGET_PCT_USED || 0;
+      const tokenPct = weekly > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
+      const coinPct = coinBudget > 0 ? (coinUsed / coinBudget * 100) : 0;
+      const useCoinPrimary = coinBudget > 0 && (!weekly || coinPct >= tokenPct);
+      const pctUsed = useCoinPrimary ? coinPct : tokenPct;
+      const usedText = useCoinPrimary ? `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}` : `${fmtTokens(used)} / ${fmtTokens(weekly)}`;
+      const secondaryBudgetText = coinBudget > 0 && weekly > 0
+        ? ` · ${useCoinPrimary ? `tokens ${fmtTokens(used)} / ${fmtTokens(weekly)}` : `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}`}`
+        : '';
       const projPct = budget.PROJECTED_PCT || 0;
       const burnRate = budget.BURN_RATE_HOURLY || 0;
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
@@ -15934,13 +15944,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
       return `<div class="budget-bar">
         <div class="budget-bar-label">
-          <span>Used: ${fmtTokens(used)} / ${fmtTokens(weekly)} (${pctUsed}%)${ignoreCheck}</span>
+          <span>Used: ${usedText} (${Math.round(pctUsed)}%)${secondaryBudgetText}${ignoreCheck}</span>
           <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
         </div>
         <div class="budget-bar-track"><div class="budget-bar-fill ${usedFillCls}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-2)">
           <span>Burn: ${fmtTokens(burnRate)}/hr · ${fmtTokens(dailyRate)}/day</span>
-          <span>Projected: ${fmtTokens(used + burnRate * hoursLeft)} (${projPct}%)</span>
+          <span>Projected: ${useCoinPrimary ? '—' : fmtTokens(used + burnRate * hoursLeft)} (${useCoinPrimary ? Math.round(pctUsed) : projPct}%)</span>
         </div>
         <div style="font-size:var(--fs-xs);margin-top:3px">${govAction}</div>
         ${budgetHistoryChart()}
@@ -17402,20 +17412,30 @@ function burnAreaChart() {
       // status poll — so the Cost panel cannot disagree with the Governor bar.
       const budget = window._lastBudget || null;
       const limit = budget && budget.BUDGET_WEEKLY;
-      if (!limit) {
-        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured — set <b>Total Tokens</b> and <b>Period Days</b> under Settings → Governor to track spend against a limit. The figures above are dollar ESTIMATES and are not what any limit is enforced against.</div>`;
+      const coinLimit = Number(budget && budget.COIN_BUDGET) || 0;
+      const coinLabel = (budget && budget.COIN_LABEL) || 'coins';
+      if (!limit && !coinLimit) {
+        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured, and no coin budget configured — set <b>Total Tokens</b> or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are tokens, not dollars; coin budgets use the configured backend unit. The figures above are dollar ESTIMATES and are not what any limit is enforced against.</div>`;
       }
       const used = budget.BUDGET_USED || 0;
-      const pctUsed = budget.BUDGET_PCT_USED || 0;
+      const coinUsed = Number(budget.COINS_USED) || 0;
+      const tokenPct = limit > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
+      const coinPct = coinLimit > 0 ? (coinUsed / coinLimit * 100) : 0;
+      const useCoinPrimary = coinLimit > 0 && (!limit || coinPct >= tokenPct);
+      const pctUsed = useCoinPrimary ? coinPct : tokenPct;
+      const usedLabel = useCoinPrimary ? `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}` : `${fmtTokens(used)} / ${fmtTokens(limit)}`;
+      const secondaryBudgetText = coinLimit > 0 && limit > 0
+        ? ` · ${useCoinPrimary ? `tokens ${fmtTokens(used)} / ${fmtTokens(limit)}` : `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}`}`
+        : '';
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
       const exhausted = !!budget.BUDGET_EXHAUSTED;
       const PCT_BUDGET_WARN = 90;
       const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
       return `<div class="cost-token-budget" style="margin-top:14px;padding-top:var(--sp-5);border-top:1px solid var(--border)">
-        <div class="cost-subtitle mb-3"><b>Token budget</b> — this is the limit the governor actually enforces (tokens, not dollars). Used tokens and each history bar cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
+        <div class="cost-subtitle mb-3"><b>${useCoinPrimary ? 'Coin' : 'Token'} budget</b> — this is the most-used enforced limit (${useCoinPrimary ? esc(coinLabel) : 'tokens'}, not dollars). Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
         <div class="budget-bar">
           <div class="budget-bar-label">
-            <span>Used this budget period: ${fmtTokens(used)} / ${fmtTokens(limit)} (${pctUsed}%)</span>
+            <span>Used this budget period: ${usedLabel} (${Math.round(pctUsed)}%)${secondaryBudgetText}</span>
             <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
           </div>
           <div class="budget-bar-track"><div class="budget-bar-fill ${fill}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
@@ -17423,6 +17443,12 @@ function burnAreaChart() {
           ${budgetHistoryChart()}
         </div>
       </div>`;
+    }
+
+    function fmtCoins(n, label) {
+      const v = Number(n) || 0;
+      const digits = Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : 2;
+      return `${v.toLocaleString('en-US', { maximumFractionDigits: digits })} ${esc(label || 'coins')}`;
     }
 
     function renderCost(cost) {
@@ -17616,6 +17642,10 @@ function burnAreaChart() {
       const allTimeCost = costAllTimeEstimate(est);
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const coinLabel = est.coin_label || '';
+      const coinStat = coinLabel && Number(est.coins) > 0
+        ? `<div class="cost-stat"><div class="cval" title="Bob backend coin usage estimated from configured tokens-per-coin conversion">${fmtCoins(est.coins, coinLabel)}</div><div class="clabel">Bob coins${est.coin_budget ? ` — ${fmtCoins(est.coins, coinLabel)} of ${fmtCoins(est.coin_budget, coinLabel)}` : ''}</div></div>`
+        : '';
       const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
         ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
         : '';
@@ -17625,6 +17655,7 @@ function burnAreaChart() {
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
+            ${coinStat}
             <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
             <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
           </div>

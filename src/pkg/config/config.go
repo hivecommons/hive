@@ -3711,9 +3711,65 @@ type HealthConfig struct {
 }
 
 type BudgetConfig struct {
-	TotalTokens int64 `yaml:"total_tokens"`
-	PeriodDays  int   `yaml:"period_days"`
-	CriticalPct int   `yaml:"critical_pct"`
+	TotalTokens int64                       `yaml:"total_tokens"`
+	PeriodDays  int                         `yaml:"period_days"`
+	CriticalPct int                         `yaml:"critical_pct"`
+	Coins       map[string]CoinBudgetConfig `yaml:"coins,omitempty"`
+}
+
+type CoinBudgetConfig struct {
+	TokensPerCoin float64 `yaml:"tokens_per_coin,omitempty" json:"tokens_per_coin,omitempty"`
+	USDPerCoin    float64 `yaml:"usd_per_coin,omitempty" json:"usd_per_coin,omitempty"`
+	Label         string  `yaml:"label,omitempty" json:"label,omitempty"`
+	Budget        float64 `yaml:"budget,omitempty" json:"budget,omitempty"`
+}
+
+const (
+	// DefaultBobTokensPerCoin and DefaultBobUSDPerCoin are operator-supplied
+	// fallback values for Bob-account coin math. They are defaults only, not a
+	// public authoritative Bob rate; operators should confirm their own account
+	// conversion with their Bob team.
+	DefaultBobTokensPerCoin = 500000
+	DefaultBobUSDPerCoin    = 0.50
+	DefaultBobCoinLabel     = "BC"
+
+	BobTokensPerCoinEnvVar = "HIVE_BOB_TOKENS_PER_COIN"
+	BobUSDPerCoinEnvVar    = "HIVE_BOB_USD_PER_COIN"
+	BobCoinBudgetEnvVar    = "HIVE_BOB_COIN_BUDGET"
+)
+
+func (b BudgetConfig) CoinConfig(backend string) (CoinBudgetConfig, bool) {
+	if b.Coins == nil {
+		return CoinBudgetConfig{}, false
+	}
+	key := strings.ToLower(strings.TrimSpace(backend))
+	cc, ok := b.Coins[key]
+	if !ok {
+		for name, candidate := range b.Coins {
+			if strings.EqualFold(strings.TrimSpace(name), key) {
+				cc, ok = candidate, true
+				break
+			}
+		}
+		if !ok {
+			return CoinBudgetConfig{}, false
+		}
+	}
+	return cc, cc.TokensPerCoin > 0
+}
+
+func (c CoinBudgetConfig) TokensToCoins(tokens int64) float64 {
+	if c.TokensPerCoin <= 0 || tokens <= 0 {
+		return 0
+	}
+	return float64(tokens) / c.TokensPerCoin
+}
+
+func (c CoinBudgetConfig) LabelOrDefault() string {
+	if strings.TrimSpace(c.Label) != "" {
+		return strings.TrimSpace(c.Label)
+	}
+	return DefaultBobCoinLabel
 }
 
 // MinUsableBudgetTokens is the sanity floor for governor.budget.total_tokens.
@@ -5885,6 +5941,48 @@ const (
 	defaultAdvisoryStalenessDays = 7
 )
 
+func (c *Config) applyCoinBudgetDefaults() {
+	if c.Governor.Budget.Coins == nil {
+		c.Governor.Budget.Coins = map[string]CoinBudgetConfig{}
+	}
+	bobKey := "bob"
+	for key := range c.Governor.Budget.Coins {
+		if strings.EqualFold(strings.TrimSpace(key), bobKey) {
+			bobKey = key
+			break
+		}
+	}
+	bob := c.Governor.Budget.Coins[bobKey]
+	if bob.TokensPerCoin == 0 {
+		bob.TokensPerCoin = DefaultBobTokensPerCoin
+	}
+	if bob.USDPerCoin == 0 {
+		bob.USDPerCoin = DefaultBobUSDPerCoin
+	}
+	if strings.TrimSpace(bob.Label) == "" {
+		bob.Label = DefaultBobCoinLabel
+	}
+	if v := strings.TrimSpace(os.Getenv(BobTokensPerCoinEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.TokensPerCoin = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobUSDPerCoinEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.USDPerCoin = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobCoinBudgetEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.Budget = parsed
+		}
+	}
+	if bobKey != "bob" {
+		delete(c.Governor.Budget.Coins, bobKey)
+	}
+	c.Governor.Budget.Coins["bob"] = bob
+}
+
 func (c *Config) applyDefaults() {
 	c.applyUpstreamWatchDefaults()
 	// Runs before any review default so the pointer is settled on every load
@@ -6138,6 +6236,7 @@ func (c *Config) applyDefaults() {
 	if c.Governor.Budget.CriticalPct == 0 {
 		c.Governor.Budget.CriticalPct = defaultBudgetCriticalPct
 	}
+	c.applyCoinBudgetDefaults()
 	// WARN, NEVER REJECT, on the load path (#5508). Three spokes are live
 	// right now with below-floor limits. If load REFUSED them they would fail
 	// to start on the next restart — converting a starving hive into a dead
