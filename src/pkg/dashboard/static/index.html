@@ -82,6 +82,7 @@
       --navbar-sticky-height: 48px;
       --navbar-sticky-z: 9400;
       --navbar-motion-duration: var(--overview-transition-duration, 600ms);
+      --bee-orbit-duration: 11s;
       --navbar-shadow: 0 1px 0 color-mix(in srgb, var(--line) 42%, transparent), 0 8px 24px color-mix(in srgb, var(--bg) 42%, transparent);
     }
     * { margin: var(--sp-0); padding: var(--sp-0); box-sizing: border-box; }
@@ -229,10 +230,16 @@
       margin: 1px 8px; position: relative;
       height: 28px; overflow: hidden;
     }
-    .oc-nav-drag-handle { width: 1.25rem; height: 1.25rem; min-width: 1.25rem; padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
-    .oc-nav-item:hover .oc-nav-drag-handle, .oc-nav-drag-handle:focus-visible, .oc-nav-drag-handle[aria-pressed="true"] { opacity: 1; color: var(--text); border-color: var(--border); background: var(--surface-2); outline: none; }
+    .oc-nav-drag-handle, .oc-nav-hide-toggle { width: 1.25rem; height: 1.25rem; min-width: 1.25rem; padding: var(--sp-0); margin: var(--sp-0); border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--muted); line-height: 1; cursor: grab; opacity: 0; display: inline-flex; align-items: center; justify-content: center; touch-action: none; }
+    .oc-nav-hide-toggle { cursor: pointer; margin-left: auto; font-size: var(--fs-xs); }
+    .oc-nav-item:hover .oc-nav-drag-handle, .oc-nav-drag-handle:focus-visible, .oc-nav-drag-handle[aria-pressed="true"], .oc-nav-item:hover .oc-nav-hide-toggle, .oc-nav-hide-toggle:focus-visible, .oc-nav-hide-toggle[aria-pressed="true"] { opacity: 1; color: var(--text); border-color: var(--border); background: var(--surface-2); outline: none; }
     .oc-nav-drag-handle:active, .oc-nav-drag-handle[aria-pressed="true"] { cursor: grabbing; background: var(--surface); }
-    @media (hover: none), (pointer: coarse) { .oc-nav-drag-handle { opacity: 1; } }
+    .oc-nav-hide-toggle:hover { color: var(--amber); }
+    .oc-nav-item.oc-nav-item-hidden { opacity: 0.48; color: var(--muted); }
+    .oc-nav-item.oc-nav-item-hidden:hover { opacity: 0.75; color: var(--muted); }
+    .oc-nav-item.oc-nav-item-hidden .oc-nav-text { text-decoration: line-through; text-decoration-thickness: 1px; }
+    .dashboard-section-hidden { display: none !important; }
+    @media (hover: none), (pointer: coarse) { .oc-nav-drag-handle, .oc-nav-hide-toggle { opacity: 1; } }
     .oc-nav-emoji { display: inline-flex; width: 18px; font-size: 0.9rem; flex-shrink: 0; justify-content: center; }
     .oc-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: var(--sp-1); transition: opacity 0.15s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
@@ -343,7 +350,7 @@
 
     /* Topbar — fixed blurred header (hub .site-header recipe). */
     .oc-topbar {
-      --topbar-grid-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      --topbar-grid-columns: auto minmax(0, 1fr) auto;
       position: fixed; top: var(--sp-0); left: var(--sidebar-w); right: auto; min-height: var(--navbar-sticky-height);
       width: 100%;
       max-width: calc(100% - var(--sidebar-w));
@@ -398,10 +405,11 @@
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
     .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
-    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: calc(var(--navbar-motion-duration, var(--overview-transition-duration, 600ms)) * 3.2); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: center; will-change: transform, opacity; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite both; }
-    .oc-version-bee:nth-child(2) { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
-    .oc-version-bee:nth-child(3) { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
-    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; contain: layout paint style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
+    .oc-version-bee--phase-b { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
+    .oc-version-bee--phase-c { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
+    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); transform-box: fill-box; transform-origin: 50% 50%; }
+    .oc-version-bee-glyph * { transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--terminal-bg); stroke-width: 1.7; }
     .oc-version-bee-body { fill: var(--amber); stroke: var(--terminal-bg); stroke-width: 1.5; }
     .oc-version-bee-stripe, .oc-version-bee-head, .oc-version-bee-stinger { fill: none; stroke: var(--terminal-bg); stroke-width: 2; stroke-linecap: round; }
@@ -412,7 +420,7 @@
     .oc-version-progress-status a { color: var(--accent); }
     .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
     .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); overflow: visible; }
-    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; max-width: min(360px, 34vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: visible; }
+    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade[hidden] { display: none; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
@@ -423,8 +431,8 @@
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      0% { opacity: 0.96; transform: translate(-50%, -50%) rotate(0turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0); }
-      100% { opacity: 0.96; transform: translate(-50%, -50%) rotate(1turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0); }
+      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
+      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -448,11 +456,11 @@
       margin-left: -10px;
     }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { justify-self: center; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
+    .oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
     .dashboard-custom-style-note { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
     .dashboard-custom-style-note.warn { border-color: color-mix(in srgb, var(--status-warn) 45%, transparent); background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: var(--fs-sm); line-height: 1; padding: var(--sp-0); }
-    .oc-topbar-right { justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
+    .oc-topbar-right { position: relative; z-index: 2; justify-self: end; max-width: 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--nav-chip-gap, 8px); min-width: 0; flex-wrap: nowrap; }
     .oc-health-badge { --nav-chip-color: var(--status-ok); }
     #oc-settings-btn { flex: 0 0 auto; }
     .oc-topbar .git-version { color: var(--muted); }
@@ -1239,6 +1247,22 @@
     /* Last upstream/launch error — stacked below .agent-state, never under the
        working-indicator dot, so a retry in progress cannot hide it (#3604). */
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
+    /* "Now:" line (#10934): what the agent is on, under its state line. Not
+       aria-live — it changes every update and would flood screen readers. */
+    .agent-now { text-align: right; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); word-break: break-word; }
+    .agent-now .an-lead { font-weight: 600; color: var(--text); }
+    .agent-now.outdated { color: var(--yellow); }
+    .oc-agent-detail .agent-now { text-align: left; }
+    /* Agent activity section (#10935): one row per agent. */
+    .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+    .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .agent-activity-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .agent-activity-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); vertical-align: top; }
+    .agent-activity-table td.aa-name { font-weight: 600; white-space: nowrap; }
+    .agent-activity-table td.aa-state, .agent-activity-table td.aa-since { color: var(--muted); white-space: nowrap; }
+    .agent-activity-table td.aa-reserved { color: var(--muted); font-size: var(--fs-xs); }
+    .agent-activity-table .agent-now { text-align: left; margin-top: 0; }
+    .agent-activity-empty { color: var(--muted); font-size: var(--fs-sm); }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -1810,7 +1834,10 @@
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: min(16rem, 32vh); overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .overview-headline { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .overview-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--sp-3); }
+    .overview-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
+    .overview-kpi-operator { display: inline-flex; align-items: center; justify-content: center; align-self: start; padding-top: var(--sp-3); color: var(--muted); font-size: var(--fs-lg); font-weight: 800; line-height: 1; }
+    @media (max-width: 1399px) { .overview-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .overview-kpi-operator { display: none; } }
+    @media (max-width: 720px) { .overview-kpis { grid-template-columns: minmax(0, 1fr); } }
     .overview-kpi-range { display: inline-flex; gap: var(--sp-1); }
     .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
     .overview-kpi-range-btn.active { border-color: var(--accent); color: var(--accent); }
@@ -2124,6 +2151,8 @@
     .cadence-continuous-fields { display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:flex-end;margin-top:var(--sp-4); }
     .cadence-mode-presets { display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-2); }
     .cadence-day-label { display:inline-flex;gap:3px;align-items:center;margin-right:var(--sp-3); }
+    .cadence-legacy-notice { color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--yellow) 8%, transparent);border:1px solid color-mix(in srgb, var(--yellow) 28%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-5); }
+    .cadence-legacy-action { margin-left:var(--sp-3); }
     @media (max-width: 480px) {
       .gov-matrix { font-size: 0.65rem; }
       .gov-matrix th { padding: var(--sp-1) var(--sp-2); }
@@ -2159,22 +2188,10 @@
 
     /* Agent indicators */
     .agent-indicators { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); font-size: var(--fs-sm); }
-    details.agent-indicators > summary { list-style: none; }
-    details.agent-indicators > summary::-webkit-details-marker { display: none; }
-    details.agent-indicators > summary::before { content: '▶'; display: inline-block; margin-right: var(--sp-2); font-size: var(--fs-2xs); transition: transform 0.15s; vertical-align: middle; }
-    details.agent-indicators[open] > summary::before { transform: rotate(90deg); }
-    .ind-label { color: var(--muted); font-size: 0.65rem; }
-    .ind-empty { color: var(--muted); font-style: italic; font-size: 0.7rem; }
     .ind-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 3px; }
     /* .ind-tag family — pill recipe; variants pick --pill-c, hover deepens tint */
     .ind-tag { --component-status: var(--status-info); --pill-c: var(--status-info); text-decoration: none; }
     .ind-tag:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
-    .ind-pair { display: flex; align-items: center; gap: var(--sp-2); margin-top: 3px; }
-    .ind-issue { --pill-c: var(--green); }
-    .ind-pr { --pill-c: var(--purple); }
-    .ind-merged { --pill-c: var(--green); }
-    .ind-wip { --pill-c: var(--yellow); }
-    .ind-arrow { color: var(--muted); font-size: 0.7rem; }
     .ind-dots { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
     .ind-dot-item { display: flex; align-items: center; gap: 3px; }
     .ind-dlabel { font-size: var(--fs-2xs); color: var(--muted); }
@@ -2887,6 +2904,8 @@
       pointer-events: none;
     }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
+    .section-help-mark { text-decoration: none; }
+    .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
     .overview-partition-tooltip {
       width: min(24rem, calc(100vw - var(--sp-8)));
       max-height: min(18rem, calc(100vh - var(--sp-8)));
@@ -3493,11 +3512,11 @@
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     .agent-navbar-upnext {
       display: inline-flex; align-items: stretch; justify-content: flex-start; gap: var(--sp-2);
-      min-width: 0; max-width: min(640px, 42vw); overflow-x: auto; overflow-y: hidden;
+      min-width: 0; max-width: min(640px, 100%); overflow-x: auto; overflow-y: hidden;
       scrollbar-width: thin; mask-image: linear-gradient(90deg, var(--text) 0, var(--text) calc(100% - var(--sp-4)), transparent 100%);
     }
     .agent-navbar-upnext[hidden] { display: none; }
-    .agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px); min-width: 136px; min-height: calc(var(--nav-chip-h) + var(--sp-4)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: max-content max-content; align-content: center; align-items: center; gap: var(--sp-1) var(--sp-2); padding: var(--sp-2) var(--nav-chip-px); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.2; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
+    .agent-navbar-tile { flex: 0 0 auto; min-width: 136px; min-height: calc(var(--nav-chip-h) + var(--sp-4)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: max-content auto; grid-template-rows: max-content max-content; align-content: center; align-items: center; gap: var(--sp-1) var(--sp-2); padding: var(--sp-2) var(--nav-chip-px); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.2; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
     .agent-navbar-tile:hover, .agent-navbar-tile:focus-visible { border-color: var(--border); background: var(--surface-2); outline: none; }
     .agent-navbar-tile.up-next { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
     .agent-navbar-tile.running-now { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 60%, transparent); }
@@ -3507,18 +3526,33 @@
     .agent-navbar-tile.active { border-color: color-mix(in srgb, var(--green) 70%, var(--line-subtle)); }
     .agent-navbar-tile.stopped, .agent-navbar-tile.needs-login { border-color: color-mix(in srgb, var(--red) 45%, var(--line-subtle)); }
     .agent-navbar-tile .agent-tile-dot { grid-column: 2; grid-row: 1; justify-self: end; }
-    .agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: max-content; overflow: visible; text-overflow: clip; }
     .agent-navbar-tile .agent-tile-next { grid-column: 1; grid-row: 2; color: var(--muted); }
     .agent-navbar-tile .agent-up-next { grid-column: 2; grid-row: 2; color: var(--amber); }
     .agent-navbar-tile .agent-up-next.running-now { color: var(--green); }
     .agent-navbar-tile.active .agent-tile-dot { animation: green-pulse 2.4s ease-in-out infinite; }
     .agent-navbar-tile.stopped .agent-tile-dot, .agent-navbar-tile.needs-login .agent-tile-dot { background: var(--red); box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 40%, transparent); }
+    .agent-navbar-upnext::after { content: attr(data-agent-summary); display: none; align-items: center; justify-content: center; min-height: calc(var(--nav-chip-h) + var(--sp-4)); padding: var(--sp-2) var(--nav-chip-px); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+    @container navbar-center (max-width: 560px) {
+      .agent-navbar-tile { min-width: 104px; }
+      .agent-navbar-tile .agent-tile-next { display: none; }
+      .agent-navbar-tile .agent-up-next { grid-row: 1; }
+    }
+    @container navbar-center (max-width: 440px) {
+      .agent-navbar-tile { min-width: 82px; }
+      .agent-navbar-tile .agent-up-next { display: none; }
+    }
+    @container navbar-center (max-width: 340px) {
+      .agent-navbar-upnext { overflow: hidden; mask-image: none; }
+      .agent-navbar-upnext .agent-navbar-tile { display: none; }
+      .agent-navbar-upnext::after { display: inline-flex; }
+    }
     @keyframes navbar-up-next-pulse {
       0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 72%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
       45% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 90%, transparent), 0 0 0 var(--sp-4) color-mix(in srgb, var(--amber) 24%, transparent); }
       100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 var(--sp-0) color-mix(in srgb, var(--amber) 0%, transparent); }
     }
-    @media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }
+    @media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }
     @media (prefers-reduced-motion: reduce) { .agent-collapsed-tile.active .agent-tile-dot { animation: none; } }
     @media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }
     .advisory-collapsed-advice { display: flex; align-items: stretch; gap: var(--sp-2); width: min(760px, 52vw); max-width: 760px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
@@ -4522,6 +4556,7 @@
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
       <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
       <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Agent activity</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
@@ -4716,7 +4751,7 @@
     <div class="section-body section-group-body">
     <div class="advisory-subsection" id="advisory-digest-section">
       <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: var(--sp-4); cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
-        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest
+        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest<span data-section-help="advisory-digest-section"></span>
       </h2>
       <div class="section-body">
         <div id="advisory-digest"></div>
@@ -4759,9 +4794,10 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: a human-only gate or exhausted fix attempts requires operator review"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
     <div class="section-body">
       <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
+        <span id="repos-overview-filter-chip" class="repo-filtered-chip" hidden></span>
         <button class="hv-btn btn-secondary btn" id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1" title="Clear the active repository pill filter" hidden>Clear filter</button>
         <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button>
         <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button>
@@ -4947,6 +4983,13 @@
     </div>
     <div class="section-body">
       <div class="agents" id="agents"></div>
+    </div>
+  </div>
+
+  <div class="mt-6 mb-8" id="agent-activity-section" data-dashboard-section="agent-activity-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Agent activity</h2>
+    <div class="section-body">
+      <div id="agent-activity-panel"></div>
     </div>
   </div>
 
@@ -5658,8 +5701,78 @@
       'debug-section': { title: '🔍 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
+      'agent-activity-section': { title: '📍 Agent activity', summary: '0 working / 0 total' },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
+    // Section help marks (#10915). Each entry's help sentence is word for word
+    // the first line of its entry in src/docs/dashboard-sections.md, and the
+    // link anchor is derived from its heading. Runs and Platform exist only
+    // on the v6 line, so the help page documents them but this map does not.
+    const DASHBOARD_HELP_PAGE = 'dashboard-sections';
+    const DASHBOARD_HELP_CLICK_LINE = 'Click (or press Enter) for the full explanation';
+    const DASHBOARD_DOCS_LINES = ['v5', 'v6'];
+    const DASHBOARD_SECTION_HELP = Object.freeze({
+      'overview-section': { heading: 'Overview', help: 'How many issues and pull requests Hive is tracking right now, and how many of them it can work on.' },
+      'governor': { heading: 'Governor', help: 'How busy Hive thinks your projects are right now, and how often it wakes its workers as a result.' },
+      'governor-pr-models-section': { heading: 'PRs by model', help: "Which AI models wrote the pull requests Hive opened, and how often each model's work was merged without extra fixes." },
+      'advisory-section': { heading: 'Advisory', help: 'Reports, advice and suggestions Hive has written about your projects and about how it is running.' },
+      'advisory-digest-section': { heading: 'Advisory Digest', help: "The open findings Hive's workers have written down, such as bugs, ideas and advice, grouped by who wrote them." },
+      'hive-advice-section': { heading: 'Hive Advice', help: 'A short weekly list of things Hive recommends you do to keep work moving on your projects.' },
+      'fleet-report-section': { heading: 'Fleet Report Preview', help: 'Problems Hive has noticed in itself that it would report to the Hive maintainers, and problems that have since gone away.' },
+      'acmm-reco-section': { heading: 'Ready to level up?', help: 'Whether Hive thinks you could safely let it do more on its own, and what still has to be true first.' },
+      'lifecycle-section': { heading: 'Lifecycle Timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
+      'pr-throughput-section': { heading: 'Throughput', help: 'How many pull requests were opened, merged and closed over a chosen time window, and who did the work.' },
+      'token-panel': { heading: 'Tokens', help: 'How much text the AI models read and wrote for Hive recently, broken down by model and by worker.' },
+      'cost-panel': { heading: 'Cost', help: "An estimate of what Hive's use of AI models has cost so far, based on public list prices." },
+      'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
+      'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
+      'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
+      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first.' },
+      'review-queue-section': { heading: 'Review Queue', help: 'Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.' },
+      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
+      'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
+      'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
+      'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
+      'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
+      'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
+      'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
+      'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
+      'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people most often ask when they start using Hive.' },
+      'runs-section': { heading: 'Runs', help: 'Longer pieces of work Hive is carrying out in stages, and which ones are waiting for you.' },
+      'platform-section': { heading: 'Platform', help: 'Which code hosting service Hive is connected to and which optional platform services are switched on.' },
+    });
+    // The one place that decides where dashboard help lives: every help mark and
+    // Overview "Learn more" link is built here, so moving them (for example to
+    // docs.hivecommons.dev) is a single change. Builds that are not on a known
+    // release line (forks, feature branches, unknown versions) open v5's help.
+    function dashboardDocsHref(page, anchor) {
+      const line = (typeof window !== 'undefined' && window._hiveDocsLine) || 'v5';
+      return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
+    }
+    function dashboardDocsHrefFromPath(path) {
+      const m = /^\/docs\/([\w-]+)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
+      return m ? dashboardDocsHref(m[1], m[2] || '') : String(path || '');
+    }
+    function setDashboardDocsLine(branch) {
+      const m = /^(v\d+)(?:\.\d+)*$/.exec(String(branch || '').trim());
+      window._hiveDocsLine = m && DASHBOARD_DOCS_LINES.includes(m[1]) ? m[1] : '';
+      document.querySelectorAll('a[data-docs-page]').forEach(a => { a.href = dashboardDocsHref(a.dataset.docsPage, a.dataset.docsAnchor || ''); });
+    }
+    function dashboardSectionHelpAnchor(heading) {
+      return String(heading || '').toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s/g, '-');
+    }
+    function dashboardSectionHelpMark(sectionId) {
+      const entry = DASHBOARD_SECTION_HELP[sectionId];
+      if (!entry) return '';
+      const anchor = dashboardSectionHelpAnchor(entry.heading);
+      const tipId = sectionId + '-help-tip';
+      return `<a class="config-info section-help-mark" href="${esc(dashboardDocsHref(DASHBOARD_HELP_PAGE, anchor))}" data-docs-page="${DASHBOARD_HELP_PAGE}" data-docs-anchor="${esc(anchor)}" target="_blank" rel="noopener noreferrer" data-action="gh3" data-stop="1" title="" aria-label="Help: ${esc(entry.heading)}" aria-describedby="${esc(tipId)}">?<span id="${esc(tipId)}" class="config-tooltip section-help-tip" role="tooltip">${esc(entry.help)}<span class="section-help-tip-action">${DASHBOARD_HELP_CLICK_LINE}</span></span></a>`;
+    }
+    function fillSectionHelpMarks() {
+      document.querySelectorAll('[data-section-help]').forEach(el => {
+        if (!el.querySelector('.section-help-mark')) el.innerHTML = dashboardSectionHelpMark(el.dataset.sectionHelp);
+      });
+    }
     function sectionCardHeader(opts) {
       opts = opts || {};
       const id = opts.id || '';
@@ -5678,7 +5791,7 @@
       const summaryText = textOrDash(opts.summaryHtml || opts.summary || '');
       const summary = `<span class="dash-card-summary ${opts.summaryClass || ''}" id="${esc(opts.summaryId || (id + '-summary'))}" title="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}" aria-label="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}">${visualSectionSummary(id, summaryText, opts.summaryTitle)}</span>`;
       const cls = ['dash-card-header','section-header-toggle',opts.headerClass || ''].filter(Boolean).join(' ');
-      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${subtitle}</span>${badges}${actions}${summary}</div>`;
+      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${subtitle}</span>${badges}${actions}${summary}</div>`;
     }
     function sectionCardShell(opts, bodyHtml) {
       opts = opts || {};
@@ -5749,6 +5862,7 @@
     }
     function initializeDashboardSectionCards() {
       Object.keys(DASHBOARD_SECTION_CARD_CONFIG).forEach(refreshSectionCardShell);
+      fillSectionHelpMarks();
     }
     const MINI_SUMMARY_HISTORY_PREFIX = 'hive_visual_summary_history:';
     const MINI_SUMMARY_HISTORY_POINTS = 48;
@@ -6216,7 +6330,7 @@
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now()) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -6325,6 +6439,28 @@
       const state = String(a.state || '').toLowerCase();
       return state === 'working';
     }
+    function agentTileRunningLabel(a, nowMs) {
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const started = Date.parse((a && (a.busySince || a.runningSince || a.startedAt)) || '');
+      if (!Number.isFinite(started) || started > now) return 'running';
+      const mins = Math.max(1, Math.floor((now - started) / 60000));
+      if (mins < 60) return `running ${mins}m`;
+      const hrs = Math.floor(mins / 60);
+      const rem = mins % 60;
+      return rem ? `running ${hrs}h ${rem}m` : `running ${hrs}h`;
+    }
+    function agentTileCadenceLabel(a, nowMs) {
+      const nextMs = agentCollapsedNextKickMs(a, nowMs);
+      if (!Number.isFinite(nextMs)) return '';
+      const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      if (nextMs <= now) return '';
+      return formatKickCountdown(nextMs - now);
+    }
+    function agentTileGovernorQueue(governor) {
+      const gov = governor || (typeof window !== 'undefined' && window._lastStatus && window._lastStatus.governor) || {};
+      const raw = Array.isArray(gov.nextAgents) ? gov.nextAgents : (Array.isArray(gov.pendingKicks) ? gov.pendingKicks : []);
+      return raw.map(name => String(name || '').trim()).filter(Boolean);
+    }
     function agentCollapsedSortKey(a, index, nowMs) {
       const disabled = !a || agentIsDisabled(a);
       const active = agentTileIsRunning(a);
@@ -6337,33 +6473,46 @@
       else if (!disabled) group = 3;
       return { group, next: Number.isFinite(next) ? next : Number.POSITIVE_INFINITY, index };
     }
-    function agentTileStates(agents, nowMs) {
+    function agentTileStates(agents, nowMs, governor) {
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+      const queued = agentTileGovernorQueue(governor);
       const rows = (Array.isArray(agents) ? agents : []).map((agent, index) => {
         const name = (agent && (agent.name || agent.displayName)) || `agent-${index}`;
         const disabled = !agent || agentIsDisabled(agent);
         const running = agentTileIsRunning(agent);
         const nextMs = !disabled ? agentCollapsedNextKickMs(agent, now) : null;
         const continuous = !!agent && !disabled && agent.continuous === true;
-        const canBeNext = !running && !disabled && (Number.isFinite(nextMs) || continuous);
+        const queuedIndex = queued.indexOf(String(name));
+        const canBeNext = queuedIndex >= 0 && !running && !disabled;
         let group = 4;
         if (running) group = 0;
-        else if (Number.isFinite(nextMs)) group = 1;
+        else if (queuedIndex >= 0) group = 1;
+        else if (Number.isFinite(nextMs)) group = 2;
         else if (continuous) group = 2;
         else if (!disabled) group = 3;
         return {
           agent,
           id: String(name),
           label: running ? 'running' : null,
-          countdown: running ? 'now' : agentCollapsedNextLabel(agent, now),
+          countdown: running ? agentTileRunningLabel(agent, now) : agentTileCadenceLabel(agent, now),
           nextMs: Number.isFinite(nextMs) ? nextMs : null,
           running,
           canBeNext,
-          sortKey: { group, next: Number.isFinite(nextMs) ? nextMs : Number.POSITIVE_INFINITY, index }
+          queuedIndex,
+          sortKey: { group, next: queuedIndex >= 0 ? queuedIndex : (Number.isFinite(nextMs) ? nextMs : Number.POSITIVE_INFINITY), index }
         };
       }).sort((a, b) => (a.sortKey.group - b.sortKey.group) || (a.sortKey.next - b.sortKey.next) || (a.sortKey.index - b.sortKey.index));
-      const next = rows.find(row => row.canBeNext);
-      if (next) next.label = 'next';
+      const nextName = queued.find(name => {
+        const row = rows.find(item => item.id === name);
+        return row && row.canBeNext;
+      });
+      if (nextName) {
+        const next = rows.find(row => row.id === nextName);
+        if (next) {
+          next.label = 'next';
+          if (!next.countdown) next.countdown = Number.isFinite(next.nextMs) && next.nextMs > now ? formatKickCountdown(next.nextMs - now) : 'queued';
+        }
+      }
       return rows;
     }
     function sortAgentsForCollapsedTiles(agents, nowMs) {
@@ -6430,7 +6579,7 @@
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const power = disabled ? 'disabled' : (isDown ? 'stopped' : 'running');
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
-      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
+      const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const state = agentCollapsedStateLabel(disabled, isDown, auth);
       const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
       const label = tileState.label || null;
@@ -6438,7 +6587,7 @@
       const title = agentCollapsedTileTitle(a || {}, name, power, auth, nextMs);
       const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
-      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentCollapsedTile" data-agent="${esc(key)}" data-agent-order-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-sort-group="${sortKey.group}" data-agent-queue-index="${tileState.queuedIndex >= 0 ? String(tileState.queuedIndex) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span>${labelHtml}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span>${stateHtml}</span></button>`;
     }
     function refreshAgentsCollapsedCountdowns(nowMs) {
       const strip = document.querySelector('.agents-collapsed-tiles');
@@ -6449,7 +6598,14 @@
       tiles.forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        let countdown = '';
+        if (tile.getAttribute('data-agent-running') === '1') {
+          countdown = agentTileRunningLabel({ busySince: tile.getAttribute('data-agent-running-since') || '' }, now);
+        } else if (Number.isFinite(nextMs) && nextMs > now) {
+          countdown = formatKickCountdown(nextMs - now);
+        } else if (tile.getAttribute('data-agent-tile-label') === 'next') {
+          countdown = 'queued';
+        }
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
@@ -6458,9 +6614,13 @@
         const bg = Number(b.getAttribute('data-agent-sort-group')) || 0;
         const ar = String(a.getAttribute('data-agent-next-kick-ms') || '').trim();
         const br = String(b.getAttribute('data-agent-next-kick-ms') || '').trim();
+        const aq = Number(a.getAttribute('data-agent-queue-index'));
+        const bq = Number(b.getAttribute('data-agent-queue-index'));
         const an = ar ? Number(ar) : NaN;
         const bn = br ? Number(br) : NaN;
-        return (ag - bg) || ((Number.isFinite(an) ? an : Number.POSITIVE_INFINITY) - (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY));
+        const aOrder = Number.isFinite(aq) ? aq : (Number.isFinite(an) ? an : Number.POSITIVE_INFINITY);
+        const bOrder = Number.isFinite(bq) ? bq : (Number.isFinite(bn) ? bn : Number.POSITIVE_INFINITY);
+        return (ag - bg) || (aOrder - bOrder);
       });
       let nextAssigned = false;
       sortedTiles.forEach(tile => {
@@ -6486,13 +6646,13 @@
       const active = tileState.running === true || agentTileIsRunning(a);
       const auth = agentCollapsedAuthInfo(a || {}, isDown);
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
-      const countdown = tileState.countdown || agentCollapsedNextLabel(a, nowMs);
+      const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const label = tileState.label || null;
       const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = `${name}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
       const labelHtml = agentTileLabelHtml(label);
-      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
+      return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}"><span class="agent-tile-name">${esc(name)}</span><span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
     }
     function agentNavbarTileFromHtml(html) {
       const template = document.createElement('template');
@@ -6560,8 +6720,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
       wrap.hidden = list.length === 0;
+      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
       renderAgentNavbarTileDiff(wrap, list, now);
       if (list.length) ensureAgentsCollapsedCountdownTicker();
     }
@@ -6572,7 +6733,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       Array.from(wrap.querySelectorAll('.agent-navbar-tile')).forEach(tile => {
         const rawNext = String(tile.getAttribute('data-agent-next-kick-ms') || '').trim();
         const nextMs = rawNext ? Number(rawNext) : NaN;
-        const countdown = tile.getAttribute('data-agent-running') === '1' ? 'now' : formatKickCountdown(Number.isFinite(nextMs) ? nextMs - now : null);
+        let countdown = '';
+        if (tile.getAttribute('data-agent-running') === '1') {
+          countdown = agentTileRunningLabel({ busySince: tile.getAttribute('data-agent-running-since') || '' }, now);
+        } else if (Number.isFinite(nextMs) && nextMs > now) {
+          countdown = formatKickCountdown(nextMs - now);
+        } else if (tile.getAttribute('data-agent-tile-label') === 'next') {
+          countdown = 'queued';
+        }
         const el = tile.querySelector('.agent-tile-countdown');
         if (el && el.textContent !== countdown) el.textContent = countdown;
       });
@@ -6583,8 +6751,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!expanded && isSectionCollapsed('agents-section')) toggleSection('agents-section', { collapsed: false, persist: false, navPeek: true });
       ocAfterNavLayoutSettles(['agents-section'], function() { ocScrollSectionIntoView('agents-section'); });
     }
-    function agentsCollapsedTilesHtml(agents, nowMs) {
-      const list = agentTileStates(agents, nowMs);
+    function agentsCollapsedTilesHtml(agents, nowMs, governor) {
+      const list = agentTileStates(agents, nowMs, governor);
       if (!list.length) return '';
       ensureAgentsCollapsedCountdownTicker();
       return `<span class="agents-collapsed-tiles" data-mini-summary="agents-section">${list.map(item => agentCollapsedTileHtml(item.agent, nowMs, item)).join('')}</span>`;
@@ -6953,12 +7121,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
     var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
     var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
+    var DASHBOARD_HIDDEN_SECTIONS_KEY='hive.dashboard.hiddenSections';
+    var DASHBOARD_HIDE_DENYLIST=['overview-section'];
     var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
     var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
     var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
@@ -6967,11 +7137,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
     function dashboardFeatureSectionHidden(id){return id==='nous-section'&&!strategyLabEnabled();}
-    function dashboardEnsureSections(){DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var el=document.getElementById(id);if(el&&!el.getAttribute('data-dashboard-section'))el.setAttribute('data-dashboard-section',id);});}
+    function dashboardCanHideSection(id){return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
+    function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
+    function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
+    function dashboardSectionHidden(id){return dashboardHiddenSectionsRead().indexOf(id)>=0;}
+    function dashboardFirstVisibleSectionId(exclude){var hidden=dashboardHiddenSectionsRead();return dashboardLayoutNormalize(dashboardLayoutCurrent()).main.find(function(id){return id!==exclude&&hidden.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);})||'overview-section';}
+    function dashboardApplyHiddenSections(){var hidden=dashboardHiddenSectionsRead();DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var isHidden=hidden.indexOf(id)>=0,section=document.getElementById(id);if(section){section.classList.toggle('dashboard-section-hidden',isHidden);}var item=document.querySelector('.oc-nav-item[data-section="'+id+'"]');if(item){item.classList.toggle('oc-nav-item-hidden',isHidden);if(isHidden)item.setAttribute('aria-disabled','true');else item.removeAttribute('aria-disabled');item.title=isHidden?'Hidden from the dashboard. Click to unhide this section.':'';var btn=item.querySelector(':scope > .oc-nav-hide-toggle');if(btn){var label=(item.querySelector('.oc-nav-text')||item).textContent.trim()||id;btn.textContent=isHidden?'👁':'⊘';btn.title=isHidden?'Unhide '+label:'Hide '+label;btn.setAttribute('aria-label',(isHidden?'Unhide ':'Hide ')+label);btn.setAttribute('aria-pressed',isHidden?'true':'false');}}});}
+    function dashboardSetSectionHidden(sectionId,hidden){if(!dashboardCanHideSection(sectionId))return;var ids=dashboardHiddenSectionsRead().filter(function(id){return id!==sectionId;});if(hidden)ids.push(sectionId);dashboardHiddenSectionsWrite(ids);dashboardApplyHiddenSections();dashboardLayoutAnnounce((hidden?'Hid ':'Unhid ')+sectionId+'.');var active=document.querySelector('.oc-nav-item.active[data-section="'+sectionId+'"]');if(hidden&&active){active.classList.remove('active');ocNavigate(dashboardFirstVisibleSectionId(sectionId),true);}}
+    function toggleDashboardSectionHidden(sectionId){if(sectionId&&typeof sectionId==='object')sectionId=sectionId.getAttribute&&sectionId.getAttribute('data-section');if(!sectionId)return;var wasHidden=dashboardSectionHidden(sectionId);dashboardSetSectionHidden(sectionId,!wasHidden);if(wasHidden)ocNavigate(sectionId);}
+    function dashboardEnsureSections(){DASHBOARD_LAYOUT_TEMPLATE.main.forEach(function(id){var el=document.getElementById(id);if(el&&!el.getAttribute('data-dashboard-section'))el.setAttribute('data-dashboard-section',id);});dashboardApplyHiddenSections();}
     function dashboardRegionEl(name){return document.getElementById('hive-dashboard-root');}
     function dashboardCardEl(id){return document.querySelector('[data-dashboard-section="'+id+'"]');}
     function dashboardLayoutAnnounce(msg){var live=document.getElementById('dashboard-layout-live');if(live)live.textContent=msg;}
-    function dashboardLayoutCardName(card){var h=card&&card.querySelector('.dash-card-title,.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
+    function dashboardLayoutCardName(card){var h=card&&card.querySelector('.dash-card-title,.gov-title,.token-title,.cost-title,.section-header-toggle h2,.section-header-toggle,.section-label');if(h){var clone=h.cloneNode(true);Array.prototype.forEach.call(clone.querySelectorAll('button,.section-help-mark'),function(b){b.remove();});var txt=clone.textContent.trim();if(txt)return txt.replace(/^▼\s*/,'');}return card?card.getAttribute('data-dashboard-section'):'section';}
     function dashboardLayoutAllIds(){return DASHBOARD_LAYOUT_TEMPLATE.main.filter(function(id){return !dashboardFeatureSectionHidden(id);});}
     function dashboardLayoutRead(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
     function dashboardLayoutCurrent(){var out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var region=dashboardRegionEl('main');if(!region)return out;Array.prototype.forEach.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-dashboard-section');if(id&&!dashboardFeatureSectionHidden(id))out.main.push(id);});return out;}
@@ -6981,10 +7159,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardLayoutExtraKeys(){var keys=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i)||'';if(k.indexOf('hive-repos-pill-filter:')===0||k.indexOf('hive-repo-card-widths:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY||k.indexOf('hive-agent-card-layout:')===0||k.indexOf('hive.repo.tile.order')===0||k.indexOf('hive.repo-tile.order')===0||k.indexOf('hive.repoTile.order')===0||k.indexOf('hive.dashboard.repoTileOrder')===0)keys.push(k);}}catch(e){}keys.sort();return keys;}
-    function dashboardLayoutSnapshot(){var collapsed={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,extras:extras};}
-    function dashboardNormalizeSnapshot(value){var src=value&&typeof value==='object'?value:{};var layout=src.layout?src.layout:src;var collapsed={},extras={};if(src.collapsed&&typeof src.collapsed==='object'&&!Array.isArray(src.collapsed)){dashboardLayoutAllIds().forEach(function(id){if(src.collapsed[id])collapsed[id]=true;});}if(src.extras&&typeof src.extras==='object'&&!Array.isArray(src.extras)){Object.keys(src.extras).forEach(function(k){if(k.indexOf('hive-repos-pill-filter:')===0||/^hive[-.]repo/.test(k)||k.indexOf('hive-agent-card-layout:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY)extras[k]=String(src.extras[k]);});}return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(layout),collapsed:collapsed,extras:extras};}
-    function dashboardSnapshotEquals(a,b){a=dashboardNormalizeSnapshot(a);b=dashboardNormalizeSnapshot(b);if(!dashboardLayoutEquals(a.layout,b.layout))return false;var ac=Object.keys(a.collapsed).sort(),bc=Object.keys(b.collapsed).sort();if(JSON.stringify(ac)!==JSON.stringify(bc))return false;var ae=Object.keys(a.extras).sort(),be=Object.keys(b.extras).sort();if(JSON.stringify(ae)!==JSON.stringify(be))return false;for(var i=0;i<ae.length;i++){if(a.extras[ae[i]]!==b.extras[ae[i]])return false;}return true;}
-    function dashboardLayoutDefaultSnapshot(){return dashboardNormalizeSnapshot({layout:null,collapsed:{},extras:{}});}
+    function dashboardLayoutSnapshot(){var collapsed={},hidden={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardHiddenSectionsRead().forEach(function(id){hidden[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,hidden:hidden,extras:extras};}
+    function dashboardNormalizeSnapshot(value){var src=value&&typeof value==='object'?value:{};var layout=src.layout?src.layout:src;var collapsed={},hidden={},extras={};if(src.collapsed&&typeof src.collapsed==='object'&&!Array.isArray(src.collapsed)){dashboardLayoutAllIds().forEach(function(id){if(src.collapsed[id])collapsed[id]=true;});}if(src.hidden&&typeof src.hidden==='object'&&!Array.isArray(src.hidden)){dashboardLayoutAllIds().forEach(function(id){if(src.hidden[id]&&dashboardCanHideSection(id))hidden[id]=true;});}if(src.extras&&typeof src.extras==='object'&&!Array.isArray(src.extras)){Object.keys(src.extras).forEach(function(k){if(k.indexOf('hive-repos-pill-filter:')===0||/^hive[-.]repo/.test(k)||k.indexOf('hive-agent-card-layout:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY)extras[k]=String(src.extras[k]);});}return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(layout),collapsed:collapsed,hidden:hidden,extras:extras};}
+    function dashboardSnapshotEquals(a,b){a=dashboardNormalizeSnapshot(a);b=dashboardNormalizeSnapshot(b);if(!dashboardLayoutEquals(a.layout,b.layout))return false;var ac=Object.keys(a.collapsed).sort(),bc=Object.keys(b.collapsed).sort();if(JSON.stringify(ac)!==JSON.stringify(bc))return false;var ah=Object.keys(a.hidden).sort(),bh=Object.keys(b.hidden).sort();if(JSON.stringify(ah)!==JSON.stringify(bh))return false;var ae=Object.keys(a.extras).sort(),be=Object.keys(b.extras).sort();if(JSON.stringify(ae)!==JSON.stringify(be))return false;for(var i=0;i<ae.length;i++){if(a.extras[ae[i]]!==b.extras[ae[i]])return false;}return true;}
+    function dashboardLayoutDefaultSnapshot(){return dashboardNormalizeSnapshot({layout:null,collapsed:{},hidden:{},extras:{}});}
     function dashboardReadLayoutPresets(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_PRESETS_KEY);var arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(p){return p&&p.id&&p.state;}).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT):[];}catch(e){return [];}}
     function dashboardWriteLayoutPresets(presets){try{localStorage.setItem(DASHBOARD_LAYOUT_PRESETS_KEY,JSON.stringify((presets||[]).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT)));}catch(e){}dashboardRenderLayoutPresets();}
     function dashboardReadAppliedLayout(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_APPLIED_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
@@ -6992,7 +7170,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardUpdateLayoutMenuState(){var status=document.getElementById('oc-gh-menu-layout-status'),wrap=document.getElementById('oc-gh-avatar-wrap');var current=dashboardLayoutSnapshot(),applied=dashboardReadAppliedLayout(),base=applied&&applied.state?applied:{kind:'default',name:'',state:dashboardLayoutDefaultSnapshot()};var same=dashboardSnapshotEquals(current,base.state);var label='Layout: ';if(base.kind==='default')label+=same?'default':'custom (unsaved)';else label+=(base.name||'custom')+(same?'':' (modified)');if(status)status.textContent=label;if(wrap)wrap.classList.toggle('layout-unsaved',!same);if(typeof dashboardRenderLayoutPresets==='function')dashboardRenderLayoutPresets();}
     function dashboardUpdateResetButton(){dashboardUpdateLayoutMenuState();}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
-    function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){if(state.collapsed[id])localStorage.setItem(SECTION_LS_PREFIX+id,'1');else localStorage.removeItem(SECTION_LS_PREFIX+id);});var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardUpdateLayoutMenuState();}
+    function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){if(state.collapsed[id])localStorage.setItem(SECTION_LS_PREFIX+id,'1');else localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardHiddenSectionsWrite(Object.keys(state.hidden||{}));var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardUpdateLayoutMenuState();}
     function dashboardRenderLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list');if(!list)return;var presets=dashboardReadLayoutPresets();if(!presets.length){list.innerHTML='<div class="avatar-menu-layout-empty">No saved layouts yet.</div>';return;}list.innerHTML=presets.map(function(p){return '<div class="avatar-menu-layout-snapshot"><span class="avatar-menu-layout-name" title="'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'">'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'</span><button type="button" class="avatar-menu-layout-action" data-action="applyDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Apply</button><button type="button" class="avatar-menu-layout-action" data-action="renameDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Rename</button><button type="button" class="avatar-menu-layout-action" data-action="deleteDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Delete</button></div>';}).join('');}
     function toggleDashboardLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list'),btn=document.getElementById('oc-gh-menu-layout-saved');if(!list)return;list.hidden=!list.hidden;if(btn){btn.setAttribute('aria-expanded',String(!list.hidden));btn.textContent=list.hidden?'Saved layouts ▸':'Saved layouts ▾';}dashboardRenderLayoutPresets();}
     async function saveDashboardLayoutPreset(){var name=(await hivePrompt({title:'Save dashboard layout',message:'Name this layout snapshot.',defaultValue:DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Save'}));name=String(name||'').trim();if(!name)return;var presets=dashboardReadLayoutPresets(),now=new Date().toISOString(),state=dashboardLayoutSnapshot(),existing=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();});if(existing){existing.state=state;existing.updatedAt=now;}else{presets.unshift({id:'layout-'+Date.now().toString(36),name:name,createdAt:now,updatedAt:now,state:state});}presets=presets.slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT);dashboardWriteLayoutPresets(presets);var saved=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();})||presets[0];dashboardMarkAppliedLayout('preset',saved.name,saved.id,saved.state);showToast('Layout saved as '+saved.name,'success');}
@@ -7002,15 +7180,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardDownloadJSON(filename,obj){var blob=new Blob([JSON.stringify(obj,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);}
     function exportDashboardLayoutJSON(){dashboardDownloadJSON('hive-dashboard-layout.json',dashboardLayoutSnapshot());showToast('Layout JSON exported','success');}
     function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
-    async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
+    async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, hidden sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
     function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
     function dashboardTopAnchor(region){var anchor=document.getElementById(DASHBOARD_LAYOUT_ANCHOR_ID);if(!region||!anchor)return null;if(anchor.parentElement!==region||region.firstElementChild!==anchor)region.insertBefore(anchor,region.firstElementChild||null);return anchor;}
     function dashboardPinNoticeAnchor(region){var anchor=dashboardTopAnchor(region);if(!region||!anchor||!region.children)return;var children=Array.prototype.slice.call(region.children),moved=[];for(var i=0;i<children.length&&children[i]!==anchor;i++){if(dashboardIsSectionNode(children[i]))moved.push(children[i]);}if(!moved.length)return;var ref=anchor.nextElementSibling||null;moved.forEach(function(card){region.insertBefore(card,ref);});dashboardTopAnchor(region);}
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
-    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardUpdateResetButton();dashboardSortSidebar();}
+    function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardApplyHiddenSections();dashboardUpdateResetButton();dashboardSortSidebar();}
     function dashboardSidebarNavItems(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});return Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});}
-    function dashboardEnsureSidebarHandles(){dashboardSidebarNavItems().forEach(function(item){if(item.querySelector(':scope > .oc-nav-drag-handle'))return;var sectionId=item.getAttribute('data-section'),label=(item.querySelector('.oc-nav-text')||item).textContent.trim()||sectionId;var handle=document.createElement('button');handle.type='button';handle.className='oc-nav-drag-handle';handle.draggable=true;handle.setAttribute('data-nav-order-grip','dashboard');handle.setAttribute('data-section',sectionId);handle.setAttribute('data-stop','1');handle.setAttribute('aria-label','Move '+label+' section');handle.setAttribute('aria-pressed','false');handle.title='Drag or focus and press Alt+↑/↓ to reorder';handle.textContent='⠿';item.insertBefore(handle,item.firstChild);});}
+    function dashboardEnsureSidebarHandles(){dashboardSidebarNavItems().forEach(function(item){var sectionId=item.getAttribute('data-section'),label=(item.querySelector('.oc-nav-text')||item).textContent.trim()||sectionId;if(!item.querySelector(':scope > .oc-nav-drag-handle')){var handle=document.createElement('button');handle.type='button';handle.className='oc-nav-drag-handle';handle.draggable=true;handle.setAttribute('data-nav-order-grip','dashboard');handle.setAttribute('data-section',sectionId);handle.setAttribute('data-stop','1');handle.setAttribute('aria-label','Move '+label+' section');handle.setAttribute('aria-pressed','false');handle.title='Drag or focus and press Alt+↑/↓ to reorder';handle.textContent='⠿';item.insertBefore(handle,item.firstChild);}if(dashboardCanHideSection(sectionId)&&!item.querySelector(':scope > .oc-nav-hide-toggle')){var hide=document.createElement('button');hide.type='button';hide.className='oc-nav-hide-toggle';hide.setAttribute('data-action','toggleDashboardSectionHidden');hide.setAttribute('data-arg0',sectionId);hide.setAttribute('data-section',sectionId);hide.setAttribute('data-stop','1');hide.setAttribute('aria-label','Hide '+label);hide.setAttribute('aria-pressed','false');hide.title='Hide '+label;hide.textContent='⊘';item.appendChild(hide);}});dashboardApplyHiddenSections();}
     function dashboardSidebarLayoutFromDom(){var ids=dashboardSidebarNavItems().map(function(item){return item.getAttribute('data-section');}).filter(Boolean);return dashboardLayoutNormalize({v:DASHBOARD_LAYOUT_VERSION,main:ids});}
     function dashboardApplyOrderFromSidebar(){var layout=dashboardSidebarLayoutFromDom();dashboardApplyLayout(layout);dashboardLayoutWrite();dashboardLayoutAnnounce('Dashboard sidebar order saved.');}
     function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=dashboardSidebarNavItems();items.sort(function(a,b){return rank[a.getAttribute('data-section')]-rank[b.getAttribute('data-section')];});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});dashboardEnsureSidebarHandles();Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home||group.id==='oc-agent-nav-group'){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
@@ -7258,7 +7436,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function _ocSectionFromHash() {
       const h = location.hash.replace('#', '');
       if (h === 'throughput') return 'pr-throughput-section';
-      return h && h.startsWith('section-') ? h.replace('section-', '') : null;
+      const route = h.split('?')[0];
+      if (route === 'projects') {
+        const key = overviewProjectFilterKeyFromURL();
+        if (key) _overviewProjectFilterKey = key;
+        return 'repos-section';
+      }
+      return route && route.startsWith('section-') ? route.replace('section-', '') : null;
     }
     let _ocSelectedAgent = _ocAgentFromHash();
     let _ocPaneTimer = null;
@@ -7436,6 +7620,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function ocNavigate(section, skipScroll) {
       if (dashboardFeatureSectionHidden(section)) return;
+      if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);
       _ocSelectedAgent = null;
       history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#section-' + section) : '#section-' + section);
       ocStopPanePoll();
@@ -7480,6 +7665,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ensureNousPolling();
       }
       dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
+      dashboardApplyHiddenSections();
       dashboardSortSidebar();
     }
 
@@ -7887,6 +8073,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Same for the blockers line, the stat fields and the indicators — they
         // live outside the scroll region, so replacing them wholesale cannot
         // cause the scroll jumps the fast path exists to prevent.
+        const nowEl = detail.querySelector('[data-agent-now]');
+        if (nowEl) nowEl.outerHTML = agentNowHtml(a);
         const blockersEl = detail.querySelector('.oc-detail-blockers');
         if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
         const fieldsEl = detail.querySelector('.oc-detail-fields');
@@ -8025,6 +8213,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           </select>
           ${effortSelectHtml(a)}
         </div>
+        ${agentNowHtml(a)}
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
@@ -9952,72 +10141,316 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="agent-indicators"><div class="ind-group"><div class="ind-dots">${items.join('')}</div></div></div>`;
     }
 
+    // Configured per-agent stats (statsConfig). The old "Working on / PR open
+    // / merged" rows that also lived here were fed by a script the Go
+    // dashboard never ported (#128), so they never rendered; the agent's
+    // "Now:" line below answers "what is it on?" instead (#10925).
     function agentIndicators(name) {
-      const m = currentAgentMetrics[name];
-
-      // Config-driven stats rendering — check first so agents without
-      // currentAgentMetrics entries still get their statsConfig rendered.
       const agentObj = ((window._lastStatus || {}).agents || []).find(a => a.name === name);
       const statsConfig = agentObj ? agentObj.statsConfig : null;
       if (statsConfig && statsConfig.length > 0) {
         return renderStatsFromConfig(statsConfig, name);
       }
-
-      if (!m) return '';
-
-      // Agents with issue/PR pair tracking get special pair rendering
-      if (m.pairs || m.inProgress) {
-        const pairs = m.pairs || [];
-        const inProgress = m.inProgress || [];
-        const openPairs = pairs.filter(p => p.state !== 'merged');
-        const mergedPairs = pairs.filter(p => p.state === 'merged');
-        const _org = (window._primaryRepo || 'kubestellar/console').split('/')[0];
-        const _defaultRepo = (window._primaryRepo || 'kubestellar/console').split('/')[1];
-        const _ghBase = window._githubBaseUrl || 'https://github.com';
-        const _ghUrl = (p, type) => `${_ghBase}/${encodeURIComponent(_org)}/${encodeURIComponent(p.repo || _defaultRepo)}/${type}/${type === 'issues' ? p.issue : p.pr}`;
-        const _repoTag = (p) => (p.repo && p.repo !== _defaultRepo) ? `<span style="color:var(--muted);font-size:0.65rem">${esc(p.repo)}/</span>` : '';
-        const renderPair = (p) => {
-          const issueLabel = p.issueTitle ? `⊙ #${p.issue} — ${esc(p.issueTitle.length > 48 ? p.issueTitle.slice(0, 48) + '…' : p.issueTitle)}` : `⊙ #${p.issue}`;
-          const issueTip = p.issueTitle ? esc(p.issueTitle) : '';
-          const prIcon = p.state === 'merged' ? '✓' : '⎇';
-          const prCls = p.state === 'merged' ? 'ind-pr ind-merged' : 'ind-pr';
-          const prTip = p.prTitle ? esc(p.prTitle) : '';
-          return `<div class="ind-pair">
-          ${_repoTag(p)}<a class="ind-tag ind-issue" href="${_ghUrl(p,'issues')}" target="_blank" title="${issueTip}">${issueLabel}</a>
-          <span class="ind-arrow">→</span>
-          <a class="ind-tag ${prCls}" href="${_ghUrl(p,'pull')}" target="_blank" title="${prTip}">${prIcon} #${p.pr}</a>
-        </div>`;
-        };
-        const renderWip = (ip) => {
-          const title = ip.title ? esc(ip.title.length > 48 ? ip.title.slice(0, 48) + '…' : ip.title) : '';
-          const label = title ? `⏳ #${ip.number} — ${title}` : `⏳ #${ip.number}`;
-          return `<div class="ind-pair">
-          <a class="ind-tag ind-wip" href="${_ghBase}/${_org}/${_defaultRepo}/issues/${ip.number}" target="_blank" title="${ip.title ? esc(ip.title) : ''}">${label}</a>
-        </div>`;
-        };
-        const standaloneMerged = m.mergedPrs || [];
-        const renderStandalonePr = (p) => {
-          const title = p.prTitle ? esc(p.prTitle.length > 55 ? p.prTitle.slice(0, 55) + '…' : p.prTitle) : '';
-          const tip = p.prTitle ? esc(p.prTitle) : '';
-          return `<div class="ind-pair">
-          ${_repoTag(p)}<a class="ind-tag ind-pr ind-merged" href="${_ghUrl(p,'pull')}" target="_blank" title="${tip}">✓ #${p.pr} — ${title}</a>
-        </div>`;
-        };
-        const allMergedCount = mergedPairs.length + standaloneMerged.length;
-        let html = '';
-        if (inProgress.length > 0) html += `<div class="agent-indicators"><span class="ind-label">Working on (${inProgress.length}):</span>${inProgress.map(renderWip).join('')}</div>`;
-        if (openPairs.length > 0) html += `<div class="agent-indicators"><span class="ind-label">PR open (${openPairs.length}):</span>${openPairs.map(renderPair).join('')}</div>`;
-        if (allMergedCount > 0) {
-          const mergedOpen = localStorage.getItem('hive-merged-expanded') !== 'false';
-          html += `<details class="agent-indicators merged-collapse" ${mergedOpen ? 'open' : ''} data-toggle-action="gh4"><summary class="ind-label" style="cursor:pointer;user-select:none">Merged today (${allMergedCount})</summary>${mergedPairs.map(renderPair).join('')}${standaloneMerged.map(renderStandalonePr).join('')}</details>`;
-        }
-        if (!html) html = '<div class="agent-indicators"><span class="ind-empty">no active fixes</span></div>';
-        return html;
-      }
-
       return '';
     }
 
+    /* "Now:" line on agent cards and the agent detail panel (#10934, part of
+       #10925). Built only from what the hive already sends: the agent's
+       lastAction record, busy/lastKickAt, the payload timestamp (the hive's
+       clock) and, when reservations are on, the claims ledger. Times are
+       measured on the hive's clock so a wrong viewer clock never skews them. */
+    const AGENT_NOW_UPDATE_MS = 10000;
+    const AGENT_NOW_MISSED_UPDATES = 3;
+    const AGENT_NOW_TICK_MS = 15000;
+    const AGENT_NOW_CLAIMS_REFRESH_MS = 15000;
+    const AGENT_NOW_HELP = 'What this agent is on, from what it does through the hive: the last issue or pull request it commented on, labelled, opened, reviewed or merged since it was last started. Work done outside the hive (a direct git push or command-line call) is not seen, so "no issue or pull request yet" does not mean it is doing nothing. "reserved until" is a reservation on the issue, not proof the agent is still working on it.';
+    const AGENT_NOW_PR_ACTIONS = { agent_pr_created: true, pr_closed: true, agent_pr_reviewed: true, pr_merged: true, agent_review_requested: true };
+    let _agentNowClock = null;
+    let _agentNowClaims = { enabled: false, claims: [], fetchedAt: 0 };
+
+    function agentNowClockFrom(timestamp, localMs) {
+      const hiveMs = Date.parse(timestamp || '');
+      return Number.isFinite(hiveMs) ? { hiveMs, localMs } : null;
+    }
+
+    function agentNowHiveMs(clock, localMs) {
+      if (!clock) return localMs;
+      return clock.hiveMs + Math.max(0, localMs - clock.localMs);
+    }
+
+    function agentNowIsOutdated(clock, localMs) {
+      if (!clock) return false;
+      return localMs - clock.localMs > AGENT_NOW_UPDATE_MS * AGENT_NOW_MISSED_UPDATES + AGENT_NOW_UPDATE_MS / 2;
+    }
+
+    function agentNowAgo(ms) {
+      const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      if (sec < 60) return 'just now';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min} min ago`;
+      const hours = Math.floor(min / 60);
+      if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+      const days = Math.floor(hours / 24);
+      return days === 1 ? '1 day ago' : `${days} days ago`;
+    }
+
+    // HH:MM in the viewer's time zone, with the date when it is not today on
+    // the hive's clock.
+    function agentNowClockTime(ms, hiveNowMs) {
+      const d = new Date(ms);
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (d.toDateString() === new Date(hiveNowMs).toDateString()) return time;
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+    }
+
+    /* Resolves an item's repository against the repos this viewer is shown.
+       The short name is used only when it names exactly one watched repo;
+       otherwise the line says owner/repo. Titles come only from the issue and
+       pull request lists already served for that repo, so a viewer who is not
+       shown a repo's issues is not shown its titles here either. */
+    function agentNowItem(repo, number, action, ctx) {
+      const raw = String(repo || '').trim();
+      const n = Number(number) || 0;
+      if (!raw || n <= 0 || !Array.isArray(ctx.repos)) return null;
+      const repos = ctx.repos;
+      const lower = (v) => String(v || '').toLowerCase();
+      let full = raw;
+      let short = raw;
+      if (raw.includes('/')) {
+        short = raw.slice(raw.lastIndexOf('/') + 1);
+      } else {
+        const byName = repos.filter(r => lower(r.name) === lower(raw));
+        full = byName.length === 1 && byName[0].full ? byName[0].full : (ctx.org ? ctx.org + '/' + raw : raw);
+      }
+      const watched = repos.find(r => lower(r.full) === lower(full)) || null;
+      const sameShort = repos.filter(r => lower(r.name) === lower(short)).length;
+      const label = (watched && sameShort === 1 ? short : full) + '#' + n;
+      let title = '';
+      let isPR = !!AGENT_NOW_PR_ACTIONS[action];
+      if (watched) {
+        for (const [key, pr] of [['actionableIssues', false], ['heldIssues', false], ['openPrs', true], ['heldPrs', true]]) {
+          const hit = (watched[key] || []).find(i => i && Number(i.number) === n);
+          if (hit) { title = hit.title || ''; isPR = isPR || pr; break; }
+        }
+      }
+      const href = full.includes('/')
+        ? `${ctx.ghBase || 'https://github.com'}/${full.split('/').map(encodeURIComponent).join('/')}/${isPR ? 'pull' : 'issues'}/${n}`
+        : '';
+      return { full, label, title, href };
+    }
+
+    function agentNowItemHtml(item, withTitle) {
+      const ref = item.href
+        ? `<a href="${esc(item.href)}" target="_blank" rel="noopener" data-stop="1">${esc(item.label)}</a>`
+        : esc(item.label);
+      return withTitle && item.title ? `${ref} — ${esc(item.title)}` : ref;
+    }
+
+    // Live reservations this agent holds, soonest end first. Empty when
+    // reservations are off: nothing about them is shown then.
+    function agentNowReservations(a, ctx) {
+      const cl = ctx.claims || {};
+      if (!cl.enabled || !Array.isArray(cl.claims)) return [];
+      return cl.claims
+        .filter(c => c && c.kind === 'agent' && (c.holder_id === a.name || c.holder === a.name))
+        .map(c => ({ c, ends: Date.parse(c.expires_at || '') }))
+        .filter(r => Number.isFinite(r.ends) && r.ends > ctx.hiveNowMs)
+        .sort((x, y) => x.ends - y.ends);
+    }
+
+    /* st: { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel }
+       ctx: { hiveNowMs, outdated, repos, org, ghBase, claims } */
+    function agentNowLineHtml(a, st, ctx) {
+      const outdated = !!ctx.outdated;
+      const ago = (iso) => outdated ? '' : agentNowAgo(ctx.hiveNowMs - Date.parse(iso || ''));
+      const parts = [];
+      let lead = '';
+      let showReservations = true;
+      if (st.isPoweredOff || st.isOff) { lead = 'Off'; showReservations = false; }
+      else if (st.isPaused) { lead = 'Paused'; showReservations = false; }
+      else if (st.isStopped) { lead = "Stopped — see the agent's log"; showReservations = false; }
+      else if (st.isStarting || (!a.lastKickAt && a.busy !== 'working')) { lead = 'Not started yet'; showReservations = false; }
+      const la = a.lastAction || null;
+      const item = (!lead && la) ? agentNowItem(la.repo, la.number, la.action, ctx) : null;
+      const reservations = showReservations ? agentNowReservations(a, ctx) : [];
+      let shownKey = '';
+      if (!lead && a.busy === 'working') {
+        if (item && la.current) {
+          lead = 'Now:';
+          shownKey = item.full.toLowerCase() + '#' + la.number;
+          let seg = agentNowItemHtml(item, true);
+          const age = ago(la.at);
+          if (age) seg += ' · ' + age;
+          const own = reservations.find(r => (String(r.c.repo || '').toLowerCase() + '#' + r.c.issue) === shownKey);
+          if (own) seg += ' · reserved until ' + esc(agentNowClockTime(own.ends, ctx.hiveNowMs));
+          parts.push(seg);
+        } else {
+          lead = 'Now:';
+          let seg = 'working — no issue or pull request yet';
+          if (a.lastKickAt && !outdated) seg += ' · started ' + agentNowAgo(ctx.hiveNowMs - Date.parse(a.lastKickAt));
+          parts.push(seg);
+        }
+      } else if (!lead && a.busy === 'idle') {
+        lead = 'Idle';
+        if (item) {
+          const age = ago(la.at);
+          parts.push('last: ' + agentNowItemHtml(item, false) + (age ? ', ' + age : ''));
+        }
+      } else if (!lead) {
+        lead = esc(st.stateLabel || a.busy || '');
+        showReservations = false;
+      }
+      if (showReservations) {
+        const others = reservations.filter(r => (String(r.c.repo || '').toLowerCase() + '#' + r.c.issue) !== shownKey);
+        const first = others.length ? agentNowItem(others[0].c.repo, others[0].c.issue, '', ctx) : null;
+        if (first) {
+          let seg = 'still reserved: ' + agentNowItemHtml(first, false) + ' until ' + esc(agentNowClockTime(others[0].ends, ctx.hiveNowMs));
+          if (others.length > 1) seg += ` and ${others.length - 1} more`;
+          parts.push(seg);
+        }
+      }
+      if (outdated) parts.push('information may be out of date');
+      const body = lead === 'Now:' ? `<span class="an-lead">Now:</span> ${parts.join(' · ')}` : `<span class="an-lead">${lead}</span>${parts.length ? ' · ' + parts.join(' · ') : ''}`;
+      return `<div class="agent-now${outdated ? ' outdated' : ''}" data-agent-now="${esc(a.name)}" title="${esc(AGENT_NOW_HELP)}">${body}</div>`;
+    }
+
+    // Same state derivation as the agent card (renderAgents) so the line
+    // never disagrees with the state shown above it.
+    function agentNowStateOf(a) {
+      const isOnDemand = a.onDemand === true;
+      const isPoweredOff = agentIsDisabled(a) && a.state !== 'running';
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
+      const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      return { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel: isOnDemand ? 'on demand' : a.busy };
+    }
+
+    // The state word on the agent card. The Agent activity row shows the same
+    // word, so the two never disagree.
+    function agentStateText(a) {
+      const { isPoweredOff, isPaused, isOff } = agentNowStateOf(a);
+      const isOnDemand = a.onDemand === true;
+      return isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy;
+    }
+
+    function agentNowContext(localMs) {
+      return {
+        hiveNowMs: agentNowHiveMs(_agentNowClock, localMs),
+        outdated: agentNowIsOutdated(_agentNowClock, localMs),
+        repos: (window._lastStatus || {}).repos,
+        org: window._githubOrg || '',
+        ghBase: window._githubBaseUrl || 'https://github.com',
+        claims: _agentNowClaims,
+      };
+    }
+
+    function agentNowHtml(a) {
+      return agentNowLineHtml(a, agentNowStateOf(a), agentNowContext(Date.now()));
+    }
+
+    // Repaints every "Now:" line in place so "ago" keeps counting up (and
+    // turns into "information may be out of date") without new data.
+    function refreshAgentNowLines() {
+      renderAgentActivity();
+      const agents = window._lastAgents || [];
+      document.querySelectorAll('[data-agent-now]').forEach(el => {
+        const a = agents.find(ag => ag.name === el.dataset.agentNow);
+        if (!a) return;
+        const html = agentNowHtml(a);
+        if (el.outerHTML !== html) el.outerHTML = html;
+      });
+    }
+
+    function refreshAgentNowClaims(localMs) {
+      if (localMs - _agentNowClaims.fetchedAt < AGENT_NOW_CLAIMS_REFRESH_MS) return;
+      _agentNowClaims.fetchedAt = localMs;
+      fetch('/api/claims', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return;
+          _agentNowClaims = { enabled: d.enabled === true, claims: Array.isArray(d.claims) ? d.claims : [], fetchedAt: _agentNowClaims.fetchedAt };
+          refreshAgentNowLines();
+        })
+        .catch(() => {});
+    }
+
+    // Called with every full or per-agent status payload.
+    function noteAgentNowUpdate(timestamp) {
+      const localMs = Date.now();
+      _agentNowClock = agentNowClockFrom(timestamp, localMs)
+        || (_agentNowClock ? { hiveMs: agentNowHiveMs(_agentNowClock, localMs), localMs } : null);
+      refreshAgentNowClaims(localMs);
+      if (!DASHBOARD_INTERVALS.agentNow) dashboardSetInterval('agentNow', refreshAgentNowLines, AGENT_NOW_TICK_MS);
+    }
+
+    /* Agent activity section (#10935, part of #10925): one row per agent,
+       built from the same agent list as the cards and the same "Now:" helpers
+       (agentStateText, agentNowHtml, agentNowItem, agentNowReservations), so a
+       row and its card never disagree. It shows only agents the hive already
+       sends this viewer in the status payload. */
+    let _agentActivityAgents = [];
+
+    // Time since the agent's last action, or since it started when it is
+    // working with no issue or pull request yet. Empty when the item is not
+    // shown to this viewer or the information may be out of date.
+    function agentActivitySinceText(a, ctx) {
+      if (ctx.outdated) return '';
+      const la = a.lastAction || null;
+      if (a.busy === 'working' && !(la && la.current) && a.lastKickAt) {
+        return 'started ' + agentNowAgo(ctx.hiveNowMs - Date.parse(a.lastKickAt));
+      }
+      if (la && la.at && agentNowItem(la.repo, la.number, la.action, ctx)) {
+        return agentNowAgo(ctx.hiveNowMs - Date.parse(la.at));
+      }
+      return '';
+    }
+
+    // Every live reservation the agent holds, soonest end first.
+    function agentActivityReservationsHtml(a, ctx) {
+      return agentNowReservations(a, ctx)
+        .map(r => {
+          const item = agentNowItem(r.c.repo, r.c.issue, '', ctx);
+          return item ? agentNowItemHtml(item, false) + ' until ' + esc(agentNowClockTime(r.ends, ctx.hiveNowMs)) : '';
+        })
+        .filter(Boolean)
+        .join('<br>');
+    }
+
+    function agentActivityRowHtml(a, nowHtml, ctx) {
+      const since = agentActivitySinceText(a, ctx);
+      const reserved = agentActivityReservationsHtml(a, ctx);
+      return `<tr data-agent-activity="${esc(a.name)}">
+        <td class="aa-name">${a.emoji ? esc(a.emoji) + ' ' : ''}${esc(a.displayName || a.name)}</td>
+        <td class="aa-state">${esc(agentStateText(a))}</td>
+        <td class="aa-now">${nowHtml}</td>
+        <td class="aa-since">${since ? esc(since) : '—'}</td>
+        <td class="aa-reserved">${reserved || '—'}</td>
+      </tr>`;
+    }
+
+    // Called with the agent list the cards are built from, and with no
+    // argument on the "Now:" tick so the times keep counting up.
+    function renderAgentActivity(agents) {
+      if (Array.isArray(agents)) _agentActivityAgents = agents;
+      const el = document.getElementById('agent-activity-panel');
+      if (!el) return;
+      refreshSectionCardShell('agent-activity-section');
+      const live = window._lastAgents || [];
+      const list = _sortAgentsBySidebar(_agentActivityAgents).sorted
+        .map(a => live.find(ag => ag.name === a.name) || a);
+      setSectionSummary('agent-activity-section', `${list.filter(a => a.busy === 'working').length} working / ${list.length} total`);
+      if (list.length === 0) {
+        setIfChanged(el, '<div class="agent-activity-empty">No agents to show.</div>');
+        return;
+      }
+      const ctx = agentNowContext(Date.now());
+      const rows = list.map(a => agentActivityRowHtml(a, agentNowHtml(a), ctx)).join('');
+      setIfChanged(el, `<div class="agent-activity-scroll"><table class="agent-activity-table">
+        <thead><tr><th scope="col">Agent</th><th scope="col">State</th><th scope="col">Now</th><th scope="col">Since last action</th><th scope="col">Reserved</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`);
+    }
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
@@ -10836,6 +11269,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       })() : (Array.isArray(agents) ? agents : []);
       refreshSectionCardShell('agents-section');
       setSectionSummary('agents-section', agentsSectionSummary(agents));
+      renderAgentActivity(agents);
       renderAgentNavbarUpNext(agents, Date.now());
       const el = document.getElementById('agents');
       // Preserve custom prompt input values across re-renders
@@ -10949,7 +11383,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="hv-btn btn-secondary btn-sm" data-action="showAdvisorRecords" data-arg0="${esc(a.name)}" data-stop="1" title="Advisor reviews of this agent's finished turns — severity and text, newest first">🗣 advisor</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
-          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isPoweredOff ? 'powered off' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : (a.busy === 'working' && a.awaitingCI) ? 'Waiting on CI' : a.busy}${pauseInfoIcon(a)}${(() => {
+          <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');
             if (a.structuredStatus === 'DONE_WITH_CONCERNS') return statusBadgeHTML('needs_attention', 'concerns', a.statusEvidence, 'done-concerns');
@@ -10957,6 +11391,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (isStale) return statusBadgeHTML('degraded', 'stale', '', 'needs-context');
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
+          ${agentNowHtml(a)}
           ${agentBlockerLineHtml(a)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
@@ -12456,7 +12891,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
         <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
           <span class="section-chevron" aria-hidden="true">▼</span>
-          <span>PRS BY MODEL<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
+          <span>PRS BY MODEL${dashboardSectionHelpMark('governor-pr-models-section')}<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
           <span class="gov-pr-models-summary">${collapsedSummary}</span>
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
@@ -13486,9 +13921,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // are not: `hold` on an agent's own PR is usually the ACMM level gate
     // ("held for human review"), which the hive lifts itself once policy no
     // longer requires the checkpoint; `needs-human` beside the hold is the
-    // escalation ledger saying automated fix attempts are exhausted, and
-    // that one only a person can clear. The labels are the single source of
-    // truth here, exactly as they are for the needs-human pill. Returned
+    // fix-loop fallback, unless reporter_trust_reason carries the original
+    // reporter-trust notice evidence. Neither reason changes the label-driven
+    // hold gate; only a person clears a reporter-trust hold. Returned
     // without wrapping so the state chip can show it as-is and the pill can
     // append it in parentheses after the title.
     function heldReason(item) {
@@ -13497,6 +13932,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const needsHuman = labels.includes('needs-human');
       const parts = [];
       parts.push('On hold' + (held.length ? ' — label ' + held.map(l => '`' + l + '`').join(', ') : '') + ': agents will not act on this until the hold label is removed');
+      if (item && item.reporter_trust_reason) {
+        parts.push(item.reporter_trust_reason + ', a maintainer must review this');
+        return parts.join('; ');
+      }
       if (item && item.hive_attributed) parts.push('opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator');
       if (needsHuman) parts.push('needs-human: automated fix attempts exhausted, a human must review this');
       return parts.join('; ');
@@ -14108,6 +14547,170 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }));
     }
 
+    const OVERVIEW_PROJECT_FILTERS = {
+      'open-issues': { label: 'Total open issues', kinds: ['issue'], issueBands: OVERVIEW_ISSUE_BAND_ORDER, bucketKind: 'issues' },
+      'open-prs': { label: 'Total open PRs', kinds: ['pr'], prBands: PR_BAND_ORDER, bucketKind: 'prs' },
+      'actionable-now': { label: 'Actionable now', kinds: ['issue', 'pr'], issueBands: OVERVIEW_ISSUE_BAND_ORDER.filter(b => !['waiting', 'done'].includes(b)), prBands: PR_BAND_ORDER.filter(b => !['waiting', 'draft', 'blocked'].includes(b)) },
+      'held': { label: 'Held', kinds: ['issue', 'pr'], held: true },
+      'blocked-needs-human': { label: 'Blocked / needs-human', kinds: ['issue', 'pr'], issueBands: ['waiting', 'done'], prBands: ['waiting', 'blocked'], issueBuckets: ['needs_human'] },
+      'outside': { label: 'Outside', kinds: ['issue', 'pr'], outside: true }
+    };
+    let _overviewProjectFilterKey = null;
+    let _overviewProjectFilterCount = null;
+
+    function overviewProjectFilterSpec(key) {
+      return OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
+    }
+
+    function overviewProjectFilterKeyFromURL() {
+      const read = raw => {
+        try {
+          const q = String(raw || '');
+          const params = new URLSearchParams(q.startsWith('?') ? q.slice(1) : q);
+          return params.get('band') || params.get('kpi') || '';
+        } catch { return ''; }
+      };
+      const hash = String(location.hash || '').replace(/^#/, '');
+      if (hash.startsWith('projects')) {
+        const idx = hash.indexOf('?');
+        const key = idx >= 0 ? read(hash.slice(idx + 1)) : '';
+        if (overviewProjectFilterSpec(key)) return key;
+      }
+      const key = read(location.search || '');
+      return overviewProjectFilterSpec(key) ? key : '';
+    }
+
+    function overviewProjectFilterState() {
+      const key = overviewProjectFilterSpec(_overviewProjectFilterKey) ? _overviewProjectFilterKey : overviewProjectFilterKeyFromURL();
+      const spec = overviewProjectFilterSpec(key);
+      return spec ? Object.assign({ key, selectedCount: _overviewProjectFilterCount }, spec) : null;
+    }
+
+    function overviewRepoTrackedIssueEntries(repo) {
+      const name = overviewRepoName(repo);
+      return (repo && repo.actionableIssues || []).map(issue => ({ kind: 'issue', item: issue, issue, repo: name, held: false, band: issue && issue.band }))
+        .concat((repo && repo.heldIssues || []).map(issue => ({ kind: 'issue', item: issue, issue, repo: name, held: true, band: issue && issue.band })));
+    }
+
+    function overviewRepoTrackedPREntries(repo) {
+      const name = overviewRepoName(repo);
+      return (repo && repo.openPrs || []).map(pr => ({ kind: 'pr', item: pr, pr, repo: name, held: false, band: pr && pr.band }))
+        .concat((repo && repo.heldPrs || []).map(pr => ({ kind: 'pr', item: pr, pr, repo: name, held: true, band: pr && pr.band })));
+    }
+
+    function overviewProjectBucketCount(repo, kind, keys) {
+      const bd = (repo && repo.workBreakdown && repo.workBreakdown[kind]) || {};
+      return (keys || []).reduce((n, key) => n + Number(bd[key] || 0), 0);
+    }
+
+    function overviewProjectOutsideIssueCount(repo, trackedBlocked) {
+      const raw = overviewRepoOpenIssueCount(repo);
+      const tracked = (repo && repo.actionableIssues || []).length + (repo && repo.heldIssues || []).length;
+      const needsHuman = overviewProjectBucketCount(repo, 'issues', ['needs_human']);
+      return Math.max(0, Number(raw || tracked) - tracked - Math.max(0, needsHuman - Number(trackedBlocked || 0)));
+    }
+
+    function overviewProjectOutsidePRCount(repo) {
+      const raw = overviewRepoOpenPRCount(repo);
+      const tracked = (repo && repo.openPrs || []).length + (repo && repo.heldPrs || []).length;
+      return Math.max(0, Number(raw || tracked) - tracked);
+    }
+
+    function overviewProjectFilterMatchesEntry(entry, filter) {
+      if (!filter) return true;
+      if (filter.kinds && !filter.kinds.includes(entry.kind)) return false;
+      if (filter.held) return !!entry.held;
+      const band = String(entry.band || '');
+      if (filter.outside) return entry.kind === 'pr' && band === 'draft';
+      if (entry.kind === 'issue' && filter.issueBands) return filter.issueBands.includes(band);
+      if (entry.kind === 'pr' && filter.prBands) return filter.prBands.includes(band);
+      return filter.key === 'open-issues' || filter.key === 'open-prs';
+    }
+
+    function overviewProjectFilterRepoMatches(repo, filter) {
+      filter = filter || overviewProjectFilterState();
+      if (!filter) return { issues: overviewRepoTrackedIssueEntries(repo), prs: overviewRepoTrackedPREntries(repo), buckets: [], count: 0 };
+      const issueEntries = overviewRepoTrackedIssueEntries(repo).filter(entry => overviewProjectFilterMatchesEntry(entry, filter));
+      const prEntries = overviewRepoTrackedPREntries(repo).filter(entry => overviewProjectFilterMatchesEntry(entry, filter));
+      const buckets = [];
+      if (filter.key === 'open-issues') {
+        const missing = Math.max(0, Number(overviewRepoOpenIssueCount(repo) || 0) - issueEntries.length);
+        if (missing) buckets.push({ kind: 'issue', count: missing, reason: 'outside buckets', label: 'Open issues outside Overview bands' });
+      } else if (filter.key === 'open-prs') {
+        const missing = Math.max(0, Number(overviewRepoOpenPRCount(repo) || 0) - prEntries.length);
+        if (missing) buckets.push({ kind: 'pr', count: missing, reason: 'outside buckets', label: 'Open PRs outside Overview bands' });
+      } else if (filter.key === 'blocked-needs-human') {
+        const trackedNeedsHuman = issueEntries.filter(entry => repoItemNeedsHuman(entry.issue)).length;
+        const missingNeedsHuman = Math.max(0, overviewProjectBucketCount(repo, 'issues', ['needs_human']) - trackedNeedsHuman);
+        if (missingNeedsHuman) buckets.push({ kind: 'issue', count: missingNeedsHuman, reason: 'needs-human outside Overview bands', label: 'Needs-human issue bucket' });
+      } else if (filter.key === 'outside') {
+        const issueBlocked = overviewRepoTrackedIssueEntries(repo).filter(entry => ['waiting', 'done'].includes(String(entry.band || '')) || repoItemNeedsHuman(entry.issue)).length;
+        const issueOutside = overviewProjectOutsideIssueCount(repo, issueBlocked);
+        const prOutside = overviewProjectOutsidePRCount(repo);
+        if (issueOutside) buckets.push({ kind: 'issue', count: issueOutside, reason: 'outside buckets', label: 'Issues outside Overview bands' });
+        if (prOutside) buckets.push({ kind: 'pr', count: prOutside, reason: 'outside buckets', label: 'PRs outside Overview bands' });
+      }
+      const count = issueEntries.length + prEntries.length + buckets.reduce((n, b) => n + Number(b.count || 0), 0);
+      return { issues: issueEntries, prs: prEntries, buckets, count };
+    }
+
+    function overviewProjectFilterSummary(key, repos, issueSlices, prSlices) {
+      const filter = overviewProjectFilterSpec(key) ? Object.assign({ key }, overviewProjectFilterSpec(key)) : null;
+      if (!filter) return { key: '', label: '', count: 0 };
+      const repoCount = (repos || []).reduce((n, repo) => n + overviewProjectFilterRepoMatches(repo, filter).count, 0);
+      const issueCount = bandKeys => (issueSlices || []).filter(s => bandKeys.includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      const prCount = bandKeys => (prSlices || []).filter(s => bandKeys.includes(s.key)).reduce((n, s) => n + Number(s.count || 0), 0);
+      let count = repoCount;
+      if (issueSlices || prSlices) {
+        if (key === 'open-issues') count = (repos || []).reduce((n, r) => n + Number(overviewRepoOpenIssueCount(r) || 0), 0);
+        else if (key === 'open-prs') count = (repos || []).reduce((n, r) => n + Number(overviewRepoOpenPRCount(r) || 0), 0);
+        else if (key === 'actionable-now') count = issueCount(filter.issueBands || []) + prCount(filter.prBands || []);
+        else if (key === 'held') count = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
+        else if (key === 'blocked-needs-human') count = issueCount(filter.issueBands || []) + prCount(filter.prBands || []) + (repos || []).reduce((n, r) => n + overviewProjectBucketCount(r, 'issues', ['needs_human']), 0);
+        else if (key === 'outside') {
+          const openIssues = (repos || []).reduce((n, r) => n + Number(overviewRepoOpenIssueCount(r) || 0), 0);
+          const openPRs = (repos || []).reduce((n, r) => n + Number(overviewRepoOpenPRCount(r) || 0), 0);
+          const actionable = issueCount(OVERVIEW_PROJECT_FILTERS['actionable-now'].issueBands) + prCount(OVERVIEW_PROJECT_FILTERS['actionable-now'].prBands);
+          const held = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
+          const blocked = issueCount(OVERVIEW_PROJECT_FILTERS['blocked-needs-human'].issueBands) + prCount(OVERVIEW_PROJECT_FILTERS['blocked-needs-human'].prBands) + (repos || []).reduce((n, r) => n + overviewProjectBucketCount(r, 'issues', ['needs_human']), 0);
+          count = Math.max(0, openIssues + openPRs - actionable - held - blocked);
+        }
+      }
+      return { key, label: filter.label, count };
+    }
+
+    function overviewSetProjectFilterHash(key) {
+      const hash = key ? ('#projects?band=' + encodeURIComponent(key)) : '#section-repos-section';
+      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(hash) : hash);
+    }
+
+    function overviewApplyKPIProjectFilter(key, count) {
+      if (!overviewProjectFilterSpec(key)) return;
+      _overviewProjectFilterKey = key;
+      const n = Number(count);
+      _overviewProjectFilterCount = Number.isFinite(n) ? n : null;
+      overviewSetProjectFilterHash(key);
+      repaintReposForWidth();
+      ocNavigate('repos-section');
+      overviewSetProjectFilterHash(key);
+    }
+
+    function clearOverviewProjectFilter() {
+      _overviewProjectFilterKey = '';
+      _overviewProjectFilterCount = null;
+      overviewSetProjectFilterHash('');
+      repaintReposForWidth();
+    }
+
+    function overviewProjectFilterChip(filter, count) {
+      if (!filter) return '';
+      return `Filtered by: ${esc(filter.label)} (${Number(count || 0)}) <button type="button" data-action="clearOverviewProjectFilter" data-stop="1" data-prevent="1" aria-label="Clear Overview KPI filter" title="Clear filter">✕</button>`;
+    }
+
+    function overviewProjectBucketRowsHTML(buckets) {
+      return (buckets || []).map(bucket => `<div class="repo-pill-row repo-overview-filter-bucket"><span class="repo-pill-status repo-issue-pill held">${esc(bucket.kind === 'pr' ? 'PRs' : 'issues')}</span><span class="repo-pill-main repo-issue-pill held"><span class="pill-num">${esc(String(Number(bucket.count || 0)))}</span><span class="pill-title">${esc(bucket.label || 'Outside bucket')}</span><span class="pill-state" title="${esc(bucket.reason || 'bucket count')}">ⓘ</span></span></div>`).join('');
+    }
+
     function overviewItemUrl(item, kind) {
       const raw = (item && (item.item || item.issue || item.pr)) || item || {};
       if (raw.url) return raw.url;
@@ -14652,6 +15255,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       needs_direction: 'needs-direction',
       needs_decision: 'needs-decision',
       needs_spec: 'needs-spec',
+      reporter_confirmation: 'waiting on reporter',
       exempt: 'exempt',
       filtered: 'filtered',
       reporter_triage: 'reporter triage',
@@ -14693,7 +15297,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
           let v = Number(ib[key] || 0);
           if (key === 'filtered') {
-            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'exempt']));
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
           }
           if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
         });
@@ -14739,7 +15343,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionDocsLink(row) {
       const href = row && row.docsHref;
-      return href ? `<a href="${esc(href)}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
+      return href ? `<a href="${esc(dashboardDocsHrefFromPath(href))}" target="_blank" rel="noopener" data-stop="1">Learn more ↗</a>` : '';
     }
 
     function overviewPartitionSettingsButton(row) {
@@ -14758,6 +15362,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return 'Held: work intentionally paused for a maintainer.';
         case 'blocked_needs_human':
           return 'Blocked: work waiting on a person or dependency.';
+        case 'waiting-on-reporter':
+          return 'Waiting on reporter: issues labeled needs-reporter-confirmation (search label:needs-reporter-confirmation).';
         default:
           return `${term?.label || term?.key || 'Bucket'}: items in this bucket.`;
       }
@@ -14768,6 +15374,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'needs-direction': return 'needs direction';
         case 'needs-decision': return 'needs decision';
         case 'needs-spec': return 'needs spec';
+        case 'waiting-on-reporter': return 'waiting on reporter';
         case 'exempt-labels':
         case 'exempt-pr-labels': return 'exempt label match';
         case 'reporter-triage': return 'untrusted reporter';
@@ -14819,7 +15426,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const settingsRow = overviewPartitionPreferredSettings(rows);
       const fixed = rows.some(row => row && !row.settingsTab) ? '<span class="text-muted">fixed buckets</span>' : '';
       const more = hiddenCount > 0 && docsRow?.docsHref
-        ? `<a class="overview-partition-more" href="${esc(docsRow.docsHref)}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
+        ? `<a class="overview-partition-more" href="${esc(dashboardDocsHrefFromPath(docsRow.docsHref))}" target="_blank" rel="noopener" data-stop="1">+${esc(String(hiddenCount))} more</a>`
         : (hiddenCount > 0 ? `<span class="overview-partition-more text-muted">+${esc(String(hiddenCount))} more</span>` : '');
       const footerParts = [overviewPartitionSettingsButton(settingsRow), overviewPartitionDocsLink(docsRow), fixed].filter(Boolean).join('');
       const footer = footerParts ? `<span class="overview-partition-footer">${footerParts}</span>` : '';
@@ -14871,11 +15478,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const blocked = overviewEquationTermCount(equation, 'blocked_needs_human');
       const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
       const detail = overviewOutsideBreakdownText(equation);
-      return `${esc(String(total))} = ${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
+      return `${esc(String(actionable))} actionable + ${esc(String(held))} held + ${esc(String(blocked))} blocked + ${esc(String(outside))} outside${detail ? ': ' + esc(detail) : ''}`;
     }
 
     function renderOverviewSplitSubline(total, issueCount, prCount, label) {
-      return `${esc(String(Number(total || 0)))} ${esc(label)} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
+      return `${esc(String(Number(total || 0)))} = ${esc(String(Number(issueCount || 0)))} issues + ${esc(String(Number(prCount || 0)))} PRs`;
     }
 
     function overviewKPIEquation(openIssues, openPRs, actionable, held, blockedNeedsHuman, issueSlices, prSlices, forgeTotals) {
@@ -14884,13 +15491,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const outsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
       const confirmClose = (issueSlices || []).filter(s => s.key === 'done').reduce((n, s) => n + Number(s.count || 0), 0);
       const blockedTerm = Number(blockedNeedsHuman || 0) + outsideNeedsHuman + confirmClose;
-      const outside = Math.max(0, Number(forgeTotals?.issues?.outside || 0) + Number(forgeTotals?.prs?.outside || 0) - outsideNeedsHuman + draft);
+      const outside = Math.max(0, totalOpen - Number(actionable || 0) - Number(held || 0) - blockedTerm);
       const terms = [
         { key: 'actionable', label: 'actionable', count: actionable },
         { key: 'held', label: 'held', count: held },
         { key: 'blocked_needs_human', label: 'blocked/needs-human', count: blockedTerm },
       ];
-      if (outside > 0) terms.push({ key: 'outside', label: 'outside', count: outside });
+      terms.push({ key: 'outside', label: 'outside', count: outside });
       const sum = terms.reduce((n, t) => n + Number(t.count || 0), 0);
       if (totalOpen > sum) terms.push({ key: 'other', label: 'other', count: totalOpen - sum });
       const text = `${openIssues} issues + ${openPRs} PRs = ` + terms.filter(t => Number(t.count || 0) > 0).map(t => `${Number(t.count || 0)} ${t.label}`).join(' + ');
@@ -14940,6 +15547,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const computedActionableNow = actionableIssues + actionablePRs;
       const serverActionableNow = Number(window._lastStatus?.actionableNow?.total);
       const actionableNow = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableNow) ? serverActionableNow : computedActionableNow;
+      const serverActionableIssues = Number(window._lastStatus?.actionableNow?.issues);
+      const serverActionablePRs = Number(window._lastStatus?.actionableNow?.prs);
+      const actionableIssueSplit = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionableIssues) ? serverActionableIssues : actionableIssues;
+      const actionablePRSplit = _overviewKPILocalScope === 'all' && Number.isFinite(serverActionablePRs) ? serverActionablePRs : actionablePRs;
       const computedHeld = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length + (r.heldPrs || []).length, 0);
       const computedBlockedNeedsHuman = (prSlices || []).filter(s => s.key === 'blocked' || s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0)
         + (issueSlices || []).filter(s => s.key === 'waiting').reduce((n, s) => n + Number(s.count || 0), 0);
@@ -14952,15 +15563,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issueHeldLocal = (repos || []).reduce((n, r) => n + (r.heldIssues || []).length, 0);
       const prHeldLocal = (repos || []).reduce((n, r) => n + (r.heldPrs || []).length, 0);
       const localOutsideNeedsHuman = Number(forgeTotals?.issues?.breakdown?.needs_human || 0);
+      const issueBlockedLocal = Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman;
+      const prBlockedLocal = Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0);
+      const issueOutsideLocal = Math.max(0, openIssues - actionableIssues - issueHeldLocal - issueBlockedLocal);
+      const prOutsideLocal = Math.max(0, openPRs - actionablePRs - prHeldLocal - prBlockedLocal);
       const issueEq = serverIssueEq || overviewKPIKindEquation('issues', openIssues, actionableIssues, [
         { key: 'held', label: 'held', count: issueHeldLocal },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(issueCounts.waiting || 0) + Number(issueCounts.done || 0) + localOutsideNeedsHuman },
-        { key: 'outside', label: 'outside', count: Math.max(0, Number(forgeTotals?.issues?.outside || 0) - localOutsideNeedsHuman) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: issueBlockedLocal },
+        { key: 'outside', label: 'outside', count: issueOutsideLocal },
       ]);
       const prEq = serverPREq || overviewKPIKindEquation('PRs', openPRs, actionablePRs, [
         { key: 'held', label: 'held', count: prHeldLocal },
-        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: Number(prCounts.waiting || 0) + Number(prCounts.blocked || 0) },
-        { key: 'outside', label: 'outside', count: Number(forgeTotals?.prs?.outside || 0) + Number(prCounts.draft || 0) },
+        { key: 'blocked_needs_human', label: 'blocked/needs-human', count: prBlockedLocal },
+        { key: 'outside', label: 'outside', count: prOutsideLocal },
       ]);
       const held = overviewKPITerm(equation, 'held', computedHeld);
       const blockedNeedsHuman = overviewKPITerm(equation, 'blocked_needs_human', computedBlockedNeedsHuman);
@@ -14971,21 +15586,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const heldPRs = overviewEquationTermCount(prEq, 'held');
       const blockedIssues = overviewEquationTermCount(issueEq, 'blocked_needs_human');
       const blockedPRs = overviewEquationTermCount(prEq, 'blocked_needs_human');
+      const outside = overviewEquationTermCount(equation, 'outside') + overviewEquationTermCount(equation, 'other');
+      const outsideIssues = overviewEquationTermCount(issueEq, 'outside') + overviewEquationTermCount(issueEq, 'other');
+      const outsidePRs = overviewEquationTermCount(prEq, 'outside') + overviewEquationTermCount(prEq, 'other');
+      const outsideTermBase = (equation?.terms || []).find(t => t && t.key === 'outside');
+      const outsideTerm = Object.assign({ key: 'outside', label: 'outside', count: outside, rule: "Open items excluded before they enter Overview bands by this hive's scanner settings." }, outsideTermBase || {});
+      const outsideInfo = overviewPartitionInfo(outsideTerm, 'overview-kpi-outside');
       const useServerHistory = _overviewKPILocalScope === 'all';
+      const kpiFilterSummary = key => overviewProjectFilterSummary(key, repos, issueSlices, prSlices);
+      const openIssueFilter = kpiFilterSummary('open-issues');
+      const openPRFilter = kpiFilterSummary('open-prs');
+      const actionableFilter = kpiFilterSummary('actionable-now');
+      const heldFilter = kpiFilterSummary('held');
+      const blockedFilter = kpiFilterSummary('blocked-needs-human');
       const cards = [
-        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. In Overview bands means actionable + held + blocked/needs-human.', subline: renderOverviewTotalPartitionSubline(issueEq) },
-        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. In Overview bands means actionable + held + blocked/needs-human; draft PRs are outside until ready.', subline: renderOverviewTotalPartitionSubline(prEq) },
-        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now (issues and PRs)', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle, subline: equationHTML },
-        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: `${held} held = ${heldIssues} issues + ${heldPRs} PRs. Issues and PRs deliberately paused by a hold.`, subline: renderOverviewSplitSubline(held, heldIssues, heldPRs, 'held') },
-        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') }
+        { key: 'open-issues', field: 'overviewOpenIssues', label: 'Total open issues', value: openIssues, rawValue: openIssues, color: 'var(--orange)', tip: 'All open GitHub issues (pull requests excluded) across the selected configured repos. In Overview bands means actionable + held + blocked/needs-human. Click to filter Projects to matching issues.', subline: renderOverviewTotalPartitionSubline(issueEq) },
+        { key: 'open-prs', field: 'overviewOpenPrs', label: 'Total open PRs', value: openPRs, rawValue: openPRs, color: 'var(--green)', tip: 'All open GitHub pull requests across the selected configured repos, including drafts. In Overview bands means actionable + held + blocked/needs-human; draft PRs are outside until ready. Click to filter Projects to matching PRs.', subline: renderOverviewTotalPartitionSubline(prEq) },
+        { key: 'actionable-now', field: 'overviewActionable', label: 'Actionable now', value: actionableNow, rawValue: actionableNow, color: 'var(--accent)', tip: equationTitle + ' Click to filter Projects to this band.', subline: renderOverviewSplitSubline(actionableNow, actionableIssueSplit, actionablePRSplit, 'actionable') },
+        { key: 'held', field: 'overviewHeld', label: 'Held', value: held, rawValue: held, color: 'color-mix(in srgb, var(--orange) 65%, var(--muted))', tip: `${held} held = ${heldIssues} issues + ${heldPRs} PRs. Issues and PRs deliberately paused by a hold. Click to filter Projects.`, subline: renderOverviewSplitSubline(held, heldIssues, heldPRs, 'held') },
+        { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency. Click to filter Projects.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') },
+        { key: 'outside', field: 'overviewOutside', label: 'Outside', value: outside, rawValue: outside, color: 'var(--muted)', tip: `${outside} outside = ${outsideIssues} issues + ${outsidePRs} PRs. Open items excluded before they enter Overview bands by this hive's scanner settings. Click to filter Projects.`, subline: renderOverviewSplitSubline(outside, outsideIssues, outsidePRs, 'outside'), infoHTML: outsideInfo }
       ];
       overviewKPIRecordLocal(overviewKPICurrentSample(cards));
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis">${cards.map(card => {
+      const ops = ['+', '=', '+', '+', '+'];
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${held} held + ${blockedNeedsHuman} blocked or needs-human + ${outside} outside`;
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
         const subline = card.subline ? `<span class="overview-kpi-subline">${card.subline}</span>` : '';
-        return `<div class="overview-kpi" role="button" tabindex="0" data-action="ocNavigate" data-keydown-action="ocNavigate" data-keys="Enter, " data-prevent="1" data-arg0="repos-section" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}</span>${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
+        const label = `<span class="overview-kpi-label">${esc(card.label)}${card.infoHTML || ''}</span>`;
+        const tile = `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span>${label}${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
+        return tile + (ops[i] ? `<span class="overview-kpi-operator" aria-hidden="true">${ops[i]}</span>` : '');
       }).join('')}</div></div>`;
     }
 
@@ -15115,7 +15747,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewNavigateBand(kind, band) {
-      ocNavigate('repos-section');
+      const key = kind === 'issue' ? (band === 'waiting' || band === 'done' ? 'blocked-needs-human' : 'actionable-now') : (band === 'waiting' || band === 'blocked' ? 'blocked-needs-human' : (band === 'draft' ? 'outside' : 'actionable-now'));
+      overviewApplyKPIProjectFilter(key);
     }
 
     function setOverviewChartType(kind, type) {
@@ -15276,7 +15909,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const status = window._lastStatus || {};
       const pillFilter = repoPillFilterState();
       const pillFilterIsActive = repoPillFilterActive(pillFilter);
-      const visibleRepos = (repos || []).filter(r => repoPillFilterRepoMatches(r && (r.full || r.name), pillFilter));
+      const overviewFilter = overviewProjectFilterState();
+      const overviewFilterSummary = overviewFilter ? overviewProjectFilterSummary(overviewFilter.key, repos) : null;
+      const visibleRepos = (repos || []).filter(r => repoPillFilterRepoMatches(r && (r.full || r.name), pillFilter)).filter(r => !overviewFilter || overviewProjectFilterRepoMatches(r, overviewFilter).count > 0);
       renderRepoLegend();
       renderOverviewCharts(repos);
       const activeSwarmRepo = ((status.swarm || {}).active || {}).repo || '';
@@ -15325,6 +15960,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       const clearFilterBtn = document.getElementById('repos-clear-pill-filter-btn');
       if (clearFilterBtn) clearFilterBtn.hidden = !pillFilterIsActive;
+      const overviewFilterChip = document.getElementById('repos-overview-filter-chip');
+      if (overviewFilterChip) {
+        overviewFilterChip.hidden = !overviewFilter;
+        setIfChanged(overviewFilterChip, overviewFilter ? overviewProjectFilterChip(overviewFilter, Number.isFinite(Number(overviewFilter.selectedCount)) ? Number(overviewFilter.selectedCount) : (overviewFilterSummary && overviewFilterSummary.count)) : '');
+      }
       setIfChanged(el, visibleRepos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes(), `repo:${r.name}:issues`);
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes(), `repo:${r.name}:prs`);
@@ -15341,9 +15981,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const cardRepoKey = repoOrderName(cardRepo);
         const cardW = repoCardWidth(cardRepo);
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
+        const overviewRepoMatches = overviewFilter ? overviewProjectFilterRepoMatches(r, overviewFilter) : null;
+        const filteredIssues = overviewRepoMatches ? overviewRepoMatches.issues.map(entry => entry.issue) : (r.actionableIssues || []).concat(r.heldIssues || []);
+        const filteredOpenPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => !entry.held).map(entry => entry.pr) : (r.openPrs || []);
+        const filteredHeldPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => entry.held).map(entry => entry.pr) : (r.heldPrs || []);
+        const filteredBuckets = overviewRepoMatches ? overviewRepoMatches.buckets : [];
+        const overviewIssueKeys = overviewRepoMatches ? new Set(filteredIssues.map(i => String(i.number))) : null;
+        const overviewPRKeys = overviewRepoMatches ? new Set(filteredOpenPrs.concat(filteredHeldPrs).map(p => String(p.number))) : null;
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
-        const repoIssueFilterRows = (r.actionableIssues || []).concat(r.heldIssues || []).map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
-        const repoPRFilterRows = (r.openPrs || []).map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat((r.heldPrs || []).map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
+        const repoIssueFilterRows = filteredIssues.map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
+        const repoPRFilterRows = filteredOpenPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat(filteredHeldPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
         const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoPRFilterRows), pillFilter);
         const renderIssuePill = (i, info) => {
           const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
@@ -15379,8 +16026,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
         const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {
-          const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
-          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+          const shown = overviewIssueKeys ? g.issues.filter(entry => overviewIssueKeys.has(String(entry.issue.number))) : g.issues;
+          if (!shown.length) return '';
+          const items = shown.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -15470,8 +16119,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
         const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
-          const items = g.prs.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
-          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
+          const shown = overviewPRKeys ? g.prs.filter(entry => overviewPRKeys.has(String(entry.pr.number))) : g.prs;
+          if (!shown.length) return '';
+          const items = shown.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable and held
         // grouped into the same display bands) under "issues", PR pills grouped
@@ -15480,9 +16131,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const issueCol = issuePills ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}` : '';
         const prCol = prPills ? `<div class="repo-pill-run-title">PULL REQUESTS</div>${prPills}` : '';
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
-        const pillsHtml = (issueCol || prCol)
+        const bucketHtml = overviewProjectBucketRowsHTML(filteredBuckets);
+        const pillsHtml = ((issueCol || prCol)
           ? `<div class="repo-pills${pillColClass}"><div class="repo-pill-col repo-pill-col-issues">${issueCol}</div><div class="repo-pill-col repo-pill-col-prs">${prCol}</div></div>`
-          : '';
+          : '') + (bucketHtml ? `<div class="repo-pills repo-pills-issues-only"><div class="repo-pill-col repo-pill-col-issues">${bucketHtml}</div></div>` : '');
         // Per-repo agent pause (#6203). The tooltip carries the provenance the
         // pill has no room for; without it a paused repo raises "who did this
         // and why" every time someone new looks at the dashboard.
@@ -15549,7 +16201,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo-order-key="${esc(cardRepoKey)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -17435,6 +18087,7 @@ function burnAreaChart() {
     }
     /** Enter/Space activate the header like a button. */
     function costHeaderKey(ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.section-help-mark')) return;
       if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
         ev.preventDefault();
         toggleCostPanel();
@@ -19176,18 +19829,20 @@ function burnAreaChart() {
       const core = (ghRateLimits && ghRateLimits.core) || {};
       const now = Math.floor(Date.now() / 1000);
 
-      const RATE_LIMIT_WARN_THRESHOLD = 100;
-      if (core.remaining !== undefined && core.remaining <= RATE_LIMIT_WARN_THRESHOLD && core.reset) {
+      maybeRefreshGhRateLimits(ghRateLimits);
+      const coreStatus = debugGhRateLimitStatus(core);
+      if (coreStatus.limit > 0 && !coreStatus.resetPassed && coreStatus.remainingPct <= GH_RATE_CRITICAL_REMAINING_PCT && core.reset) {
         const resetDate = new Date(core.reset);
-        const resetStr = resetDate.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
-        const coreAlert = {
-          agent: 'github-api',
-          message: 'Core API: ' + core.remaining + '/' + (core.limit || '?') + ' remaining — resets ' + resetStr,
-          detected_epoch: now,
-          api_reset_epoch: Math.floor(resetDate.getTime() / 1000),
-        };
-        const hasCoreAlert = alerts.some(a => a.agent === 'github-api');
-        if (!hasCoreAlert) alerts.unshift(coreAlert);
+        if (!Number.isNaN(resetDate.getTime()) && resetDate.getTime() > Date.now()) {
+          const coreAlert = {
+            agent: 'github-api',
+            message: 'Core API: ' + coreStatus.remaining + '/' + coreStatus.limit + ' remaining (' + coreStatus.remainingPct + '% free) — ' + coreStatus.resetText,
+            detected_epoch: now,
+            api_reset_epoch: Math.floor(resetDate.getTime() / 1000),
+          };
+          const hasCoreAlert = alerts.some(a => a.agent === 'github-api');
+          if (!hasCoreAlert) alerts.unshift(coreAlert);
+        }
       }
       const GH_RATE_DEFAULT_TTL = 3600;
       const SECONDS_PER_MINUTE = 60;
@@ -19233,6 +19888,33 @@ function burnAreaChart() {
         </div>`;
       }).join('');
       setIfChanged(el, `<div class="gh-rate-alert-title">GitHub API Rate Limit (${active.length} agent${active.length > 1 ? 's' : ''})</div>${items}${pullbackHtml}`);
+    }
+
+    const GH_RATE_LIMIT_POLL_MS = 5 * 60 * 1000;
+    let _ghRateLimitPollInFlight = false;
+    let _ghRateLimitLastPollMs = 0;
+    async function maybeRefreshGhRateLimits(ghRateLimits) {
+      const core = (ghRateLimits && ghRateLimits.core) || {};
+      const status = debugGhRateLimitStatus(core);
+      if (!status.limit || _ghRateLimitPollInFlight) return;
+      const nowMs = Date.now();
+      const dueForPeriodicRefresh = nowMs - _ghRateLimitLastPollMs >= GH_RATE_LIMIT_POLL_MS;
+      if (!status.resetPassed && !dueForPeriodicRefresh) return;
+      _ghRateLimitPollInFlight = true;
+      _ghRateLimitLastPollMs = nowMs;
+      try {
+        const res = await fetch('/api/gh-rate-limits', { cache: 'no-store' });
+        if (!res.ok) return;
+        const fresh = await res.json();
+        if (!fresh || !fresh.core || !window._lastStatus) return;
+        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core });
+        renderGhRateLimits(window._lastStatus.ghRateLimits);
+        renderDebugSection();
+      } catch (_) {
+        // The cached /api/status payload will continue rendering safely.
+      } finally {
+        _ghRateLimitPollInFlight = false;
+      }
     }
 
     // Guard: skip agent re-render while a dropdown is focused/open
@@ -23209,6 +23891,7 @@ function burnAreaChart() {
       const scrollY = window.scrollY;
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
+      noteAgentNowUpdate(data && data.timestamp);
       tickNavbarClock();
       currentAgentMetrics = data.agentMetrics || {};
       window._healthData = data.health || {};
@@ -23279,7 +23962,7 @@ function burnAreaChart() {
         'runs-section', 'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'platform-section', 'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
-        'agents-section', 'faq-section'
+        'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
@@ -24657,6 +25340,20 @@ function burnAreaChart() {
 
     // ── Debug section ──
     const DEBUG_REFRESH_MS = 10000;
+    const GH_RATE_CRITICAL_REMAINING_PCT = 10;
+    const GH_RATE_WARN_REMAINING_PCT = 25;
+    function debugGhRateClassFromRemainingPct(pct) {
+      const n = Number.isFinite(Number(pct)) ? Number(pct) : 100;
+      if (n <= GH_RATE_CRITICAL_REMAINING_PCT) return 'debug-quota-bad';
+      if (n <= GH_RATE_WARN_REMAINING_PCT) return 'debug-quota-warn';
+      return 'debug-quota-ok';
+    }
+    function debugGhRateChipClassFromRemainingPct(pct) {
+      const cls = debugGhRateClassFromRemainingPct(pct);
+      if (cls === 'debug-quota-bad') return 'bad';
+      if (cls === 'debug-quota-warn') return 'warn';
+      return 'ok';
+    }
     function debugQuotaClass(pct) {
       const n = Number(pct) || 0;
       if (n > 85) return 'debug-quota-bad';
@@ -24682,6 +25379,35 @@ function burnAreaChart() {
       const d = new Date(typeof raw === 'number' ? raw * 1000 : raw);
       if (Number.isNaN(d.getTime())) return '—';
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    function debugGhRateLimitStatus(core, nowMs) {
+      core = core || {};
+      const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+      const limit = Math.max(0, Number(core.limit) || 0);
+      const resetRaw = core.reset;
+      const resetDate = resetRaw ? new Date(typeof resetRaw === 'number' ? resetRaw * 1000 : resetRaw) : null;
+      const resetMs = resetDate && !Number.isNaN(resetDate.getTime()) ? resetDate.getTime() : 0;
+      const resetPassed = !!(resetMs && resetMs <= now);
+      const rawRemaining = Number(core.remaining);
+      const clampedRemaining = limit > 0 && Number.isFinite(rawRemaining) ? Math.max(0, Math.min(limit, rawRemaining)) : 0;
+      const remaining = limit > 0 && resetPassed ? limit : clampedRemaining;
+      const used = limit > 0 ? Math.max(0, limit - remaining) : 0;
+      const remainingPct = limit > 0 ? Math.round((remaining / limit) * 100) : 100;
+      const resetAt = resetMs ? resetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const resetText = resetPassed ? 'reset passed; refreshing' : `resets ${resetAt}`;
+      const headline = `GitHub API ${remaining}/${limit || '—'} remaining (${remainingPct}% free) · ${resetText}`;
+      return {
+        limit,
+        remaining,
+        used,
+        remainingPct,
+        resetAt,
+        resetText,
+        resetPassed,
+        headline,
+        headlineClass: debugGhRateClassFromRemainingPct(remainingPct),
+        chipClass: debugGhRateChipClassFromRemainingPct(remainingPct),
+      };
     }
     function debugQuotaNormalize(source, quota, fallbackLabel) {
       quota = quota || {};
@@ -24723,21 +25449,37 @@ function burnAreaChart() {
         return v && typeof v === 'object' && Number(v.limit || v.max || v.quota || 0) > 0;
       });
       return buckets.map(k => {
-        const quota = Object.assign({ bucket: buckets.length === 1 && k === 'core' ? 'API' : k }, ghRate[k]);
-        return debugQuotaNormalize('GitHub', quota, 'GitHub');
+        const core = ghRate[k] || {};
+        const status = debugGhRateLimitStatus(core);
+        if (status.limit <= 0) return null;
+        return {
+          label: 'GitHub',
+          bucket: buckets.length === 1 && k === 'core' ? 'API' : k,
+          limit: status.limit,
+          used: status.used,
+          remaining: status.remaining,
+          pct: status.remainingPct,
+          resetAt: status.resetText,
+          semantics: 'remaining',
+          cls: status.chipClass,
+        };
       }).filter(Boolean);
     }
     function debugQuotaWidgetHtml(data) {
       const quotas = debugQuotaFromWorkSources(data || {}).concat(debugGitHubQuotaSources(data || {}));
       if (!quotas.length) return '';
       const chips = quotas.map(q => {
-        const cls = debugQuotaChipClass(q.pct);
+        const cls = q.cls || debugQuotaChipClass(q.pct);
         const label = q.bucket ? `${q.label} ${q.bucket}` : q.label;
-        const title = `${label}: ${q.used}/${q.limit} used (${q.pct}%). Resets ${q.resetAt}`;
+        const remainingMode = q.semantics === 'remaining';
+        const frac = remainingMode ? `${q.remaining}/${q.limit}` : `${q.used}/${q.limit}`;
+        const title = remainingMode
+          ? `${label}: ${q.remaining}/${q.limit} remaining (${q.pct}% free). ${q.resetAt}`
+          : `${label}: ${q.used}/${q.limit} used (${q.pct}%). Resets ${q.resetAt}`;
         const fill = Math.max(0, Math.min(50, Math.round(q.pct / 2)));
-        return `<span class="debug-quota-chip ${cls}" title="${escapeHtml(title)}"><span class="debug-quota-label">${escapeHtml(label)}</span><svg class="debug-quota-gauge" width="54" height="10" viewBox="0 0 54 10" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect class="debug-quota-gauge-track" x="1" y="2" width="50" height="6" rx="3"/><rect class="debug-quota-gauge-fill" x="1" y="2" width="${fill}" height="6" rx="3"/></svg><span class="debug-quota-frac">${q.used}/${q.limit}</span></span>`;
+        return `<span class="debug-quota-chip ${cls}" title="${escapeHtml(title)}"><span class="debug-quota-label">${escapeHtml(label)}</span><svg class="debug-quota-gauge" width="54" height="10" viewBox="0 0 54 10" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect class="debug-quota-gauge-track" x="1" y="2" width="50" height="6" rx="3"/><rect class="debug-quota-gauge-fill" x="1" y="2" width="${fill}" height="6" rx="3"/></svg><span class="debug-quota-frac">${frac}</span></span>`;
       }).join('');
-      const label = quotas.map(q => `${q.label} ${q.used}/${q.limit}`).join(', ');
+      const label = quotas.map(q => q.semantics === 'remaining' ? `${q.label} ${q.remaining}/${q.limit} remaining` : `${q.label} ${q.used}/${q.limit} used`).join(', ');
       return `<span class="mini-summary-strip debug-quota-strip" role="group" aria-label="${escapeHtml(label)}">${chips}</span>`;
     }
     function debugDiagnosticsHeadlineHtml(data, summaryText) {
@@ -24745,17 +25487,12 @@ function burnAreaChart() {
       const ghRate = status.ghRateLimits || {};
       const tokens = status.tokens || {};
       const core = ghRate.core || {};
-      const limit = Number(core.limit) || 0;
-      const remaining = Number(core.remaining) || 0;
-      const used = limit > 0 ? Math.max(0, limit - remaining) : 0;
-      const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
-      const resetRaw = core.reset;
-      const resetAt = resetRaw ? new Date(typeof resetRaw === 'number' ? resetRaw * 1000 : resetRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const rate = debugGhRateLimitStatus(core);
       const totals = tokens.totals || {};
-      const apiText = `GitHub API ${used}/${limit || '—'} (${pct}%) · resets ${resetAt}`;
+      const apiText = rate.headline;
       const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
       const mini = debugQuotaWidgetHtml(status);
-      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${debugQuotaClass(pct)}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     const HEALTH_LABEL_DEFAULTS = {
       ci: 'CI Pass Rate', helm: 'Helm'
@@ -24846,12 +25583,11 @@ function burnAreaChart() {
         agentRows += `<div style="${rowStyle}"><span>${esc(a.name)}</span><span style="color:${stateColor};font-weight:600">${a.state}</span></div>`;
       }
 
-      const ghCoreLimit = ghRate.core?.limit || 0;
-      const ghCoreRemaining = ghRate.core?.remaining || 0;
-      const ghCoreUsed = ghCoreLimit > 0 ? ghCoreLimit - ghCoreRemaining : 0;
-      const ghCorePct = ghCoreLimit > 0 ? Math.round((ghCoreUsed / ghCoreLimit) * 100) : 0;
-      const ghResetRaw = ghRate.core?.reset;
-      const ghResetAt = ghResetRaw ? new Date(typeof ghResetRaw === 'number' ? ghResetRaw * 1000 : ghResetRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const ghCoreRate = debugGhRateLimitStatus(ghRate.core || {});
+      const ghCoreLimit = ghCoreRate.limit;
+      const ghCoreRemaining = ghCoreRate.remaining;
+      const ghCorePct = ghCoreRate.remainingPct;
+      const ghResetAt = ghCoreRate.resetText;
       // How old is this reading? (#5733) The card used to show only `reset`,
       // which moves independently of when the sample was taken — so a value
       // that had stopped updating looked exactly like a fresh one. A reading
@@ -24907,11 +25643,11 @@ function burnAreaChart() {
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>
           <div style="${rowStyle}"><span>Identity</span><span>${ghIdentityBadge} ${esc(ghIdentityLabel)}</span></div>
-          <div style="${rowStyle}"><span>Core API</span><span style="font-weight:600">${ghCoreUsed} / ${ghCoreLimit} (${ghCorePct}%)</span></div>
-          <div style="${rowStyle}"><span>Resets at</span><span>${ghResetAt}</span></div>
+          <div style="${rowStyle}"><span>Core API</span><span style="font-weight:600">${ghCoreRemaining} / ${ghCoreLimit} remaining (${ghCorePct}% free)</span></div>
+          <div style="${rowStyle}"><span>Reset</span><span>${ghResetAt}</span></div>
           ${ghObservedHtml}
           <div style="margin-top:var(--sp-3);height:6px;background:var(--line);border-radius:3px;overflow:hidden">
-            <div style="height:100%;width:${ghCorePct}%;background:${ghCorePct > 80 ? 'var(--red)' : ghCorePct > 50 ? 'var(--yellow)' : 'var(--green)'};border-radius:3px;transition:width 0.3s"></div>
+            <div style="height:100%;width:${ghCorePct}%;background:${ghCorePct <= GH_RATE_CRITICAL_REMAINING_PCT ? 'var(--red)' : ghCorePct <= GH_RATE_WARN_REMAINING_PCT ? 'var(--yellow)' : 'var(--green)'};border-radius:3px;transition:width 0.3s"></div>
           </div>
         </div>
         <div style="${cardStyle}">
@@ -25157,6 +25893,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
@@ -27872,10 +28609,12 @@ function burnAreaChart() {
 
     function versionUpgradeHiveHTML(key) {
       const keyAttr = key ? ' data-upgrade-hive-key="' + escapeHtml(key) + '"' : '';
-      const bee = '<span class="oc-version-bee" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
+      const beeA = '<span class="oc-version-bee oc-version-bee--phase-a" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
+      const beeB = '<span class="oc-version-bee oc-version-bee--phase-b" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
+      const beeC = '<span class="oc-version-bee oc-version-bee--phase-c" aria-hidden="true">' + versionBeeGlyphHTML() + '</span>';
       return '<span class="oc-version-hive"' + keyAttr + ' aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
-        bee + bee + bee + '<span class="oc-version-honey-dot"></span>' +
+        beeA + beeB + beeC + '<span class="oc-version-honey-dot"></span>' +
         '</span>';
     }
 
@@ -27910,6 +28649,15 @@ function burnAreaChart() {
       if (!currentHive || !nextProgress || nextProgress.getAttribute('data-upgrade-key') !== upgradeKey) {
         el.innerHTML = html;
         return false;
+      }
+      if (currentProgress.parentNode === el) {
+        const currentTitle = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-title]');
+        const currentStatus = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-status]');
+        const nextTitle = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-title]');
+        const nextStatus = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-status]');
+        if (currentTitle && nextTitle) currentTitle.innerHTML = nextTitle.innerHTML;
+        if (currentStatus && nextStatus) currentStatus.innerHTML = nextStatus.innerHTML;
+        return true;
       }
       const nextHive = nextProgress.querySelector && nextProgress.querySelector('.oc-version-hive');
       if (!nextHive || !nextHive.replaceWith) {
@@ -28061,7 +28809,8 @@ function burnAreaChart() {
       const complete = !!progress.completedAt;
       el.hidden = false;
       versionSetHTMLPreservingUpgradeBee(el, versionNavbarUpgradeHTML(progress, v || {}), versionUpgradeKey(progress));
-      el.title = complete ? 'Upgrade complete — jump to Version details' : 'Upgrade in progress — jump to Version details';
+      const detail = versionUpgradeProgressStatus(v || {}, progress);
+      el.title = (complete ? 'Upgrade complete' : 'Upgrade in progress') + (detail ? ' — ' + detail : '') + ' — jump to Version details';
       el.setAttribute('aria-label', complete ? 'Upgrade complete — Version details' : 'Upgrade in progress' + (progress.targetShort ? ' to ' + progress.targetShort : '') + ' — Version details');
     }
 
@@ -28498,6 +29247,7 @@ function burnAreaChart() {
     function startVersionCheck() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
+        setDashboardDocsLine(d.branch);
       }).catch(function() {});
       dashboardSetInterval('version-reload-check', function() {
         fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
@@ -28572,6 +29322,7 @@ function burnAreaChart() {
       source.addEventListener('agent-status', (e) => {
         try {
           const payload = JSON.parse(e.data);
+          noteAgentNowUpdate(payload.timestamp);
           window._lastAgents = payload.agents || [];
           window._configuredAgents = payload.configuredAgents || window._configuredAgents || [];
           if (window._lastStatus) {
@@ -32290,6 +33041,25 @@ function burnAreaChart() {
       markDirty('cadences', mode, value);
       renderConfigTab(_configState.tab);
     }
+    function switchToPerModeCadences() {
+      if (!_configState.data.general) _configState.data.general = {};
+      if (!_configState.data.cadences) _configState.data.cadences = {};
+      _configState.data.general.continuous = false;
+      for (const mode of ['surge', 'busy', 'idle']) {
+        if (!Object.prototype.hasOwnProperty.call(_configState.data.cadences, mode)) {
+          _configState.data.cadences[mode] = 'continuous';
+          markDirty('cadences', mode, 'continuous');
+          continue;
+        }
+        const currentKind = cadenceModeValue(_configState.data.cadences[mode]);
+        if (currentKind !== 'continuous' && currentKind !== 'off') {
+          _configState.data.cadences[mode] = 'continuous';
+          markDirty('cadences', mode, 'continuous');
+        }
+      }
+      markDirty('general', 'continuous', false);
+      renderConfigTab(_configState.tab);
+    }
     function cadenceKindKey(event, mode, kind) {
       if (event.key === 'Enter' || event.key === ' ') { cadenceSetKind(mode, kind); return; }
       const order = ['off', 'interval', 'continuous'];
@@ -32311,7 +33081,7 @@ function burnAreaChart() {
     }
     function cadenceKindButton(mode, current, kind, label) {
       const checked = current === kind;
-      return `<button class="hv-btn btn-secondary btn-sm" type="button" role="radio" aria-checked="${checked ? 'true' : 'false'}" tabindex="${checked ? '0' : '-1'}" data-action="cadenceSetKind" data-keydown-action="cadenceKindKey" data-keys="Enter, ,ArrowLeft,ArrowRight,ArrowUp,ArrowDown" data-prevent="1" data-arg0="${mode}" data-arg1="${kind}" data-arg-types="e,s,s">${label}</button>`;
+      return `<button class="hv-btn btn-secondary btn-sm" type="button" role="radio" aria-checked="${checked ? 'true' : 'false'}" tabindex="${checked ? '0' : '-1'}" data-action="cadenceSetKind" data-keydown-action="cadenceKindKey" data-keys="Enter, ,ArrowLeft,ArrowRight,ArrowUp,ArrowDown" data-prevent="1" data-arg1="${mode}" data-arg2="${kind}" data-arg-types="e,s,s">${label}</button>`;
     }
     function renderCadenceBuilder(mode, value, legacyContinuous) {
       const storedKind = cadenceModeValue(value);
@@ -32371,9 +33141,14 @@ function burnAreaChart() {
       // toggleConfigSwitch rather than the card's immediate action.
       const _agentName = _configState.agent || '';
       const _live = (window._lastAgents || []).find(a => a.name === _agentName);
-      const _enabled = !(_live && _live.enabled === false);
       const _general = (_configState.data && _configState.data.general) || {};
-      const _continuous = _general.continuous === true;
+      const _dirtyGeneral = (_configState.dirty && _configState.dirty.general) || {};
+      const _enabled = Object.prototype.hasOwnProperty.call(_dirtyGeneral, 'enabled')
+        ? _dirtyGeneral.enabled === true
+        : _general.enabled !== false;
+      const _continuous = Object.prototype.hasOwnProperty.call(_dirtyGeneral, 'continuous')
+        ? _dirtyGeneral.continuous === true
+        : _general.continuous === true;
       const _continuousCooldown = Number(_general.continuousCooldown || 60);
       const _continuousBudgetPct = Number(_general.continuousBudgetPct || 80);
       const _continuousBudgetNote = _live && _live.continuousBlocked === 'budget'
@@ -32395,6 +33170,11 @@ function burnAreaChart() {
             ${_continuousBudgetNote}
           </span>
         </div>
+        ${_continuous ? `<div class="cadence-legacy-notice">
+          <b>Legacy continuous is on.</b> SURGE, BUSY, and IDLE are using the old "continuous in all active modes" shortcut until you save per-mode cadences.
+          The row buttons below are editable; choosing Off or Interval automatically switches this agent to per-mode cadences.
+          <button class="hv-btn btn-secondary btn-sm cadence-legacy-action" type="button" data-action="switchToPerModeCadences">Switch to per-mode cadences</button>
+        </div>` : ''}
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
           <b>Continuous.</b> When enabled, cadence no longer decides the next kick while the agent is in a running sequence; the next kick is scheduled from the observed session end plus the cool-down. Turning it off returns to these cadences.
@@ -36131,7 +36911,7 @@ function burnAreaChart() {
             <span class="config-toggle-label">Flue binding (runs.external.flue) <span class="config-info">i<span class="config-tooltip">OFF by default. When on with no mode it runs in shadow: Hive persists admissions and observes but performs no external start and no external mutation. Only mode report-only dispatches, and only to relays that declare the ext-exec/flue capability; a relay without it is refused that work, never handed it as local work. Endpoint and workflow version are yaml-only. Requires a build with the extwork_flue tag; see src/docs/design/external-workflow-admission.md.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Mode: <b>${esc(f.extFlueMode || 'off')}</b> · adapter ${f.extFlueLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_flue); the toggle stays inert'} · endpoint ${f.extFlueEndpointSet ? 'configured' : 'not configured'}.</p>
-          <div class="config-toggle" style="margin-top:10px">
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.extOmpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extOmpEnabled"></div>
             <span class="config-toggle-label">OMP workbench host (runs.external.omp) <span class="config-info">i<span class="config-tooltip">OFF by default and independent of the Flue toggle. An already-running OMP workbench takes a lease over the contributor relay it already holds: it sees the assignment summary, must accept before the bounded context bundle is delivered, reports progress, and ends with a stage receipt that Hive verifies. Report-only: no repository credential, no dashboard token; OMP is unconfined (T3), so write-capable stages are refused outright. Only relays declaring ext-exec/omp are offered this work. Requires a build with the extwork_omp tag; see src/docs/design/external-workflow-admission.md.</span></span></span>
           </div>
@@ -36304,6 +37084,10 @@ function burnAreaChart() {
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fix_human_prs ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fix_human_prs"></div>
             <span class="config-toggle-label">Push fix commits to PRs Hive did not open <span class="config-info">i<span class="config-tooltip">OFF by default. When a review verdict is changes_requested on a PR opened by a person, a maintainer, or another bot, Hive will COMMIT TO THAT PERSON'S PR BRANCH: the &quot;Fixer agent&quot; below checks the branch out, makes the change, and pushes it &mdash; including onto an outside contributor's fork when &quot;allow edits by maintainers&quot; is on. Off, the reviewer still posts its findings, with the proposed fix as a suggestion or patch block in the comment, and the author decides what to change; each withheld push is recorded in the audit log. Hive's own agents' PRs are fixed either way. &quot;Review every PR&quot; never turns this on by itself. Owner only.</span></span></span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rv.contributor_prs && rv.contributor_prs.base_sync ? 'on' : ''}" data-action="toggleContributorPRBaseSync"></div>
+            <span class="config-toggle-label">Sync lane-authored contributor fork PRs with base <span class="config-info">i<span class="config-tooltip">OFF by default. Owner gate for review.contributor_prs.base_sync. When a Hive-authored lane PR lives on a contributor fork, is behind or dirty, and has &quot;allow edits by maintainers&quot; enabled, Hive may call GitHub&apos;s update-branch API. Clean BEHIND PRs get a GitHub-authored merge commit; DIRTY PRs fall back to the base-moved repair note and kick. Requires the agent mode that permits update-branch (ISSUES_PRS_MERGE).</span></span></span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>
@@ -37179,6 +37963,12 @@ function burnAreaChart() {
 
     function markBoolDirty(section, key, value) {
       markDirty(section, key, value === true || value === 'true');
+    }
+
+    function toggleContributorPRBaseSync(el) {
+      if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
+      const isOn = el.classList.toggle('on');
+      markDirty('review', 'contributor_prs', { base_sync: isOn });
     }
 
     // markDirtyRecommendations reads the three Recommendations controls and
@@ -41065,8 +41855,11 @@ function burnAreaChart() {
     dashboardSetInterval('welcome-claude-auth', checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
 
     window.addEventListener('hashchange', function() {
+      _overviewProjectFilterKey = overviewProjectFilterKeyFromURL();
+      _overviewProjectFilterCount = null;
       var section = _ocSectionFromHash();
       if (section) ocNavigate(section);
+      if (section === 'repos-section') repaintReposForWidth();
     });
 
     connect();
@@ -41274,7 +42067,6 @@ function burnAreaChart() {
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },
       gh3: function (event, A) { event.stopPropagation(); },
-      gh4: function (event, A) { localStorage.setItem('hive-merged-expanded', this.open); },
       gh5: function (event, A) { openConfigDialog('governor',null,'Thresholds'); },
       gh6: function (event, A) { this.parentElement._zoomIn(); },
       gh7: function (event, A) { this.parentElement._zoomReset(); },

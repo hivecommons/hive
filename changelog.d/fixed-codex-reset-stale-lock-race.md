@@ -1,1 +1,0 @@
-- Serialize Codex banked-reset stale-lock takeover with a persistent file-lock guard so concurrent controllers cannot displace a live holder or spend overlapping resets ([#10814](https://github.com/hivecommons/hive/issues/10814)).

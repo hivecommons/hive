@@ -49,7 +49,8 @@ push; comment with the finding, never push a branch of that name), or
 is behind it — re-run the check on the default branch, or diagnose by hand;
 do not repair PRs against it). For `NOT_REACHABLE_FORK`, report the failing
 or held required check and a concrete fix in one PR comment; do not push unless
-an explicit owner-enabled contributor-PR gate authorizes DCO-safe unstick moves.
+`review.contributor_prs.base_sync: true` authorizes the DCO-safe update-branch
+unstick move.
 
 A shared result is **one repository incident, not one failure per PR**. Stop
 PR-specific retries. Create or reuse the single open issue with the stable title

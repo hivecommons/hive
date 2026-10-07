@@ -144,6 +144,8 @@ func TestCloseIssueSendsStateReason(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			gotReason = payload.StateReason
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "closed"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/o/r/issues/8/labels/needs-reporter-confirmation":
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

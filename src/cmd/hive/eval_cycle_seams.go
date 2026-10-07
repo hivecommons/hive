@@ -318,6 +318,19 @@ func gateKickMessagesForProviderBudget(messages []scheduler.KickMessage, suppres
 	return providerBudgetKickGate{Kept: messages}
 }
 
+func pendingKickAgentsFromMessages(messages []scheduler.KickMessage) []string {
+	seen := make(map[string]bool, len(messages))
+	agents := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Agent == "" || seen[msg.Agent] {
+			continue
+		}
+		seen[msg.Agent] = true
+		agents = append(agents, msg.Agent)
+	}
+	return agents
+}
+
 // doubleSLAMinutes is the age past which an issue is a "2x SLA breach".
 const doubleSLAMinutes = 60
 

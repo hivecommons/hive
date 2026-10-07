@@ -1,1 +1,0 @@
-- Let automated release PRs run v5 required checks and wait long enough for them to report before merging.

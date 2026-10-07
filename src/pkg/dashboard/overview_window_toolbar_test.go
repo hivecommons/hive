@@ -15,7 +15,7 @@ func TestOverviewWindowPillsUseSharedInFlowToolbar(t *testing.T) {
 		`class="gov-pr-models-toggle window-pills-toolbar overview-window-toolbar"`,
 		`data-action="setOverviewKPIWindow"`,
 		`<div class="overview-headline sec-headline" data-collapsed-keep>`,
-		`<div class="overview-kpis">`,
+		`<div class="overview-kpis" aria-label="${esc(equationLabel)}">`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("Overview window toolbar missing snippet %q", snippet)
@@ -31,7 +31,7 @@ func TestOverviewWindowPillsUseSharedInFlowToolbar(t *testing.T) {
 	}
 	render := jsFunc(t, html, "renderOverviewKPIs")
 	toolbar := strings.Index(render, "${overviewKPIWindowControls()}")
-	grid := strings.Index(render, `<div class="overview-kpis">`)
+	grid := strings.Index(render, `<div class="overview-kpis" aria-label="${esc(equationLabel)}">`)
 	if toolbar < 0 || grid < 0 || toolbar > grid {
 		t.Fatalf("Overview KPI toolbar must render before the tile grid: toolbar=%d grid=%d", toolbar, grid)
 	}

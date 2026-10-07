@@ -115,11 +115,12 @@ check_class none "I can reproduce this on v5.96.3"
 check_class none "Here is how the feature works in detail"
 
 # --- /fixed from the reporter closes and relabels --------------------------
-run "/fixed" reporter "hive/likely-done" "$SWEEP_COMMENT"
+run "/fixed" reporter $'hive/likely-done\nneeds-reporter-confirmation' "$SWEEP_COMMENT"
 if [ "$rc" -eq 0 ] && closed \
   && grep -q '^POST repos/hivecommons/hive/issues/7/labels$' "$CALL_LOG" \
-  && grep -q '^DELETE repos/hivecommons/hive/issues/7/labels/hive%2Flikely-done$' "$CALL_LOG"; then
-  pass "/fixed from the reporter closes, applies the confirmed label and removes likely-done"
+  && grep -q '^DELETE repos/hivecommons/hive/issues/7/labels/hive%2Flikely-done$' "$CALL_LOG" \
+  && grep -q '^DELETE repos/hivecommons/hive/issues/7/labels/needs-reporter-confirmation$' "$CALL_LOG"; then
+  pass "/fixed from the reporter closes, applies the confirmed label and removes wait labels"
 else
   bad "/fixed from the reporter did not close/relabel"
   dump
@@ -148,6 +149,14 @@ if [ "$rc" -eq 0 ] && closed; then
   pass "plain-language confirmation closes a likely-done issue"
 else
   bad "plain-language confirmation did not close a likely-done issue"
+  dump
+fi
+
+run "Confirmed fixed" reporter "needs-reporter-confirmation"
+if [ "$rc" -eq 0 ] && closed; then
+  pass "plain-language confirmation closes an issue with the reporter-confirmation label"
+else
+  bad "plain-language confirmation did not close a reporter-confirmation labeled issue"
   dump
 fi
 

@@ -134,3 +134,48 @@ func TestBuildGHRateLimits_OmitsObservedAtWhenUnknown(t *testing.T) {
 		t.Errorf("observed_at present with no client; got %v", core)
 	}
 }
+
+func TestGHRateLimitStatusColoursOnRemainingQuota(t *testing.T) {
+	now := time.Date(2026, 10, 6, 11, 52, 0, 0, time.UTC)
+	futureReset := now.Add(10 * time.Minute)
+	pastReset := now.Add(-12 * time.Minute)
+
+	cases := []struct {
+		name      string
+		limit     int
+		remaining int
+		reset     time.Time
+		want      string
+	}{
+		{name: "exhausted reset future is critical", limit: 5000, remaining: 0, reset: futureReset, want: "critical"},
+		{name: "exhausted reset past is healthy pending refresh", limit: 5000, remaining: 0, reset: pastReset, want: "ok"},
+		{name: "full remaining quota is healthy", limit: 5000, remaining: 5000, reset: futureReset, want: "ok"},
+		{name: "four percent remaining is critical", limit: 5000, remaining: 200, reset: futureReset, want: "critical"},
+		{name: "twenty percent remaining is warning", limit: 5000, remaining: 1000, reset: futureReset, want: "warning"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ghRateLimitStatus(tc.limit, tc.remaining, tc.reset, now); got != tc.want {
+				t.Fatalf("ghRateLimitStatus() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeGHRateLimitForDisplayTreatsResetPassedAsRestored(t *testing.T) {
+	now := time.Date(2026, 10, 6, 11, 52, 0, 0, time.UTC)
+	entry := ghpkg.RateLimitEntry{
+		Limit:     5000,
+		Remaining: 0,
+		Reset:     now.Add(-12 * time.Minute),
+	}
+
+	got := normalizeGHRateLimitForDisplay(entry, now)
+	if got.Remaining != got.Limit {
+		t.Fatalf("remaining = %d, want restored limit %d after reset passed", got.Remaining, got.Limit)
+	}
+	if fraction := ghRateLimitRemainingFraction(got.Limit, got.Remaining); fraction != 1 {
+		t.Fatalf("remaining fraction = %v, want 1", fraction)
+	}
+}

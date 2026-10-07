@@ -87,7 +87,7 @@ case "$1 $2 ${3:-}" in
   "rev-parse HEAD ")
     echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
   "rev-parse origin/v5 ")
-    echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
+    echo "deadbeefcafe"; exit 0 ;;
   "fetch origin "*)
     exit 0 ;;
   "tag "*)
@@ -95,6 +95,10 @@ case "$1 $2 ${3:-}" in
     exit 0 ;;
   "push origin --delete"*)
     exit 0 ;;
+  "push origin HEAD:refs/heads/v5"*)
+    echo "remote: error: GH006: Protected branch update failed for refs/heads/v5." >&2
+    echo "error: failed to push some refs to 'https://github.com/hivecommons/hive'" >&2
+    exit 1 ;;
   "push origin refs/tags/"*)
     n=$(( $(cat "$state/tag" 2>/dev/null || echo 0) + 1 ))
     echo "$n" > "$state/tag"
@@ -213,8 +217,8 @@ grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHU
 [ "$(cat "$st/tag_target" 2>/dev/null)" = feedfacefeedfacefeedfacefeedfacefeedface ] \
   && note_ok "version tag targets merge API's exact release SHA" \
   || note_fail "version tag did not target merge API SHA: $(cat "$st/tag_target" 2>/dev/null)"
-[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch " ] \
-  && note_ok "gate, PR, merge and exact-SHA dispatch are ordered" \
+[ "$(tr '\n' ' ' < "$st/timeline")" = "status pr merge dispatch status " ] \
+  && note_ok "gate, PR, merge, exact-SHA dispatch, and hold-clear status are ordered" \
   || note_fail "unexpected status/PR/merge order: $(tr '\n' ' ' < "$st/timeline")"
 
 echo "case: gate status publication failure stops before opening the PR"
@@ -400,14 +404,22 @@ if guard is None:
 else:
     guard_run = guard.get("run") or ""
     # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v5,
-    # not a push. The backstop may count that publishing run, but the decide
-    # job's workflow_run filter above must still reject workflow_dispatch so
-    # the handoff cannot re-enter the release loop.
+    # not a push. The backstop may count that publishing run. #10866 also
+    # needs a backstop-primed workflow_dispatch docker run on the line to
+    # re-enter this workflow once the images exist; post-release handoffs are
+    # harmless because Unreleased is empty by then.
     if '.event == \\"workflow_dispatch\\"' not in guard_run or '.head_branch == \\"${RELEASE_LINE}\\"' not in guard_run:
         bad("the backstop no longer accepts the release line's workflow_dispatch docker.yml publishing runs (#6380)")
+    if 'gh workflow run docker.yml --ref "$RELEASE_LINE"' not in guard_run:
+        bad("the backstop no longer primes docker.yml when the release line's tip images are missing (#10866)")
     decide_if = dec.get("if") or ""
-    if "github.event.workflow_run.event == 'push'" not in decide_if:
-        bad("decide no longer admits only push workflow_run events, risking a release loop (#6380) and fork-branch releases (#9154)")
+    if "github.event.workflow_run.event != 'workflow_dispatch'" in decide_if:
+        bad("decide still rejects workflow_dispatch docker completions on the line, so a backstop-primed image build cannot release (#10866)")
+    if ("github.event.workflow_run.event == 'push'" not in decide_if
+            or "github.event.workflow_run.event == 'workflow_dispatch'" not in decide_if
+            or "github.event.workflow_run.head_branch == github.ref_name" not in decide_if):
+        bad("decide must admit only push/workflow_dispatch workflow_run events on the release line itself — "
+            "a pull_request run's head_branch is fork-controlled (#9154)")
 push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_line"), None)
 if push_step is None:
@@ -447,11 +459,11 @@ else:
         if not status_at < pr_at < merge_at:
             bad("push_line must publish gate status, then open the PR, then merge it (#5356)")
     if "-f state=success" not in code or "-f context=gate" not in code:
-        bad("push_v5's commit status is not the required gate:success verdict (#5356)")
-    if "RELEASE_MERGE_WAIT_SECONDS" not in code or ":-1800" not in code:
-        bad("push_v5 no longer waits up to the 30-minute release merge deadline (#10795)")
+        bad("push_line's commit status is not the required gate:success verdict (#5356)")
+    if "RELEASE_MERGE_WAIT_SECONDS" not in code or ":-300" not in code:
+        bad("push_line no longer waits up to the 5-minute release merge deadline (#10863)")
     if "required_checks_state" not in code:
-        bad("push_v5 no longer polls the release PR's required checks before giving up (#10795)")
+        bad("push_line no longer polls the release PR's required checks before giving up (#10795)")
     # #6380: a release PR merged with GITHUB_TOKEN cannot emit docker.yml's
     # push event. Dispatch immediately after the SHA-keyed merge, before tag
     # retries widen the window in which a later v5 push could get an earlier
@@ -461,7 +473,7 @@ else:
     if dispatch_call not in code:
         bad("push_line no longer dispatches docker.yml after the GITHUB_TOKEN merge (#6380)")
     else:
-        dispatch_at = code.index(dispatch_call)
+        dispatch_at = code.rindex(dispatch_call)
         tag_at = code.index('git tag "v${VERSION}"')
         if not merge_at < dispatch_at < tag_at:
             bad("release-image dispatch must occur after merge succeeds and before tag publication")

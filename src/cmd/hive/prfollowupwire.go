@@ -163,6 +163,12 @@ func routePRFollowUps(ctx context.Context, cfg *config.Config, client *github.Cl
 		Comments: collectPRFollowUpComments(ctx, client, dir, prs, now, logger),
 		Logger:   logger,
 	}
+	opts.BaseSyncEnabled = func(repo string) bool {
+		return cfg != nil && cfg.Review.ContributorPRs.BaseSync
+	}
+	if client != nil {
+		opts.BranchUpdater = client
+	}
 
 	if agentMgr != nil {
 		resumer = prFollowUpResumer{mgr: agentMgr}

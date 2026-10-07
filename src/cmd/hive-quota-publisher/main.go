@@ -56,6 +56,10 @@ const (
 	// enables the banked-reset redemption controller (#10598, ADR-0022). It is
 	// read only from this process's own environment.
 	envAutoUseBankedReset = "HIVE_CODEX_AUTO_USE_BANKED_RESET"
+	// envModel is the contributor's explicitly selected model. For codex it
+	// scopes the reading and redemption to that model's applicable limits
+	// (hivecommons/hive#10865).
+	envModel = "AGENT_MODEL"
 )
 
 // plan is the startup decision: publish, or stand down with a stated reason.
@@ -66,6 +70,9 @@ type plan struct {
 	backend string
 	poolDir string
 	account string
+	// model is the explicitly selected Codex model; empty reads every
+	// rate-limit bucket. Only set for the codex backend.
+	model string
 	// redeemBankedReset runs the banked-reset redemption controller beside
 	// the publisher. Only ever true for the codex backend with local opt-in.
 	redeemBankedReset bool
@@ -91,6 +98,9 @@ func startPublisher(ctx context.Context, p plan) (<-chan struct{}, bool) {
 	mgr, ok := rotation.NewContributorBackendReadingPublisher(p.poolDir, p.account, p.backend)
 	if !ok {
 		return nil, false
+	}
+	if p.model != "" {
+		mgr.SetCodexModel(p.model)
 	}
 	if p.redeemBankedReset {
 		mgr.EnableCodexResetRedeem()
@@ -161,7 +171,7 @@ func resolvePlan(getenv func(string) string, defaultPoolDir func() string) plan 
 		return p
 	}
 	if backend == "pi" {
-		provider, _, _ := strings.Cut(strings.TrimSpace(getenv("AGENT_MODEL")), "/")
+		provider, _, _ := strings.Cut(strings.TrimSpace(getenv(envModel)), "/")
 		if provider == "" {
 			provider = "(unselected)"
 		}
@@ -181,6 +191,9 @@ func resolvePlan(getenv func(string) string, defaultPoolDir func() string) plan 
 		return p
 	}
 	p.publish = true
+	if backend == "codex" {
+		p.model = strings.TrimSpace(getenv(envModel))
+	}
 	// The redemption controller lives inside this publisher, so every
 	// stand-down above (opt-out, guard off, an external reading source,
 	// unsupported backend) also means no competing controller is started.

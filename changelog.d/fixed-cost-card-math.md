@@ -1,1 +1,0 @@
-- Fixed the dashboard Cost tiles so the total, sparkline, and per-PR/issue math use the same current cost lineage and hive-attributed outcome counts with auditable divisors.

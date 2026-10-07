@@ -20,12 +20,14 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 		wantErr        bool
 		wantClosed     bool
 		wantComment    string
+		wantLabels     []string
 	}{
 		{
 			name:        "human-filed bug is blocked and asks for confirmation",
 			issue:       closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"}),
 			wantErr:     true,
 			wantComment: "please confirm",
+			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
 		},
 		{
 			name:       "bot-filed bug closes normally",
@@ -52,6 +54,7 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			issue:       closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code", []string{"kind/bug"}),
 			wantErr:     true,
 			wantComment: "please confirm",
+			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
 		},
 		{
 			name:           "override records reason and closes",
@@ -66,10 +69,17 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var closed bool
 			var comments []string
+			var labels []string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 					_ = json.NewEncoder(w).Encode(tt.issue)
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/labels/"+issueNeedsReporterConfirmationLabel:
+					w.WriteHeader(http.StatusNotFound)
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": issueNeedsReporterConfirmationLabel})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/collaborators/human/permission":
+					_ = json.NewEncoder(w).Encode(map[string]any{"permission": "read"})
 				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					var payload struct {
 						Body string `json:"body"`
@@ -77,6 +87,11 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 					_ = json.NewDecoder(r.Body).Decode(&payload)
 					comments = append(comments, payload.Body)
 					_ = json.NewEncoder(w).Encode(map[string]any{"id": len(comments)})
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+					var payload []string
+					_ = json.NewDecoder(r.Body).Decode(&payload)
+					labels = append(labels, payload...)
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					// No prior confirmation request on the issue, so the gate
 					// posts one. The dedup path is covered separately by
@@ -91,6 +106,8 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 						closed = true
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+				case r.Method == "DELETE" && r.URL.Path == "/repos/o/r/issues/7/labels/"+issueNeedsReporterConfirmationLabel:
+					w.WriteHeader(http.StatusNotFound)
 				default:
 					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -118,6 +135,9 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			}
 			if len(comments) != 1 || !strings.Contains(comments[0], tt.wantComment) {
 				t.Fatalf("comments = %q, want one containing %q", comments, tt.wantComment)
+			}
+			if strings.Join(labels, ",") != strings.Join(tt.wantLabels, ",") {
+				t.Fatalf("labels = %q, want %q", labels, tt.wantLabels)
 			}
 		})
 	}
@@ -185,6 +205,44 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 	}
 }
 
+func TestCloseIssueReporterConfirmationLabelsMaintainerReporterNeedsHuman(t *testing.T) {
+	issue := closeGateIssue("maintainer", "User", "Bug: fixed", "reported by maintainer", []string{"bug"})
+	var labels []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			_ = json.NewEncoder(w).Encode(issue)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/labels/"+issueNeedsReporterConfirmationLabel:
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": issueNeedsReporterConfirmationLabel})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/collaborators/maintainer/permission":
+			_ = json.NewEncoder(w).Encode(map[string]any{"permission": "maintain"})
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+			var payload []string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			labels = append(labels, payload...)
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv.URL)
+	err := c.CloseIssue(context.Background(), "r", 7, IssueCloseOptions{})
+	if !errors.Is(err, ErrReporterConfirmationRequired) {
+		t.Fatalf("CloseIssue error = %v, want ErrReporterConfirmationRequired", err)
+	}
+	want := []string{issueNeedsReporterConfirmationLabel, issueNeedsHumanLabel}
+	if strings.Join(labels, ",") != strings.Join(want, ",") {
+		t.Fatalf("labels = %q, want %q", labels, want)
+	}
+}
+
 func closeGateIssue(login, userType, title, body string, labels []string) *gh.Issue {
 	issue := &gh.Issue{
 		Number: gh.Ptr(7),
@@ -207,31 +265,41 @@ func closeGateIssue(login, userType, title, body string, labels []string) *gh.Is
 // posted once and the gate error is returned unchanged thereafter.
 func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
 	existing := []struct {
-		name    string
-		prior   []any
-		wantNew int
+		name       string
+		prior      []any
+		labels     []string
+		wantNew    int
+		wantLabels int
 	}{
 		{
-			name:    "first attempt posts the request",
-			prior:   []any{map[string]any{"id": 1, "body": "unrelated chatter"}},
-			wantNew: 1,
+			name:       "first attempt posts the request",
+			prior:      []any{map[string]any{"id": 1, "body": "unrelated chatter"}},
+			wantNew:    1,
+			wantLabels: 1,
 		},
 		{
-			name:    "second attempt reuses the existing request",
-			prior:   []any{map[string]any{"id": 1, "body": reporterConfirmationRequestMarker + " please confirm"}},
-			wantNew: 0,
+			name:       "second attempt reuses the existing request and label",
+			prior:      []any{map[string]any{"id": 1, "body": reporterConfirmationRequestMarker + " please confirm"}},
+			labels:     []string{issueNeedsReporterConfirmationLabel},
+			wantNew:    0,
+			wantLabels: 0,
 		},
 	}
 
 	for _, tt := range existing {
 		t.Run(tt.name, func(t *testing.T) {
-			issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"})
+			issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", append([]string{"bug"}, tt.labels...))
 			var posted []string
+			var labelsAdded int
 			var closed bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 					_ = json.NewEncoder(w).Encode(issue)
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/labels/"+issueNeedsReporterConfirmationLabel:
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": issueNeedsReporterConfirmationLabel})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/collaborators/human/permission":
+					_ = json.NewEncoder(w).Encode(map[string]any{"permission": "read"})
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					_ = json.NewEncoder(w).Encode(tt.prior)
 				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
@@ -241,6 +309,9 @@ func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
 					_ = json.NewDecoder(r.Body).Decode(&payload)
 					posted = append(posted, payload.Body)
 					_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+					labelsAdded++
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 				case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
 					closed = true
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
@@ -264,6 +335,9 @@ func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
 			if len(posted) != tt.wantNew {
 				t.Fatalf("new comments = %d (%q), want %d", len(posted), posted, tt.wantNew)
 			}
+			if labelsAdded != tt.wantLabels {
+				t.Fatalf("label add calls = %d, want %d", labelsAdded, tt.wantLabels)
+			}
 		})
 	}
 }
@@ -277,6 +351,10 @@ func TestCloseIssueConfirmationDedupFailsOpen(t *testing.T) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 			_ = json.NewEncoder(w).Encode(issue)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/labels/"+issueNeedsReporterConfirmationLabel:
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": issueNeedsReporterConfirmationLabel})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/collaborators/human/permission":
+			_ = json.NewEncoder(w).Encode(map[string]any{"permission": "read"})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			w.WriteHeader(http.StatusInternalServerError)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
@@ -286,6 +364,8 @@ func TestCloseIssueConfirmationDedupFailsOpen(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			posted = append(posted, payload.Body)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
 			closed = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
@@ -306,5 +386,33 @@ func TestCloseIssueConfirmationDedupFailsOpen(t *testing.T) {
 	}
 	if len(posted) != 1 {
 		t.Fatalf("new comments = %d, want 1 (dedup must fail open)", len(posted))
+	}
+}
+
+func TestCloseIssueRemovesReporterConfirmationLabelOnClose(t *testing.T) {
+	issue := closeGateIssue("bot[bot]", "Bot", "Bug: fixed", "automated", []string{"bug", issueNeedsReporterConfirmationLabel})
+	var removed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			_ = json.NewEncoder(w).Encode(issue)
+		case r.Method == "PATCH" && r.URL.Path == "/repos/o/r/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		case r.Method == "DELETE" && r.URL.Path == "/repos/o/r/issues/7/labels/"+issueNeedsReporterConfirmationLabel:
+			removed = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := testClient(t, srv.URL)
+	if err := c.CloseIssue(context.Background(), "r", 7, IssueCloseOptions{}); err != nil {
+		t.Fatalf("CloseIssue: %v", err)
+	}
+	if !removed {
+		t.Fatalf("%s label was not removed on close", issueNeedsReporterConfirmationLabel)
 	}
 }

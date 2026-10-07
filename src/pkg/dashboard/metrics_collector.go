@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -43,6 +44,8 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
+	prIssueCachePath string
 	// issuesDisabled is the latest proactive has_issues probe over every
 	// watched repo (#9972); the dashboard banner renders it.
 	issuesDisabledMu sync.RWMutex
@@ -428,8 +431,15 @@ func (mc *MetricsCollector) saveMTTRToDisk(result *ghpkg.MTTRResult) {
 	}
 }
 
+func (mc *MetricsCollector) prIssueCountsPath() string {
+	if mc.prIssueCachePath != "" {
+		return mc.prIssueCachePath
+	}
+	return prIssueCountsCacheFile
+}
+
 func (mc *MetricsCollector) loadPRIssueCountsFromDisk() {
-	data, err := os.ReadFile(prIssueCountsCacheFile)
+	data, err := os.ReadFile(mc.prIssueCountsPath())
 	if err != nil {
 		return
 	}
@@ -448,10 +458,11 @@ func (mc *MetricsCollector) savePRIssueCountsToDisk(result *ghpkg.PRIssueCounts)
 	if err != nil {
 		return
 	}
-	_ = os.MkdirAll("/data/metrics", 0o755)
-	tmpPath := prIssueCountsCacheFile + ".tmp"
+	path := mc.prIssueCountsPath()
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
 	if os.WriteFile(tmpPath, data, 0o644) == nil {
-		_ = os.Rename(tmpPath, prIssueCountsCacheFile)
+		_ = os.Rename(tmpPath, path)
 	}
 }
 

@@ -1,1 +1,0 @@
-- Clear a reporter-trust PR's `needs-human` label after a human removes `hold`, while preserving independent human hand-offs such as fix-loop escalations ([#10817](https://github.com/hivecommons/hive/issues/10817)).

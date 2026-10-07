@@ -350,6 +350,19 @@ func (c *Client) reconcileMerge(ctx context.Context, boundary effects.Boundary, 
 // go-github surfaces as *gh.AcceptedError; that is the success path here, not
 // a failure, so it is swallowed rather than returned.
 func (c *Client) UpdateBranch(ctx context.Context, repo string, number int) error {
+	return c.updateBranch(ctx, repo, number, "", "")
+}
+
+// UpdateBranchExpectedHead syncs a PR's head branch only if GitHub still sees
+// expectedHeadSHA as the PR head. observedBaseSHA is part of the mutation
+// identity so a later base move is not deduped against an earlier update
+// attempt. Together they prevent a stale enumeration from adding a base-sync
+// merge commit on top of contributor commits the hive has not evaluated yet.
+func (c *Client) UpdateBranchExpectedHead(ctx context.Context, repo string, number int, expectedHeadSHA string, observedBaseSHA string) error {
+	return c.updateBranch(ctx, repo, number, expectedHeadSHA, observedBaseSHA)
+}
+
+func (c *Client) updateBranch(ctx context.Context, repo string, number int, expectedHeadSHA string, observedBaseSHA string) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
 	}
@@ -357,12 +370,21 @@ func (c *Client) UpdateBranch(ctx context.Context, repo string, number int) erro
 	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
 		owner, repo = parts[0], parts[1]
 	}
+	var inputs map[string]string
+	if expectedHeadSHA != "" || observedBaseSHA != "" {
+		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
+	}
 	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindBranchUpdate,
 		Target: strconv.Itoa(number),
+		Inputs: inputs,
 	}, func(ctx context.Context) (effects.Result, error) {
-		_, _, apiErr := c.client.PullRequests.UpdateBranch(ctx, owner, repo, number, nil)
+		var opts *gh.PullRequestBranchUpdateOptions
+		if expectedHeadSHA != "" {
+			opts = &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHeadSHA)}
+		}
+		_, _, apiErr := c.client.PullRequests.UpdateBranch(ctx, owner, repo, number, opts)
 		var accepted *gh.AcceptedError
 		if errors.As(apiErr, &accepted) {
 			apiErr = nil

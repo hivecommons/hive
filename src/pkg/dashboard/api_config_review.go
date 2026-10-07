@@ -64,11 +64,14 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		FixerAgent         *string   `json:"fixer_agent"`
 		AllAuthors         *bool     `json:"all_authors"`
 		FixHumanPRs        *bool     `json:"fix_human_prs"`
-		AcknowledgeNoFind  *bool     `json:"acknowledge_no_findings"`
-		HumanDecisionLabel *string   `json:"human_decision_label"`
-		ConfidenceScore    *bool     `json:"confidence_score"`
-		PriorityLabels     *bool     `json:"priority_labels"`
-		MaxReviewsPerHead  *int      `json:"max_reviews_per_head"`
+		ContributorPRs     *struct {
+			BaseSync *bool `json:"base_sync"`
+		} `json:"contributor_prs"`
+		AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
+		HumanDecisionLabel *string `json:"human_decision_label"`
+		ConfidenceScore    *bool   `json:"confidence_score"`
+		PriorityLabels     *bool   `json:"priority_labels"`
+		MaxReviewsPerHead  *int    `json:"max_reviews_per_head"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
 		// perspective is only valid once its prompt exists, so validating one
 		// without the other would reject a correct pair sent in two requests.
@@ -219,6 +222,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.FixHumanPRs != nil {
 		enabled := *body.FixHumanPRs
 		cfg.Review.FixHumanPRs = &enabled
+	}
+	if body.ContributorPRs != nil && body.ContributorPRs.BaseSync != nil {
+		cfg.Review.ContributorPRs.BaseSync = *body.ContributorPRs.BaseSync
 	}
 	if body.AcknowledgeNoFind != nil {
 		cfg.Review.AcknowledgeNoFindings = *body.AcknowledgeNoFind

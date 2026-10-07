@@ -11,6 +11,145 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-06 (v5.139.0)
+
+### Added
+
+- Every dashboard section title now has a small **?** help mark ([#10915](https://github.com/hivecommons/hive/issues/10915)). Hovering or focusing it shows one plain-language sentence about what the section shows; clicking it (or pressing Enter) opens the section's entry in the new [Dashboard sections explained](src/docs/dashboard-sections.md) page, which explains what each section tells you, how its numbers are worked out, what to do about them, when it appears and which settings change it — including why the Overview band charts, tiles and trend lines can disagree. Help opens on the operator's own release line (`v6` builds open the `v6` page, everything else `v5`), and the Overview tiles' "Learn more" links, which used to lead to a "not found" page, now open the same help.
+- dashboard: every agent card, in the full and compact layouts, and the agent's detail panel now show a "Now:" line under the agent's state saying what it is on: "Now: console#123 — title · 2 min ago", "Now: working — no issue or pull request yet · started 12 min ago", "Idle · last: console#123, 40 min ago", or "Paused", "Off", "Stopped — see the agent's log", "Not started yet". It is built from the last issue or pull request the agent itself acted on through the hive, counts up on the hive's clock without reloading, says "information may be out of date" after three missed updates, and, when issue reservations are on, adds "reserved until HH:MM" or "still reserved: …" in the viewer's local time. The "Working on / PR open / merged" rows, which nothing had filled since the move to the Go dashboard, are gone ([#10934](https://github.com/hivecommons/hive/issues/10934), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+
+### Changed
+
+- Agent kicks now state that governor-supplied PR/issue lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery only wastes an agent turn ([#10913](https://github.com/hivecommons/hive/issues/10913)).
+- docs: explain when a hive follows the `stable` channel after the tag moves, including hub refresh, heartbeat delivery, upgrade policy windows, UI signals, and self-hosted runtime behavior (#10187)
+
+### Fixed
+
+- dashboard: an agent card's "this agent may be stuck" warning and "updated N min ago" badge can now appear. They read two agent fields, `doing` and `summaryUpdated`, that nothing in Hive ever set, so a working agent that had stopped making progress looked exactly like a healthy one ([#10927](https://github.com/hivecommons/hive/issues/10927)). Hive now keeps, in memory, the last issue or pull request each agent itself acted on through the hive (comments, labels and claims it requested, opened, reviewed or closed pull requests; never the hive's own reservation comments, automatic labels or governor merges), and sends it on the per-agent status update as `lastAction`. While an agent is working, `doing` names that item (`repo#N`) and `summaryUpdated` is the time of its last action this round, or the round's start when it has not acted yet; the chat summary's agent list shows the item too. This is the data layer for the agent cards' upcoming "Now:" line ([#10933](https://github.com/hivecommons/hive/issues/10933), part of [#10925](https://github.com/hivecommons/hive/issues/10925)).
+- Issue claims: the `🔒` claim comment no longer prints a fixed "until HH:MM UTC" time that went stale as soon as the claim was renewed (so a maintainer would read a still-held claim as lapsed); it now states how long a claim lasts without activity and that it renews while the work continues. Hive's own record keeps the live expiry ([#10926](https://github.com/hivecommons/hive/issues/10926)).
+
+## 2026-10-06 (v5.138.2)
+
+### Changed
+
+- dashboard: the Operations **Most effective models** panel now starts collapsed, remembers whether you opened or closed it, and only fetches `/api/contribute/effective-models` once expanded, so the work, runs, decisions and queue cards no longer sit below a tall table on first load (#10919)
+
+### Fixed
+
+- dashboard: Overview trend lines now count "Blocked / needs-human" and "Outside" the same way as their tiles, including "Confirm & close" and needs-human/reporter-confirmation issues, so server and browser samples no longer disagree ([#10916](https://github.com/hivecommons/hive/issues/10916)). The "Claimed" and "Confirm & close" band hover text no longer promises a linked-PR check that never runs ([#10917](https://github.com/hivecommons/hive/issues/10917)). The "waiting on reporter" row now searches the hive's own watched repositories instead of hivecommons/hive ([#10918](https://github.com/hivecommons/hive/issues/10918)).
+
+## 2026-10-06 (v5.138.1)
+
+### Fixed
+
+- dashboard: topbar up-next tiles no longer truncate long agent names such as `adjudicator` (regressed by #10770) (#10912)
+
+## 2026-10-06 (v5.138.0)
+
+### Added
+
+- Add an opt-in, fail-closed GitHub `viewerCanUpdateBranch` lookup as groundwork for serialized-lane fork handling; existing merge and branch-update behavior is unchanged (#10890).
+
+### Fixed
+
+- Dashboard cost-per-PR and cost-per-issue divisors retain their persisted last-good counts when GitHub returns incomplete search results, rather than replacing them with partial or zero totals (#10875).
+
+### Security
+
+- The SaaS provisioning template's `hive-node-health-reader-*` ClusterRole no longer grants `nodes/proxy` to the tenant hive's ServiceAccount. That subresource reaches every kubelet's `/exec`, `/attach` and `/pods` endpoints through the API server, so a per-tenant token could act on any pod in the shared cluster. The spoke's kubelet `stats/summary` disk-usage read was already best-effort; push-reported spokes now show disk capacity without a live usage percentage until a safe source exists. Operators who provisioned tenants on an affected build should re-apply the narrowed ClusterRole (#10902).
+
+## 2026-10-06 (v5.137.1)
+
+### Changed
+
+- CI: add `workflow_run` backstops with bounded de-duplication to `coverage-hourly.yml` and `promote-stable.yml` so neither depends solely on starved cron delivery (#10877).
+
+### Fixed
+
+- Contributor quota: with `AGENT_MODEL` set, the built-in Codex quota publisher now reads only the rate-limit buckets that apply to the selected model — shared account buckets (no `normalModelSlug`) plus buckets scoped to that model — so another model's exhausted quota no longer holds work or triggers a banked-reset redemption. Buckets with missing scope are treated as shared, `ordinaryUsageAllowed` refusals still apply, and an unset `AGENT_MODEL` keeps reading every bucket ([#10865](https://github.com/hivecommons/hive/issues/10865)).
+- dashboard: refresh GitHub rate-limit after reset and colour on remaining (#10880)
+- Fix dashboard agent tiles so UP NEXT follows the governor pending-kick queue and due-now idle agents do not render bare now labels.
+- Fixed the dashboard navbar so upgrade-progress pills cannot overlap or squeeze the centered running-agent strip.
+- Keep v5 tagged releases moving under high merge cadence by making release-gate checks instant, holding hive automerges during the short post-publish release window, and re-arming docker backstops after stale release attempts.
+- Slow and stabilize the dashboard upgrade bee orbit while preserving the animated wrapper across status text refreshes.
+
+## 2026-10-06 (v5.137.0)
+
+### Added
+
+- Docs/examples: document `HIVE_CODEX_AUTO_USE_BANKED_RESET` (consent, exhaustion-only trigger, account-wide effects, no purchases) in the contributor relay docs and isolated example, and forward it through the `just` container launch (#10599, #10552).
+- Contributor quota guard: new local opt-in `HIVE_CODEX_AUTO_USE_BANKED_RESET` admits work below the weekly reserve (above 0%) when a fresh reading shows a banked rate-limit reset credit; short-term windows, manual pauses and stale/unknown readings are unchanged (#10597).
+- Contributor quota: with the local opt-in `HIVE_CODEX_AUTO_USE_BANKED_RESET` on, `hive-quota-publisher` now redeems one already-earned Codex rate-limit reset when a fresh reading shows the weekly window at 0% and a reset is banked, then re-reads the quota so the relay resumes only once a fresh reading clears its guard. Redemption is idempotent (a UUID key persisted in the pool directory before sending and reused across retries and restarts), serialized per pool by a lock file, never triggered by the reserve or short-term windows, backs off on `nothingToReset`/`noCredit`/errors/timeouts, and never buys credits, upgrades plans or enables overage (#10598, ADR-0021).
+- The vibe-kanban mirror (`bin/vibe-kanban-mirror.js`) can now record board pick-ups as shadow external executions ([#10641](https://github.com/hivecommons/hive/issues/10641)). Set `VIBE_KANBAN_SHADOW_LOG` (or `--shadow-log`) to a local file. When a developer moves a hive-queued card forward on the board or links a PR to it, the mirror appends an `ext_work_shadow_observed` event in the extwork progress-event shape (`running`, `waiting`, or `terminal`) and leaves the card where the developer put it. Each fact is recorded once. Hive dispatches nothing and nothing is written back to hive. See `src/docs/vibe-kanban.md`.
+- extwork: vibe-kanban dispatch adapter (Phase 2 of #10641) (#10844)
+- dashboard: hide individual sections from the left menu (#10854)
+- prfollowup: owner-gated base sync for DIRTY/BEHIND fork lane PRs (contributor_prs) (#10864)
+- `issue_filter.reporter_trust` gains the opt-in `clanker_requested`, `clanker_requested_label` (default `clanker-requested`) and `clanker_requested_addendum` keys. While `clanker_requested` is on, a PR carrying the configured label is treated as held. Off by default; omitted keys change nothing ([#10777](https://github.com/hivecommons/hive/issues/10777), part of [#10766](https://github.com/hivecommons/hive/issues/10766)).
+- Dashboard Settings → Labels → Reporter trust gains controls for the opt-in `clanker_requested` policy: a toggle, the label name (placeholder `clanker-requested`), an addendum textarea and a live preview of the comment text. `GET`/`PUT /api/config/governor` expose and validate `clankerRequested`, `clankerRequestedLabel` and `clankerRequestedAddendum` ([#10782](https://github.com/hivecommons/hive/issues/10782), part of [#10766](https://github.com/hivecommons/hive/issues/10766)).
+- With `issue_filter.reporter_trust.clanker_requested` on, Hive now steers untrusted contributors to ClankeR, the contributor relay. The one-shot reporter-trust wait comment on an untrusted reporter's issue gains a paragraph that links the relay's Basic setup guide and says the issue will be offered to their relay once connected ([#10780](https://github.com/hivecommons/hive/issues/10780)). An open PR from an untrusted author that did not come through the relay (no contributor claim for that author, and not App-authored) gets the `clanker-requested` label within one scanner tick. It then shows as held, and Hive posts a one-shot notice saying the PR is parked until it is resubmitted through the relay or a maintainer removes the label. Removing the label releases the PR permanently, and Hive never re-applies it. New parkings are capped per poll ([#10781](https://github.com/hivecommons/hive/issues/10781)). The optional `clanker_requested_addendum` is appended to both texts. With the switch off, nothing changes. Part of [#10766](https://github.com/hivecommons/hive/issues/10766).
+- The opt-in `issue_filter.reporter_trust.clanker_requested` policy is now documented: [contributor relay](src/docs/contributor-relay.md) covers the config keys and issue/PR behaviour, [contributor trust and roles](src/docs/contributor-trust-and-roles.md) covers human-override semantics and non-goals (it is not a branch-protection change), and the [dashboard](src/docs/dashboard.md) page covers the Settings → Labels → Reporter trust controls ([#10783](https://github.com/hivecommons/hive/issues/10783), part of [#10766](https://github.com/hivecommons/hive/issues/10766)).
+- Added Overview/Governor outside-bucket explanations, docs, and Settings controls for triage bucket labels.
+- Overview KPI tiles now read as an equation with operators and a new OUTSIDE tile explaining excluded buckets.
+- Clicking Overview KPI tiles now filters the Projects section to matching issues and pull requests with a clearable chip and deep link.
+- Spektacular rechecks can opt into bounded, read-only discovery of declared documents through a relay proxy, retaining source-labelled evidence on each revision without bypassing approval checkpoints.
+- Hive can now mirror one repository's admitted queue onto a local [vibe-kanban](https://github.com/BloopAI/vibe-kanban) board with `bin/vibe-kanban-mirror.js` ([#10641](https://github.com/hivecommons/hive/issues/10641)). The mirror is report-only and off by default. It reads `/api/contribute/queue` and `/api/contribute/fleet`, then creates or updates vibe-kanban Issues through the MCP stdio server: queued → To do, leased → In progress, operator-held → Cancelled. Each issue is tagged `hive` and keyed by a `[hive-work-key: …]` description trailer, so reruns are idempotent. Turn it on with `VIBE_KANBAN_MCP_CMD` and `VIBE_KANBAN_PROJECT_ID`; it needs no new credentials. Use `--dry-run` to preview the changes and `--once` to run a single pass. See `src/docs/vibe-kanban.md`.
+
+### Changed
+
+- docs: record opt-in Codex reset redemption ruling and allow-list the guard test (#10731)
+- docs: describe hive.yaml.runtime as the live boot input on K8s and Docker, with the ConfigMap only seeding first boot (#10753, #10754, #10755, #10756, #10757, #10758)
+- test(hub): cover admin notifications handlers, webhook guard and hot-reload paths (#10787)
+- images: bump agy 1.2.13,6662628811079680 -> 1.3.0,6233328509124608 (#10833)
+- docs: renumber Codex reset ADR on v5 (#10840)
+- Shorten Overview and Governor KPI info hovers into compact bucket summaries with one shared Settings/docs footer.
+
+### Fixed
+
+- An agent no longer re-claims the same issue forever when nothing moves between its claims ([#10527](https://github.com/hivecommons/hive/issues/10527)). An agent claim lapses after `agent_ttl_s`, the issue went back into the work lists, and the next kick claimed it again, so an issue only a person could unblock showed as "claimed" for hours (#10512: `scanner` claimed at 15:50Z and again at 17:57Z with no commit, PR or label change in between). The claim ledger now remembers each agent's claims on an issue. When one agent's last `governor.claims.escalate_after_claims` claims (default `2`; negative turns the gate off) on a free issue were followed by no linked or referencing pull request, no referencing commit, no label or assignee change and no close/reopen, the issue is left out of every kick instead of being claimed a third time, labelled `needs-human`, and given one comment listing the claims and how each ended (ADR-0019). The claim machinery's own `claimed`/`preempted:*` labels and the gate's own `needs-human` do not count as progress; a person removing `needs-human` (or `/hive approve`) does, so the next claim goes ahead. If the issue timeline cannot be read, the claim is allowed.
+- A governor kick no longer claims, or posts a 🔒 claim comment on, every issue in the agent's work list every two hours ([#10527](https://github.com/hivecommons/hive/issues/10527)). The kick now only *lists* those issues: a 30-minute hold in the ledger, with no GitHub comment, that keeps relay contributors and other agents off them while the kick is live. The agent claim, with its comment and `claimed` label, is recorded on the agent's first start signal on an issue — its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming the issue — and only those claims count toward `escalate_after_claims`, so an issue that merely sat in a work list is never escalated.
+- A `hive/likely-done` issue is verified once instead of every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527), the #10509 pattern of eight near-identical verification comments). Once an agent has started on the issue after the merged pull request — its verification comment, then the reporter-confirmation request for a human-filed bug — the issue is withheld from kicks until a person (the reporter or a maintainer) comments, labels, assigns, closes or reopens it. If the issue timeline cannot be read, the issue is offered as before.
+- dashboard: Most effective models matches contributor PRs by full owner/repo, reports closed-PR and run-history coverage (reading the rotated run log) for 30d/All, shows — instead of 0% for run rates with no recorded runs, and no longer labels hosted Pi providers as local (#10687, #10688, #10689, #10690)
+- fix: do not claim dependency-blocked issues on kick (#10724)
+- dashboard: Overview tiles show reconciling math for totals (#10727)
+- fix: show stable next update status (#10729)
+- dashboard: restore top navbar and Overview tile layout (#10732)
+- dashboard: stop nesting a <button> inside the Overview KPI card tooltip (#10735)
+- dashboard: portal the version popover out of the sidebar so it can't be clipped (#10739)
+- dashboard: smooth the upgrade bee animation (persist across refreshes, composite-only motion) (#10741)
+- dashboard: ACMM Eval collapsed pill shows the current level only (#10743)
+- Reporter-trust PR holds now honor configured acceptance labels on rationale issues, avoiding a second maintainer sign-off for accepted requests; hold notices explicitly identify the source issue reporter rather than the PR author ([#10771](https://github.com/hivecommons/hive/issues/10771)).
+- Reporter-trust PR holds now raise `needs-human`, persist a human-only escalation reason, identify the original issue reporter in dashboard and hive-advice queues, and clear only the hold's own signal after a human removes `hold` ([#10773](https://github.com/hivecommons/hive/issues/10773), [#10818](https://github.com/hivecommons/hive/issues/10818)).
+- The pre-merge squash sign-off gate no longer rejects the automated release commit: a commit authored and signed off by `hive-release-bot <actions@github.com>` whose diff is confined to `CHANGELOG.md` and `changelog.d/` is merged with a merge commit, never squashed, so it is exempted before the author-login lookup and the verdict no longer flaps on commits-API availability. The GitHub Actions identity (`actions@github.com` / `actions-user`) is now recognised as a bot sign-off, so the same identity on a code-carrying commit is still rejected. Refs #10795.
+- Stabilize the vanity-repair in-flight deduplication regression test by explicitly expiring failure backoff and draining accepted repair workers before assertions (#10813).
+- fix(github): raise needs-human and escalation on reporter-trust PR hold (#10819)
+- fix(dashboard): release-status strip false hub-stale and unknown channel on standalone Podman (#10821)
+- contribute: make clanker PRs carry Closes/Fixes for their issue (#10826)
+- dashboard: left-justify repo card name next to the grab bar (#10851)
+- github: label issues waiting on reporter confirmation and surface them (#10857)
+- dashboard: clarify hide and unhide section toggle (#10862)
+- Dashboard: the navbar's upcoming-agent cards (e.g. the adjudicator) no longer get cut off and run into the bug-report button — the right-hand chip column now keeps its full width and the cards shrink instead (#10869).
+- Fix dashboard agent schedule tiles so actively running agents show RUNNING NOW while the next queued agent alone shows UP NEXT.
+- Fixed the agent Cadences dialog so mode buttons and legacy continuous conversion controls respond and save per-mode settings.
+- Fixed a race in the banked-reset redemption controller where two controllers taking over the same abandoned lock could both proceed and redeem twice with different idempotency keys; takeover is now atomic (#10774).
+- Serialize Codex banked-reset stale-lock takeover with a persistent file-lock guard so concurrent controllers cannot displace a live holder or spend overlapping resets ([#10814](https://github.com/hivecommons/hive/issues/10814)).
+- The public contributor page footer now shows the Hive build from the public `/api/contribute/status` `served_sha` instead of fetching the login-protected `/api/version`, so anonymous visitors on hosted hives no longer always see "Hive version unavailable" (#10682).
+- Fixed the dashboard Cost tiles so the total, sparkline, and per-PR/issue math use the same current cost lineage and hive-attributed outcome counts with auditable divisors.
+- The hourly coverage gate now installs Node.js on self-hosted runners before Go tests that shell out to JavaScript harnesses, so dashboard and hub coverage are scored instead of failing with `node` missing ([#10747](https://github.com/hivecommons/hive/issues/10747)).
+- The post-merge DCO monitor now records the accepted maintainer waiver for v5 squash commit `a8104b0c`, clearing the protected-branch trailer alert for #10746.
+- The post-merge DCO monitor now records the accepted maintainer waivers for v5 squash commits `692d068f` and `b893b01c`, clearing the protected-branch trailer alert for #10767.
+- Centre the navbar agent schedule pills' two text rows within padded borders, keeping status dots and UP NEXT badges aligned and allowing room for theme typography ([#10816](https://github.com/hivecommons/hive/issues/10816)).
+- Fixed the dashboard navbar cascade so the scripted layout toggle no longer forces the topbar out of its three-zone grid.
+- Fixed the dashboard navbar so left, centered running-agent, and right control zones stay distributed without clipping the agent strip.
+- Refuse automated claims on `needs-human` or held issues and release existing automated claims on the next cleanup tick, without disturbing human claims ([#10526](https://github.com/hivecommons/hive/issues/10526)).
+- Stable-channel promotion runs on GitHub-hosted runners again; the self-hosted image lacks `gh`, so every scheduled promotion since the lane move failed and `stable` stopped advancing (#10042).
+- Let automated release PRs run v5 required checks and wait long enough for them to report before merging.
+- Fix the v5 tagged-release backstop so it primes Docker image publication for a busy branch tip instead of waiting indefinitely for a quiet hourly tick.
+- Clear a reporter-trust PR's `needs-human` label after a human removes `hold`, while preserving independent human hand-offs such as fix-loop escalations ([#10817](https://github.com/hivecommons/hive/issues/10817)).
+- The hub's stable-promotion `eligible_at` now reports when a build actually crossed the 24h soak line instead of drifting to "now" on every poll; the hub release card and spoke Version panel say "overdue since …" when that time has passed and promotion has not happened (#10042, #10187).
+- Stable promotion accepts a healthy maintained hive on any later `candidate` build as smoke evidence for an older eligible build, instead of only the exact current candidate; on busy merge days the exact-match rule left the gate with no evidence and `stable` never advanced (#10042).
+- Fixed dashboard theme CSS so custom theme rules cannot override navbar zone placement or center project names.
+- Restore the dashboard upgrade bees' black-and-gold contrast and smooth their orbit loop.
+
 ## 2026-10-05 (v5.136.0)
 
 ### Added

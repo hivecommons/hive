@@ -19,6 +19,10 @@ sync with the Go config schema. `pkg/dashboard` has a guard test that extracts
 those keys from the FAQ panel and asserts each path exists in `config.Config`
 via YAML tags.
 
+## Section help
+
+Every dashboard section title has a small **?** mark. Hovering or focusing it shows a one-sentence summary; clicking it (or pressing Enter) opens that section's entry in [Dashboard sections explained](dashboard-sections.md), the plain-language help page for operators. The help sentences live in one table in `index.html` (`DASHBOARD_SECTION_HELP`), and `dashboardDocsHref` is the single place that builds every help address: a hive built from the `v6` branch or a `v6.x.y` tag opens the `v6` page, anything else opens `v5`. A guard test fails when a section has no help entry or its sentence drifts from the page.
+
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
@@ -28,7 +32,7 @@ Dashboard UI changes should follow the shared [dashboard design system](dashboar
 
 Top-level dashboard sections use the shared section-card shell for their header, border, collapse state, badges, and collapsed summaries. Notices that must stay above the reorderable dashboard — release channel/upgrade status, install/configuration warnings, and the planning intro — live in the pinned `#dashboard-notices` anchor before Overview so browser-local section reordering cannot move them down the page.
 
-The standalone Platform section is no longer part of the default dashboard layout. Its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
+On the v5 line the standalone Platform section is not part of the default dashboard layout; on the v6 line Platform is a top-level section. On v5 its forge, mint-token-service, and skills facts now appear in **Diagnostics → Platform**, keeping the information available without consuming a top-level card. Diagnostics also includes **Quality stats**, a data-driven card rendered from the `quality` agent's configured Stats entries rather than a fixed set of deployment-specific workflow checks. The topbar health dropdown is limited to real spoke health checks from `deepHealth`, so repository workflow stats do not appear there.
 
 ## Topbar and sidebar status
 
@@ -47,7 +51,9 @@ and upgrade availability, and the fleet breaker state.
 
 ## Reorder sections
 
-The main dashboard layout is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The working order is auto-saved in `localStorage` as `hive.dashboard.layout`; ACMM-hidden sections keep their slots, feature-disabled sections are excluded, and the sidebar follows the saved order. Section collapse state and repository card display tweaks are captured with saved layout presets; sidebar jumps temporarily peek collapsed sections open and restore them on the next different jump unless the operator manually keeps the section open. Open the GitHub avatar menu's **Layout** section to save the current working layout as a named preset (default **My layout**), apply/rename/delete up to five saved layouts, export/import a JSON layout, or **Reset layout to default**. Reset asks for confirmation, clears the working layout on this device, and offers a short undo toast. The avatar shows a small dot whenever the working layout differs from the last applied preset or default.
+The main dashboard layout is browser-local and display-only. Use the `⠿` grip in each top-level section header to drag a section, or focus the grip and press Space, Up/Down, then Space/Enter to drop; Escape cancels the keyboard move. The working order is auto-saved in `localStorage` as `hive.dashboard.layout`; ACMM-hidden sections keep their slots, feature-disabled sections are excluded, and the sidebar follows the saved order. Section collapse state, hidden sections, and repository card display tweaks are captured with saved layout presets; sidebar jumps temporarily peek collapsed sections open and restore them on the next different jump unless the operator manually keeps the section open. Open the GitHub avatar menu's **Layout** section to save the current working layout as a named preset (default **My layout**), apply/rename/delete up to five saved layouts, export/import a JSON layout, or **Reset layout to default**. Reset asks for confirmation, clears the working layout on this device, and offers a short undo toast. The avatar shows a small dot whenever the working layout differs from the last applied preset or default.
+
+To hide a dashboard section, hover or focus its left-menu row and press the small eye-off control. The row remains in the sidebar in a muted state, while the matching dashboard card is removed from the main layout. The same control changes to **Unhide <section>** with an eye icon; choosing it, or clicking the hidden row, restores the card in its saved order and jumps to it. Hidden sections are stored locally as `hive.dashboard.hiddenSections`; Overview cannot be hidden.
 
 The Strategy Lab (`dashboard.strategy_lab`) is hidden by default while that
 surface is being reworked. Set `dashboard.strategy_lab: true` to show the
@@ -90,7 +96,7 @@ count without changing the selected window.
 
 ## Throughput
 
-The Throughput panel appears as a nested Advisory sub-section with its header separated from the body card; its subtitle uses the small muted dashboard subtitle style.
+The Throughput panel is a top-level dashboard section with its own sidebar entry, listed under Overview and Governor; its subtitle uses the small muted dashboard subtitle style. For a plain-language summary see [Throughput](dashboard-sections.md#throughput).
 
 The **Throughput** section (`pr-throughput-section`) summarizes
 pull/merge requests and issues across tracked forges. It reads
@@ -204,19 +210,20 @@ client-side issue and PR bands across the selected repository view. Its SVG
 charts reuse the repository-card classifiers for actionable plus held
 issues/PRs, so their totals match the visible band counters and respect the
 Overview settings repo filter without a separate API call. A compact KPI strip
-shows total open issues, total open PRs, actionable now, held, and
-blocked/needs-human. This is the same partition used by the Governor
-actionable issue/PR subtitles. **Total open issues** and **Total open PRs** are
-forge totals for the selected configured repositories from the existing scanner tick:
-open GitHub issues exclude pull requests, while open GitHub pull requests
-include drafts. Their subtitles stay empty so the reconciliation is not split
-across tiles. **Actionable now** is the shared server-side count used by the
-Overview KPI and the Governor collapsed split: open enumerated issues plus open
-enumerated PRs after hold/exempt filters, excluding items in the waiting, done,
-draft, or blocked Overview bands. Its subtitle carries the complete partition,
-for example `41 issues + 17 PRs = 13 actionable + 13 held + 10
-blocked/needs-human + 22 outside`; the held and blocked/needs-human tiles use
-the same server-side terms. The `outside` term is also server-side and is
+renders the partition as an equation: **Total open issues + Total open PRs =
+Actionable now + Held + Blocked/needs-human + Outside**. This is the same
+partition used by the Governor actionable issue/PR subtitles. **Total open
+issues** and **Total open PRs** are forge totals for the selected configured
+repositories from the existing scanner tick: open GitHub issues exclude pull
+requests, while open GitHub pull requests include drafts. Their subtitles show
+the per-kind terms without repeating the headline total. **Actionable now** is
+the shared server-side count used by the Overview KPI and the Governor collapsed
+split: open enumerated issues plus open enumerated PRs after hold/exempt
+filters, excluding items in the waiting, done, draft, or blocked Overview
+bands. The following tiles expose issue/PR splits such as `13 = 5 issues + 8
+PRs`, and the operator glyphs between cards make the full strip read like
+`41 TOTAL OPEN ISSUES + 17 TOTAL OPEN PRS = 13 ACTIONABLE NOW + 13 HELD + 10
+BLOCKED / NEEDS-HUMAN + 22 OUTSIDE`. The `outside` tile is server-side and is
 broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
 row naming the count, rule, current setting, and how to change it for this
 hive. The rows cover hard-suppress labels (`needs-direction`,

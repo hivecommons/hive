@@ -97,6 +97,31 @@ func TestOverviewActionableEquationPartitionsOpenWork(t *testing.T) {
 	}
 }
 
+func TestOverviewActionableEquationSurfacesWaitingOnReporter(t *testing.T) {
+	status := &StatusPayload{Repos: []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		ActionableIssues: []any{github.Issue{Repo: "hivecommons/hive", Number: 1, Title: "ready"}},
+		WorkBreakdown: &github.RepoWorkBreakdown{
+			Issues: github.RepoIssueBreakdown{Actionable: 1, Filtered: 1, ReporterConfirmation: 1},
+		},
+	}}}
+
+	got := (&Server{}).statusWithOverviewBands(status, time.Now()).ActionableNow
+	blocked := overviewTerm(got.IssueEquation, "blocked_needs_human")
+	if blocked == nil || blocked.Count != 1 {
+		t.Fatalf("blocked term = %+v, want one waiting reporter issue", blocked)
+	}
+	for _, row := range blocked.Breakdown {
+		if row.Key == "waiting-on-reporter" {
+			if row.Count != 1 || row.Label != "waiting on reporter" || !strings.Contains(row.DocsHref, "label%3Aneeds-reporter-confirmation") || !strings.Contains(row.DocsHref, "repo%3Ahivecommons%2Fhive") || strings.Contains(row.DocsHref, "github.com/hivecommons/hive/issues") {
+				t.Fatalf("waiting-on-reporter row = %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing waiting-on-reporter row in %+v", blocked.Breakdown)
+}
+
 func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 	reporterTrustEnabled := true
 	status := &StatusPayload{HiveID: "hive-test", Repos: []FrontendRepo{{
@@ -110,8 +135,8 @@ func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 		HeldPrs:    []any{github.PullRequest{Repo: "hivecommons/hive", Number: 11, Title: "held PR", Labels: []string{"hold"}}},
 		WorkBreakdown: &github.RepoWorkBreakdown{
 			Issues: github.RepoIssueBreakdown{
-				Actionable: 2, Hold: 1, Filtered: 21,
-				NeedsHuman: 1, NeedsDirection: 2, NeedsDecision: 3, NeedsSpec: 4, Exempt: 5,
+				Actionable: 2, Hold: 1, Filtered: 27,
+				NeedsHuman: 1, NeedsDirection: 2, NeedsDecision: 3, NeedsSpec: 4, ReporterConfirmation: 6, Exempt: 5,
 				ReporterTriage: 7, HiveAdvisory: 8, DependencyDashboard: 9, Other: 10,
 			},
 			PRs: github.RepoPRBreakdown{Actionable: 1, Hold: 1, Draft: 11, Filtered: 12, Other: 13},
@@ -189,6 +214,8 @@ func TestOverviewKPIRenderedMathSublineSumsToHeadline(t *testing.T) {
 	block := html[start : start+end]
 	script := `
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+` + jsFunc(t, html, "dashboardDocsHref") + `
+` + jsFunc(t, html, "dashboardDocsHrefFromPath") + `
 ` + block + `
 const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   { key: 'held', label: 'held', count: 10 },
@@ -206,12 +233,12 @@ const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   ] }
 ] };
 const subline = renderOverviewTotalPartitionSubline(issueEq);
-const m = subline.match(/(\d+) = (\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+) outside/);
-if (!m) throw new Error('partition subline did not render expected equation: ' + subline);
+const m = subline.match(/(\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+) outside/);
+if (!m) throw new Error('partition subline did not render expected breakdown: ' + subline);
 const nums = m.slice(1).map(Number);
-if (nums[0] !== nums[1] + nums[2] + nums[3] + nums[4]) throw new Error('partition equation does not sum: ' + subline);
+if (42 !== nums[0] + nums[1] + nums[2] + nums[3]) throw new Error('partition terms do not sum to open total: ' + subline);
 const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
-if (outside !== nums[4]) throw new Error('outside breakdown does not sum: ' + subline);
+if (outside !== nums[3]) throw new Error('outside breakdown does not sum: ' + subline);
 const actionSubline = renderActionableEquationSubline(issueEq);
 if (!actionSubline.includes('Outside: items Hive is configured to leave alone.')) throw new Error('compact outside summary missing: ' + actionSubline);
 if (!actionSubline.includes('overview-partition-row')) throw new Error('compact rows missing: ' + actionSubline);
@@ -219,7 +246,7 @@ if (!actionSubline.includes('+1 more')) throw new Error('long outside list was n
 if (!actionSubline.includes('Settings → Labels') || !actionSubline.includes('Learn more ↗') || !actionSubline.includes('fixed buckets')) throw new Error('single footer row missing: ' + actionSubline);
 if (actionSubline.includes('project.issue_filter') || actionSubline.includes('change:') || actionSubline.includes('Open Settings')) throw new Error('tooltip still duplicates settings prose: ' + actionSubline);
 const held = renderOverviewSplitSubline(12, 10, 2, 'held');
-if (held !== '12 held = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
+if (held !== '12 = 10 issues + 2 PRs') throw new Error('held split did not render: ' + held);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -291,8 +318,11 @@ func TestOverviewKPIBindsForgeTotalsAndTooltips10629(t *testing.T) {
 		"Learn more ↗",
 		"aria-describedby",
 		"data-action=\"openConfigDialog\" data-keydown-action=\"openConfigDialog\" data-keys=\"Enter, \" data-prevent=\"1\" data-arg0=\"governor\" data-arg2",
+		"overview-kpi-outside",
 		"Triage buckets: what counts as outside",
 		"project.issue_filter.hard_suppress_labels.needs_direction",
+		"waiting on reporter",
+		"label:needs-reporter-confirmation",
 		"Fixed scanner rule",
 	} {
 		if !strings.Contains(html, want) {
