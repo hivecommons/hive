@@ -12,6 +12,7 @@ func TestApplyCoinEstimateAddsAPIShape(t *testing.T) {
 	s.deps.Config.Governor.Budget.Coins = map[string]config.CoinBudgetConfig{
 		"bob": {TokensPerCoin: 500000, USDPerCoin: 0.50, Label: "BC", Budget: 10},
 	}
+	s.deps.Config.Governor.Budget.USD = 1
 	est := costEstimated{
 		ByAgent:   []costModelEntry{{Name: "scanner"}, {Name: "quality"}},
 		BySession: []costSessionEntry{{SessionID: "s1"}, {SessionID: "s2"}},
@@ -26,6 +27,12 @@ func TestApplyCoinEstimateAddsAPIShape(t *testing.T) {
 	}
 	if est.CoinBudget == nil || *est.CoinBudget != 10 || est.CoinsRemaining == nil || *est.CoinsRemaining != 9.5 {
 		t.Fatalf("coin budget fields = budget %v remaining %v", est.CoinBudget, est.CoinsRemaining)
+	}
+	if est.CoinUSD != 0.25 || est.CoinBudgetUSD == nil || *est.CoinBudgetUSD != 5 {
+		t.Fatalf("coin USD fields = spend %v budget %v", est.CoinUSD, est.CoinBudgetUSD)
+	}
+	if est.USDBudget == nil || *est.USDBudget != 1 || est.USDRemaining == nil || *est.USDRemaining != 0.75 || est.USDBudgetCoins == nil || *est.USDBudgetCoins != 2 {
+		t.Fatalf("USD budget fields = budget %v remaining %v coins %v", est.USDBudget, est.USDRemaining, est.USDBudgetCoins)
 	}
 	if est.ByAgent[0].Coins != 0.5 || est.ByAgent[1].Coins != 0 {
 		t.Fatalf("per-agent coins = %+v", est.ByAgent)

@@ -15896,22 +15896,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderBudgetBar(budget) {
-      if (!budget || (!budget.BUDGET_WEEKLY && !budget.COIN_BUDGET)) return '';
+      if (!budget || (!budget.BUDGET_WEEKLY && !budget.COIN_BUDGET && !budget.USD_BUDGET)) return '';
       const PCT_SAFE = 50;
       const PCT_WARN = 85;
       const coinBudget = Number(budget.COIN_BUDGET) || 0;
       const coinUsed = Number(budget.COINS_USED) || 0;
       const coinLabel = budget.COIN_LABEL || 'coins';
+      const usdBudget = Number(budget.USD_BUDGET) || 0;
+      const usdUsed = Number(budget.USD_USED) || 0;
       const used = budget.BUDGET_USED || 0;
       const weekly = budget.BUDGET_WEEKLY;
       const tokenPct = weekly > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
       const coinPct = coinBudget > 0 ? (coinUsed / coinBudget * 100) : 0;
-      const useCoinPrimary = coinBudget > 0 && (!weekly || coinPct >= tokenPct);
-      const pctUsed = useCoinPrimary ? coinPct : tokenPct;
-      const usedText = useCoinPrimary ? `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}` : `${fmtTokens(used)} / ${fmtTokens(weekly)}`;
-      const secondaryBudgetText = coinBudget > 0 && weekly > 0
-        ? ` · ${useCoinPrimary ? `tokens ${fmtTokens(used)} / ${fmtTokens(weekly)}` : `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}`}`
-        : '';
+      const usdPct = usdBudget > 0 ? (usdUsed / usdBudget * 100) : 0;
+      const choices = [
+        weekly > 0 ? { pct: tokenPct, label: `${fmtTokens(used)} / ${fmtTokens(weekly)}`, name: 'tokens' } : null,
+        coinBudget > 0 ? { pct: coinPct, label: `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}`, name: coinLabel } : null,
+        usdBudget > 0 ? { pct: usdPct, label: `${fmtUSD(usdUsed)} / ${fmtUSD(usdBudget)}`, name: 'USD' } : null,
+      ].filter(Boolean);
+      const primary = choices.slice().sort((a, b) => b.pct - a.pct)[0] || choices[0];
+      const pctUsed = primary ? primary.pct : 0;
+      const usedText = primary ? primary.label : '';
+      const secondaryBudgetText = choices.length > 1 ? ' · ' + choices.filter(c => c !== primary).map(c => `${c.name} ${c.label}`).join(' · ') : '';
       const projPct = budget.PROJECTED_PCT || 0;
       const burnRate = budget.BURN_RATE_HOURLY || 0;
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
@@ -17414,25 +17420,31 @@ function burnAreaChart() {
       const limit = budget && budget.BUDGET_WEEKLY;
       const coinLimit = Number(budget && budget.COIN_BUDGET) || 0;
       const coinLabel = (budget && budget.COIN_LABEL) || 'coins';
-      if (!limit && !coinLimit) {
-        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured, and no coin budget configured — set <b>Total Tokens</b> or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are tokens, not dollars; coin budgets use the configured backend unit. The figures above are dollar ESTIMATES and are not what any limit is enforced against.</div>`;
+      const usdLimit = Number(budget && budget.USD_BUDGET) || 0;
+      if (!limit && !coinLimit && !usdLimit) {
+        return `<div class="cost-subtitle" style="margin-top:10px">No token, dollar, or coin budget configured — set <b>Total Tokens</b>, <b>USD Budget</b>, or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are tokens; Bob dollar/coin budgets use the configured backend conversion.</div>`;
       }
       const used = budget.BUDGET_USED || 0;
       const coinUsed = Number(budget.COINS_USED) || 0;
+      const usdUsed = Number(budget.USD_USED) || 0;
       const tokenPct = limit > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
       const coinPct = coinLimit > 0 ? (coinUsed / coinLimit * 100) : 0;
-      const useCoinPrimary = coinLimit > 0 && (!limit || coinPct >= tokenPct);
-      const pctUsed = useCoinPrimary ? coinPct : tokenPct;
-      const usedLabel = useCoinPrimary ? `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}` : `${fmtTokens(used)} / ${fmtTokens(limit)}`;
-      const secondaryBudgetText = coinLimit > 0 && limit > 0
-        ? ` · ${useCoinPrimary ? `tokens ${fmtTokens(used)} / ${fmtTokens(limit)}` : `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}`}`
-        : '';
+      const usdPct = usdLimit > 0 ? (usdUsed / usdLimit * 100) : 0;
+      const choices = [
+        limit > 0 ? { unit: 'Token', pct: tokenPct, label: `${fmtTokens(used)} / ${fmtTokens(limit)}` } : null,
+        coinLimit > 0 ? { unit: 'Coin', pct: coinPct, label: `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}` } : null,
+        usdLimit > 0 ? { unit: 'Dollar', pct: usdPct, label: `${fmtUSD(usdUsed)} / ${fmtUSD(usdLimit)}` } : null,
+      ].filter(Boolean);
+      const primary = choices.slice().sort((a, b) => b.pct - a.pct)[0] || choices[0];
+      const pctUsed = primary.pct || 0;
+      const usedLabel = primary.label;
+      const secondaryBudgetText = choices.length > 1 ? ' · ' + choices.filter(c => c !== primary).map(c => `${c.unit.toLowerCase()}s ${c.label}`).join(' · ') : '';
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
       const exhausted = !!budget.BUDGET_EXHAUSTED;
       const PCT_BUDGET_WARN = 90;
       const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
       return `<div class="cost-token-budget" style="margin-top:14px;padding-top:var(--sp-5);border-top:1px solid var(--border)">
-        <div class="cost-subtitle mb-3"><b>${useCoinPrimary ? 'Coin' : 'Token'} budget</b> — this is the most-used enforced limit (${useCoinPrimary ? esc(coinLabel) : 'tokens'}, not dollars). Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
+        <div class="cost-subtitle mb-3"><b>${esc(primary.unit)} budget</b> — this is the most-used enforced limit. Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
         <div class="budget-bar">
           <div class="budget-bar-label">
             <span>Used this budget period: ${usedLabel} (${Math.round(pctUsed)}%)${secondaryBudgetText}</span>
@@ -17643,8 +17655,11 @@ function burnAreaChart() {
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
       const coinLabel = est.coin_label || '';
+      const coinEquiv = Number(est.coin_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_usd)}` : '';
+      const coinBudgetEquiv = Number(est.coin_budget_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_budget_usd)}` : '';
+      const usdBudgetEquiv = Number(est.usd_budget_coins) > 0 ? ` (${fmtCoins(est.usd_budget_coins, coinLabel)})` : '';
       const coinStat = coinLabel && Number(est.coins) > 0
-        ? `<div class="cost-stat"><div class="cval" title="Bob backend coin usage estimated from configured tokens-per-coin conversion">${fmtCoins(est.coins, coinLabel)}</div><div class="clabel">Bob coins${est.coin_budget ? ` — ${fmtCoins(est.coins, coinLabel)} of ${fmtCoins(est.coin_budget, coinLabel)}` : ''}</div></div>`
+        ? `<div class="cost-stat"><div class="cval" title="Bob backend coin usage estimated from configured tokens-per-coin conversion">${fmtCoins(est.coins, coinLabel)}${coinEquiv}</div><div class="clabel">Bob coins${est.coin_budget ? ` — ${fmtCoins(est.coins, coinLabel)} of ${fmtCoins(est.coin_budget, coinLabel)}${coinBudgetEquiv}` : ''}${est.usd_budget ? ` · USD cap ${fmtUSD(est.usd_budget)}${usdBudgetEquiv}` : ''}</div></div>`
         : '';
       const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
         ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
@@ -33855,10 +33870,21 @@ function burnAreaChart() {
     function renderGovBudget(b, h) {
       loadBudgetExemptions();
       h = h || {};
+      const bobCoin = ((b.coins || {}).bob) || {};
+      const coinLabel = bobCoin.label || 'BC';
       return `
         <div class="config-field-row">
           <div class="config-field"><label>Total Tokens <span class="config-info">i<span class="config-tooltip">Maximum token budget for the period. When usage approaches this limit, the governor will downgrade models or skip low-priority kicks. Set to 0 to disable budget tracking.</span></span></label><input type="number" value="${b.totalTokens || 0}" data-change-action="gh43"></div>
           <div class="config-field"><label>Period (days) <span class="config-info">i<span class="config-tooltip">Rolling window length in days for token budget accounting. Default is 7 (weekly). The budget resets at the end of each period.</span></span></label><input type="number" value="${b.periodDays || 7}" data-change-action="gh44"></div>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>USD Budget <span class="config-info">i<span class="config-tooltip">Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.</span></span></label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
+          <div class="config-field"><label>${esc(coinLabel)} Budget <span class="config-info">i<span class="config-tooltip">Optional Bob coin cap for the period. Uses the configured Bob coin conversion; confirm the conversion with your Bob team.</span></span></label><input id="gov-budget-coin" type="number" step="0.01" min="0" value="${bobCoin.budget || 0}" data-change-action="gh86"></div>
+        </div>
+        <div class="config-field">
+          <label>Bob budget entry unit</label>
+          <select data-change-action="gh87"><option value="usd">USD</option><option value="coins">${esc(coinLabel)}</option></select>
+          <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:4px">USD and ${esc(coinLabel)} caps are both first-class; set either or both. The governor stops kicks when the first configured cap is exhausted.</div>
         </div>
         <div class="config-field">
           <label>Critical Percent <span class="config-info">i<span class="config-tooltip">When token usage exceeds this percentage of the total budget, the governor enters budget-critical mode: downgrading models to cheaper alternatives and potentially skipping non-essential kicks. Default is 90%.</span></span></label>
@@ -39895,6 +39921,9 @@ function burnAreaChart() {
       gh43: function (event, A) { markDirty('budget','totalTokens',Number(this.value)); },
       gh44: function (event, A) { markDirty('budget','periodDays',Number(this.value)); },
       gh45: function (event, A) { markDirty('budget','criticalPct',Number(this.value)); },
+      gh85: function (event, A) { markDirty('budget','usd',Number(this.value)); },
+      gh86: function (event, A) { markDirty('budget','coinBudget',Number(this.value)); },
+      gh87: function (event, A) { const id=this.value==='coins'?'gov-budget-coin':'gov-budget-usd'; const el=document.getElementById(id); if(el) el.focus(); },
       gh48: function (event, A) { markDirty('sensing','ttlSeconds',Number(this.value)); },
       gh49: function (event, A) { markDirty('sensing','pullbackSeconds',Number(this.value)); },
       gh50: function (event, A) { markDirty('logging','maxSizeMB',Number(this.value)); },

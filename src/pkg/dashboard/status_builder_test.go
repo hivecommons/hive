@@ -1094,6 +1094,21 @@ func TestBuildBudget_WithTokenCollectorSummary(t *testing.T) {
 	}
 }
 
+func TestBuildBudget_USDOnlyBudget(t *testing.T) {
+	gov := governor.New(config.GovernorConfig{}, map[string]config.AgentConfig{}, nil)
+	gov.SetUSDBudget(5)
+	gov.SeedBudget(0, nil, nil, time.Now())
+	gov.UpdateBudgetFromTotalsCoinsAndUSD(0, nil, nil, 0, 6)
+
+	fb := buildBudget(gov, nil)
+	if !fb.Exhausted || fb.ExhaustedUnit != "usd" {
+		t.Fatalf("budget exhausted=%v unit=%q, want usd exhaustion", fb.Exhausted, fb.ExhaustedUnit)
+	}
+	if fb.USDBudget != 5 || fb.USDUsed != 6 || fb.USDRemaining != 0 || fb.PctUsed != 120 {
+		t.Fatalf("usd budget fields = %+v", fb)
+	}
+}
+
 func TestBuildHealth_NilClient_NoCached(t *testing.T) {
 	// Clear any cached state for the duration of this test only; the shared
 	// hook restores whatever was cached before, so this test cannot erase

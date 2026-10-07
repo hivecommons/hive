@@ -156,8 +156,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"maxPRsPerKick":    cfg.Governor.KickLimits.PRsPerKick(),
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
+			"usd":         cfg.Governor.Budget.USD,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
 			"criticalPct": cfg.Governor.Budget.CriticalPct,
+			"coins":       cfg.Governor.Budget.Coins,
 		},
 		"notifications": notifications,
 		"health": map[string]interface{}{
@@ -762,9 +764,11 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	// out-of-range. Nil now means "leave the stored value alone", while an
 	// explicit 0 is still honored (totalTokens: 0 disables budget tracking).
 	var body struct {
-		TotalTokens *int64 `json:"totalTokens"`
-		PeriodDays  *int   `json:"periodDays"`
-		CriticalPct *int   `json:"criticalPct"`
+		TotalTokens *int64   `json:"totalTokens"`
+		USD         *float64 `json:"usd"`
+		CoinBudget  *float64 `json:"coinBudget"`
+		PeriodDays  *int     `json:"periodDays"`
+		CriticalPct *int     `json:"criticalPct"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -775,9 +779,17 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	// the incoming value, omitted fields keep what is already stored. This
 	// keeps a partial update from being judged against a phantom zero.
 	current := s.deps.Config.Governor.Budget
-	totalTokens, periodDays, criticalPct := current.TotalTokens, current.PeriodDays, current.CriticalPct
+	totalTokens, usd, periodDays, criticalPct := current.TotalTokens, current.USD, current.PeriodDays, current.CriticalPct
+	coinCfg, _ := current.CoinConfig("bob")
+	coinBudget := coinCfg.Budget
 	if body.TotalTokens != nil {
 		totalTokens = *body.TotalTokens
+	}
+	if body.USD != nil {
+		usd = *body.USD
+	}
+	if body.CoinBudget != nil {
+		coinBudget = *body.CoinBudget
 	}
 	if body.PeriodDays != nil {
 		periodDays = *body.PeriodDays
@@ -795,7 +807,13 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateGovernorBudget(totalTokens, periodDays, criticalPct); err != nil {
+	if body.CoinBudget != nil && *body.CoinBudget > 0 {
+		if _, ok := current.CoinConfig("bob"); !ok {
+			jsonError(w, "coinBudget requires a configured Bob coin conversion", http.StatusBadRequest)
+			return
+		}
+	}
+	if err := validateGovernorBudget(totalTokens, usd, coinBudget, periodDays, criticalPct); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -803,6 +821,22 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	if body.TotalTokens != nil {
 		s.deps.Config.Governor.Budget.TotalTokens = totalTokens
 		s.deps.Governor.SetBudgetLimit(totalTokens)
+	}
+	if body.USD != nil {
+		s.deps.Config.Governor.Budget.USD = usd
+		s.deps.Governor.SetUSDBudget(usd)
+	}
+	if body.CoinBudget != nil {
+		if s.deps.Config.Governor.Budget.Coins == nil {
+			s.deps.Config.Governor.Budget.Coins = map[string]config.CoinBudgetConfig{}
+		}
+		bob := s.deps.Config.Governor.Budget.Coins["bob"]
+		if existing, ok := current.CoinConfig("bob"); ok {
+			bob = existing
+		}
+		bob.Budget = coinBudget
+		s.deps.Config.Governor.Budget.Coins["bob"] = bob
+		s.deps.Governor.SetCoinBudget(coinBudget, bob.LabelOrDefault())
 	}
 	if body.PeriodDays != nil {
 		s.deps.Config.Governor.Budget.PeriodDays = periodDays

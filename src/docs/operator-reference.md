@@ -291,15 +291,16 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 ```yaml
 governor:
   budget:
+    usd: 25.00                    # optional period cap in Bob-equivalent USD
     coins:
       bob:
         tokens_per_coin: 500000   # example placeholder; confirm with your Bob team
         usd_per_coin: 0.50        # example placeholder; confirm with your Bob team
         label: "BC"
-        budget: 50
+        budget: 50                # optional period cap in Bob coins
 ```
 
-  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, and `HIVE_BOB_COIN_BUDGET` override those values at runtime. When `budget` is positive, the governor treats Bob coin exhaustion exactly like token-budget exhaustion: scheduled, resume, continuous, and CEL kicks stop for non-exempt agents until the window resets or the operator raises/resets the budget.
+  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; confirm them with your Bob team before relying on the defaults.
 
 ### What consumes tokens while agents are paused
 

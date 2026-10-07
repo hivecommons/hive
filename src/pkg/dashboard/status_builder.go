@@ -2228,6 +2228,9 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		CoinBudget:           budget.CoinLimit,
 		CoinsUsed:            budget.CoinSpend,
 		CoinLabel:            budget.CoinLabel,
+		USDBudget:            budget.USDLimit,
+		USDUsed:              budget.USDSpend,
+		ExhaustedUnit:        budget.ExhaustedUnit,
 		LastUpdated:          now.UTC().Format(time.RFC3339),
 		WindowHoursRemaining: windowHoursRemaining,
 	}
@@ -2235,6 +2238,12 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		fb.CoinsRemaining = budget.CoinLimit - budget.CoinSpend
 		if fb.CoinsRemaining < 0 {
 			fb.CoinsRemaining = 0
+		}
+	}
+	if budget.USDLimit > 0 {
+		fb.USDRemaining = budget.USDLimit - budget.USDSpend
+		if fb.USDRemaining < 0 {
+			fb.USDRemaining = 0
 		}
 	}
 
@@ -2267,15 +2276,27 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		if budget.CoinLimit > 0 && budget.CoinSpend >= budget.CoinLimit {
 			fb.Exhausted = true
 		}
+		if budget.USDLimit > 0 && budget.USDSpend >= budget.USDLimit {
+			fb.Exhausted = true
+		}
 		if hasWindow {
 			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
 			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)
 		}
 	}
-	if budget.WeeklyLimit == 0 && budget.CoinLimit > 0 {
+	if budget.WeeklyLimit == 0 && (budget.CoinLimit > 0 || budget.USDLimit > 0) {
 		const pctMultiplier = 100.0
-		fb.PctUsed = budget.CoinSpend / budget.CoinLimit * pctMultiplier
-		fb.Exhausted = budget.CoinSpend >= budget.CoinLimit
+		if budget.CoinLimit > 0 {
+			fb.PctUsed = budget.CoinSpend / budget.CoinLimit * pctMultiplier
+			fb.Exhausted = budget.CoinSpend >= budget.CoinLimit
+		}
+		if budget.USDLimit > 0 {
+			usdPct := budget.USDSpend / budget.USDLimit * pctMultiplier
+			if usdPct > fb.PctUsed {
+				fb.PctUsed = usdPct
+			}
+			fb.Exhausted = fb.Exhausted || budget.USDSpend >= budget.USDLimit
+		}
 		if hasWindow {
 			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
 			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)

@@ -157,6 +157,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
 	}
+	if c.Governor.Budget.USD < 0 {
+		return fmt.Errorf("governor.budget.usd must be non-negative")
+	}
 	for backend, coin := range c.Governor.Budget.Coins {
 		name := strings.TrimSpace(backend)
 		if name == "" {

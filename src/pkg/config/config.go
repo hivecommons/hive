@@ -3712,6 +3712,7 @@ type HealthConfig struct {
 
 type BudgetConfig struct {
 	TotalTokens int64                       `yaml:"total_tokens"`
+	USD         float64                     `yaml:"usd,omitempty" json:"usd,omitempty"`
 	PeriodDays  int                         `yaml:"period_days"`
 	CriticalPct int                         `yaml:"critical_pct"`
 	Coins       map[string]CoinBudgetConfig `yaml:"coins,omitempty"`
@@ -3736,6 +3737,7 @@ const (
 	BobTokensPerCoinEnvVar = "HIVE_BOB_TOKENS_PER_COIN"
 	BobUSDPerCoinEnvVar    = "HIVE_BOB_USD_PER_COIN"
 	BobCoinBudgetEnvVar    = "HIVE_BOB_COIN_BUDGET"
+	BobUSDBudgetEnvVar     = "HIVE_BOB_USD_BUDGET"
 )
 
 func (b BudgetConfig) CoinConfig(backend string) (CoinBudgetConfig, bool) {
@@ -3763,6 +3765,20 @@ func (c CoinBudgetConfig) TokensToCoins(tokens int64) float64 {
 		return 0
 	}
 	return float64(tokens) / c.TokensPerCoin
+}
+
+func (c CoinBudgetConfig) CoinsToUSD(coins float64) float64 {
+	if c.USDPerCoin <= 0 || coins <= 0 {
+		return 0
+	}
+	return coins * c.USDPerCoin
+}
+
+func (c CoinBudgetConfig) USDToCoins(usd float64) float64 {
+	if c.USDPerCoin <= 0 || usd <= 0 {
+		return 0
+	}
+	return usd / c.USDPerCoin
 }
 
 func (c CoinBudgetConfig) LabelOrDefault() string {
@@ -5975,6 +5991,11 @@ func (c *Config) applyCoinBudgetDefaults() {
 	if v := strings.TrimSpace(os.Getenv(BobCoinBudgetEnvVar)); v != "" {
 		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
 			bob.Budget = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobUSDBudgetEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			c.Governor.Budget.USD = parsed
 		}
 	}
 	if bobKey != "bob" {
