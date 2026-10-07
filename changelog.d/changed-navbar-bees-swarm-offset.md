@@ -1,0 +1,1 @@
+- Make the dashboard navbar upgrade bees larger and move their orbit off-centre so they read more like a swarm.
