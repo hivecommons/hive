@@ -277,6 +277,13 @@ For every `hive-serialized` repository:
 3. No pull request merges unless every required check finished successfully on
    the exact head that merges. Missing, queued or running never counts as
    passing; an unknown or empty required-check set means no merge.
+
+**Administration: Read-only is optional for `hive-serialized`.** Without it
+the App cannot read classic branch protection (GitHub answers 403); the lane
+then uses the required checks the branch's rulesets list, and GitHub still
+enforces any classic rule itself at merge time. The lane panel and the ACMM
+merge-queue row show the reason when the required-check set is unknown, for
+example a 403 on a branch whose rulesets require no checks.
 4. The merge call pins the validated head.
 5. Immediately before the merge Hive re-reads the head, the branch tip,
    open/draft state, the target branch, mergeability, the required-check set

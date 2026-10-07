@@ -27487,7 +27487,10 @@ function burnAreaChart() {
       if (window._hiveRole !== 'owner') return '';
       const rr = ((_acmmEvalData && _acmmEvalData.repo_results) || []).find(r => r.repo === repo);
       if (rr && rr.merge_strategy === 'hive-serialized') {
-        return '<span class="muted-xs" style="white-space:nowrap" title="The serialized merge lane is on; the default branch also needs at least one required status check">Lane on — needs required checks</span>';
+        const own = (rr.criteria_results || []).find(r => r.id === c.id);
+        const why = c.unsatisfied_reason || (own && own.unsatisfied_reason) || '';
+        const title = 'The serialized merge lane is on; the default branch also needs at least one required status check' + (why ? ' — ' + why : '');
+        return '<span class="muted-xs" style="white-space:nowrap" title="' + escapeHtml(title) + '">Lane on — needs required checks' + (why ? ' (' + escapeHtml(why) + ')' : '') + '</span>';
       }
       return '<button data-action="acmmUseSerializedLane" data-arg0="' + escapeHtml(repo) + '" data-arg-types="s,t" data-stop="1" ' +
         'style="padding:3px 10px;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer;color:var(--muted);white-space:nowrap" ' +

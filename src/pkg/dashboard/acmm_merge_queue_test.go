@@ -157,6 +157,26 @@ func TestACMMMergeQueueCapability(t *testing.T) {
 	if !strings.Contains(reason, "build, test") {
 		t.Fatalf("lane reason should list required checks in order, got %q", reason)
 	}
+	unknown := ghpkg.BranchRulesResult{Reason: "branch rulesets unreadable: boom"}
+	if _, reason, ok := acmmMergeQueueCapability(config.MergeStrategyHiveSerialized, "main", unknown); ok || reason != unknown.Reason {
+		t.Fatalf("lane without credit = (%q, %v), want rules reason %q", reason, ok, unknown.Reason)
+	}
+	if _, reason, _ := acmmMergeQueueCapability(config.MergeStrategyDirect, "main", unknown); reason != "" {
+		t.Fatalf("direct repo reason = %q, want empty", reason)
+	}
+}
+
+// #10984: a lane repo that earns no credit says why on its row.
+func TestACMMMergeQueue_LaneGapCarriesReason(t *testing.T) {
+	s := mqServer(t, mqFixture{ownerType: "User", rules: `[]`}, config.MergeStrategyHiveSerialized, nil)
+	res := mqFind(t, s.evaluateAllRepos().RepoResults[0].CriteriaResults)
+	if res.Passed || !strings.Contains(res.UnsatisfiedReason, "no required checks found") {
+		t.Fatalf("result = %+v, want a failing row with the rules reason", res)
+	}
+	raw, _ := json.Marshal(res)
+	if !strings.Contains(string(raw), `"unsatisfied_reason":`) {
+		t.Fatalf("serialized result: %s", raw)
+	}
 }
 
 // AC27: the lane with a known, non-empty required-check set satisfies the
@@ -540,6 +560,10 @@ check('other criteria offer nothing', acmmMergeLaneAction({id: 'acmm:claude-md',
 check('no repo offers nothing', acmmMergeLaneAction(failing, '') === '');
 _acmmEvalData = {repo_results: [{repo: 'repo1', merge_strategy: 'hive-serialized'}]};
 check('lane already on explains the gap', acmmMergeLaneAction(failing, 'repo1').includes('needs required checks'));
+check('lane gap without a reason adds none', !acmmMergeLaneAction(failing, 'repo1').includes('('));
+check('lane gap shows the rules reason', acmmMergeLaneAction({id: 'acmm:merge-queue', passed: false, unsatisfied_reason: 'branch rulesets unreadable: 500'}, 'repo1').includes('(branch rulesets unreadable: 500)'));
+_acmmEvalData = {repo_results: [{repo: 'repo1', merge_strategy: 'hive-serialized', criteria_results: [{id: 'acmm:merge-queue', passed: false, unsatisfied_reason: 'rules <x>'}]}]};
+check('lane gap reason from the repo row, escaped', acmmMergeLaneAction(failing, 'repo1').includes('(rules &lt;x&gt;)'));
 window._hiveRole = 'read';
 check('non-owner is not offered the lane', acmmMergeLaneAction(failing, 'repo1') === '');
 
