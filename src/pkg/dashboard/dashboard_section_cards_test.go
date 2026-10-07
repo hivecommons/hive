@@ -180,7 +180,7 @@ func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
 		`Project inception runs on <a href="https://github.com/jumppad-labs/spektacular"`,
 		`summary: '0 facts'`,
 		"kbFactsLabel(kbTotalFactsFromStats",
-		"No lifecycle events in the last 6h.",
+		"No pull requests in the window yet.",
 		"function lcJourneyHasContent(j)",
 		"repo-header-badges",
 		"repo-header-actions",
