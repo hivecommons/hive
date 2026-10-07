@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.141.1)
+
+### Fixed
+
+- Fixed the v5 dashboard Swarm repo card header so long repo names no longer overlap the `auto-merge` toggle or the `swarm`/`pause` chips: the header row now wraps, the name truncates with an ellipsis in its own space, and chips stay inside the card (#10968).
+
 ## 2026-10-07 (v5.141.0)
 
 ### Added
