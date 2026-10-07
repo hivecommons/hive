@@ -2046,7 +2046,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// yet sanitize away to nothing.
 		VersionAbsent:           s.noteVersionAbsent(payload.HiveID, shortSHA(sanitizeHeartbeatField(payload.GitHash))),
 		GitHubAppID:             payload.GitHubAppID,
-		GitHubAppSlug:           payload.GitHubAppSlug,
+		GitHubAppSlug:           normalizeReportedAppSlug(payload.GitHubAppID, payload.GitHubAppSlug),
 		GitHubInstallationID:    payload.GitHubInstallationID,
 		GitHubAPIURL:            payload.GitHubAPIURL,
 		GitHubBaseURL:           payload.GitHubBaseURL,
@@ -4357,8 +4357,26 @@ func (s *HubServer) loadRegistry() {
 	if err := json.Unmarshal(data, &s.registry); err != nil {
 		s.logger.Warn("failed to parse hub registry", "error", err)
 	} else {
-		s.logger.Info("hub registry loaded", "hives", len(s.registry.Hives))
+		normalized := normalizeRegistryAppSlugs(s.registry.Hives)
+		if normalized > 0 {
+			if err := s.saveRegistryNow(); err != nil {
+				s.logger.Warn("failed to persist normalized hub registry app slugs", "normalized", normalized, "error", err)
+			}
+		}
+		s.logger.Info("hub registry loaded", "hives", len(s.registry.Hives), "normalizedAppSlugs", normalized)
 	}
+}
+
+func normalizeRegistryAppSlugs(hives []RegistryEntry) int {
+	normalized := 0
+	for i := range hives {
+		slug := normalizeReportedAppSlug(hives[i].GitHubAppID, hives[i].GitHubAppSlug)
+		if slug != hives[i].GitHubAppSlug {
+			hives[i].GitHubAppSlug = slug
+			normalized++
+		}
+	}
+	return normalized
 }
 
 // recoverArmedUpgrades rebuilds s.heartbeatUpgrade — the in-memory map that

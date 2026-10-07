@@ -1,0 +1,1 @@
+- Normalize legacy public GitHub App slugs in hub registry heartbeats and loaded registry entries.
