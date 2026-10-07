@@ -3739,6 +3739,9 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
 		}
 		b.gov.SetUSDBudget(b.cfg.Governor.Budget.USD)
+		// governor.claims.*_ttl_s apply to claims made or renewed after the
+		// reload; live claims keep their expiry (#10981).
+		b.issueClaims.SetPolicy(b.cfg.Governor.Claims.Policy())
 		// A reload can add or archive repos, which moves every scaled default
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
