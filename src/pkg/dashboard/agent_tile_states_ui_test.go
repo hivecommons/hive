@@ -38,42 +38,51 @@ function assertSame(name, got, want) {
   const w = JSON.stringify(want);
   if (g !== w) throw new Error(name + '\n got  ' + g + '\n want ' + w);
 }
-assertSame('one running agent labels next scheduled agent up next', compact(agentTileStates([
-  { name: 'adjudicator', state: 'running', busy: 'working', nextKickIn: 'now' },
+function assertNoBareNow(name, rows) {
+  rows.forEach(row => { if (row.countdown === 'now') throw new Error(name + ' rendered bare now for ' + row.id); });
+}
+let rows = compact(agentTileStates([
+  { name: 'ci', state: 'running', busy: 'working', busySince: '2026-10-06T11:56:00Z', nextKickIn: 'now' },
+  { name: 'scanner', state: 'running', busy: 'working', busySince: '2026-10-06T11:55:00Z', nextKickIn: 'now' },
+  { name: 'guide', state: 'running', busy: 'idle', nextKickIn: 'now' },
+  { name: 'quality', state: 'running', busy: 'idle', nextKickIn: 'now' }
+], now, { nextAgents: ['ci', 'scanner', 'guide'] }));
+assertSame('two running and one queued labels exactly one non-running agent up next', rows, [
+  { id: 'ci', label: 'running', countdown: 'running 4m', running: true },
+  { id: 'scanner', label: 'running', countdown: 'running 5m', running: true },
+  { id: 'guide', label: 'next', countdown: 'queued', running: false },
+  { id: 'quality', label: null, countdown: '', running: false }
+]);
+assertNoBareNow('queued fixture', rows);
+rows = compact(agentTileStates([
+  { name: 'ci', state: 'running', busy: 'working', busySince: '2026-10-06T11:56:00Z', nextKickIn: 'now' },
+  { name: 'scanner', state: 'running', busy: 'working', busySince: '2026-10-06T11:55:00Z', nextKickIn: 'now' },
+  { name: 'guide', state: 'running', busy: 'idle', nextKickIn: 'now' }
+], now, { nextAgents: ['ci', 'scanner'] }));
+assertSame('running queued agents leave no up next target', rows, [
+  { id: 'ci', label: 'running', countdown: 'running 4m', running: true },
+  { id: 'scanner', label: 'running', countdown: 'running 5m', running: true },
+  { id: 'guide', label: null, countdown: '', running: false }
+]);
+assertNoBareNow('no queued target fixture', rows);
+rows = compact(agentTileStates([
+  { name: 'guide', state: 'running', busy: 'idle', nextKickIn: 'now' },
+  { name: 'quality', state: 'running', busy: 'idle', nextKickIn: 'now' }
+], now, { nextAgents: [] }));
+assertSame('paused governor or empty queue renders no up next', rows, [
+  { id: 'guide', label: null, countdown: '', running: false },
+  { id: 'quality', label: null, countdown: '', running: false }
+]);
+assertNoBareNow('paused fixture', rows);
+rows = compact(agentTileStates([
   { name: 'reviewer', state: 'running', busy: 'idle', nextKickIn: 'in 16m' },
   { name: 'scanner', state: 'running', busy: 'idle', nextKickIn: 'in 38m' }
-], now)), [
-  { id: 'adjudicator', label: 'running', countdown: 'now', running: true },
+], now, { nextAgents: ['reviewer'] }));
+assertSame('future queued agent keeps ETA', rows, [
   { id: 'reviewer', label: 'next', countdown: 'in 16m', running: false },
   { id: 'scanner', label: null, countdown: 'in 38m', running: false }
 ]);
-assertSame('no running agent labels only soonest tile up next', compact(agentTileStates([
-  { name: 'adjudicator', state: 'running', busy: 'idle', nextKickIn: 'in 20m' },
-  { name: 'reviewer', state: 'running', busy: 'idle', nextKickIn: 'in 16m' },
-  { name: 'scanner', state: 'running', busy: 'idle', nextKickIn: 'in 38m' }
-], now)), [
-  { id: 'reviewer', label: 'next', countdown: 'in 16m', running: false },
-  { id: 'adjudicator', label: null, countdown: 'in 20m', running: false },
-  { id: 'scanner', label: null, countdown: 'in 38m', running: false }
-]);
-assertSame('multiple running agents all show running now and first queued agent is up next', compact(agentTileStates([
-  { name: 'adjudicator', running: true, busy: 'idle', nextKickIn: 'in 8m' },
-  { name: 'reviewer', state: 'running', busy: 'working', nextKickIn: 'in 16m' },
-  { name: 'scanner', state: 'running', busy: 'idle', nextKickIn: 'in 38m' }
-], now)), [
-  { id: 'adjudicator', label: 'running', countdown: 'now', running: true },
-  { id: 'reviewer', label: 'running', countdown: 'now', running: true },
-  { id: 'scanner', label: 'next', countdown: 'in 38m', running: false }
-]);
-assertSame('due now is not running without an execution signal', compact(agentTileStates([
-  { name: 'adjudicator', state: 'running', busy: 'idle', nextKickIn: 'now' },
-  { name: 'reviewer', state: 'running', busy: 'idle', nextKickIn: 'now' },
-  { name: 'scanner', state: 'running', busy: 'idle', nextKickIn: 'now' }
-], now)), [
-  { id: 'adjudicator', label: 'next', countdown: 'now', running: false },
-  { id: 'reviewer', label: null, countdown: 'now', running: false },
-  { id: 'scanner', label: null, countdown: 'now', running: false }
-]);
+assertNoBareNow('future queued fixture', rows);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

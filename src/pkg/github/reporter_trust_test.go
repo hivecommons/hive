@@ -682,14 +682,25 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	// stranger's request and an unattended merge.
 	c.prHoldLabel = func(string) bool { return false }
 
+	var reason string
+	c.SetReporterTrustEscalation(func(repo string, number int, value string) bool {
+		if repo != "o/r" || number != 583 {
+			t.Fatalf("escalation target = %s#%d", repo, number)
+		}
+		reason = value
+		return false
+	})
 	reqPath := runReporterTrustWatcher(t, c)
+	if !strings.Contains(reason, "issue #581 filed by @stranger") {
+		t.Fatalf("missing escalation reason: %q", reason)
+	}
 
 	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "authored by the hive", "untrusted reporter", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "authored by the hive", "untrusted **reporter**", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}

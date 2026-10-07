@@ -7097,6 +7097,8 @@ func runEvalCycle(
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
 	}
 	messages = kickGate.Kept
+	govState.PendingKicks = pendingKickAgentsFromMessages(messages)
+	gov.SetPendingKicks(govState.PendingKicks)
 	if notifyProviderBudget {
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
@@ -8347,11 +8349,20 @@ func runEscalationSweep(
 	type prMeta struct{ checks []string }
 	meta := map[string]prMeta{}
 	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	for _, pr := range actionable.PRs.Items {
-		if !isHiveAgentAuthor(cfg, pr.Author) {
+	prs := append([]github.PullRequest(nil), actionable.PRs.Items...)
+	for _, pr := range actionable.PRs.Held {
+		if pr.ReporterTrustReason != "" {
+			prs = append(prs, pr)
+		}
+	}
+	for _, pr := range prs {
+		if !isHiveAgentAuthor(cfg, pr.Author) && pr.ReporterTrustReason == "" {
 			continue
 		}
 		o := escalationObservation(cfg, pr, owners)
+		if pr.ReporterTrustReason != "" {
+			escalationStore.SetReporterTrustReason(o.Repo, o.Number, pr.ReporterTrustReason)
+		}
 		obs = append(obs, o)
 		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: pr.FailingChecks}
 	}

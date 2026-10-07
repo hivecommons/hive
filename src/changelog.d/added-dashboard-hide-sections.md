@@ -1,0 +1,1 @@
+- Add dashboard sidebar controls to hide individual sections while keeping muted show controls in the left menu.

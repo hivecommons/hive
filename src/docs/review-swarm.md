@@ -132,6 +132,8 @@ review:
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
   all_authors: true                         # optional; review every open PR, not only agent-authored ones
   fix_human_prs: false                      # optional; let the fixer push commits to PRs Hive did not open (default off)
+  contributor_prs:
+    base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
 ```
 
@@ -192,6 +194,7 @@ A review-fix kick tells the fixer agent to check out the PR branch and push a co
 
 - `review.all_authors` makes every open PR eligible for **review**, whoever opened it. It never implies pushing.
 - `review.fix_human_prs` (default off) lets the fix kick be dispatched for a PR the hive did **not** open. Owner-only; in the dashboard it sits next to "Review every PR" under Features -> Review Gate -> Reviewers, as "Push fix commits to PRs Hive did not open".
+- `review.contributor_prs.base_sync` (default off) is narrower: it only lets PR follow-up call GitHub's update-branch API for a hive-authored lane PR whose head is in a contributor fork, whose base moved (`behind`/`dirty`), and whose author enabled "allow edits by maintainers". `behind` produces a GitHub-authored merge commit; `dirty` falls back to the base-moved repair note and kick. Fork pushes still do not pass through Hive, so stale-head prevention is a post-push note/kick rather than a true pre-push rejection.
 
 Before every fix kick the planner checks authorship. A PR counts as the hive's own when its author login is an agent (`github.ai_author` or a `[bot]` login), when the audit trail attributes it to one of this hive's agents, or when its body carries the hive attribution trailer (a PR an agent opened on a person's credentials). Anything else gets a fix kick only with `fix_human_prs: true`.
 

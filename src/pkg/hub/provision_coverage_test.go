@@ -48,7 +48,6 @@ func TestProvisionManifestIncludesNodeHealthRBAC(t *testing.T) {
 		"kind: ClusterRole",
 		"name: hive-node-health-reader-{{.Namespace}}",
 		`resources: ["nodes"]`,
-		`resources: ["nodes/proxy"]`,
 		`resources: ["pods"]`,
 		`apiGroups: ["metrics.k8s.io"]`,
 		"kind: ClusterRoleBinding",
@@ -56,6 +55,11 @@ func TestProvisionManifestIncludesNodeHealthRBAC(t *testing.T) {
 		if !strings.Contains(k8sManifestTemplate, want) {
 			t.Fatalf("k8sManifestTemplate missing %q", want)
 		}
+	}
+	// nodes/proxy reaches every kubelet's /exec, /attach and /pods endpoints via
+	// the API server; a per-tenant ServiceAccount must never hold it.
+	if strings.Contains(k8sManifestTemplate, `"nodes/proxy"`) {
+		t.Fatalf("k8sManifestTemplate must not grant nodes/proxy to the tenant ServiceAccount")
 	}
 }
 

@@ -18,7 +18,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Token mint](token-mint.md) — the opt-in `mint:` block (`pkg/mint`): what a minted token grants, key lifecycle, and the trust boundary an operator must get right before enabling it. Companion to [ADR-0007](adr/0007-token-mint.md).
 - [Changelog](../../CHANGELOG.md) — recent user-visible changes and release notes.
 - [Work-source terminology](work-source-terminology.md) — glossary and audit notes for keeping user-facing copy neutral across GitHub, GitLab, Gitea, Linear, Jira, and future work sources.
-- [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, per-line channel ownership (`v5` → `candidate`/`latest`, `v6` → `edge`, `v4` → none), switching a hive to a channel, and the version pill.
+- [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, per-line channel ownership (`v5` → `candidate`/`latest`, `v6` → `edge`, `v4` → none), switching a hive to a channel, the version pill, and the timeline for when a hive follows `stable` after the tag moves.
 - [Digest-verifiable rollback](release-rollback.md) - the operator runbook for pinning a hive back to a prior immutable short-SHA build for all three images (`hive`, `hive-contributor`, `hive-hub`), stopping the hub automation that would undo it, and verifying by digest rather than by tag that the pin landed on the running spoke.
 - [v5 GA readiness bar](v5-ga.md) — measurable release-train, migration, safety, and governance criteria that must be evidenced before v5 can be promoted beyond the active-development `edge` channel.
 - [v5 GA candidate week sequencing](v5-candidate-week.md) — dependency-ordered plan for the remaining human-gated GA-bar steps: candidate-SHA designation, candidate-pinned measurements, the two bound exercises, and the v4 freeze evaluation.
@@ -36,8 +36,10 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Work source providers](integrations/work-source-providers.md) — implement and contribute a provider that maps source-native work items onto `pkg/worksource.WorkSource`.
 - [Hive Labels and Control Signals](labels-and-control-signals.md) — authoritative operator reference for labels, holds, approvals, contributor skip labels, planning labels, and dashboard bands. The old [Hive issue labels](issue-labels.md) page redirects here.
 - [Spoke dashboard](dashboard.md) — the static dashboard FAQ panel contract: not ACMM-gated, no JS/fetch, grouped L1-L6/runs/contributors/claims/cost help, and guarded config-key references.
+- [Dashboard sections explained](dashboard-sections.md) — plain-language operator help for every dashboard section: what it shows, how its numbers are worked out, what to do about them, when it appears, and which settings change it. The **?** mark on each section title opens its entry.
 - [Dashboard feedback](feedback.md) — reporting bugs and requesting features from the spoke dashboard, including diagnostics, screenshot handling, hub relay, user-auth, and fallback issue paths.
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
+- [Dashboard glossary and sidebar IA](dashboard-glossary.md) — the operator-facing names used by the dashboard and the ADR-0018 sidebar information architecture.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
 - [Kubernetes deployment](../../README.md#kubernetes-deployment) — the operator path for Kubernetes: prerequisites, namespace, secret, ConfigMap, PVC, Deployment, Service, Ingress, and published ports. Lives in the root README alongside the Compose and Podman quick starts; the manifests it applies are [`src/deploy/k8s/`](../deploy/k8s/). See also [dashboard route and health checks](health-checks.md) and the Kubernetes CronJob in [backup and restore](backup-restore.md).
@@ -103,6 +105,8 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CLI pins and the automated pin bump](cli-pins.md) — where each agent CLI's version and per-arch digest are pinned in the two Dockerfiles, why they are pinned rather than self-updating, and how `cli-pin-bump.yml` resolves the latest release, recomputes the digests, smokes the image, and opens one labelled PR per CLI.
 - [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](credly-badges.md) — planned integration design; currently a placeholder mapping only.
+- [Battle Log and Hive of the Week](hive-of-the-week.md) — the public showpiece feed for leaderboard pages: scrubbed activity feed, the featured project with embed snippets, and the Gource log.
+- [Contributor social cards](social-cards.md) — public cacheable 1200×630 SVG cards and share landing pages for players, achievements, and leaderboards.
 
 ## Configuration and agents
 

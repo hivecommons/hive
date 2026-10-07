@@ -752,6 +752,9 @@ type FrontendAgent struct {
 	ActionNudges           int    `json:"actionNudges,omitempty"`
 	TransientNudges        int    `json:"transientNudges,omitempty"`
 	CIPollNudges           int    `json:"ciPollNudges,omitempty"`
+	// LastAction is the last issue or PR the agent acted on through the hive
+	// (#10925); see FrontendAgentLastAction.
+	LastAction *FrontendAgentLastAction `json:"lastAction,omitempty"`
 	// KickOutcome is how the last kicked turn ENDED (#7421): "question" (asked
 	// the operator what to do — a defect), "stand-down" (policy refusal —
 	// blocked), "no-op" (reported nothing produced) or "ended". Empty while
@@ -886,6 +889,7 @@ type FrontendGovernor struct {
 	SuspendedStandbys map[string]int     `json:"suspended_standbys,omitempty"`
 	NextKickAt        string             `json:"nextKickAt,omitempty"`
 	NextKickIn        string             `json:"nextKickIn,omitempty"`
+	NextAgents        []string           `json:"nextAgents,omitempty"`
 }
 
 type FrontendThresholds struct {
@@ -1185,6 +1189,7 @@ type TrendHistoryEntry struct {
 	OverviewActionable   int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewOutside      int  `json:"overviewOutside,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -3707,7 +3712,7 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			if !overviewKPIExcludedBand(band) {
 				e.OverviewActionable++
 			}
-			if band == "waiting" {
+			if band == "waiting" || band == "done" {
 				e.OverviewBlockedHuman++
 			}
 		}
@@ -3725,6 +3730,13 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 			}
 		}
 	}
+	totals := status.OverviewTotals
+	if totals.Issues.Forge == 0 && totals.PRs.Forge == 0 && len(status.Repos) > 0 {
+		totals = overviewTotals(status)
+	}
+	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
+	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
+	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
 }
 
 func overviewKPIExcludedBand(band string) bool {
@@ -3755,6 +3767,7 @@ type OverviewKPIHistoryEntry struct {
 	OverviewActionable   *int  `json:"overviewActionable,omitempty"`
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
+	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3767,12 +3780,13 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 	out := make([]OverviewKPIHistoryEntry, 0, len(entries))
 	for _, e := range entries {
 		row := OverviewKPIHistoryEntry{Timestamp: e.Timestamp}
-		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 {
+		if e.OverviewKPI || e.OverviewOpenIssues != 0 || e.OverviewOpenPRs != 0 || e.OverviewActionable != 0 || e.OverviewHeld != 0 || e.OverviewBlockedHuman != 0 || e.OverviewOutside != 0 {
 			row.OverviewOpenIssues = intPtr(e.OverviewOpenIssues)
 			row.OverviewOpenPRs = intPtr(e.OverviewOpenPRs)
 			row.OverviewActionable = intPtr(e.OverviewActionable)
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
+			row.OverviewOutside = intPtr(e.OverviewOutside)
 		}
 		out = append(out, row)
 	}

@@ -381,6 +381,7 @@ func TestSidebarDragHandlesSharePersistedOrder(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`data-nav-order-grip`,
+		`oc-nav-hide-toggle`,
 		`function dashboardSidebarLayoutFromDom()`,
 		`function dashboardApplyOrderFromSidebar()`,
 		`dashboardApplyLayout(layout);dashboardLayoutWrite()`,
@@ -416,6 +417,75 @@ func TestSidebarDragHandlesSharePersistedOrder(t *testing.T) {
 	applySnapshot := jsFunctionBody(t, html, "function dashboardApplySnapshotState(state)")
 	if !strings.Contains(applySnapshot, "ocUpdateSidebarAgents()") {
 		t.Fatal("restoring a saved layout does not refresh the agent sidebar order")
+	}
+}
+
+func TestDashboardSidebarHideSectionsContract(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`var DASHBOARD_HIDDEN_SECTIONS_KEY='hive.dashboard.hiddenSections'`,
+		`var DASHBOARD_HIDE_DENYLIST=['overview-section']`,
+		`function dashboardCanHideSection(id)`,
+		`function dashboardHiddenSectionsRead()`,
+		`function dashboardSetSectionHidden(sectionId,hidden)`,
+		`function toggleDashboardSectionHidden(sectionId)`,
+		`.oc-nav-item.oc-nav-item-hidden`,
+		`.dashboard-section-hidden { display: none !important; }`,
+		`hide.setAttribute('data-action','toggleDashboardSectionHidden')`,
+		`hide.setAttribute('aria-label','Hide '+label)`,
+		`hide.setAttribute('aria-pressed','false')`,
+		`hide.textContent='⊘'`,
+		`btn.textContent=isHidden?'👁':'⊘'`,
+		`item.setAttribute('aria-disabled','true')`,
+		`btn.title=isHidden?'Unhide '+label:'Hide '+label`,
+		`btn.setAttribute('aria-label',(isHidden?'Unhide ':'Hide ')+label)`,
+		`btn.setAttribute('aria-pressed',isHidden?'true':'false')`,
+		`if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("dashboard hide sections contract missing %q", want)
+		}
+	}
+
+	snapshot := jsFunctionBody(t, html, "function dashboardLayoutSnapshot()")
+	if !strings.Contains(snapshot, "dashboardHiddenSectionsRead().forEach") || !strings.Contains(snapshot, "hidden:hidden") {
+		t.Fatal("dashboard layout snapshots do not capture hidden sections")
+	}
+	normalize := jsFunctionBody(t, html, "function dashboardNormalizeSnapshot(value)")
+	if !strings.Contains(normalize, "src.hidden") || !strings.Contains(normalize, "dashboardCanHideSection(id)") {
+		t.Fatal("saved layout import/apply does not normalize hidden sections through the deny-list")
+	}
+	reset := jsFunctionBody(t, html, "async function resetDashboardLayout()")
+	if !strings.Contains(reset, "localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY)") {
+		t.Fatal("dashboard layout reset does not clear hidden sections")
+	}
+
+	applyHidden := jsFunctionBody(t, html, "function dashboardApplyHiddenSections()")
+	for _, want := range []string{
+		"item.classList.toggle('oc-nav-item-hidden',isHidden)",
+		"item.setAttribute('aria-disabled','true')",
+		"else item.removeAttribute('aria-disabled')",
+		"btn.title=isHidden?'Unhide '+label:'Hide '+label",
+		"btn.setAttribute('aria-label',(isHidden?'Unhide ':'Hide ')+label)",
+		"btn.setAttribute('aria-pressed',isHidden?'true':'false')",
+	} {
+		if !strings.Contains(applyHidden, want) {
+			t.Fatalf("dashboard hidden sidebar state does not cover both hide/unhide directions: missing %q", want)
+		}
+	}
+	toggleHidden := jsFunctionBody(t, html, "function toggleDashboardSectionHidden(sectionId)")
+	for _, want := range []string{
+		"var wasHidden=dashboardSectionHidden(sectionId)",
+		"dashboardSetSectionHidden(sectionId,!wasHidden)",
+		"if(wasHidden)ocNavigate(sectionId)",
+	} {
+		if !strings.Contains(toggleHidden, want) {
+			t.Fatalf("dashboard hide control is not wired as a two-way toggle: missing %q", want)
+		}
+	}
+
+	if strings.Contains(html, "section.hidden=isHidden") {
+		t.Fatal("dashboard hide state must not clear existing section-owned hidden attributes")
 	}
 }
 

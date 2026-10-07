@@ -583,6 +583,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			// A reporter-trust hold is a human-only decision at every level, so
 			// it raises needs-human with the hold (hivecommons/hive#10773).
 			holdLabels = reporterTrustHoldLabels()
+			reporter.OwnsNeedsHuman = !res.AlreadyExisted
 		}
 		if lerr := c.AddLabels(ctx, req.Repo, res.Number, holdLabels); lerr != nil {
 			// A missing hold label is a policy failure, not a cosmetic one. Keep
@@ -636,6 +637,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// also carried a reporter-trust reason must not shed the label on
 	// promotion. Best-effort like the #5117 notice — the label is the
 	// enforcement, and the release path re-evaluates and re-posts if needed.
+	if reporter.Held && !res.DuplicateTree {
+		c.recordReporterTrustEscalation(req.Repo, res.Number, reporter.escalationReason())
+	}
 	if reporter.Held && !res.DuplicateTree && !res.AlreadyExisted {
 		if cerr := c.CreateIssueComment(ctx, req.Repo, res.Number, reporterTrustNotice(reporter)); cerr != nil {
 			c.logger.Warn("pr-request watcher: reporter-trust-held PR but could not post the explanation",

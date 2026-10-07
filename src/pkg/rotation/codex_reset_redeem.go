@@ -123,6 +123,10 @@ type codexResetRedeemer struct {
 	dir     string
 	backend string
 	account string
+	// model is the explicitly selected Codex model (hivecommons/hive#10865).
+	// Only weekly windows that apply to it can trigger a redemption; empty
+	// means every window applies.
+	model string
 
 	// consume sends the redemption request; a seam so tests never spawn codex.
 	consume func(ctx context.Context, idempotencyKey string) (json.RawMessage, error)
@@ -160,6 +164,7 @@ func (m *Manager) EnableCodexResetRedeem() {
 		return
 	}
 	m.codexResetRedeem = newCodexResetRedeemer(m.contributorPublishDir, "codex", m.contributorPublishAccount)
+	m.codexResetRedeem.model = m.codexModel
 }
 
 // maybeRedeemCodexReset runs the controller for a fresh openai probe and
@@ -198,8 +203,17 @@ func codexReadingFresh(h Headroom) bool {
 // The kinds match QUOTA_WEEKLY_WINDOW_KINDS in bin/contributor-relay.js.
 // Short-term windows are deliberately ignored: a reset is never spent on them.
 func codexWeeklyExhausted(h Headroom) bool {
+	return codexWeeklyExhaustedForModel(h, "")
+}
+
+// codexWeeklyExhaustedForModel is codexWeeklyExhausted restricted to windows
+// that apply to the selected model (hivecommons/hive#10865): a weekly window
+// scoped to a different model never counts, so another model's exhaustion
+// cannot spend a banked reset. Shared windows always count.
+func codexWeeklyExhaustedForModel(h Headroom, model string) bool {
 	for _, w := range h.Limits {
-		if (w.Kind == "weekly" || w.Kind == "weekly_scoped") && w.PctRemaining <= 0 {
+		if (w.Kind == "weekly" || w.Kind == "weekly_scoped") && w.PctRemaining <= 0 &&
+			codexLimitAppliesToModel(w.Scope[codexScopeModelKey], model) {
 			return true
 		}
 	}
@@ -213,9 +227,14 @@ func codexResetCredits(h Headroom) int {
 	return *h.ResetCreditsAvailable
 }
 
-// codexRedeemTrigger is the full trigger: fresh, weekly at 0%, credit banked.
-func codexRedeemTrigger(h Headroom) bool {
-	return codexReadingFresh(h) && codexWeeklyExhausted(h) && codexResetCredits(h) > 0
+// codexRedeemTrigger is the full trigger: fresh, an applicable weekly window
+// at 0%, credit banked.
+func codexRedeemTrigger(h Headroom, model string) bool {
+	return codexReadingFresh(h) && codexWeeklyExhaustedForModel(h, model) && codexResetCredits(h) > 0
+}
+
+func (r *codexResetRedeemer) weeklyExhausted(h Headroom) bool {
+	return codexWeeklyExhaustedForModel(h, r.model)
 }
 
 // evaluate runs one controller step for the fresh reading h. reread takes a
@@ -224,7 +243,7 @@ func (r *codexResetRedeemer) evaluate(ctx context.Context, h Headroom, reread fu
 	if !codexReadingFresh(h) {
 		return h
 	}
-	if !codexWeeklyExhausted(h) {
+	if !r.weeklyExhausted(h) {
 		// The exhaustion episode is over: forget its attempt record so the
 		// next episode starts clean.
 		r.clearIfPresent()
@@ -257,11 +276,11 @@ func (r *codexResetRedeemer) evaluate(ctx context.Context, h Headroom, reread fu
 	if !codexReadingFresh(fresh) {
 		return h
 	}
-	if !codexWeeklyExhausted(fresh) {
+	if !r.weeklyExhausted(fresh) {
 		r.clearState()
 		return fresh
 	}
-	if !codexRedeemTrigger(fresh) {
+	if !codexRedeemTrigger(fresh, r.model) {
 		return fresh
 	}
 	if st.Status == codexRedeemRedeemed {
@@ -304,8 +323,8 @@ func (r *codexResetRedeemer) evaluate(ctx context.Context, h Headroom, reread fu
 			"reset_credits_before", before,
 			"reset_credits_after", codexResetCreditsLog(after),
 			"refreshed_reading_ok", codexReadingFresh(after),
-			"weekly_exhausted_after", codexWeeklyExhausted(after))
-		if codexReadingFresh(after) && !codexWeeklyExhausted(after) {
+			"weekly_exhausted_after", r.weeklyExhausted(after))
+		if codexReadingFresh(after) && !r.weeklyExhausted(after) {
 			r.clearState()
 		}
 		// Published as-is: a failed re-read publishes unknown and the relay

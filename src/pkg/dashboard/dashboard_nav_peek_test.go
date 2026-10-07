@@ -179,6 +179,8 @@ const document = {
 const history = { replaceState(){} };
 const window = { hiveURLWithHash: h => h };
 function dashboardFeatureSectionHidden(){ return false; }
+function dashboardSectionHidden(){ return false; }
+function dashboardSetSectionHidden(){}
 let _ocSelectedAgent = 'agent';
 function ocStopPanePoll(){}
 function ocUpdateFocusedState(){}

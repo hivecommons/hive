@@ -24,6 +24,20 @@ let _overviewKPIWindow = '24h';
 let _overviewKPILocalScope = 'all';
 let _overviewLastRepos = [];
 const window = { _lastStatus: {} };
+const location = { hash: '', search: '' };
+const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
+const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
+const OVERVIEW_PROJECT_FILTERS = {
+  'open-issues': { label: 'Total open issues', kinds: ['issue'], issueBands: OVERVIEW_ISSUE_BAND_ORDER, bucketKind: 'issues' },
+  'open-prs': { label: 'Total open PRs', kinds: ['pr'], prBands: PR_BAND_ORDER, bucketKind: 'prs' },
+  'actionable-now': { label: 'Actionable now', kinds: ['issue', 'pr'], issueBands: OVERVIEW_ISSUE_BAND_ORDER.filter(b => !['waiting', 'done'].includes(b)), prBands: PR_BAND_ORDER.filter(b => !['waiting', 'draft', 'blocked'].includes(b)) },
+  'held': { label: 'Held', kinds: ['issue', 'pr'], held: true },
+  'blocked-needs-human': { label: 'Blocked / needs-human', kinds: ['issue', 'pr'], issueBands: ['waiting', 'done'], prBands: ['waiting', 'blocked'], issueBuckets: ['needs_human'] },
+  'outside': { label: 'Outside', kinds: ['issue', 'pr'], outside: true }
+};
+let _overviewProjectFilterKey = null;
+let _overviewProjectFilterCount = null;
+function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l => String(l).toLowerCase() === 'needs-human'); }
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
 function renderSparkline(){ return '<svg></svg>'; }
@@ -35,6 +49,8 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewKPIForgeTotals") + `
 ` + jsFunc(t, html, "overviewKPIBreakdownSubline") + `
 ` + jsFunc(t, html, "overviewKPITerm") + `
+` + jsFunc(t, html, "dashboardDocsHref") + `
+` + jsFunc(t, html, "dashboardDocsHrefFromPath") + `
 ` + jsFunc(t, html, "overviewPartitionDocsLink") + `
 ` + jsFunc(t, html, "overviewPartitionSettingsButton") + `
 ` + jsFunc(t, html, "overviewPartitionSummaryLine") + `
@@ -62,9 +78,19 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewKPIWindowControls") + `
 ` + jsFunc(t, html, "overviewKPISparkTitle") + `
 ` + jsFunc(t, html, "overviewKPISpark") + `
+` + jsFunc(t, html, "overviewRepoName") + `
 ` + jsFunc(t, html, "overviewRepoNumber") + `
 ` + jsFunc(t, html, "overviewRepoOpenIssueCount") + `
 ` + jsFunc(t, html, "overviewRepoOpenPRCount") + `
+` + jsFunc(t, html, "overviewProjectFilterSpec") + `
+` + jsFunc(t, html, "overviewRepoTrackedIssueEntries") + `
+` + jsFunc(t, html, "overviewRepoTrackedPREntries") + `
+` + jsFunc(t, html, "overviewProjectBucketCount") + `
+` + jsFunc(t, html, "overviewProjectOutsideIssueCount") + `
+` + jsFunc(t, html, "overviewProjectOutsidePRCount") + `
+` + jsFunc(t, html, "overviewProjectFilterMatchesEntry") + `
+` + jsFunc(t, html, "overviewProjectFilterRepoMatches") + `
+` + jsFunc(t, html, "overviewProjectFilterSummary") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
 const state = { showKPIs: true };
 const repos = [{ issues: 100, prs: 7, heldIssues: [{ number: 501 }], heldPrs: [] }];
@@ -85,29 +111,63 @@ const prSlices = [
   { key: 'draft', count: 0, items: [] },
 ];
 const out = renderOverviewKPIs(repos, issueSlices, prSlices, state);
-const values = [...out.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]);
-assert.equal(values.length, 5);
+const values = [...out.matchAll(/data-overview-kpi-key="([^"]+)" data-overview-kpi-value="([^"]+)"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)/g)].map(m => [m[4], m[3]]);
+assert.equal(values.length, 6);
 for (const [label, value] of values) assert.notEqual(value, '', label + ' rendered an empty KPI value');
+const renderedValues = Object.fromEntries(values.map(([label, value]) => [label, Number(value)]));
 assert.deepEqual(Object.fromEntries(values), {
   'Total open issues': '100',
   'Total open PRs': '7',
-  'Actionable now (issues and PRs)': '103',
+  'Actionable now': '103',
   'Held': '1',
   'Blocked / needs-human': '3',
+  'Outside': '0',
 });
-assert.match(out, />100 issues \+ 7 PRs = 103 actionable \+ [\s\S]*1 held[\s\S]* \+ [\s\S]*3 blocked\/needs-human</);
+assert.equal(
+  renderedValues['Total open issues'] + renderedValues['Total open PRs'],
+  renderedValues['Actionable now'] + renderedValues.Held + renderedValues['Blocked / needs-human'] + renderedValues.Outside
+);
+assert.match(out, /aria-label="100 total open issues \+ 7 total open PRs = 103 actionable now \+ 1 held \+ 3 blocked or needs-human \+ 0 outside"/);
 
 repos[0].issues = 123;
 repos[0].prs = 45;
 const rawOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
-const rawValues = Object.fromEntries([...rawOut.matchAll(/<span class="overview-kpi-value"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)<\/span>/g)].map(m => [m[2], m[1]]));
+const rawValues = Object.fromEntries([...rawOut.matchAll(/data-overview-kpi-key="([^"]+)" data-overview-kpi-value="([^"]+)"[^>]*>([^<]*)<\/span><span class="overview-kpi-label">([^<]*)/g)].map(m => [m[4], m[3]]));
 assert.equal(rawValues['Total open issues'], '123');
 assert.equal(rawValues['Total open PRs'], '45');
+assert.equal(rawValues['Outside'], '61');
 assert.doesNotMatch(out, /Median actionable age/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node overview KPI render failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestOverviewKPIProjectFiltersShareClassificationFunction(t *testing.T) {
+	html := indexHTML(t)
+	render := jsFunc(t, html, "renderOverviewKPIs")
+	summary := jsFunc(t, html, "overviewProjectFilterSummary")
+	predicate := jsFunc(t, html, "overviewProjectFilterRepoMatches")
+	apply := jsFunc(t, html, "overviewApplyKPIProjectFilter")
+	setHash := jsFunc(t, html, "overviewSetProjectFilterHash")
+	for _, want := range []string{
+		"overviewProjectFilterSummary(key, repos, issueSlices, prSlices)",
+		`data-action="overviewApplyKPIProjectFilter"`,
+		`data-arg0="${esc(card.key)}"`,
+	} {
+		if !strings.Contains(render, want) {
+			t.Fatalf("renderOverviewKPIs no longer wires KPI tile counts/clicks through %q", want)
+		}
+	}
+	if !strings.Contains(summary, "overviewProjectFilterRepoMatches(repo, filter).count") {
+		t.Fatal("overviewProjectFilterSummary must count Projects matches through the shared predicate")
+	}
+	if !strings.Contains(predicate, "overviewProjectFilterMatchesEntry(entry, filter)") {
+		t.Fatal("overviewProjectFilterRepoMatches must filter individual issue/PR rows with the shared band predicate")
+	}
+	if !strings.Contains(apply, "overviewSetProjectFilterHash(key)") || !strings.Contains(setHash, "#projects?band=") || !strings.Contains(html, "Filtered by: ${esc(filter.label)}") {
+		t.Fatal("KPI project filters must be deep-linkable and visibly clearable")
 	}
 }
 

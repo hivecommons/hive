@@ -30,7 +30,7 @@ func TestAgentsCollapsedSummaryRendersPerAgentTiles(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"agentsCollapsedTilesHtml(agents, Date.now())",
+		"agentsCollapsedTilesHtml(agents, Date.now(), data.governor)",
 		"if ((sectionId === 'agents-section' || sectionId === 'repos-section') && inner) return inner;",
 	} {
 		if !strings.Contains(html, want) {
@@ -46,16 +46,19 @@ func TestAgentsSidebarLinkAndNavbarUpNextContracts(t *testing.T) {
 		`id="agent-navbar-upnext"`,
 		`class="agent-navbar-upnext"`,
 		`function renderAgentNavbarUpNext(agents, nowMs)`,
-		`agentTileStates(agents, now).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3)`,
+		`agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3)`,
 		`function renderAgentNavbarTileDiff(wrap, list, now)`,
 		`data-agent-key`,
 		`function openAgentsUpNextPanel()`,
 		`data-action="openAgentsUpNextPanel"`,
-		`.agent-navbar-tile { flex: 0 1 clamp(136px, 11vw, 176px);`,
-		`.agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }`,
+		`.agent-navbar-tile { flex: 0 0 auto; min-width: 136px;`,
+		`.agent-navbar-tile .agent-tile-name { grid-column: 1; grid-row: 1; min-width: max-content; overflow: visible; text-overflow: clip; }`,
+		`@container navbar-center (max-width: 560px)`,
+		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
+		`wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';`,
 		`renderAgentNavbarUpNext(agents, Date.now())`,
 		`refreshAgentNavbarUpNextCountdowns(now);`,
-		`@media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }`,
+		`@media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }`,
 		`@media (prefers-reduced-motion: reduce) { .agent-navbar-tile, .agent-navbar-tile.active .agent-tile-dot, .agent-navbar-tile.up-next-pulse { animation: none; transition: none; } }`,
 	} {
 		if !strings.Contains(html, want) {
@@ -121,6 +124,9 @@ function agentIsDisabled(a) { return !!a && a.enabled === false; }
 ` + jsFunc(t, html, "agentCollapsedNextKickMs") + `
 ` + jsFunc(t, html, "agentCollapsedNextLabel") + `
 ` + jsFunc(t, html, "agentTileIsRunning") + `
+` + jsFunc(t, html, "agentTileRunningLabel") + `
+` + jsFunc(t, html, "agentTileCadenceLabel") + `
+` + jsFunc(t, html, "agentTileGovernorQueue") + `
 ` + jsFunc(t, html, "agentCollapsedSortKey") + `
 ` + jsFunc(t, html, "agentTileStates") + `
 ` + jsFunc(t, html, "sortAgentsForCollapsedTiles") + `

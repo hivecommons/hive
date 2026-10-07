@@ -200,7 +200,11 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 		signals = append(signals, Signal{Role: role, Label: "agent-authored by " + role})
 	}
 	if labels["needs-human"] {
-		signals = append(signals, Signal{Glyph: "⚠", Label: "needs human review"})
+		reason := "needs human review"
+		if pr.ReporterTrustReason != "" {
+			reason = pr.ReporterTrustReason
+		}
+		signals = append(signals, Signal{Glyph: "⚠", Label: reason})
 	}
 	if labels["needs-decision"] || labels["2-discussing"] {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
@@ -248,7 +252,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID), Stale: stale, Signals: signals}
+	return PRBandInfo{Band: band, Role: role, Held: held, HoldReason: heldReason(pr.Labels, pr.HiveAttributed, hiveID, pr.ReporterTrustReason), Stale: stale, Signals: signals}
 }
 
 type prReviewInfo struct{ glyph, label string }
@@ -319,13 +323,13 @@ func issueBandSpec(key string, cfg config.DashboardIssueBandsConfig) BandSpec {
 	norm := normalizeIssueBandsConfig(cfg)
 	switch key {
 	case "in-progress":
-		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned, claimed by an agent, or an open PR references it — nothing needed unless it stalls"}
+		return BandSpec{Key: key, Label: "Claimed", Short: "claimed", Rule: "assigned or claimed by an agent — nothing needed unless it stalls"}
 	case "agent-filed":
 		return BandSpec{Key: key, Label: "Needs triage", Short: "triage", Rule: "filed by an agent (agent/<role> label) with no approved-direction label, no human assignee, and self-authorization hold is on for the repo (ACMM < 6 or github.self_authorization_hold=true) — add the label, assign a human, or close it. A human comment also acknowledges for #5117 but is not in the snapshot, so a commented-on proposal still shows here"}
 	case "waiting":
 		return BandSpec{Key: key, Label: "Needs human", Short: "needs human", Rule: "labelled " + strings.Join(norm.WaitingLabels, ", ") + " — a human must unblock or decide before agents continue"}
 	case "done":
-		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " or a merged PR references it — verify the work landed and close the issue"}
+		return BandSpec{Key: key, Label: "Confirm & close", Short: "close?", Rule: "an agent applied " + strings.Join(norm.DoneLabels, ", ") + " — verify the work landed and close the issue"}
 	default:
 		return BandSpec{Key: "ready", Label: "Unclaimed", Short: "unclaimed", Rule: "no other band matched — nobody is assigned, nothing claimed it, and no human gate applies; this does not by itself mean agents will pick it up"}
 	}
@@ -498,7 +502,7 @@ func containsAnyHoldLabel(s string, needles []string) bool {
 	return false
 }
 
-func heldReason(labels []string, hiveAttributed bool, hiveID string) string {
+func heldReason(labels []string, hiveAttributed bool, hiveID string, evidence ...string) string {
 	held := holdLabels(labels, hiveID)
 	parts := make([]string, 0, 3)
 	labelText := ""
@@ -510,6 +514,10 @@ func heldReason(labels []string, hiveAttributed bool, hiveID string) string {
 		labelText = " — label " + strings.Join(quoted, ", ")
 	}
 	parts = append(parts, "On hold"+labelText+": agents will not act on this until the hold label is removed")
+	if len(evidence) > 0 && evidence[0] != "" {
+		parts = append(parts, evidence[0]+", a maintainer must review this")
+		return strings.Join(parts, "; ")
+	}
 	if hiveAttributed {
 		parts = append(parts, "opened by a hive agent — a generic `hold` here is usually the ACMM level gate; the dashboard hive-pause hold is only removed by an operator")
 	}

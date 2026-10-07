@@ -171,6 +171,7 @@ type Client struct {
 	// for the #9665 reporter-trust hold (pr_reporter_trust.go). Both nil
 	// until the boot wiring installs them; nil means "off" and "nobody",
 	// respectively, so an unwired client never holds.
+	reporterTrustEscalation  func(string, int, string) bool
 	reporterTrustMu          sync.RWMutex
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
@@ -537,19 +538,20 @@ type IssueClaimContext struct {
 }
 
 type PullRequest struct {
-	Repo        string    `json:"repo"`
-	Number      int       `json:"number"`
-	Title       string    `json:"title"`
-	Author      string    `json:"author"`
-	AppAuthored bool      `json:"app_authored,omitempty"`
-	Labels      []string  `json:"labels"`
-	Draft       bool      `json:"draft"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ClosedAt    time.Time `json:"closed_at,omitempty"`
-	MergedAt    time.Time `json:"merged_at,omitempty"`
-	State       string    `json:"state,omitempty"`
-	URL         string    `json:"url"`
+	ReporterTrustReason string    `json:"reporter_trust_reason,omitempty"`
+	Repo                string    `json:"repo"`
+	Number              int       `json:"number"`
+	Title               string    `json:"title"`
+	Author              string    `json:"author"`
+	AppAuthored         bool      `json:"app_authored,omitempty"`
+	Labels              []string  `json:"labels"`
+	Draft               bool      `json:"draft"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ClosedAt            time.Time `json:"closed_at,omitempty"`
+	MergedAt            time.Time `json:"merged_at,omitempty"`
+	State               string    `json:"state,omitempty"`
+	URL                 string    `json:"url"`
 	// HiveAttributed is true when the PR body carries the `— hive:`
 	// attribution trailer (HasAttributionTrailer). It is how a PR a hive agent
 	// opened on a PERSON's credentials — a contributor relay, or an operator
@@ -603,6 +605,10 @@ type PullRequest struct {
 	HeadRef  string `json:"head_ref,omitempty"`
 	HeadRepo string `json:"head_repo,omitempty"`
 	FromFork bool   `json:"from_fork,omitempty"`
+	// MaintainerCanModify mirrors GitHub's "allow edits by maintainers"
+	// switch. It is what lets the update-branch API sync a fork PR without
+	// giving Hive direct push access to the contributor's branch.
+	MaintainerCanModify bool `json:"maintainer_can_modify,omitempty"`
 	// BaseRef is the branch the PR targets. Display only: the merge-verdict
 	// reason names it ("has merge conflicts with v4 — needs a rebase") so a
 	// blocked pill says what to do rather than GitHub's enum
@@ -1191,6 +1197,11 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Exempt++
 			continue
 		}
+		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
+			breakdown.Filtered++
+			breakdown.ReporterConfirmation++
+			continue
+		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 			breakdown.Filtered++
 			breakdown.addHardSuppress(suppress)
@@ -1378,6 +1389,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		// Parked before the hold check so a freshly labelled PR lands in the
 		// held partition on this same poll (hivecommons/hive#10781).
 		labels = c.parkClankerRequestedPR(ctx, repo, pr, labels, clankerBudget)
+		labels, reporterTrustReason := c.reconcileReporterTrustSignal(ctx, repo, pr, labels)
 		labels = c.clearReleasedReporterTrustNeedsHuman(ctx, repo, pr.GetNumber(), labels)
 		attrMeta, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		runKey, planRef := ParseRunTrailers(pr.GetBody())
@@ -1408,31 +1420,36 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			if !pr.GetDraft() {
 				headRef, headRepo, fromFork := prHeadOrigin(pr)
 				reqLogins, reqTeams := prRequestedReviews(pr)
+				if reporterTrustReason == "" {
+					reporterTrustReason = c.reporterTrustHeldPRReason(ctx, owner, repoName, pr.GetNumber(), labels)
+				}
 				heldPRs = append(heldPRs, PullRequest{
-					Repo:               repo,
-					Number:             pr.GetNumber(),
-					Title:              pr.GetTitle(),
-					Author:             safeGetLogin(pr.GetUser()),
-					Labels:             labels,
-					CreatedAt:          pr.GetCreatedAt().Time,
-					UpdatedAt:          pr.GetUpdatedAt().Time,
-					State:              pr.GetState(),
-					URL:                pr.GetHTMLURL(),
-					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
-					HiveAttributed:     hasAttr,
-					HiveAgent:          attrMeta.Agent,
-					HiveBackend:        attrMeta.Backend,
-					HiveModel:          attrMeta.Model,
-					HiveRun:            runKey,
-					HivePlan:           planRef,
-					ScopeContract:      scopeContract,
-					HeadSHA:            prHeadSHA(pr),
-					HeadRef:            headRef,
-					HeadRepo:           headRepo,
-					FromFork:           fromFork,
-					BaseRef:            prBaseRef(pr),
-					RequestedReviewers: reqLogins,
-					RequestedTeams:     reqTeams,
+					Repo:                repo,
+					Number:              pr.GetNumber(),
+					Title:               pr.GetTitle(),
+					Author:              safeGetLogin(pr.GetUser()),
+					Labels:              labels,
+					CreatedAt:           pr.GetCreatedAt().Time,
+					UpdatedAt:           pr.GetUpdatedAt().Time,
+					State:               pr.GetState(),
+					URL:                 pr.GetHTMLURL(),
+					ReviewClass:         ClassifyReviewClass(pr.GetTitle(), labels),
+					HiveAttributed:      hasAttr,
+					HiveAgent:           attrMeta.Agent,
+					HiveBackend:         attrMeta.Backend,
+					HiveModel:           attrMeta.Model,
+					HiveRun:             runKey,
+					HivePlan:            planRef,
+					ScopeContract:       scopeContract,
+					ReporterTrustReason: reporterTrustReason,
+					HeadSHA:             prHeadSHA(pr),
+					HeadRef:             headRef,
+					HeadRepo:            headRepo,
+					FromFork:            fromFork,
+					MaintainerCanModify: pr.GetMaintainerCanModify(),
+					BaseRef:             prBaseRef(pr),
+					RequestedReviewers:  reqLogins,
+					RequestedTeams:      reqTeams,
 				})
 			}
 			continue
@@ -1755,6 +1772,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	} else {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
+		pr.MaintainerCanModify = full.GetMaintainerCanModify()
 	}
 
 	checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
@@ -3178,16 +3196,17 @@ type RepoWorkBreakdown struct {
 }
 
 type RepoIssueBreakdown struct {
-	Actionable          int `json:"actionable"`
-	Hold                int `json:"hold"`
-	HiveAdvisory        int `json:"hive_advisory"`
-	DependencyDashboard int `json:"dependency_dashboard"`
-	Filtered            int `json:"filtered"`
-	NeedsHuman          int `json:"needs_human,omitempty"`
-	NeedsDirection      int `json:"needs_direction,omitempty"`
-	NeedsDecision       int `json:"needs_decision,omitempty"`
-	NeedsSpec           int `json:"needs_spec,omitempty"`
-	Exempt              int `json:"exempt,omitempty"`
+	Actionable           int `json:"actionable"`
+	Hold                 int `json:"hold"`
+	HiveAdvisory         int `json:"hive_advisory"`
+	DependencyDashboard  int `json:"dependency_dashboard"`
+	Filtered             int `json:"filtered"`
+	NeedsHuman           int `json:"needs_human,omitempty"`
+	NeedsDirection       int `json:"needs_direction,omitempty"`
+	NeedsDecision        int `json:"needs_decision,omitempty"`
+	NeedsSpec            int `json:"needs_spec,omitempty"`
+	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
+	Exempt               int `json:"exempt,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter

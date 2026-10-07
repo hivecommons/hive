@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/mergelane"
@@ -297,6 +298,7 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 	client.SetOtherNeedsHumanReason(func(repo string, number int) bool {
 		return getEscalationStore().IsEscalated(repo, number)
 	})
+	client.SetReporterTrustEscalation(getEscalationStore().SetReporterTrustReason)
 	// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
 	// re-engage the fix loop instead of abandoning the PR. The hook records a
 	// re-engagement under the escalation store's per-red-SHA cap (shared with
@@ -326,6 +328,9 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
 		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
 		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
+		// #10927/#10933: the agent card's "what is it on" and stale warning
+		// read each agent's last hive-mediated write.
+		dashboard.RecordAgentLastAction(rec, time.Now())
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)

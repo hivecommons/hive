@@ -82,6 +82,8 @@ env:
 
 jobs:
   govulncheck:
+    # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: govulncheck (known vulnerabilities)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
@@ -104,6 +106,8 @@ jobs:
         run: govulncheck ./...
 
   gosec:
+    # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: gosec (insecure patterns)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
@@ -149,6 +153,8 @@ jobs:
         run: gosec -exclude-generated ./...
 
   golangci-lint:
+    # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: golangci-lint
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:

@@ -27,15 +27,18 @@ method=GET
 path=""
 body=""
 state=""
+labels=()
 is_graphql=0
 graphql_number=""
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "-X" ]; then method="$arg"; prev=""; continue; fi
+  if [ "$prev" = "--jq" ]; then prev=""; continue; fi
   if [ "$prev" = "-f" ] || [ "$prev" = "-F" ]; then
     case "$arg" in
       body=*) body="${arg#body=}" ;;
       state=*) state="${arg#state=}" ;;
+      labels[]=*) labels+=("${arg#labels[]=}") ;;
       number=*) graphql_number="${arg#number=}" ;;
     esac
     prev=""
@@ -44,7 +47,7 @@ for arg in "$@"; do
   case "$arg" in
     api) ;;
     graphql) is_graphql=1; path="graphql" ;;
-    -X|-f|-F|-H) prev="$arg" ;;
+    -X|-f|-F|-H|--jq) prev="$arg" ;;
     --paginate|--slurp) ;;
     Accept:*) ;;
     repos/*) path="$arg" ;;
@@ -83,7 +86,11 @@ JSON
   esac
   exit 0
 fi
-printf '%s %s\n' "$method" "$path" >> "$CALL_LOG"
+printf '%s %s' "$method" "$path" >> "$CALL_LOG"
+if [ "${#labels[@]}" -gt 0 ]; then
+  printf ' labels[]=%s' "${labels[@]}" >> "$CALL_LOG"
+fi
+printf '\n' >> "$CALL_LOG"
 
 if [ "$method" = "POST" ]; then
   printf '%s\n' "$body" >> "$BODY_LOG"
@@ -144,7 +151,7 @@ JSON
 JSON
     ;;
   repos/hivecommons/hive/issues/10)
-    printf '{"number":10,"state":"open"}\n'
+    printf '{"number":10,"state":"open","user":{"login":"maintainer"},"labels":[]}\n'
     ;;
   repos/hivecommons/hive/issues/12)
     printf '{"number":12,"state":"closed"}\n'
@@ -153,7 +160,7 @@ JSON
     printf '{"number":13,"state":"open"}\n'
     ;;
   repos/hivecommons/hive/issues/15)
-    printf '{"number":15,"state":"open"}\n'
+    printf '{"number":15,"state":"open","user":{"login":"reporter"},"labels":[]}\n'
     ;;
   repos/hivecommons/hive/issues/20)
     printf '{"number":20,"state":"open"}\n'
@@ -162,7 +169,13 @@ JSON
     printf '{"number":21,"state":"open"}\n'
     ;;
   repos/hivecommons/hive/issues/22)
-    printf '{"number":22,"state":"open"}\n'
+    printf '{"number":22,"state":"open","user":{"login":"reporter"},"labels":[{"name":"needs-reporter-confirmation"}]}\n'
+    ;;
+  repos/hivecommons/hive/collaborators/maintainer/permission)
+    printf 'write\n'
+    ;;
+  repos/hivecommons/hive/collaborators/reporter/permission)
+    printf 'read\n'
     ;;
   repos/hivecommons/hive/issues/10/timeline*)
     printf '[[]]\n'
@@ -228,6 +241,14 @@ if grep -q '^POST repos/hivecommons/hive/issues/10/comments' "$CALL_LOG"; then
 else
   bad "issue #10 was not commented"
 fi
+if grep -q '^POST repos/hivecommons/hive/issues/10/labels' "$CALL_LOG" \
+  && grep -q 'labels\[]=needs-reporter-confirmation' "$CALL_LOG" \
+  && grep -q 'labels\[]=needs-human' "$CALL_LOG"; then
+  pass "refs sweep labels the issue and maintainer reporter for dashboard visibility"
+else
+  bad "refs sweep did not add reporter-confirmation and needs-human labels"
+  cat "$CALL_LOG" | sed 's/^/      | /'
+fi
 
 for issue in 12 13 14 15 16 17; do
   if grep -q "^POST repos/hivecommons/hive/issues/${issue}/comments" "$CALL_LOG"; then
@@ -255,6 +276,12 @@ if printf '%s\n' "$output" | grep -q 'Skipping #12: issue state is closed' \
 else
   bad "expected skip messages were missing"
   echo "$output" | sed 's/^/      | /'
+fi
+if grep -q '^POST repos/hivecommons/hive/issues/15/labels labels\[]=needs-reporter-confirmation' "$CALL_LOG"; then
+  pass "duplicate refs-sweep comments backfill the reporter-confirmation label"
+else
+  bad "duplicate refs-sweep comment did not backfill the reporter-confirmation label"
+  cat "$CALL_LOG" | sed 's/^/      | /'
 fi
 
 : > "$CALL_LOG"

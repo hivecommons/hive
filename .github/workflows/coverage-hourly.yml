@@ -6,6 +6,13 @@ on:
     # its most congested window, and this cron was observed firing every
     # 2-5h instead of hourly (#6627). :23 is not used by any other workflow.
     - cron: '23 * * * *'
+  # Non-schedule backstop (#10877): schedule: delivery is starved (~one tick
+  # per 6-7h), so also measure v5 after each successful post-merge image build,
+  # mirroring tagged-release.yml's workflow_run trigger (#5318). The `gate`
+  # job de-duplicates against cron and repeat events.
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
   workflow_dispatch:
   # No pull_request trigger anymore (#4112). The pre-merge half of this gate —
   # added in #2350's aftermath and moved to v4 in #3903 — now lives in
@@ -25,11 +32,49 @@ on:
   # v2-tests.yml's coverage job; a floor change must land in both.
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
 jobs:
+  gate:
+    # Non-schedule backstop (#10877): repository-wide schedule: delivery is
+    # starved (~one tick per 6-7h), so this workflow also runs when its
+    # upstream workflow completes. Bounded de-dup: skip when another run of
+    # this workflow for the same commit started within the last 30
+    # minutes (cron + event must not double-run).
+    if: >-
+      github.event_name != 'workflow_run' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'v5' )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.dedup.outputs.run }}
+    steps:
+      - name: Skip when a recent run already covers this commit
+        id: dedup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SELF_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          recent=$(gh api "repos/${REPO}/actions/workflows/coverage-hourly.yml/runs?per_page=30&created=>=${since}" \
+            --jq "[.workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | select(.head_sha == env.SHA or (env.EVENT == \"schedule\"))] | length" || echo 0)
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "${recent:-0}" = "0" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${recent} recent coverage-hourly.yml run(s) already cover ${SHA}; skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   coverage:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     # Hard cap so a hung runner / stuck -race build auto-fails instead of
     # blocking PR merges indefinitely (the go test -timeout only bounds the test
@@ -416,7 +461,7 @@ jobs:
     # test failure aborting the run. Now that the gate also runs on
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
-    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success'
+    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: coverage
     permissions:

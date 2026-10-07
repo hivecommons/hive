@@ -177,6 +177,7 @@ type State struct {
 	Cadences      map[string]AgentCadence    `json:"-"`
 	LastKick      map[string]time.Time       `json:"last_kick"`
 	Continuous    map[string]ContinuousState `json:"continuous,omitempty"`
+	PendingKicks  []string                   `json:"pending_kicks,omitempty"`
 	LastEval      time.Time                  `json:"last_eval"`
 	SLAViolations int                        `json:"sla_violations"`
 	// BudgetExhausted mirrors the budget gate as of the last eval: the
@@ -470,6 +471,7 @@ func (g *Governor) EvaluateWithRepoDepths(queueIssues, queuePRs, queueHold, slaV
 	kickReport := g.agentsDueForKickReport()
 	g.continuousAllowInitialCadence = false
 	due := kickReport.due
+	g.state.PendingKicks = agentNamesFromKickKeys(due)
 	g.state.SuppressedLanes = kickReport.suppressedLanes
 	g.state.LanePauseReasons = kickReport.pauseReasons
 
@@ -1417,6 +1419,12 @@ func (g *Governor) validateAgentReportIfPresent(agentName string) (AgentReportRe
 	return record, true
 }
 
+func (g *Governor) SetPendingKicks(agents []string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.state.PendingKicks = append([]string(nil), agents...)
+}
+
 func (g *Governor) GetState() State {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -1446,6 +1454,7 @@ func (g *Governor) GetState() State {
 		Cadences:         cadences,
 		LastKick:         lastKick,
 		Continuous:       continuous,
+		PendingKicks:     append([]string(nil), g.state.PendingKicks...),
 		LastEval:         g.state.LastEval,
 		SLAViolations:    g.state.SLAViolations,
 		BudgetExhausted:  g.state.BudgetExhausted,
@@ -1472,6 +1481,20 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func agentNamesFromKickKeys(keys []string) []string {
+	seen := make(map[string]bool, len(keys))
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		agentName, _ := config.SplitCadenceTargetKey(key)
+		if agentName == "" || seen[agentName] {
+			continue
+		}
+		seen[agentName] = true
+		names = append(names, agentName)
+	}
+	return names
 }
 
 func modeToConfigKey(m Mode) string {

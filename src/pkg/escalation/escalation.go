@@ -115,6 +115,8 @@ const MachineryVersion = 2
 
 // Entry is the persisted per-PR attempt record.
 type Entry struct {
+	// ReporterTrustReason is an independent human-only gate, not a CI failure.
+	ReporterTrustReason string `json:"reporter_trust_reason,omitempty"`
 	// RedSHAs are the distinct head SHAs observed with failing CI, oldest
 	// first. Length == number of failed fix attempts.
 	RedSHAs []string `json:"red_shas"`
@@ -432,6 +434,13 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		key := Key(o.Repo, o.Number)
 		seen[key] = true
 		e := s.entries[key]
+
+		// Human-only policy holds never recover just because CI turns green.
+		if e != nil && e.ReporterTrustReason != "" {
+			e.UpdatedAt = s.now()
+			results[key] = Result{Escalated: true, NeedsLabel: !o.Labeled}
+			continue
+		}
 
 		// The forge label is authoritative in both directions.
 		//
@@ -858,6 +867,30 @@ func (s *Store) MarkLabelApplied(repo string, number int) {
 	s.saveLocked()
 }
 
+// SetReporterTrustReason registers (or releases) a policy gate without
+// overwriting an independent CI escalation. The return value reports that
+// independent escalation, so callers must retain its needs-human label.
+func (s *Store) SetReporterTrustReason(repo string, number int, reason string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := Key(repo, number)
+	e := s.entries[key]
+	if e == nil {
+		if reason == "" {
+			return false
+		}
+		e = &Entry{Machinery: MachineryVersion}
+		s.entries[key] = e
+	}
+	if e.ReporterTrustReason == reason {
+		return e.Escalated
+	}
+	e.ReporterTrustReason = reason
+	e.UpdatedAt = s.now()
+	s.saveLocked()
+	return e.Escalated
+}
+
 // Excerpt returns the stored failure excerpt for a PR ("" if none).
 func (s *Store) Excerpt(repo string, number int) string {
 	s.mu.Lock()
@@ -1104,7 +1137,7 @@ func (s *Store) reEngageEligibleLocked(repo string, number int, headSHA string, 
 	// without consulting the escalated set, unlike the governor reaper). The
 	// amnesty above may have just un-escalated an older-generation entry, in
 	// which case re-engagement proceeds on its fresh budget as intended.
-	if e.Escalated {
+	if e.Escalated || e.ReporterTrustReason != "" {
 		return false
 	}
 	if e.ReEngagements >= MaxReEngagements {

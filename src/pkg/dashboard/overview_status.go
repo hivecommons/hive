@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -104,7 +105,13 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	if s.deps != nil {
 		fullCfg = s.deps.Config
 	}
-	out.ActionableNow = overviewActionableNow(&out, overviewPartitionMetadataFromConfig(fullCfg, status.HiveID))
+	meta := overviewPartitionMetadataFromConfig(fullCfg, status.HiveID)
+	for _, repo := range out.Repos {
+		if name := overviewRepoName(repo); strings.Contains(name, "/") {
+			meta.Repos = append(meta.Repos, name)
+		}
+	}
+	out.ActionableNow = overviewActionableNow(&out, meta)
 	return &out
 }
 
@@ -129,6 +136,7 @@ func overviewTotals(status *StatusPayload) FrontendOverviewTotals {
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_direction", ib.NeedsDirection)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_decision", ib.NeedsDecision)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_spec", ib.NeedsSpec)
+			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_confirmation", ib.ReporterConfirmation)
 			addOverviewBreakdown(totals.Issues.Breakdown, "exempt", ib.Exempt)
 			addOverviewBreakdown(totals.Issues.Breakdown, "filtered", overviewGenericIssueFiltered(ib))
 			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_triage", ib.ReporterTriage)
@@ -174,7 +182,7 @@ func addOverviewBreakdown(dst map[string]int, key string, count int) {
 }
 
 func overviewGenericIssueFiltered(b github.RepoIssueBreakdown) int {
-	named := b.NeedsHuman + b.NeedsDirection + b.NeedsDecision + b.NeedsSpec + b.Exempt
+	named := b.NeedsHuman + b.NeedsDirection + b.NeedsDecision + b.NeedsSpec + b.ReporterConfirmation + b.Exempt
 	return max(0, b.Filtered-named)
 }
 
@@ -224,8 +232,9 @@ func overviewActionableEquations(totals FrontendOverviewTotals, actionableIssues
 	openIssues := totals.Issues.Forge
 	openPRs := totals.PRs.Forge
 	outsideNeedsHuman := totals.Issues.Breakdown["needs_human"]
-	issueBlockedHuman += outsideNeedsHuman
-	issueOutside := max(0, totals.Issues.Outside-outsideNeedsHuman)
+	waitingReporter := totals.Issues.Breakdown["reporter_confirmation"]
+	issueBlockedHuman += outsideNeedsHuman + waitingReporter
+	issueOutside := max(0, totals.Issues.Outside-outsideNeedsHuman-waitingReporter)
 	prOutside := max(0, totals.PRs.Outside+draft)
 	details := overviewPartitionDetails(totals, issueOutside, prOutside, issueBlockedHuman, prBlockedHuman, meta)
 	issueEq := overviewActionableKindEquation("issues", openIssues, actionableIssues, []FrontendActionableEquationTerm{
@@ -274,9 +283,7 @@ func overviewActionableCombinedEquation(totals FrontendOverviewTotals, actionabl
 		{Key: "held", Label: "held", Count: held, Rule: "Open issues and PRs paused by hold labels.", Breakdown: heldBreakdown},
 		{Key: "blocked_needs_human", Label: "blocked/needs-human", Count: blockedHuman, Rule: "Open work waiting on a person, dependency, or mergeability.", Breakdown: blockedBreakdown},
 	}
-	if outside > 0 {
-		terms = append(terms, FrontendActionableEquationTerm{Key: "outside", Label: "outside", Count: outside, Rule: "Open items excluded before they enter Overview bands by this hive's scanner settings.", Breakdown: outsideBreakdown})
-	}
+	terms = append(terms, FrontendActionableEquationTerm{Key: "outside", Label: "outside", Count: outside, Rule: "Open items excluded before they enter Overview bands by this hive's scanner settings.", Breakdown: outsideBreakdown})
 	if other > 0 {
 		terms = append(terms, FrontendActionableEquationTerm{Key: "other", Label: "other", Count: other})
 	}
@@ -371,6 +378,7 @@ func overviewEquationTitle(eq *FrontendActionableEquation, _ FrontendOverviewTot
 }
 
 type overviewPartitionMeta struct {
+	Repos                       []string
 	ExemptLabels                []string
 	RequireLabels               []string
 	ReporterTrustEnabled        bool
@@ -439,22 +447,22 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 	issueDependencyDashboard := totals.Issues.Breakdown["dependency_dashboard"]
 	issueOther := totals.Issues.Breakdown["other"]
 	issueRows := []FrontendActionableBreakdownTerm{
-		overviewBreakdownTerm("needs-direction", "needs-direction", totals.Issues.Breakdown["needs_direction"], "Issue carries a needs-direction hard-suppress label, so Hive waits for maintainer direction before offering it to agents.", "project.issue_filter.hard_suppress_labels.needs_direction", overviewValue(meta.HardSuppressNeedsDirection), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
-		overviewBreakdownTerm("needs-decision", "needs-decision", totals.Issues.Breakdown["needs_decision"], "Issue carries a needs-decision hard-suppress label, so Hive waits for a maintainer decision.", "project.issue_filter.hard_suppress_labels.needs_decision", overviewValue(meta.HardSuppressNeedsDecision), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
-		overviewBreakdownTerm("needs-spec", "needs-spec", totals.Issues.Breakdown["needs_spec"], "Issue carries a needs-spec hard-suppress label, so Hive waits for specification or acceptance criteria.", "project.issue_filter.hard_suppress_labels.needs_spec", overviewValue(meta.HardSuppressNeedsSpec), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard.md#outside-buckets"),
-		overviewBreakdownTerm("exempt-labels", "exempt labels", issueExempt, "Issue matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/labels-and-control-signals.md"),
-		overviewBreakdownTerm("reporter-triage", "reporter triage", issueReporter, "Reporter trust is enabled and the issue author is not trusted until a maintainer adds an allowed triage label.", "project.issue_filter.reporter_trust", overviewReporterValue(meta), "Open Settings → Labels → Reporter trust, or edit hive.yaml project.issue_filter.reporter_trust.", "Labels", "/docs/dashboard.md#overview"),
-		overviewBreakdownTerm("project-issue-filter", "project issue filter", issueFiltered, "Issue lacks every label required by project.issue_filter.require_labels.", "project.issue_filter.require_labels", overviewValue(meta.RequireLabels), "Open Settings → Labels to change require labels, or edit hive.yaml project.issue_filter.require_labels.", "Labels", "/docs/dashboard.md#overview"),
-		overviewBreakdownTerm("standing-meta-advisory", "standing meta/advisory", issueAdvisory, "Hive advisory reports are standing meta issues, not work to assign.", "standing meta title/label patterns", "hive advisory title or hive/advisory label", "Close/rename the advisory issue or remove the advisory label if it should become work.", "", "/docs/labels-and-control-signals.md"),
-		overviewBreakdownTerm("dependency-dashboard", "dependency dashboard", issueDependencyDashboard, "Bot Dependency Dashboard issues are control panels, not actionable work.", "standing meta title/author patterns", "Dependency Dashboard from renovate[bot]/dependabot[bot]", "Rename/close the dashboard issue, or file concrete child work instead.", "", "/docs/dashboard.md#overview"),
-		overviewBreakdownTerm("hold-adjacent-other-issues", "hold-adjacent/other issues", issueOther, "Open issue did not enter an explicit scanner bucket; this is the safety remainder.", "enumeration fallback", "unclassified open issue remainder", "Check labels and scanner rules; if this persists, add a dedicated classifier.", "", "/docs/dashboard.md#overview"),
+		overviewBreakdownTerm("needs-direction", "needs-direction", totals.Issues.Breakdown["needs_direction"], "Issue carries a needs-direction hard-suppress label, so Hive waits for maintainer direction before offering it to agents.", "project.issue_filter.hard_suppress_labels.needs_direction", overviewValue(meta.HardSuppressNeedsDirection), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("needs-decision", "needs-decision", totals.Issues.Breakdown["needs_decision"], "Issue carries a needs-decision hard-suppress label, so Hive waits for a maintainer decision.", "project.issue_filter.hard_suppress_labels.needs_decision", overviewValue(meta.HardSuppressNeedsDecision), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("needs-spec", "needs-spec", totals.Issues.Breakdown["needs_spec"], "Issue carries a needs-spec hard-suppress label, so Hive waits for specification or acceptance criteria.", "project.issue_filter.hard_suppress_labels.needs_spec", overviewValue(meta.HardSuppressNeedsSpec), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("exempt-labels", "exempt labels", issueExempt, "Issue matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("reporter-triage", "reporter triage", issueReporter, "Reporter trust is enabled and the issue author is not trusted until a maintainer adds an allowed triage label.", "project.issue_filter.reporter_trust", overviewReporterValue(meta), "Open Settings → Labels → Reporter trust, or edit hive.yaml project.issue_filter.reporter_trust.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("project-issue-filter", "project issue filter", issueFiltered, "Issue lacks every label required by project.issue_filter.require_labels.", "project.issue_filter.require_labels", overviewValue(meta.RequireLabels), "Open Settings → Labels to change require labels, or edit hive.yaml project.issue_filter.require_labels.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("standing-meta-advisory", "standing meta/advisory", issueAdvisory, "Hive advisory reports are standing meta issues, not work to assign.", "standing meta title/label patterns", "hive advisory title or hive/advisory label", "Close/rename the advisory issue or remove the advisory label if it should become work.", "", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("dependency-dashboard", "dependency dashboard", issueDependencyDashboard, "Bot Dependency Dashboard issues are control panels, not actionable work.", "standing meta title/author patterns", "Dependency Dashboard from renovate[bot]/dependabot[bot]", "Rename/close the dashboard issue, or file concrete child work instead.", "", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("hold-adjacent-other-issues", "hold-adjacent/other issues", issueOther, "Open issue did not enter an explicit scanner bucket; this is the safety remainder.", "enumeration fallback", "unclassified open issue remainder", "Check labels and scanner rules; if this persists, add a dedicated classifier.", "", "/docs/dashboard-sections.md#overview"),
 	}
 	issueRows = overviewExactOutsideRows(issueRows, issueOutside, "hold-adjacent-other-issues")
 
 	prRows := []FrontendActionableBreakdownTerm{
-		overviewBreakdownTerm("exempt-pr-labels", "exempt PR labels", totals.PRs.Breakdown["filtered"], "PR matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/labels-and-control-signals.md"),
-		overviewBreakdownTerm("draft-prs", "draft PRs", totals.PRs.Breakdown["draft"], "Draft pull requests stay outside Actionable now until marked ready for review.", "GitHub draft PR state", "draft=true", "Use GitHub's Ready for review button when the PR should count.", "", "/docs/dashboard.md#overview"),
-		overviewBreakdownTerm("hold-adjacent-other-prs", "hold-adjacent/other PRs", totals.PRs.Breakdown["other"], "Open PR did not enter an explicit scanner bucket; this is the safety remainder.", "enumeration fallback", "unclassified open PR remainder", "Check labels, draft state, and scanner rules; if this persists, add a dedicated classifier.", "", "/docs/dashboard.md#overview"),
+		overviewBreakdownTerm("exempt-pr-labels", "exempt PR labels", totals.PRs.Breakdown["filtered"], "PR matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("draft-prs", "draft PRs", totals.PRs.Breakdown["draft"], "Draft pull requests stay outside Actionable now until marked ready for review.", "GitHub draft PR state", "draft=true", "Use GitHub's Ready for review button when the PR should count.", "", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("hold-adjacent-other-prs", "hold-adjacent/other PRs", totals.PRs.Breakdown["other"], "Open PR did not enter an explicit scanner bucket; this is the safety remainder.", "enumeration fallback", "unclassified open PR remainder", "Check labels, draft state, and scanner rules; if this persists, add a dedicated classifier.", "", "/docs/dashboard-sections.md#overview"),
 	}
 	prRows = overviewExactOutsideRows(prRows, prOutside, "hold-adjacent-other-prs")
 
@@ -462,19 +470,33 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 		IssueOutside: issueRows,
 		PROutside:    prRows,
 		IssueHeld: []FrontendActionableBreakdownTerm{
-			overviewBreakdownTerm("issue-hold-labels", "held issues", totals.Issues.Held, "Issue carries a hold label and is intentionally parked for a maintainer.", "github.HoldLabels + hive scoped hold label", overviewValue(meta.HoldLabels), "Remove the hold label from the issue, or use the dashboard hold toggle.", "Labels", "/docs/labels-and-control-signals.md"),
+			overviewBreakdownTerm("issue-hold-labels", "held issues", totals.Issues.Held, "Issue carries a hold label and is intentionally parked for a maintainer.", "github.HoldLabels + hive scoped hold label", overviewValue(meta.HoldLabels), "Remove the hold label from the issue, or use the dashboard hold toggle.", "Labels", "/docs/dashboard-sections.md#overview"),
 		},
 		PRHeld: []FrontendActionableBreakdownTerm{
-			overviewBreakdownTerm("pr-hold-labels", "held PRs", totals.PRs.Held, "PR carries a hold label and is intentionally parked for a maintainer.", "github.HoldLabels + hive scoped hold label", overviewValue(meta.HoldLabels), "Remove the hold label from the PR, or use the dashboard hold toggle.", "Labels", "/docs/labels-and-control-signals.md"),
+			overviewBreakdownTerm("pr-hold-labels", "held PRs", totals.PRs.Held, "PR carries a hold label and is intentionally parked for a maintainer.", "github.HoldLabels + hive scoped hold label", overviewValue(meta.HoldLabels), "Remove the hold label from the PR, or use the dashboard hold toggle.", "Labels", "/docs/dashboard-sections.md#overview"),
 		},
 		IssueBlocked: []FrontendActionableBreakdownTerm{
-			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label after the person finishes.", "Labels", "/docs/dashboard.md#outside-buckets"),
-			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard.md#overview"),
+			overviewBreakdownTerm("needs-human", "needs-human", totals.Issues.Breakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label after the person finishes.", "Labels", "/docs/dashboard-sections.md#overview"),
+			overviewBreakdownTerm("waiting-on-reporter", "waiting on reporter", totals.Issues.Breakdown["reporter_confirmation"], "Issue carries needs-reporter-confirmation, so Hive is waiting for confirmation before closing.", "label:needs-reporter-confirmation", "is:open label:needs-reporter-confirmation", "Use the linked GitHub search, then reply /fixed or add new evidence.", "", overviewReporterSearchHref(meta.Repos)),
+			overviewBreakdownTerm("issue-waiting-band", "waiting/confirm-close issue bands", max(0, issueBlocked-totals.Issues.Breakdown["needs_human"]-totals.Issues.Breakdown["reporter_confirmation"]), "Overview waiting and confirm-close issues include open dependency links, claimed waiting states, likely-done confirmation, or human gates.", "overview issue band specs", "server-provided overview_bands.issues", "Resolve the dependency or clear the waiting/confirmation signal shown on the issue pill.", "", "/docs/dashboard-sections.md#overview"),
 		},
 		PRBlocked: []FrontendActionableBreakdownTerm{
-			overviewBreakdownTerm("pr-blocked-band", "blocked/waiting PR band", prBlocked, "Overview PR blocked/waiting bands cover merge conflicts, requested human review, needs-human, or other PR gates.", "overview PR band specs", "server-provided overview_bands.prs", "Resolve mergeability/review gates or clear the needs-human signal shown on the PR pill.", "", "/docs/dashboard.md#overview"),
+			overviewBreakdownTerm("pr-blocked-band", "blocked/waiting PR band", prBlocked, "Overview PR blocked/waiting bands cover merge conflicts, requested human review, needs-human, or other PR gates.", "overview PR band specs", "server-provided overview_bands.prs", "Resolve mergeability/review gates or clear the needs-human signal shown on the PR pill.", "", "/docs/dashboard-sections.md#overview"),
 		},
 	}
+}
+
+// overviewReporterSearchHref searches the hive's watched repos; without any it
+// points at the docs instead of another project's issues.
+func overviewReporterSearchHref(repos []string) string {
+	if len(repos) == 0 {
+		return "/docs/dashboard.md#outside-buckets"
+	}
+	q := "is:open label:needs-reporter-confirmation"
+	for _, r := range repos {
+		q += " repo:" + r
+	}
+	return "https://github.com/issues?q=" + url.QueryEscape(q)
 }
 
 func overviewBreakdownTerm(key, label string, count int, rule, settingPath, settingValue, how, tab, docs string) FrontendActionableBreakdownTerm {

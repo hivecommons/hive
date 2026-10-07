@@ -376,11 +376,42 @@ func TestNilLedgerIsSafe(t *testing.T) {
 	}
 }
 
+func TestClaimCommentNeverShowsStaleExpiry(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	l, err := New("", DefaultPolicy(), Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.SetNow(func() time.Time { return now })
+	req := Request{Repo: "o/r", Issue: 4, Holder: "scanner", Kind: KindAgent}
+	first, err := l.Claim(req)
+	if err != nil || first.Outcome != OutcomeClaimed {
+		t.Fatalf("first claim: %+v err=%v", first, err)
+	}
+	posted := ClaimComment(first.Claim)
+	now = now.Add(90 * time.Minute)
+	renewed, err := l.Claim(req)
+	if err != nil || renewed.Outcome != OutcomeRenewed {
+		t.Fatalf("renew: %+v err=%v", renewed, err)
+	}
+	if !renewed.Claim.ExpiresAt.After(first.Claim.ExpiresAt) {
+		t.Fatal("renewal did not move the expiry")
+	}
+	if strings.Contains(posted, " UTC") || strings.Contains(posted, "until ") {
+		t.Fatalf("visible comment prints a clock time that goes stale on renewal:\n%s", posted)
+	}
+	for _, want := range []string{"lasts 2h0m0s without activity", "renews while the work continues"} {
+		if !strings.Contains(posted, want) {
+			t.Fatalf("comment missing %q:\n%s", want, posted)
+		}
+	}
+}
+
 func TestComments(t *testing.T) {
 	c := Claim{Repo: "o/r", Issue: 4, Holder: "alice", Kind: KindHuman, Hive: "h1", Session: "laptop",
 		ExpiresAt: time.Date(2026, 9, 22, 16, 0, 0, 0, time.UTC)}
 	got := ClaimComment(c)
-	for _, want := range []string{"<!-- hive:claim who=alice kind=human session=laptop hive=h1 until=2026-09-22T16:00:00Z -->", "🔒 Claimed by @alice (human on hive h1) until 2026-09-22 16:00 UTC"} {
+	for _, want := range []string{"<!-- hive:claim who=alice kind=human session=laptop hive=h1 until=2026-09-22T16:00:00Z -->", "🔒 Claimed by @alice (human on hive h1)."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("ClaimComment missing %q:\n%s", want, got)
 		}

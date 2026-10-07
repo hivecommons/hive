@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -36,6 +37,12 @@ func TestBuildAgentMessageWithKickTemplate(t *testing.T) {
 	}
 	if len(msg) > 0 && !contains(msg, "[agent:scanner]") {
 		t.Error("should contain agent header")
+	}
+	if !contains(msg, "Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work") {
+		t.Fatalf("custom kick template should receive shared governor work-source rule:\n%s", msg)
+	}
+	if strings.Index(msg, "Do not run `gh pr list`") > strings.Index(msg, "Review all open issues") {
+		t.Fatalf("shared governor work-source rule should precede custom template body:\n%s", msg)
 	}
 }
 

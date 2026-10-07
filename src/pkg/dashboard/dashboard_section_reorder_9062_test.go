@@ -29,6 +29,7 @@ var dashboardLayoutIDs9062 = []string{
 	"nous-section",
 	"logs-section",
 	"agents-section",
+	"agent-activity-section",
 	"faq-section",
 }
 
@@ -54,7 +55,7 @@ var dashboardDefaultNavOrder9062 = []string{
 
 var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','platform-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder
@@ -81,6 +82,8 @@ var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
 var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
 var DASHBOARD_LAYOUT_PRESETS_KEY='hive.layout.presets';
 var DASHBOARD_LAYOUT_APPLIED_KEY='hive.layout.applied';
+var DASHBOARD_HIDDEN_SECTIONS_KEY='hive.dashboard.hiddenSections';
+var DASHBOARD_HIDE_DENYLIST=['overview-section'];
 var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
 var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
 var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
@@ -225,7 +228,7 @@ func TestDashboardApplyResetAndSidebarSort(t *testing.T) {
 		t.Skip("node not on PATH — dashboard layout apply/sidebar behavior was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	funcs := []string{"dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSidebarNavItems", "dashboardSortSidebar", "resetDashboardLayout"}
+	funcs := []string{"dashboardCanHideSection", "dashboardHiddenSectionsRead", "dashboardHiddenSectionsWrite", "dashboardSectionHidden", "dashboardApplyHiddenSections", "dashboardEnsureSections", "dashboardRegionEl", "dashboardCardEl", "dashboardLayoutAnnounce", "dashboardLayoutAllIds", "dashboardLayoutNormalize", "dashboardLayoutCurrent", "dashboardLayoutEquals", "dashboardLayoutExtraKeys", "dashboardLayoutSnapshot", "dashboardNormalizeSnapshot", "dashboardSnapshotEquals", "dashboardLayoutDefaultSnapshot", "dashboardReadLayoutPresets", "dashboardWriteLayoutPresets", "dashboardReadAppliedLayout", "dashboardMarkAppliedLayout", "dashboardRenderLayoutPresets", "dashboardUpdateLayoutMenuState", "dashboardUpdateResetButton", "dashboardLayoutWrite", "dashboardIsSectionNode", "dashboardTopAnchor", "dashboardPinNoticeAnchor", "dashboardFirstSection", "dashboardInsertSection", "dashboardApplyLayout", "dashboardSidebarNavItems", "dashboardSortSidebar", "resetDashboardLayout"}
 	var b strings.Builder
 	b.WriteString(dashboardLayoutPreamble9062())
 	b.WriteString(`
@@ -233,6 +236,7 @@ class El {
   constructor(id, attr, val){ this.id=id; this.children=[]; this.parentElement=null; this.attrs={}; this.style={}; this.hidden=false; this.textContent=''; this.innerHTML=''; this.classList={toggle(){},add(){},remove(){},contains(){return false}}; if(attr)this.attrs[attr]=val; }
   getAttribute(n){ return this.attrs[n] || null; }
   setAttribute(n,v){ this.attrs[n]=v; }
+  removeAttribute(n){ delete this.attrs[n]; }
   appendChild(ch){ if(ch.parentElement) ch.parentElement.children=ch.parentElement.children.filter(x=>x!==ch); ch.parentElement=this; this.children.push(ch); return ch; }
   insertBefore(ch,before){ if(ch.parentElement) ch.parentElement.children=ch.parentElement.children.filter(x=>x!==ch); ch.parentElement=this; const i=this.children.indexOf(before); if(i<0)this.children.push(ch); else this.children.splice(i,0,ch); return ch; }
   querySelector(sel){ if(sel === ':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR) return this.children.find(c=>c.attrs['data-dashboard-section']); return null; }
@@ -305,12 +309,12 @@ func TestDashboardLayoutNormalizeSlotsMissingSectionsForStaleSavedLayout(t *test
 const stale = {v:1, main:['runs-section','overview-section','governor','pr-throughput-section','advisory-section','token-panel','cost-panel','repos-section','acmm-eval-section','approvals-section','platform-section','audit-section','review-queue-section','nous-section','inception-section','knowledge-section','contributors-section','debug-section','faq-section']};
 const got = dashboardLayoutNormalize(stale).main;
 if (got[got.length-1] !== 'faq-section') throw new Error('persisted FAQ move not respected: '+JSON.stringify(got));
-const middle = got.slice(got.indexOf('nous-section'), got.indexOf('nous-section')+4).join(',');
-if (middle !== 'nous-section,logs-section,agents-section,inception-section') throw new Error('missing sections not slotted by neighbours: '+middle);
+const middle = got.slice(got.indexOf('nous-section'), got.indexOf('nous-section')+5).join(',');
+if (middle !== 'nous-section,logs-section,agents-section,agent-activity-section,inception-section') throw new Error('missing sections not slotted by neighbours: '+middle);
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
-if (moved.length !== 21) throw new Error('missing sections not restored: '+moved.length);
+if (moved.length !== 22) throw new Error('missing sections not restored: '+moved.length);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

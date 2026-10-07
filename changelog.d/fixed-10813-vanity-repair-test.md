@@ -1,1 +1,0 @@
-- Stabilize the vanity-repair in-flight deduplication regression test by explicitly expiring failure backoff and draining accepted repair workers before assertions (#10813).

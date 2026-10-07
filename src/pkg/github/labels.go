@@ -8,8 +8,9 @@ type issueLabelDefinition struct {
 }
 
 const (
-	issueNeedsDirectionLabel = "needs-direction"
-	issueNeedsSpecLabel      = "needs-spec"
+	issueNeedsDirectionLabel            = "needs-direction"
+	issueNeedsSpecLabel                 = "needs-spec"
+	issueNeedsReporterConfirmationLabel = "needs-reporter-confirmation"
 )
 
 // hardSuppressIssueLabels are the escalation labels that park an issue on a
@@ -44,6 +45,10 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 	issueNeedsDirectionLabel: {
 		color:       "d4c5f9",
 		description: "Hive needs a maintainer direction decision before continuing",
+	},
+	issueNeedsReporterConfirmationLabel: {
+		color:       "fbca04",
+		description: "Hive is waiting for the issue reporter or a maintainer to confirm the fix",
 	},
 	issueNeedsSpecLabel: {
 		color:       "bfd4f2",

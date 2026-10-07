@@ -80,11 +80,7 @@ jobs:
 
           echo "reopening #${ISSUE} for ${COMMENTER} (${reason})"
           gh issue reopen "${ISSUE}" --repo "${REPO}"
-          # Written to a file rather than inlined: a multi-line --body inside a
-          # YAML block scalar picks up the block's indentation and renders as a
-          # code block on GitHub.
-          {
-            printf 'Reopened at the request of @%s, who %s.\n\n' "${COMMENTER}" "${reason}"
-            printf 'If this was closed by a merged PR, first check whether the fix has reached you: it only takes effect after it ships in a tagged release and your deployment updates to it. If your running version already contains the fix and the problem persists, please add whatever you are still seeing (running version, logs, steps) so it is not closed the same way again. See #6762 for why this command exists.\n'
-          } > /tmp/reopen-comment.md
-          gh issue comment "${ISSUE}" --repo "${REPO}" --body-file /tmp/reopen-comment.md
+          gh issue edit "${ISSUE}" --repo "${REPO}" --remove-label needs-reporter-confirmation || true
+          body=$(printf 'Reopened at the request of @%s, who %s.\n\n' "${COMMENTER}" "${reason}")
+          body+=$(printf 'If this was closed by a merged PR, first check whether the fix has reached you: it only takes effect after it ships in a tagged release and your deployment updates to it. If your running version already contains the fix and the problem persists, please add whatever you are still seeing (running version, logs, steps) so it is not closed the same way again. See #6762 for why this command exists.\n')
+          gh issue comment "${ISSUE}" --repo "${REPO}" --body "${body}"

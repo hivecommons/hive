@@ -90,6 +90,32 @@ func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
 	}
 }
 
+func TestNavbarUpgradePillCannotCoverCenterAgents(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`--topbar-grid-columns: auto minmax(0, 1fr) auto;`,
+		`.oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch;`,
+		`.oc-topbar-right { position: relative; z-index: 2;`,
+		`flex-wrap: nowrap;`,
+		`.oc-navbar-upgrade { --oc-version-bee-lane: 44px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw);`,
+		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
+		`@container navbar-center (max-width: 560px)`,
+		`.agent-navbar-tile .agent-tile-next { display: none; }`,
+		`@container navbar-center (max-width: 340px)`,
+		`.agent-navbar-upnext .agent-navbar-tile { display: none; }`,
+		`@media (max-width: 900px) { .agent-navbar-upnext { display: none !important; } }`,
+		`wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';`,
+		`const detail = versionUpgradeProgressStatus(v || {}, progress);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("navbar upgrade collision guard missing %q", want)
+		}
+	}
+	if strings.Contains(html, `@media (max-width: 1280px) { .agent-navbar-upnext { display: none !important; } }`) {
+		t.Fatal("agent navbar strip must not disappear at 1280px; center container queries own collision handling")
+	}
+}
+
 func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
@@ -128,18 +154,36 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	html := indexHTML(t)
 	beeRule := cssRule(t, html, ".oc-version-bee")
 	for _, want := range []string{
-		"linear infinite both",
-		"will-change: transform, opacity",
+		"--oc-version-bee-duration: var(--bee-orbit-duration, 11s)",
+		"animation-duration: var(--oc-version-bee-duration)",
+		"animation-timing-function: linear",
+		"animation-iteration-count: infinite",
+		"animation-fill-mode: both",
+		"will-change: transform",
+		"transform-box: border-box",
+		"contain: layout paint style",
 	} {
 		if !strings.Contains(beeRule, want) {
 			t.Fatalf("orbiting bee rule missing seamless animation hint %q in %s", want, beeRule)
 		}
 	}
+	for _, selector := range []string{".oc-version-bee--phase-b", ".oc-version-bee--phase-c"} {
+		rule := cssRule(t, html, selector)
+		if !strings.Contains(rule, "animation-delay: calc(var(--oc-version-bee-duration)") {
+			t.Fatalf("%s should phase the persistent bee node without touching JS render state: %s", selector, rule)
+		}
+	}
+	glyphRule := cssRule(t, html, ".oc-version-bee-glyph")
+	for _, want := range []string{"transform-box: fill-box", "transform-origin: 50% 50%"} {
+		if !strings.Contains(glyphRule, want) {
+			t.Fatalf("bee SVG glyph should anchor transforms around its own box with %q in %s", want, glyphRule)
+		}
+	}
 
 	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
 	for _, want := range []string{
-		"0% { opacity: 0.96; transform: translate(-50%, -50%) rotate(0turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
-		"100% { opacity: 0.96; transform: translate(-50%, -50%) rotate(1turn) translateX(var(--oc-version-bee-radius, 17px)) translateZ(0);",
+		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
+		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
 	} {
 		if !strings.Contains(orbit, want) {
 			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)
@@ -148,6 +192,45 @@ func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
 	for _, forbidden := range []string{"\n      50%", "rotate(-"} {
 		if strings.Contains(orbit, forbidden) {
 			t.Fatalf("upgrade bee orbit should avoid loop-boundary decomposition hitches from %q in %s", forbidden, orbit)
+		}
+	}
+}
+
+func TestUpgradeBeeTopbarRenderPatchesTextInPlace(t *testing.T) {
+	html := indexHTML(t)
+	helper := jsFunc(t, html, "versionSetHTMLPreservingUpgradeBee")
+	for _, want := range []string{
+		"currentProgress.parentNode === el",
+		"currentTitle.innerHTML = nextTitle.innerHTML",
+		"currentStatus.innerHTML = nextStatus.innerHTML",
+	} {
+		if !strings.Contains(helper, want) {
+			t.Fatalf("upgrade bee topbar refresh should patch text in place without replacing the bee wrapper; missing %q in:\n%s", want, helper)
+		}
+	}
+	chip := jsFunc(t, html, "renderVersionChip")
+	navbar := jsFunc(t, html, "renderNavbarUpgradeIndicator")
+	for _, fn := range []struct {
+		name string
+		body string
+	}{
+		{"renderVersionChip", chip},
+		{"renderNavbarUpgradeIndicator", navbar},
+	} {
+		if !strings.Contains(fn.body, "versionSetHTMLPreservingUpgradeBee(") {
+			t.Fatalf("%s must use the preserving render path:\n%s", fn.name, fn.body)
+		}
+	}
+	layout := jsFunc(t, html, "applyLayout")
+	for _, forbidden := range []string{"innerHTML", "replaceChildren", "oc-topbar"} {
+		if forbidden == "oc-topbar" {
+			if !strings.Contains(layout, "document.getElementById('oc-topbar')") || !strings.Contains(layout, "topbar.style.display") {
+				t.Fatalf("applyLayout should only show the existing topbar, not rebuild it:\n%s", layout)
+			}
+			continue
+		}
+		if strings.Contains(layout, forbidden) {
+			t.Fatalf("applyLayout must not rebuild topbar/upgrade ancestors via %s:\n%s", forbidden, layout)
 		}
 	}
 }
