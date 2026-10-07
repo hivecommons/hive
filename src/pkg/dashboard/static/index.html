@@ -13598,6 +13598,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
 
+    function repoNonActionableIssueBucketSpec(issue) {
+      const bucket = String((issue && issue.bucket) || 'other');
+      if (bucket === 'hive_advisory') return { key: bucket, label: 'Advisory', short: 'advisory', rank: 0, tip: 'Hive advisory report — counted, but not agent work' };
+      if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or a hard-suppress label' };
+      if (bucket === 'reporter_triage') return { key: bucket, label: 'Needs triage', short: 'triage', rank: 2, tip: 'Waiting for a maintainer triage/admission label before agents can work it' };
+      if (bucket === 'dependency_dashboard') return { key: bucket, label: 'Dependency dashboard', short: 'deps', rank: 3, tip: 'Bot control-panel issue — counted, but not work' };
+      return { key: bucket, label: 'Other counted', short: 'other', rank: 9, tip: 'Counted outside the actionable and held issue lists' };
+    }
+
+    function groupedRepoNonActionableIssues(issues) {
+      const groups = new Map();
+      (issues || []).forEach(issue => {
+        if (!issue) return;
+        const spec = repoNonActionableIssueBucketSpec(issue);
+        if (!groups.has(spec.key)) groups.set(spec.key, Object.assign({ issues: [] }, spec));
+        groups.get(spec.key).issues.push(issue);
+      });
+      const out = Array.from(groups.values());
+      out.forEach(g => g.issues.sort((a, b) => issueUpdatedAt(a) - issueUpdatedAt(b) || Number(a.number || 0) - Number(b.number || 0)));
+      out.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+      return out;
+    }
+
     function overviewRepoName(repo) {
       return (repo && (repo.full || repo.name)) || '';
     }
@@ -15139,6 +15162,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
         const overviewRepoMatches = overviewFilter ? overviewProjectFilterRepoMatches(r, overviewFilter) : null;
         const filteredIssues = overviewRepoMatches ? overviewRepoMatches.issues.map(entry => entry.issue) : (r.actionableIssues || []).concat(r.heldIssues || []);
+        const filteredNonActionableIssues = overviewRepoMatches ? [] : (r.nonActionableIssues || []);
         const filteredOpenPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => !entry.held).map(entry => entry.pr) : (r.openPrs || []);
         const filteredHeldPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => entry.held).map(entry => entry.pr) : (r.heldPrs || []);
         const filteredBuckets = overviewRepoMatches ? overviewRepoMatches.buckets : [];
@@ -15146,8 +15170,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const overviewPRKeys = overviewRepoMatches ? new Set(filteredOpenPrs.concat(filteredHeldPrs).map(p => String(p.number))) : null;
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
         const repoIssueFilterRows = filteredIssues.map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
+        const repoNonActionableFilterRows = filteredNonActionableIssues.map(i => ({ kinds: ['issue:non-actionable', 'issue:' + repoNonActionableIssueBucketSpec(i).key] }));
         const repoPRFilterRows = filteredOpenPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat(filteredHeldPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
-        const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoPRFilterRows), pillFilter);
+        const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoNonActionableFilterRows, repoPRFilterRows), pillFilter);
         const renderIssuePill = (i, info) => {
           const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
           const repoFull = r.full || r.name || '';
@@ -15186,6 +15211,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!shown.length) return '';
           const items = shown.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
           return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+        }).join('');
+        const renderNonActionableIssuePill = (i) => {
+          const spec = repoNonActionableIssueBucketSpec(i);
+          const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
+          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const labels = (i.labels || []).map(l => String(l)).filter(Boolean).join(', ');
+          const reason = i.reason || spec.tip;
+          const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
+          const rowKinds = ['issue:non-actionable', 'issue:' + spec.key];
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill held repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main held" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
+        };
+        const nonActionableIssuePills = groupedRepoNonActionableIssues(filteredNonActionableIssues).map(g => {
+          const items = g.issues.map(renderNonActionableIssuePill).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.key)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -15284,7 +15323,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // grouped into the same display bands) under "issues", PR pills grouped
         // into state bands under "PRs". Position says what a pill is; tint says
         // what state it is in.
-        const issueCol = issuePills ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}` : '';
+        const issueCol = (issuePills || nonActionableIssuePills) ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}${nonActionableIssuePills}` : '';
         const prCol = prPills ? `<div class="repo-pill-run-title">PULL REQUESTS</div>${prPills}` : '';
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const bucketHtml = overviewProjectBucketRowsHTML(filteredBuckets);
