@@ -30,6 +30,11 @@ sandbox). `omp` is now a hub-agent method, but remains T3 on contributor local
 mode because its unattended approval flag is not an OS sandbox. A PR states the
 tier it claims for each path it wires.
 
+`openhands` is T3 experimental, headless-only, on the legacy local-path CLI.
+Upstream considers that CLI/headless path legacy and no longer actively
+maintained (OpenHands/OpenHands#18046), and Hive will not promote OpenHands
+beyond T3 on that surface.
+
 The T3 tier also bounds what an already-running OMP workbench may take as an
 external host (#8361 step 9, #6899): it is admissible only in report-only and
 shadow modes, where it holds no repository credential and no dashboard token
