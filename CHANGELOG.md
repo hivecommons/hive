@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-07 (v5.143.0)
+
+### Added
+
+- Expose trusted-author auto-merge settings in the dashboard so operators can enable and tune the human-authored PR merge tier without editing `hive.yaml`.
+
+### Fixed
+
+- Add a left-sidebar link and empty state for the dashboard Lifecycle Timeline.
+- Reconcile dashboard repo-card issue buckets with their header counts and make long repo issue/PR columns scrollable.
+- Reviewer verdict relay now records head-bound advisory verdicts even when they did not originate from the review-swarm dispatch state, so contributor PR reviews and combined perspective arrays can satisfy the review gate.
+
+### Security
+
+- Remove kubelet proxy and cluster-wide pod access from SaaS tenant node-health roles, reconcile existing registered roles on hub-reachable clusters, and document administrator remediation for push-reported clusters; tenant disk usage, pod counts and request-based capacity remain unavailable rather than exposing other tenants ([#10902](https://github.com/hivecommons/hive/issues/10902)).
+
 ## 2026-10-07 (v5.142.0)
 
 ### Added
