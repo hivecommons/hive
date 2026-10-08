@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -66,8 +65,8 @@ func TestCostDivisorsRetainLastGoodCounts(t *testing.T) {
 
 			failing.Store(true)
 			mc.collectPRIssueCounts(context.Background())
-			if got := mc.GetPRIssueCounts(); !reflect.DeepEqual(got, want) {
-				t.Fatalf("failed refresh replaced last-good counts: got %+v, want %+v", got, want)
+			if got := mc.GetPRIssueCounts(); got == nil || got.MergedPRs != want.MergedPRs || got.ClosedIssues != want.ClosedIssues || got.Author != want.Author || got.Basis != want.Basis || !got.Stale {
+				t.Fatalf("failed refresh did not retain stale last-good counts: got %+v, want counts %+v", got, want)
 			}
 			after, err := os.ReadFile(mc.prIssueCountsPath())
 			if err != nil || string(after) != string(before) {
