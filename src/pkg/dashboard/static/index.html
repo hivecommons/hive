@@ -5439,16 +5439,65 @@
      * introduce unescaped markup from untrusted text (hivecommons/hive#9390).
      */
     function escapeHtmlAndLinkify(str) {
-      var escaped = escapeHtml(str);
-      return escaped.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
-        // Trim trailing punctuation that's likely sentence syntax, not part of the URL.
+      return linkifyGitHubRefs(str);
+    }
+
+    function githubRefsBaseURL(defaultHost) {
+      var base = defaultHost || (typeof window !== 'undefined' && window._githubBaseUrl) || 'https://github.com';
+      base = String(base || '').trim().replace(/\/+$/, '');
+      if (!base) base = 'https://github.com';
+      if (!/^https?:\/\//i.test(base)) base = 'https://' + base.replace(/^\/+/, '');
+      return base;
+    }
+
+    function normalizeGitHubRepoContext(repoContext) {
+      var repo = String(repoContext || '').trim();
+      if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return repo;
+      return '';
+    }
+
+    function linkifyGitHubRefs(text, defaultHost, repoContext) {
+      var s = escapeHtml(text);
+      var links = [];
+      var base = githubRefsBaseURL(defaultHost);
+      function stash(html) {
+        var idx = links.length;
+        links.push(html);
+        return '\u0000GH_LINK_' + idx + '\u0000';
+      }
+      function githubIssueAnchor(label, owner, repo, number) {
+        var href = base + '/' + owner + '/' + repo + '/issues/' + number;
+        return '<a class="system-alert-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      }
+      s = s.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
         var trailing = '';
         var trailingMatch = url.match(/[).,;:!?]+$/);
         if (trailingMatch) {
           trailing = trailingMatch[0];
           url = url.slice(0, url.length - trailing.length);
         }
-        return '<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing;
+        return stash('<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing);
+      });
+      s = s.replace(/\b([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#(\d+)\b/g, function(match, owner, repo, number) {
+        return stash(githubIssueAnchor(match, owner, repo, number));
+      });
+      var context = normalizeGitHubRepoContext(repoContext);
+      if (context) {
+        var parts = context.split('/');
+        s = s.replace(/(^|[\s("'])#(\d+)\b/g, function(match, lead, number) {
+          return lead + stash(githubIssueAnchor('#' + number, parts[0], parts[1], number));
+        });
+      }
+      s = s.replace(/\u0000GH_LINK_(\d+)\u0000/g, function(_, idx) {
+        return links[Number(idx)] || '';
+      });
+      return s;
+    }
+
+    function stopSystemAlertLinkClicks(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('a.system-alert-link').forEach(function(a) {
+        a.addEventListener('click', function(event) { event.stopPropagation(); });
       });
     }
     // ── Collapsible sections (issue #1533) ──
@@ -11953,9 +12002,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + escapeHtmlAndLinkify(a.message) + '</span>'
+          + '<span style="color:' + textColor + '">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
           + '</div>';
       }).join('');
+      stopSystemAlertLinkClicks(banner);
     }
 
     async function submitGitHubInstallationID() {
@@ -19191,7 +19241,7 @@ function burnAreaChart() {
         return `<div class="gh-rate-alert-item">
           <span class="gh-rate-alert-agent">${esc(a.agent)}${cliTag}</span>
           <span class="gh-rate-alert-age">${ageStr}</span>
-          <span class="gh-rate-alert-msg">${esc(a.message || 'GitHub API rate limited')}</span>
+          <span class="gh-rate-alert-msg">${linkifyGitHubRefs(a.message || 'GitHub API rate limited', window._githubBaseUrl)}</span>
         </div>`;
       }).join('');
       const pullbackHtml = activePullbacks.map(p => {
@@ -19210,6 +19260,7 @@ function burnAreaChart() {
         </div>`;
       }).join('');
       setIfChanged(el, `<div class="gh-rate-alert-title">GitHub API Rate Limit (${active.length} agent${active.length > 1 ? 's' : ''})</div>${items}${pullbackHtml}`);
+      stopSystemAlertLinkClicks(el);
     }
 
     const GH_RATE_LIMIT_POLL_MS = 5 * 60 * 1000;
@@ -28440,6 +28491,9 @@ function burnAreaChart() {
       // its hint shows the fallback host/org. Refresh it now that both are known.
       if (typeof renderGitHubAppInstallIdHint === 'function') {
         renderGitHubAppInstallIdHint(window._lastStatus || null);
+      }
+      if (window._lastStatus && Array.isArray(window._lastStatus.systemAlerts)) {
+        renderSystemAlerts(window._lastStatus.systemAlerts);
       }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced in
