@@ -5407,7 +5407,7 @@
     function updateFeedbackAttributionLine() {
       const el = document.getElementById('feedback-attribution-line'); if (!el) return;
       const status = window._feedbackStatus || {};
-      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'the hive');
+      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'your browser on GitHub');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
       // A verified login wins over the typed one; a typed login is only ever self-reported.
       const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
@@ -5458,7 +5458,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
-            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute and @-mention you on the issue.</span></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -5541,6 +5541,12 @@
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
+        const status = window._feedbackStatus || {};
+        if (!status.credential_login && !status.hub_linked && !feedbackGitHubLogin(status.submitter_login) && !feedbackGitHubLogin(rawUsername)) {
+          if (usernameField) { usernameField.required = true; usernameField.focus(); usernameField.setCustomValidity('Enter your GitHub username to open the prefilled issue on GitHub.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
+          showToast('Enter your GitHub username to open the issue on GitHub', 'error');
+          return;
+        }
         if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
           if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
           showToast('Enter a valid GitHub username, or leave it blank', 'error');
@@ -5610,16 +5616,65 @@
      * introduce unescaped markup from untrusted text (hivecommons/hive#9390).
      */
     function escapeHtmlAndLinkify(str) {
-      var escaped = escapeHtml(str);
-      return escaped.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
-        // Trim trailing punctuation that's likely sentence syntax, not part of the URL.
+      return linkifyGitHubRefs(str);
+    }
+
+    function githubRefsBaseURL(defaultHost) {
+      var base = defaultHost || (typeof window !== 'undefined' && window._githubBaseUrl) || 'https://github.com';
+      base = String(base || '').trim().replace(/\/+$/, '');
+      if (!base) base = 'https://github.com';
+      if (!/^https?:\/\//i.test(base)) base = 'https://' + base.replace(/^\/+/, '');
+      return base;
+    }
+
+    function normalizeGitHubRepoContext(repoContext) {
+      var repo = String(repoContext || '').trim();
+      if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return repo;
+      return '';
+    }
+
+    function linkifyGitHubRefs(text, defaultHost, repoContext) {
+      var s = escapeHtml(text);
+      var links = [];
+      var base = githubRefsBaseURL(defaultHost);
+      function stash(html) {
+        var idx = links.length;
+        links.push(html);
+        return '\u0000GH_LINK_' + idx + '\u0000';
+      }
+      function githubIssueAnchor(label, owner, repo, number) {
+        var href = base + '/' + owner + '/' + repo + '/issues/' + number;
+        return '<a class="system-alert-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      }
+      s = s.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
         var trailing = '';
         var trailingMatch = url.match(/[).,;:!?]+$/);
         if (trailingMatch) {
           trailing = trailingMatch[0];
           url = url.slice(0, url.length - trailing.length);
         }
-        return '<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing;
+        return stash('<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing);
+      });
+      s = s.replace(/\b([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#(\d+)\b/g, function(match, owner, repo, number) {
+        return stash(githubIssueAnchor(match, owner, repo, number));
+      });
+      var context = normalizeGitHubRepoContext(repoContext);
+      if (context) {
+        var parts = context.split('/');
+        s = s.replace(/(^|[\s("'])#(\d+)\b/g, function(match, lead, number) {
+          return lead + stash(githubIssueAnchor('#' + number, parts[0], parts[1], number));
+        });
+      }
+      s = s.replace(/\u0000GH_LINK_(\d+)\u0000/g, function(_, idx) {
+        return links[Number(idx)] || '';
+      });
+      return s;
+    }
+
+    function stopSystemAlertLinkClicks(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('a.system-alert-link').forEach(function(a) {
+        a.addEventListener('click', function(event) { event.stopPropagation(); });
       });
     }
 
@@ -12262,9 +12317,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + escapeHtmlAndLinkify(a.message) + '</span>'
+          + '<span style="color:' + textColor + '">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
           + '</div>';
       }).join('');
+      stopSystemAlertLinkClicks(banner);
     }
 
     async function submitGitHubInstallationID() {
@@ -13411,6 +13467,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // would be a lie in the direction that matters.
         if (data.warning) showToast(data.warning, 'error', true);
         else showToast(resuming ? ('Resumed ' + repo) : ('Paused ' + repo + ' — agents will not write to it or be handed work on it'), 'success');
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast((resuming ? 'Resume' : 'Pause') + ' failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -13441,6 +13498,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo, 'success');
+        // The /api/status refetch usually beats the async rebuild and returns
+        // the pre-mutation snapshot; raising the floor first stops it from
+        // repainting the switch back to its old state (#11020).
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -20033,7 +20094,7 @@ function burnAreaChart() {
         return `<div class="gh-rate-alert-item">
           <span class="gh-rate-alert-agent">${esc(a.agent)}${cliTag}</span>
           <span class="gh-rate-alert-age">${ageStr}</span>
-          <span class="gh-rate-alert-msg">${esc(a.message || 'GitHub API rate limited')}</span>
+          <span class="gh-rate-alert-msg">${linkifyGitHubRefs(a.message || 'GitHub API rate limited', window._githubBaseUrl)}</span>
         </div>`;
       }).join('');
       const pullbackHtml = activePullbacks.map(p => {
@@ -20052,6 +20113,7 @@ function burnAreaChart() {
         </div>`;
       }).join('');
       setIfChanged(el, `<div class="gh-rate-alert-title">GitHub API Rate Limit (${active.length} agent${active.length > 1 ? 's' : ''})</div>${items}${pullbackHtml}`);
+      stopSystemAlertLinkClicks(el);
     }
 
     const GH_RATE_LIMIT_POLL_MS = 5 * 60 * 1000;
@@ -24028,6 +24090,62 @@ function burnAreaChart() {
       if (typeof refreshVersionProgressSurfaces === 'function') refreshVersionProgressSurfaces();
     }
 
+    // ── Background-refresh stability (#11032) ──
+    // Status pushes repaint every section; these helpers keep the reader on
+    // the same content and keep refreshes away from fields being edited.
+    function isEditableElement(el) {
+      if (!el || el === document.body) return false;
+      if (el.isContentEditable) return true;
+      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+    }
+
+    // True when focus sits in a form field inside el, or a field inside el
+    // (other than those matching ignoreSelector) differs from its rendered default.
+    function sectionHoldsUserInput(el, ignoreSelector) {
+      if (!el) return false;
+      const active = document.activeElement;
+      if (isEditableElement(active) && el.contains(active)) return true;
+      const fields = el.querySelectorAll('input, textarea, select');
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        if (ignoreSelector && f.matches(ignoreSelector)) continue;
+        if (f.tagName === 'SELECT') {
+          for (let j = 0; j < f.options.length; j++) {
+            if (f.options[j].selected !== f.options[j].defaultSelected) return true;
+          }
+        } else if (f.type === 'checkbox' || f.type === 'radio') {
+          if (f.checked !== f.defaultChecked) return true;
+        } else if (f.type !== 'hidden' && f.value !== f.defaultValue) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Remember the topmost visible section and the reader's offset within it,
+    // so a repaint that resizes content above doesn't move them elsewhere.
+    function captureScrollAnchor() {
+      const anchor = { el: null, top: 0, scrollY: window.scrollY };
+      if (window.scrollY <= 0) return anchor;
+      const sections = document.querySelectorAll('[data-dashboard-section]');
+      for (let i = 0; i < sections.length; i++) {
+        const el = sections[i];
+        if (!el.getClientRects().length) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > 0) { anchor.el = el; anchor.top = rect.top; break; }
+      }
+      return anchor;
+    }
+
+    function restoreScrollAnchor(anchor) {
+      if (anchor.el && anchor.el.isConnected && anchor.el.getClientRects().length) {
+        const delta = anchor.el.getBoundingClientRect().top - anchor.top;
+        if (delta) window.scrollBy(0, delta);
+        return;
+      }
+      window.scrollTo(0, anchor.scrollY);
+    }
+
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
       // ── Stale-snapshot guard (#4348) ──────────────────────────────────
@@ -24052,7 +24170,7 @@ function burnAreaChart() {
         _lastStatusSeq = data.statusSeq;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
-      const scrollY = window.scrollY;
+      const scrollAnchor = captureScrollAnchor();
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
       noteAgentNowUpdate(data && data.timestamp);
@@ -24157,9 +24275,9 @@ function burnAreaChart() {
         }
       } else if (_ocSelectedAgent) {
         ocRenderAgentDetail(); ocUpdateFocusedState(); ocStartPanePoll();
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       } else {
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
 
@@ -24233,7 +24351,17 @@ function burnAreaChart() {
             wizard = renderInceptionModeSelect();
         }
       }
+      // Rebuilding the panel resets its own scroll and the campaign filters;
+      // carry both across so refreshes don't move the reader (#11032).
+      const panelScrollTop = panel.scrollTop;
+      const campaignFilters = {};
+      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
       panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
+      Object.keys(campaignFilters).forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
+      });
+      panel.scrollTop = panelScrollTop;
       renderCampaignsList();
       if (!_inceptionPollTimer) startInceptionPoll();
     }
@@ -24970,8 +25098,13 @@ function burnAreaChart() {
       } catch (e) { /* ignore poll errors */ }
 
       try {
-        // Don't clobber the textarea while the user is typing their idea
+        // Don't clobber the textarea while the user is typing their idea, nor
+        // any panel field that is focused or holds unsaved input (#11032);
+        // the next poll retries once the user is done.
         if (_inceptionState && _inceptionState.phase === 'capture' && !_inceptionState.idea_text) {
+          return;
+        }
+        if (sectionHoldsUserInput(document.getElementById('inception-panel'), '.campaigns-filters input')) {
           return;
         }
         const sr = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
@@ -26058,6 +26191,9 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
+        case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;
+        case 'toggleSentinelBehavior': toggleSentinelBehavior(el); break;
+        case 'resetSentinelPaths': resetSentinelPaths(); break;
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
@@ -26327,6 +26463,7 @@ function burnAreaChart() {
               const meta = row && row.querySelector('.level-automerge-row-meta');
               if (meta) meta.textContent = 'Auto-merge ' + (nextEnabled ? 'enabled' : 'disabled');
               showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo.repo, 'success');
+              noteStatusMutation(resBody.minStatusSeq);
               fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
             } catch (e) {
               showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -29411,6 +29548,25 @@ function burnAreaChart() {
 
     var _initialVersionHash = null;
     var VERSION_CHECK_INTERVAL_MS = 60000;
+    var _versionReloadPending = false;
+    // Defer a version-triggered reload while the user is in a form field so
+    // the reload doesn't discard what they are typing (#11032).
+    function reloadForNewVersion() {
+      if (isEditableElement(document.activeElement)) {
+        if (!_versionReloadPending) {
+          _versionReloadPending = true;
+          document.addEventListener('focusout', function onFocusOut() {
+            setTimeout(function() {
+              if (isEditableElement(document.activeElement)) return;
+              document.removeEventListener('focusout', onFocusOut);
+              window.location.reload();
+            }, 0);
+          });
+        }
+        return;
+      }
+      window.location.reload();
+    }
     function startVersionCheck() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
@@ -29421,7 +29577,7 @@ function burnAreaChart() {
           var current = d.hash || d.short || '';
           if (_initialVersionHash && current && current !== _initialVersionHash) {
             console.log('[hive] version changed from', _initialVersionHash, 'to', current, '— reloading');
-            window.location.reload();
+            reloadForNewVersion();
           }
         }).catch(function() {});
       }, VERSION_CHECK_INTERVAL_MS);
@@ -29544,6 +29700,9 @@ function burnAreaChart() {
       // its hint shows the fallback host/org. Refresh it now that both are known.
       if (typeof renderGitHubAppInstallIdHint === 'function') {
         renderGitHubAppInstallIdHint(window._lastStatus || null);
+      }
+      if (window._lastStatus && Array.isArray(window._lastStatus.systemAlerts)) {
+        renderSystemAlerts(window._lastStatus.systemAlerts);
       }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced in
@@ -36532,6 +36691,38 @@ function burnAreaChart() {
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
+      /* Suspicious Activity (sentinel): flags PRs that look like security
+         overrides, privilege escalation or codebase damage. Observe-and-alert
+         only — it never merges, holds or removes labels. */
+      const sn = sec.sentinel || {};
+      const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
+      const snBehaviors = (sn.behaviors || []).map(b => `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
+          <span class="config-toggle-label"><code>${esc(b.name)}</code> <span class="config-info">i<span class="config-tooltip">${esc(b.description || '')}</span></span></span>
+        </div>`).join('');
+      const suspicious = `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
+          <span class="config-toggle-label">Suspicious-activity alerts <span class="config-info">i<span class="config-tooltip">Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets the alert label and one explanatory comment per push so reviewers can route it to a human. Nothing is merged, held or auto-closed.</span></span></span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep <span class="config-info">i<span class="config-tooltip">Caps label+comment actions per pass so a flood of PRs cannot spam a repo.</span></span></label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>
+        <div class="config-field">
+          <label>Sensitive files <span class="config-info">i<span class="config-tooltip">One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.</span></span>${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
+        </div>
+        <div class="config-field">
+          <label>Behaviors <span class="config-info">i<span class="config-tooltip">Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.</span></span></label>
+          ${snBehaviors}
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Exempt logins <span class="config-info">i<span class="config-tooltip">Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.</span></span></label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Repos (optional allow-list)</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>`;
+
       return `
         ${securityModelDatalistHtml()}${agentList}
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
@@ -36540,6 +36731,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Access', renderGovAccess())}
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
+        ${renderSecuritySection('Suspicious Activity', suspicious)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
         ${renderSecuritySection('Backup', backupKey)}`;
@@ -37304,7 +37496,7 @@ function burnAreaChart() {
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Max merges per sweep <span class="config-info">i<span class="config-tooltip">Caps how many PRs one sweep pass may merge. 0 or empty uses the default.</span></span></label>
-            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="5" data-change-action="gh71">
+            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
@@ -38279,6 +38471,49 @@ function burnAreaChart() {
 
     function markBoolDirty(section, key, value) {
       markDirty(section, key, value === true || value === 'true');
+    }
+
+    /* Sentinel dirty-tracking: the security PUT takes a nested `sentinel`
+       object with "absent means unchanged" fields, so edits are merged into
+       one bag rather than flattened into the security section. */
+    function sentinelState() {
+      const d = _configState.data || {};
+      d.security = d.security || {};
+      d.security.sentinel = d.security.sentinel || {};
+      return d.security.sentinel;
+    }
+    function markSentinelDirty(key, value) {
+      if (!_configState.dirty.security) _configState.dirty.security = {};
+      const bag = _configState.dirty.security.sentinel || {};
+      bag[key] = value;
+      _configState.dirty.security.sentinel = bag;
+      sentinelState()[key] = value;
+    }
+    function toggleSentinelEnabled(el) {
+      if (!el) return;
+      const isOn = el.classList.toggle('on');
+      markSentinelDirty('enabled', isOn);
+      renderConfigTab('Security');
+    }
+    function toggleSentinelBehavior(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      const sn = sentinelState();
+      sn.behaviors = (sn.behaviors || []).map(b => b.name === el.dataset.rule ? Object.assign({}, b, { enabled: isOn }) : b);
+      markSentinelDirty('disabledBehaviors', sn.behaviors.filter(b => !b.enabled).map(b => b.name));
+    }
+    function resetSentinelPaths() {
+      const sn = sentinelState();
+      sn.sensitivePaths = (sn.defaultSensitivePaths || []).slice();
+      sn.sensitivePathsDefault = true;
+      /* An empty list tells the backend to drop the override. */
+      markSentinelDirty('sensitivePaths', []);
+      renderConfigTab('Security');
+    }
+    function markSentinelPathsFromText(text) {
+      const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+      /* An emptied box restores defaults rather than disabling the rule. */
+      markSentinelDirty('sensitivePaths', lines);
     }
 
     function toggleContributorPRBaseSync(el) {
@@ -42487,6 +42722,11 @@ function burnAreaChart() {
       wsExternalTimeoutChanged: function (event, A) { markWorkSourceDirty('external.timeout_seconds',Number(this.value)||0); },
       gh79: function (event, A) { wsWavefrontSetSource(this.value); },
       gh80: function (event, A) { wsWavefrontSetLocation(this.dataset.source || 'path', this.value); },
+      gh81: function (event, A) { markSentinelDirty('label', this.value.trim()); },
+      gh82: function (event, A) { markSentinelDirty('maxActions', Number(this.value) || 0); },
+      gh83: function (event, A) { markSentinelPathsFromText(this.value); },
+      gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
+      gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
 
   </script>

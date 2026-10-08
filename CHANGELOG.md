@@ -11,6 +11,37 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-08 (v5.145.0)
+
+### Added
+
+- `auto_merge.human_merge_paths` is now enforced on every App merge path: the automerge sweep lanes (App self-merge, trusted-author, label-queued) and the agent merge-request relay refuse a PR that touches a listed path for its repo, add `hold`, and post one `<!-- hive-human-merge-path -->` comment naming the matching path(s). The check runs before the intent tier gate, so a Tier 3 App PR that App self-merge would otherwise authorize is held for a person. A configured repo whose complete changed-file list cannot be fetched fails closed (#11038, #11039).
+
+## 2026-10-08 (v5.144.0)
+
+### Added
+
+- feat(automerge): add auto_merge.human_merge_paths config and intent path matcher (#11036)
+- Added `auto_merge.human_merge_paths` (per-repo glob patterns a person must merge) with a case-insensitive `HumanMergePathsFor` accessor and an `intent.HumanMergePathMatches` matcher. No enforcement yet.
+
+### Fixed
+
+- fix(dashboard): background status refreshes no longer jump the viewport or reset focus, input and Inception panel scroll (#11032)
+
+## 2026-10-08 (v5.143.3)
+
+### Fixed
+
+- fix(github): tolerate unsearchable author:app qualifier in PR/issue counts (#11033)
+- fix(dashboard): max merges per sweep placeholder shows the real default (3) (#11034)
+- fix(scanner): comment instead of pushing content to PRs the hive did not author (#11035)
+
+## 2026-10-08 (v5.143.2)
+
+### Fixed
+
+- The repository card's auto-merge switch (and the Level 6 modal's per-repo switch) no longer snaps back to its previous state right after a toggle ([#11020](https://github.com/hivecommons/hive/issues/11020)). `POST /api/repos/auto-merge`, `/api/repos/pause` and `/api/repos/resume` now return the post-mutation `minStatusSeq` floor, and the dashboard raises its stale-snapshot guard with it before refetching `/api/status`, so a pre-mutation snapshot can no longer repaint the old value. Previously the switch could show the wrong state for seconds and a second click re-sent the same value instead of toggling.
+
 ## 2026-10-08 (v5.143.1)
 
 ### Fixed

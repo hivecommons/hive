@@ -27,7 +27,19 @@ Routine changes use lazy consensus through GitHub review. Maintainers may merge 
 
 ## Contributor ladder
 
-Hive follows the [KubeStellar Contributor Ladder](https://github.com/kubestellar/community/blob/main/CONTRIBUTOR_LADDER.md). Contributors earn additional responsibility through sustained, high-quality participation. Requests or nominations for expanded responsibility should be raised with maintainers.
+Hive follows the [Hive Commons Contributor Ladder](https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md), maintained in the org-level `.github` repository: **Contributor → Organization Member → Reviewer → Maintainer**. Contributors earn additional responsibility through sustained, high-quality participation. Requests or nominations for expanded responsibility should be raised with maintainers.
+
+## Reporter trust and escalation
+
+The hive automatically works issues only from authors whose GitHub `author_association` is one of:
+
+- **OWNER** — an owner of the organization that holds the repository.
+- **MEMBER** — a member of that organization.
+- **COLLABORATOR** — someone who was explicitly invited and granted access to the repository (see GitHub's docs on [repository collaborators](https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-outside-collaborators/adding-outside-collaborators-to-repositories-in-your-organization)). This is GitHub's term, not a Hive-specific role.
+
+Issues from anyone else wait until a maintainer adds the `triage/accepted` label. See [Securing your hive](src/docs/securing-your-hive.md) for the full table of associations.
+
+If your issue is being ignored, mention a maintainer from the table above in the issue. If there is no response after about 7 days, raise it on the [hivecommons-dev Google Group](https://hivecommons.dev/join), on [Discord](https://hivecommons.dev/discord), or at the [community meeting](https://hivecommons.dev/agenda).
 
 ## Conduct and security
 

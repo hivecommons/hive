@@ -831,8 +831,8 @@ One agent reaches its template by **role** rather than by `kick_template`: an ag
 
 | Decision | Where it lives | Why |
 |---|---|---|
-| Is the lane awake? | Go, before any template is read | Below ACMM L5 the kick is a stand-down. An edited template must not be able to wake a lane on a low-trust hive. |
-| Is there work? | Go, before any template is read | An empty escalated queue is a stand-down. A template must not be able to manufacture a contract with nothing to adjudicate. |
+| Is the lane awake? | Go, before any template is read | Below ACMM L5 the lane is dormant: scheduled kicks are skipped (logged as `dormant below ACMM 5`), and a forced kick is a stand-down. An edited template must not be able to wake a lane on a low-trust hive. |
+| Is there work? | Go, before any template is read | An empty escalated queue means scheduled kicks are skipped (logged as `nothing to adjudicate`) and a forced kick is a stand-down with no repo-rotation instructions ([#11045](https://github.com/hivecommons/hive/issues/11045), [#11046](https://github.com/hivecommons/hive/issues/11046)). A template must not be able to manufacture a contract with nothing to adjudicate. |
 | May this agent close a PR? | Go, rendered into `${REVIEWER_CLOSE_AUTHORITY}` | Closing is operator-only below ACMM L6. Whether an agent may close a human-queued PR is a trust decision, not wording. |
 
 So the worst an override can do is change the *wording* of a kick that was already going to be sent. The template-specific variables are `${REVIEWER_WORK_LIST}`, `${REVIEWER_MAX_PRS}`, `${REVIEWER_PASSED_LABEL}`, `${REVIEWER_RECOMMEND_CLOSE_LABEL}` and `${REVIEWER_CLOSE_AUTHORITY}`, alongside the usual built-ins.

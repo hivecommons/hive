@@ -1,0 +1,1 @@
+- Fixed dashboard "Max merges per sweep" placeholder to show the correct default value (3) instead of 5.

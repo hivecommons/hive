@@ -383,6 +383,11 @@ type AutoMergeConfig struct {
 	// author must be in authorized_users at the configured role, and by default
 	// GitHub must also report push/maintain/admin permission on the repository.
 	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
+	// intent.guardrail_path_patterns) for paths a person must merge. Unset
+	// means no such paths. This key only declares the paths; enforcement
+	// lives in the merge sweeps.
+	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
 }
 
 type TrustedAuthorAutoMergeConfig struct {
@@ -484,6 +489,18 @@ func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
 
 func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
+}
+
+// HumanMergePathsFor returns the human-merge path patterns configured for repo
+// (owner/repo, matched case-insensitively), or nil when none are set.
+func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
+	repo = strings.TrimSpace(repo)
+	for k, patterns := range a.HumanMergePaths {
+		if strings.EqualFold(strings.TrimSpace(k), repo) && len(patterns) > 0 {
+			return patterns
+		}
+	}
+	return nil
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a

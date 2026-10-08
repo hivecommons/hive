@@ -63,6 +63,7 @@ func defaultRunLoopDeps() runLoopDeps {
 			runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
 			runDuplicateSweepIfDue(b.ctx, b.cfg, b.ghClient, b.dashSrv, &b.lastDuplicateSweep, b.logger)
 			runIssueUnparkSweepIfDue(b.ctx, b.ghClient, b.dashSrv, &b.lastIssueUnparkSweep, b.logger)
+			runSentinelSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSentinelSweep, b.logger)
 		},
 		persist: func(b *boot) {
 			persistState(b.agentMgr, b.gov, b.cfg, spokeStatePath, b.logger, b.dashSrv, b.wd)

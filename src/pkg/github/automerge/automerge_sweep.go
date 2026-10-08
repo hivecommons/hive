@@ -52,6 +52,10 @@ type Options struct {
 	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
 	// (#6258). nil installs no policy; see IntentGate for the semantics.
 	IntentGate *IntentGate
+	// HumanMergePaths returns the live auto_merge.human_merge_paths patterns
+	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
+	// nil means no repo has any.
+	HumanMergePaths func(repo string) []string
 	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
@@ -93,6 +97,9 @@ type Engine struct {
 	intentGateMu sync.RWMutex
 	intentGate   *IntentGate
 
+	humanMergePathsMu sync.RWMutex
+	humanMergePaths   func(repo string) []string
+
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
@@ -120,6 +127,7 @@ func New(transport Transport, opts Options) *Engine {
 		approvalDesk:                      opts.ApprovalDesk,
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
+		humanMergePaths:                   opts.HumanMergePaths,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
@@ -1266,6 +1274,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// regardless of tier. Consulted after commitGreen so the extra files
 	// fetch is only spent on PRs that are otherwise mergeable, and before the
 	// approval desk so the desk still only sees requests policy permits.
+	//
+	// Human-merge paths (#11038) come first and do not depend on intent: the
+	// App self-merge contract authorizes Tier 2/3 without a person, so a path
+	// the operator reserved for a person must be refused before
+	// EvaluateForAppSelfMerge is ever asked.
+	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
+		return AutoMergeSweepEvent{}, humanReason, err
+	}
 	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {
 		return AutoMergeSweepEvent{}, intentReason, err
 	} else if intentReason != "" {
@@ -1666,6 +1682,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
+	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
+		return AutoMergeSweepEvent{}, humanReason, err
+	}
 	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
@@ -1898,6 +1917,12 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	}
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
+	}
+
+	// Human-merge paths (#11038): a merger queuing the PR is not the same as
+	// a person merging it, so the queued lane honors the list too.
+	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
+		return AutoMergeSweepEvent{}, humanReason, err
 	}
 
 	// Approval desk (RFC #4000) for the trusted human merge-queue lane.

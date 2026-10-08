@@ -1,0 +1,2 @@
+- feat(automerge): add auto_merge.human_merge_paths config and intent path matcher (#11036)
+- Added `auto_merge.human_merge_paths` (per-repo glob patterns a person must merge) with a case-insensitive `HumanMergePathsFor` accessor and an `intent.HumanMergePathMatches` matcher. No enforcement yet.

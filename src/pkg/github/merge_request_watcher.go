@@ -300,6 +300,23 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// Track attempts across ticks by reading the prior result (if any).
+	attempts := priorMergeAttempts(path) + 1
+
+	// Human-merge paths (#11039): a PR touching a path listed in
+	// auto_merge.human_merge_paths for its repo is never merged by the App,
+	// whatever agent asks. A match is terminal (the request is refused, the
+	// PR gets `hold` and one marker comment); an unknown changed-file list on
+	// a configured repo fails closed through the bounded retry path. Checked
+	// before the optional branch-update so a refused PR receives no push.
+	if refusal, err := c.mergeRequestHumanMergePathRefusal(ctx, req); err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	} else if refusal != "" {
+		c.denyMergeRequest(path, req, refusal, nowFn)
+		return
+	}
+
 	// Merge strategy (#10889), decided from configuration alone before any
 	// lane-specific GitHub call: a direct repo takes exactly the path below.
 	// A hive-serialized repo keeps every gate above and below, skips the
@@ -316,9 +333,6 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		}
 	}
-
-	// Track attempts across ticks by reading the prior result (if any).
-	attempts := priorMergeAttempts(path) + 1
 
 	// POSITIVE CI confirmation before any merge is attempted (#6173). The
 	// hive used to delegate this entirely to branch protection, which means

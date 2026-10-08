@@ -266,3 +266,29 @@ func TestEvidence(t *testing.T) {
 		t.Fatalf("same issue number in another repo should not match approved plan: %+v", otherRepoSameNumber)
 	}
 }
+
+func TestHumanMergePathMatches(t *testing.T) {
+	files := []ChangedFile{
+		{Filename: ".claude/settings.json"},
+		{Filename: ".claude/hooks/pre/run.sh"},
+		{Filename: "src/main.go"},
+	}
+	tests := []struct {
+		name     string
+		patterns []string
+		want     []string
+	}{
+		{"exact path", []string{".claude/settings.json"}, []string{".claude/settings.json"}},
+		{"double-star glob", []string{".claude/hooks/**"}, []string{".claude/hooks/pre/run.sh"}},
+		{"no match", []string{"docs/**"}, nil},
+		{"empty patterns", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HumanMergePathMatches(files, tc.patterns)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") || (tc.want == nil) != (got == nil) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
