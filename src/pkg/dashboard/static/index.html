@@ -1595,6 +1595,8 @@
        row's slack — that is the whole point of having set it. It still
        shrinks if it is alone on a line narrower than the width chosen. */
     .repo-card.repo-card-sized { flex-grow: 0; }
+    /* Floor for unsized cards (#11137): the viewport-based --repo-cols step ignores the sidebar, so a card could shrink below its header content and overlap. Under the floor the row wraps to fewer cards instead. */
+    .repo-card:not(.repo-card-sized) { min-width: min(100%, 17rem); }
     /* The drag handle: a full-height strip on the card's right edge, the
        same col-resize affordance as the sidebar splitter. Transparent until
        hovered/focused so six cards across do not read as a striped grid.
@@ -1613,7 +1615,7 @@
     }
     .repo-provider-label { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.08em; color:var(--muted); text-transform:uppercase; margin-bottom:var(--sp-2); }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }
-    .repo-name a { flex: 1 1 8rem; min-width: 0; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-header-actions { justify-content: flex-end; }
     .repo-header-spacer { min-width: var(--sp-2); }
@@ -1628,7 +1630,7 @@
     .repo-card:has(.repo-paused-pill) .repo-stats { opacity: 0.55; }
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
-    .repo-automerge-toggle { flex: 0 0 auto; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
     .repo-name .repo-automerge-toggle { margin-left: auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
@@ -1790,6 +1792,7 @@
     .repo-pill-filter-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     .repo-pill-row-filtered-hidden { display:none; }
     .repo-filtered-chip { display:inline-flex; align-items:center; gap:var(--sp-1); flex:0 0 auto; font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.02em; line-height:1; padding:var(--sp-1) var(--sp-3); border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); background:color-mix(in srgb, var(--accent) 14%, transparent); color:var(--accent); text-transform:uppercase; white-space:nowrap; }
+    .repo-filtered-chip[hidden] { display:none; }
     .repo-filtered-chip button { border:0; background:transparent; color:inherit; font:inherit; line-height:1; padding:0 var(--sp-1); cursor:pointer; }
     .repos-toolbar { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin:var(--sp-0) var(--sp-0) var(--sp-4); }
     @media (max-width:640px) { .repo-legend-v2 .repo-legend-body { grid-template-columns:1fr; } }
@@ -15592,7 +15595,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo-order-key="${esc(cardRepoKey)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
           <div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -19353,7 +19356,8 @@ function burnAreaChart() {
         if (!res.ok) return;
         const fresh = await res.json();
         if (!fresh || !fresh.core || !window._lastStatus) return;
-        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core, etag_cache: fresh.etag_cache, top_consumers: fresh.top_consumers });
+        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core, etag_cache: fresh.etag_cache, top_consumers: fresh.top_consumers, api_budget: fresh.api_budget || fresh.apiBudget });
+        window._lastStatus.api_budget = fresh.api_budget || fresh.apiBudget || window._lastStatus.api_budget;
         renderGhRateLimits(window._lastStatus.ghRateLimits);
         renderDebugSection();
       } catch (_) {
@@ -25073,10 +25077,17 @@ function burnAreaChart() {
       const core = ghRate.core || {};
       const rate = debugGhRateLimitStatus(core);
       const totals = tokens.totals || {};
+      const apiBudget = status.api_budget || ghRate.api_budget || {};
+      const skipped = Array.isArray(apiBudget.skipped_steps) ? apiBudget.skipped_steps : [];
+      const budgetReset = apiBudget.reset ? new Date(apiBudget.reset) : null;
+      const budgetResetText = budgetReset && !Number.isNaN(budgetReset.getTime()) ? 'resets ' + Math.max(0, Math.round((budgetReset.getTime() - Date.now()) / 60000)) + 'm' : 'reset unknown';
+      const budgetMode = apiBudget.mode || 'normal';
+      const budgetTitle = skipped.length ? 'Skipped for API budget: ' + skipped.join(', ') : 'No API-budget steps skipped';
+      const budgetPill = `<span id="api-budget-pill" class="debug-quota-chip ${budgetMode === 'critical' ? 'bad' : budgetMode === 'conserve' ? 'warn' : 'ok'}" title="${escapeHtml(budgetTitle)}">API budget: ${escapeHtml(budgetMode)} (${Number(apiBudget.remaining || rate.remaining || 0).toLocaleString()} left, ${escapeHtml(budgetResetText)})</span>`;
       const apiText = rate.headline;
       const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
       const mini = debugQuotaWidgetHtml(status);
-      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span>${budgetPill}</div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     function renderDebugSection() {
       refreshSectionCardShell('debug-section');

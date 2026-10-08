@@ -5664,9 +5664,10 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	b.logger.Info("entering governor loop", "interval_seconds", b.cfg.Governor.EvalIntervalS)
-	lastEvalInterval := b.cfg.Governor.EvalIntervalS
-	ticker := deps.newTicker(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
+	initialEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
+	lastEvalInterval := initialEvalInterval
+	ticker := deps.newTicker(initialEvalInterval)
 	defer ticker.Stop()
 
 	var agentTickCh <-chan time.Time
@@ -5727,6 +5728,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 	}
+	b.evalCycles++
 	deps.runEval(b, nil)
 	deps.runRotation(b)
 	if b.wd != nil {
@@ -5800,6 +5802,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 					restarted = append(restarted, name)
 				}
 			}
+			b.evalCycles++
 			deps.runEval(b, restarted)
 			deps.runRotation(b)
 			deps.runSweeps(b)
@@ -5822,11 +5825,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				}
 			}
 			deps.persist(b)
-			if b.cfg.Governor.EvalIntervalS != lastEvalInterval && b.cfg.Governor.EvalIntervalS > 0 {
+			effectiveEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+			if effectiveEvalInterval != lastEvalInterval {
 				b.logger.Info("eval interval changed, resetting ticker",
-					"from", lastEvalInterval, "to", b.cfg.Governor.EvalIntervalS)
-				ticker.Reset(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
-				lastEvalInterval = b.cfg.Governor.EvalIntervalS
+					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+				ticker.Reset(effectiveEvalInterval)
+				lastEvalInterval = effectiveEvalInterval
 			}
 			b.cfgReloadMu.Unlock()
 		case <-agentTickCh:
@@ -5895,6 +5899,8 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // provider spend rebuff is latched. Package-level for the same reason as
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
+
+var evalAPIBudgetCycle atomic.Uint64
 
 // applyBudgetAlerts is a thin wrapper around spokealerts.ApplyBudget, kept so
 // call sites in this file do not need the package-qualified name (same
@@ -6379,6 +6385,10 @@ func runEvalCycle(
 		return
 	}
 
+	budgetMode, _ := ghClient.APIBudgetMode()
+	budgetDecision := decideEvalBudgetWork(budgetMode, cfg.Governor.OptionalSweepEveryNCycles, evalAPIBudgetCycle.Add(1))
+	ghClient.RecordAPIBudgetSkippedSteps(budgetDecision.SkippedSteps)
+
 	// Re-ensure the pinned advisory issue whenever it is still unresolved, not
 	// only while the App banner is up (#4167). The startup ensure can fail for
 	// reasons that deliberately do NOT raise that banner — a rate limit, a 5xx,
@@ -6398,8 +6408,11 @@ func runEvalCycle(
 	if ghClient != nil {
 		advisoryEnsureDepsForCycle.ensure = ghClient.EnsureAdvisoryIssue
 	}
-	advisoryEnsureErr := ensurePinnedAdvisoryIssue(
-		ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+	advisoryEnsureErr := error(nil)
+	if !budgetDecision.SkipOptional {
+		advisoryEnsureErr = ensurePinnedAdvisoryIssue(
+			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+	}
 
 	enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
 	actionable, err := ghClient.EnumerateActionable(enumCtx)
@@ -6425,17 +6438,23 @@ func runEvalCycle(
 	// red and no agent was ever told to fix it (hivecommons/hive#7438). This
 	// enriches the held list ONLY for the repair path — held PRs still never
 	// reach the merge sweep, escalation or the queue counts.
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	if budgetMode != github.APIBudgetCritical {
+		ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	}
 	// Stale drafts sit in the same dashboard PR column; they get the
 	// review/link signals only — no mergeability or check-run fetches, a
 	// draft is not a merge candidate (hivecommons/hive#8968).
-	ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	if !budgetDecision.SkipOptional {
+		ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	}
 
 	// Publish the human-facing "what should I merge next?" digest. This reads
 	// the PR set enumerated and CI-enriched immediately above, so it must stay
 	// after those two calls: Mergeable and the failing-check names it sorts on
 	// are populated by EnrichCIStatus, not by EnumerateActionable.
-	postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
+	if !budgetDecision.SkipOptional {
+		postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
+	}
 
 	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
 	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
@@ -6450,7 +6469,9 @@ func runEvalCycle(
 	// start, and the agent — having no memory of the PR it just filed — files
 	// another. Backed by a PVC ledger so it survives those restarts, and fails
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
-	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
+	if !budgetDecision.SkipOptional {
+		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
+	}
 
 	// PR review queue (#9590): stamp each PR's rank, priority and reasons
 	// onto the snapshot so last-actionable.json carries them next to
@@ -6471,7 +6492,10 @@ func runEvalCycle(
 	// flooding them (#5656).
 	recordEnumeratedIssues(ctx, dashSrv, actionable)
 
-	escalatedPRs := runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+	escalatedPRs := map[string]bool{}
+	if !budgetDecision.SkipOptional {
+		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+	}
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
@@ -6501,7 +6525,9 @@ func runEvalCycle(
 	// review-threads.json, attributed to the agent that opened the PR the
 	// same way ci-failing.json is, so the scheduler can route each PR back
 	// to its author for a fix + in-thread replies before any new work.
-	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+	if !budgetDecision.SkipOptional {
+		writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+	}
 
 	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
 	// CI failures, changes-requested reviews and new review-bot threads on a
@@ -6538,19 +6564,21 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
-	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
-		PrimaryRepo:     cfg.Project.PrimaryRepo,
-		AIAuthor:        cfg.Project.AIAuthor,
-		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
-	})
-	if shaErr != nil {
-		logger.Warn("SHA hold enforcement failed", "error", shaErr)
-	} else {
-		logger.Info("SHA hold enforcement complete",
-			"held", shaResult.Held,
-			"unheld", shaResult.Unheld,
-			"skipped", shaResult.Skipped,
-		)
+	if !budgetDecision.SkipOptional {
+		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
+			PrimaryRepo:     cfg.Project.PrimaryRepo,
+			AIAuthor:        cfg.Project.AIAuthor,
+			InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+		})
+		if shaErr != nil {
+			logger.Warn("SHA hold enforcement failed", "error", shaErr)
+		} else {
+			logger.Info("SHA hold enforcement complete",
+				"held", shaResult.Held,
+				"unheld", shaResult.Unheld,
+				"skipped", shaResult.Skipped,
+			)
+		}
 	}
 
 	// Refresh budget spend from lifetime token totals before Evaluate so
