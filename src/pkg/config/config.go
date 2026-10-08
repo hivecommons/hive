@@ -4000,6 +4000,12 @@ type GitHubConfig struct {
 	// updated_at still match the cheap /pulls list payload. Zero uses the
 	// 30-minute default; HIVE_GITHUB_PR_DETAIL_TTL overrides it for tests.
 	PRDetailTTLS int `yaml:"pr_detail_ttl_s,omitempty"`
+	// GraphQLPRBatch replaces per-PR detail/check-run fan-out during scans with
+	// one paginated GraphQL query per repository. Default ON (nil == true).
+	GraphQLPRBatch *bool `yaml:"graphql_pr_batch,omitempty" json:"graphql_pr_batch,omitempty"`
+	// GraphQLPRBatchPageSize controls the pullRequests(first:) page size.
+	// Zero uses DefaultGraphQLPRBatchPageSize.
+	GraphQLPRBatchPageSize int `yaml:"graphql_pr_batch_page_size,omitempty" json:"graphql_pr_batch_page_size,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -4109,8 +4115,9 @@ const PlaceholderAppID int64 = 999999999
 const (
 	// DefaultGitHubPRDetailTTL is the default freshness window for cached
 	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.
-	DefaultGitHubPRDetailTTL = 30 * time.Minute
-	GitHubPRDetailTTLEnv     = "HIVE_GITHUB_PR_DETAIL_TTL"
+	DefaultGitHubPRDetailTTL      = 30 * time.Minute
+	GitHubPRDetailTTLEnv          = "HIVE_GITHUB_PR_DETAIL_TTL"
+	DefaultGraphQLPRBatchPageSize = 50
 )
 
 func (g GitHubConfig) PRDetailTTL() time.Duration {
@@ -4126,6 +4133,24 @@ func (g GitHubConfig) PRDetailTTL() time.Duration {
 		return time.Duration(g.PRDetailTTLS) * time.Second
 	}
 	return DefaultGitHubPRDetailTTL
+}
+
+func (g GitHubConfig) GraphQLPRBatchEnabled() bool {
+	return g.GraphQLPRBatch == nil || *g.GraphQLPRBatch
+}
+
+func (g GitHubConfig) EffectiveGraphQLPRBatchPageSize() int {
+	return NormalizeGraphQLPRBatchPageSize(g.GraphQLPRBatchPageSize)
+}
+
+func NormalizeGraphQLPRBatchPageSize(n int) int {
+	if n <= 0 {
+		return DefaultGraphQLPRBatchPageSize
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
 }
 
 const (
