@@ -196,6 +196,7 @@ func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	_ = r.Register(TypeGit, newGitConnector)
 	_ = r.Register(TypeDocument, newDocumentConnector)
+	_ = r.Register(TypeGitHubWiki, newGitHubWikiConnector)
 	return r
 }
 
