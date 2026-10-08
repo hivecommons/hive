@@ -38,10 +38,11 @@ type Client struct {
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
-	rateLimits rateLimitTracker
-	org        string
-	reposMu    sync.RWMutex
-	repos      []string
+	rateLimits  rateLimitTracker
+	prDetailTTL func() time.Duration
+	org         string
+	reposMu     sync.RWMutex
+	repos       []string
 	// repoPaused reports whether a repo is under an operator pause (#6203).
 	// Guarded by reposMu because the dashboard can pause a repo while the
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
@@ -961,11 +962,12 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger, ap
 	// (see proxytrust.go).
 	client := newTokenClient(token, apiURL)
 	return &Client{
-		client:    client,
-		org:       org,
-		repos:     repos,
-		logger:    logger,
-		authToken: token,
+		client:      client,
+		org:         org,
+		repos:       repos,
+		logger:      logger,
+		authToken:   token,
+		prDetailTTL: func() time.Duration { return (config.GitHubConfig{}).PRDetailTTL() },
 	}
 }
 
@@ -999,6 +1001,34 @@ func NewClientForTest(serverURL string, org string, repos []string, logger *slog
 	}
 	c.client.BaseURL = base
 	return c
+}
+
+func (c *Client) SetPRDetailTTLFunc(fn func() time.Duration) {
+	if c == nil {
+		return
+	}
+	c.prDetailTTL = fn
+}
+
+func (c *Client) effectivePRDetailTTL() time.Duration {
+	if c != nil && c.prDetailTTL != nil {
+		if ttl := c.prDetailTTL(); ttl >= 0 {
+			return ttl
+		}
+	}
+	return (config.GitHubConfig{}).PRDetailTTL()
+}
+
+func (c *Client) cachedPRDetailFromList(repo string, number int, headSHA string, updatedAt time.Time) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.get(repo, number, headSHA, updatedAt, c.effectivePRDetailTTL())
+}
+
+func (c *Client) cachedPRDetailAny(repo string, number int) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.getAny(repo, number, c.effectivePRDetailTTL())
+}
+
+func (c *Client) storePRDetail(repo string, number int, pr *gh.PullRequest) {
+	sharedPRDetailCache.put(repo, number, pr)
 }
 
 // SetOrg is nil-receiver safe for the same reason as SetRepos: dashboard saves
@@ -1795,14 +1825,21 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	}
 	owner, repoName := c.splitRepo(pr.Repo)
 
-	// Fetch the PR individually to learn its mergeability. The list
-	// endpoint that produced these PullRequests never populates
-	// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
-	// returns them only from this single-PR GET. On error we leave the
-	// field as MergeableUnknown rather than guessing.
-	if full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number); err != nil {
-		c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
-	} else {
+	// The list endpoint that produced this PullRequest carries a cheap,
+	// ETag-friendly head SHA and updated_at but not mergeability. Reuse a
+	// detail response only while those list fields still match; merge decisions
+	// below still re-fetch fresh details before mutating.
+	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
+	if !ok {
+		var err error
+		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
+		if err != nil {
+			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		} else {
+			c.storePRDetail(pr.Repo, pr.Number, full)
+		}
+	}
+	if full != nil {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
@@ -2118,11 +2155,17 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 	if c == nil {
 		return "", ErrNoGitHubClient
 	}
+	// Dashboard decoration tolerates the bounded PR-detail TTL; a stale author
+	// display is harmless and avoids another charged GET when enrichment just ran.
+	if pr, ok := c.cachedPRDetailAny(repo, number); ok {
+		return safeGetLogin(pr.GetUser()), nil
+	}
 	owner, repoName := c.splitRepo(repo)
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_author"), owner, repoName, number)
 	if err != nil {
 		return "", err
 	}
+	c.storePRDetail(repo, number, pr)
 	return safeGetLogin(pr.GetUser()), nil
 }
 
@@ -2141,10 +2184,17 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 	if c == nil {
 		return PRState{}, ErrNoGitHubClient
 	}
-	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
-	if err != nil {
-		return PRState{}, err
+	// Outcome/follow-up ledgers reconcile display history and retry later; they
+	// can accept one PR-detail TTL of staleness rather than recharging a GET.
+	pr, ok := c.cachedPRDetailAny(repo, number)
+	if !ok {
+		owner, repoName := c.splitRepo(repo)
+		var err error
+		pr, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
+		if err != nil {
+			return PRState{}, err
+		}
+		c.storePRDetail(repo, number, pr)
 	}
 	st := PRState{State: pr.GetState()}
 	if !pr.GetMergedAt().IsZero() {
@@ -2682,11 +2732,12 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	Core         RateLimitEntry `json:"core"`
-	Search       RateLimitEntry `json:"search"`
-	GraphQL      RateLimitEntry `json:"graphql"`
-	TopConsumers []RESTConsumer `json:"top_consumers,omitempty"`
-	ETagCache    ETagCacheInfo  `json:"etag_cache"`
+	Core          RateLimitEntry `json:"core"`
+	Search        RateLimitEntry `json:"search"`
+	GraphQL       RateLimitEntry `json:"graphql"`
+	TopConsumers  []RESTConsumer `json:"top_consumers,omitempty"`
+	ETagCache     ETagCacheInfo  `json:"etag_cache"`
+	PRDetailCache ETagCacheInfo  `json:"pr_detail_cache"`
 }
 
 type ETagCacheInfo struct {
@@ -2750,6 +2801,8 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
 	hits, misses, entries := ETagCacheStats()
 	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	hits, misses, entries = PRDetailCacheStats()
+	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	info.TopConsumers = RESTTopConsumers(10)
 
 	return info, nil
