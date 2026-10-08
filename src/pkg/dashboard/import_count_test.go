@@ -21,8 +21,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// /api/claims routes expose (hivecommons/hive#8380), plus pkg/upstreamwatch
 	// for the divergence view and /api/upstream-watch route (hivecommons/hive#10361),
 	// plus pkg/releasenotes for the GET /api/version/release-notes changelog
-	// gap endpoint (hivecommons/hive#11065).
-	const maxDashboardInternalImports = 44
+	// gap endpoint (hivecommons/hive#11065), plus pkg/compliance for the
+	// control registry and /api/compliance routes (hivecommons/hive#11078).
+	const maxDashboardInternalImports = 45
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

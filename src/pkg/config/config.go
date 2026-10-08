@@ -125,7 +125,9 @@ type Config struct {
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
 	// Evidence controls the review evidence bundles the review relay writes
 	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
-	Evidence   EvidenceConfig   `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Compliance selects framework profiles; see ComplianceConfig.
+	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client
@@ -2032,8 +2034,11 @@ func (a *AgentConfig) EnabledExplicitlySet() bool {
 }
 
 type GovernorConfig struct {
-	Modes         map[string]ModeConfig `yaml:"modes"`
-	EvalIntervalS int                   `yaml:"eval_interval_s"`
+	Modes                      map[string]ModeConfig `yaml:"modes"`
+	EvalIntervalS              int                   `yaml:"eval_interval_s"`
+	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
+	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -4016,6 +4021,10 @@ type GitHubConfig struct {
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
 	APIURL string `yaml:"api_url"`
+	// APIReserve is the core REST quota floor where Hive sheds optional work.
+	APIReserve int `yaml:"api_reserve,omitempty"`
+	// APICritical is the lower core REST quota floor where Hive enters critical mode.
+	APICritical int `yaml:"api_critical,omitempty"`
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
@@ -6070,6 +6079,11 @@ const (
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
+	defaultEvalIntervalMaxS       = 1800
+	defaultConserveIntervalMult   = 2
+	defaultOptionalSweepEveryN    = 1
+	defaultGitHubAPIReserve       = 800
+	defaultGitHubAPICritical      = 250
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeEngine        = "llm-wiki"
@@ -6182,6 +6196,21 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
+	}
+	if c.Governor.EvalIntervalMaxS == 0 {
+		c.Governor.EvalIntervalMaxS = defaultEvalIntervalMaxS
+	}
+	if c.Governor.ConserveIntervalMultiplier == 0 {
+		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult
+	}
+	if c.Governor.OptionalSweepEveryNCycles == 0 {
+		c.Governor.OptionalSweepEveryNCycles = defaultOptionalSweepEveryN
+	}
+	if c.GitHub.APIReserve == 0 {
+		c.GitHub.APIReserve = defaultGitHubAPIReserve
+	}
+	if c.GitHub.APICritical == 0 {
+		c.GitHub.APICritical = defaultGitHubAPICritical
 	}
 	if c.Governor.Trajectory.IsEnabled() {
 		if c.Governor.Trajectory.OnDivergence == "" {
