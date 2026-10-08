@@ -362,9 +362,21 @@ func (l *Lane) timeoutFor(repo string) time.Duration {
 
 func (l *Lane) expireLocked(rec *Record, now time.Time, ev *[]Event) {
 	if rec.Front != nil && now.After(rec.Front.DeadlineAt) {
-		l.exitLocked(rec, now, rec.Front.EvaluatedHead, "",
-			fmt.Sprintf("front timeout: required checks did not finish within %s", l.timeoutFor(rec.Repo)), ev)
+		l.exitLocked(rec, now, rec.Front.EvaluatedHead, "", timeoutReason(rec.Front, l.timeoutFor(rec.Repo)), ev)
 	}
+}
+
+// timeoutReason says what the lane last knew about a front that timed out; it
+// never claims the checks did not finish when the head was never evaluated.
+func timeoutReason(f *Front, timeout time.Duration) string {
+	reason := fmt.Sprintf("front timeout after %s: ", timeout)
+	switch {
+	case f.PinnedHead != "":
+		return reason + "the head after the branch update was never evaluated"
+	case f.LastReason != "":
+		return reason + "last known state: " + f.LastReason
+	}
+	return reason + "no evaluation of the front reached a verdict"
 }
 
 func (l *Lane) exitLocked(rec *Record, now time.Time, head, tip, reason string, ev *[]Event) {
