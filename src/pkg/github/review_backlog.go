@@ -114,7 +114,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 	if err != nil {
 		return nil
 	}
-	reports = acceptedReviewBacklogReports(req, reports)
+	reports = c.acceptedReviewBacklogReports(req, reports)
 	if len(reports) == 0 {
 		return nil
 	}
@@ -203,13 +203,13 @@ func (c *Client) ensureReviewBacklogLabel(ctx context.Context, repo string, numb
 	return err
 }
 
-func acceptedReviewBacklogReports(req ReviewRequest, reports []review.PerspectiveReport) []review.PerspectiveReport {
+func (c *Client) acceptedReviewBacklogReports(req ReviewRequest, reports []review.PerspectiveReport) []review.PerspectiveReport {
 	accepted := make([]review.PerspectiveReport, 0, len(reports))
 	for _, report := range reports {
 		if !strings.EqualFold(strings.TrimSpace(report.Repo), strings.TrimSpace(req.Repo)) || report.Number != req.Number {
 			continue
 		}
-		ok, _, _ := verdictDispatchAuthorized(report, req)
+		ok, _, _ := c.verdictDispatchAuthorized(report, req)
 		if !ok {
 			continue
 		}

@@ -114,6 +114,10 @@ type Client struct {
 	approvalDesk ApprovalDeskHook
 	reviseRepos  []string
 	perspectives review.PerspectiveSet
+	// reviewerAgent reports whether a lane is a reviewer (review.ReviewCapable).
+	// Only reviewers may record a verdict that no dispatch row binds; nil falls
+	// back to the dispatcher's name-token rule.
+	reviewerAgent func(agent string) bool
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore func() bool
 	// reviewBacklog controls review out-of-scope finding filing.
@@ -381,6 +385,28 @@ func (c *Client) SetPerspectives(set review.PerspectiveSet) {
 		return
 	}
 	c.perspectives = set
+}
+
+// SetReviewerAgentFunc tells the relay which lanes are reviewers. A verdict
+// with no matching dispatch row is recorded only when the submitting agent
+// passes this check, so a non-reviewer lane cannot satisfy or veto the
+// review-approval merge gate for a PR nothing asked it to review.
+func (c *Client) SetReviewerAgentFunc(fn func(agent string) bool) {
+	if c == nil {
+		return
+	}
+	c.reviewerAgent = fn
+}
+
+func (c *Client) isReviewerAgent(agent string) bool {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return false
+	}
+	if c != nil && c.reviewerAgent != nil {
+		return c.reviewerAgent(agent)
+	}
+	return review.ReviewCapable(review.AgentCapability{Name: agent}, nil)
 }
 
 // SetConfidenceScore turns on the one-line mergeability score the relay

@@ -695,29 +695,42 @@ func (o DispatchOptions) effectiveMaxPerspectivesPerPR() int {
 }
 
 func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
-	allowed := map[string]bool{}
-	for _, name := range opts.ReviewerAgents {
-		if n := strings.TrimSpace(name); n != "" {
-			allowed[n] = true
-		}
-	}
+	allowed := ReviewerAgentSet(opts.ReviewerAgents)
 	var out []AgentCapability
 	for _, a := range opts.Agents {
 		if a.Name == "" || !a.Enabled || a.Paused || a.OnDemand || !a.UsesKick {
 			continue
 		}
-		if len(allowed) > 0 {
-			if allowed[a.Name] {
-				out = append(out, a)
-			}
-			continue
-		}
-		if hasReviewCapability(a) {
+		if ReviewCapable(a, allowed) {
 			out = append(out, a)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// ReviewCapable reports whether one agent is a reviewer under the same rule
+// the dispatcher uses to hand out review kicks: when review.reviewer_agents
+// names lanes, membership in that set decides; otherwise the agent's name,
+// role, aliases or keywords must carry the review token. The relay uses it to
+// decide whose dispatch-less verdicts may be recorded.
+func ReviewCapable(a AgentCapability, reviewerAgents map[string]bool) bool {
+	if len(reviewerAgents) > 0 {
+		return reviewerAgents[a.Name]
+	}
+	return hasReviewCapability(a)
+}
+
+// ReviewerAgentSet builds the membership set ReviewCapable consults from the
+// configured review.reviewer_agents list.
+func ReviewerAgentSet(names []string) map[string]bool {
+	set := map[string]bool{}
+	for _, name := range names {
+		if n := strings.TrimSpace(name); n != "" {
+			set[n] = true
+		}
+	}
+	return set
 }
 
 func hasReviewCapability(a AgentCapability) bool {
