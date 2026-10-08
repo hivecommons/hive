@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,29 @@ func TestOpenEventLogFailsWhenParentDirMissing(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("event log must not be created, stat err = %v", statErr)
+	}
+}
+
+// /dev/null opens for append without error, but fchmod on a root-owned device
+// node is refused for an unprivileged caller, which is the only portable way
+// to make Chmod fail after OpenFile has already succeeded.
+func TestOpenEventLogFailsWhenChmodDenied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("/dev/null is not available on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root may chmod /dev/null; the Chmod error path is unreachable")
+	}
+	f, err := openEventLog(os.DevNull)
+	if err == nil {
+		f.Close()
+		t.Fatal("openEventLog succeeded, want error when Chmod is denied")
+	}
+	if f != nil {
+		t.Fatalf("file = %v, want nil on error", f)
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("err = %v, want a permission error from Chmod", err)
 	}
 }
 
