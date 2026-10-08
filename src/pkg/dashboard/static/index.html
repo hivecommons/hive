@@ -19348,7 +19348,8 @@ function burnAreaChart() {
         if (!res.ok) return;
         const fresh = await res.json();
         if (!fresh || !fresh.core || !window._lastStatus) return;
-        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core, etag_cache: fresh.etag_cache, top_consumers: fresh.top_consumers });
+        window._lastStatus.ghRateLimits = Object.assign({}, window._lastStatus.ghRateLimits || {}, { core: fresh.core, etag_cache: fresh.etag_cache, top_consumers: fresh.top_consumers, api_budget: fresh.api_budget || fresh.apiBudget });
+        window._lastStatus.api_budget = fresh.api_budget || fresh.apiBudget || window._lastStatus.api_budget;
         renderGhRateLimits(window._lastStatus.ghRateLimits);
         renderDebugSection();
       } catch (_) {
@@ -24962,10 +24963,17 @@ function burnAreaChart() {
       const core = ghRate.core || {};
       const rate = debugGhRateLimitStatus(core);
       const totals = tokens.totals || {};
+      const apiBudget = status.api_budget || ghRate.api_budget || {};
+      const skipped = Array.isArray(apiBudget.skipped_steps) ? apiBudget.skipped_steps : [];
+      const budgetReset = apiBudget.reset ? new Date(apiBudget.reset) : null;
+      const budgetResetText = budgetReset && !Number.isNaN(budgetReset.getTime()) ? 'resets ' + Math.max(0, Math.round((budgetReset.getTime() - Date.now()) / 60000)) + 'm' : 'reset unknown';
+      const budgetMode = apiBudget.mode || 'normal';
+      const budgetTitle = skipped.length ? 'Skipped for API budget: ' + skipped.join(', ') : 'No API-budget steps skipped';
+      const budgetPill = `<span id="api-budget-pill" class="debug-quota-chip ${budgetMode === 'critical' ? 'bad' : budgetMode === 'conserve' ? 'warn' : 'ok'}" title="${escapeHtml(budgetTitle)}">API budget: ${escapeHtml(budgetMode)} (${Number(apiBudget.remaining || rate.remaining || 0).toLocaleString()} left, ${escapeHtml(budgetResetText)})</span>`;
       const apiText = rate.headline;
       const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
       const mini = debugQuotaWidgetHtml(status);
-      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span></div><span class="debug-headline-mini">${mini}</span></div>`;
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span>${budgetPill}</div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     function renderDebugSection() {
       refreshSectionCardShell('debug-section');

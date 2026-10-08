@@ -21,6 +21,7 @@ func TestDashboardRateLimitUIUsesRemainingSemantics(t *testing.T) {
 		"q.semantics === 'remaining'",
 		"debugGhRateClassFromRemainingPct(remainingPct)",
 		"async function maybeRefreshGhRateLimits(ghRateLimits)",
+		"id=\"api-budget-pill\"",
 		"fetch('/api/gh-rate-limits', { cache: 'no-store' })",
 		"!status.resetPassed && !dueForPeriodicRefresh",
 		"function renderGitHubAPIBudgetPanel(ghRate)",

@@ -103,6 +103,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	authToken                 string   // token-authenticated clients only; never log
 	canariesEnabled           bool
@@ -2735,12 +2736,13 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	Core          RateLimitEntry `json:"core"`
-	Search        RateLimitEntry `json:"search"`
-	GraphQL       RateLimitEntry `json:"graphql"`
-	TopConsumers  []RESTConsumer `json:"top_consumers,omitempty"`
-	ETagCache     ETagCacheInfo  `json:"etag_cache"`
-	PRDetailCache ETagCacheInfo  `json:"pr_detail_cache"`
+	APIBudget     APIBudgetSnapshot `json:"api_budget"`
+	Core          RateLimitEntry    `json:"core"`
+	Search        RateLimitEntry    `json:"search"`
+	GraphQL       RateLimitEntry    `json:"graphql"`
+	TopConsumers  []RESTConsumer    `json:"top_consumers,omitempty"`
+	ETagCache     ETagCacheInfo     `json:"etag_cache"`
+	PRDetailCache ETagCacheInfo     `json:"pr_detail_cache"`
 }
 
 type ETagCacheInfo struct {
@@ -2807,6 +2809,8 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	hits, misses, entries = PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	info.TopConsumers = RESTTopConsumers(10)
+	_, snapshot := c.APIBudgetMode()
+	info.APIBudget = snapshot
 
 	return info, nil
 }

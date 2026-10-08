@@ -108,6 +108,7 @@ type boot struct {
 	activityCollector             *collect.ActivityCollector
 	repoCostCollector             *collect.RepoCostCollector
 	lastActionable                atomic.Pointer[github.ActionableResult]
+	evalCycles                    uint64
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer
 	nousState                     *dashboard.NousState

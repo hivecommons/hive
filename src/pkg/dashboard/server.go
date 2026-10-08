@@ -439,6 +439,7 @@ type StatusPayload struct {
 	Budget              FrontendBudget    `json:"budget"`
 	CadenceMatrix       []FrontendCadence `json:"cadenceMatrix"`
 	GHRateLimits        map[string]any    `json:"ghRateLimits"`
+	APIBudget           map[string]any    `json:"api_budget"`
 	AgentMetrics        map[string]any    `json:"agentMetrics"`
 	Hold                FrontendHold      `json:"hold"`
 	IssueToMerge        map[string]any    `json:"issueToMerge"`
