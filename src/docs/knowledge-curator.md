@@ -207,6 +207,114 @@ the same SSRF validation as git sources. Like `git_sources`, a non-empty
 imported at runtime via `POST /api/knowledge/documents` — see
 [api-reference.md](api-reference.md).
 
+## Connectors (`knowledge.connectors`)
+
+`knowledge.connectors` is the shared seam every external knowledge system
+plugs into (`pkg/knowledge/connector`). A connector lists and fetches
+upstream pages; the connector syncer runs each enabled connector on its
+`interval`, converts the pages to markdown facts and writes them into the
+vault for the connector's `layer`. Incremental sync, auth, SSRF hardening,
+size/time caps and per-connector status are shared, so individual connectors
+only implement listing and fetching.
+
+```yaml
+knowledge:
+  connectors:
+    - name: eng-handbook          # lowercase letters, digits, dashes; unique
+      type: git                   # connector type (see below)
+      layer: org                  # personal | project | org | community
+      interval: 30m               # Go duration, minimum 1m; default 15m
+      enabled: true               # default true
+      scope:                      # type-specific keys
+        url: https://github.com/acme/handbook.git
+        branch: main
+        subpath: docs
+    - name: style-guide
+      type: document
+      layer: project
+      scope:
+        url: https://example.com/style-guide.pdf
+    - name: next-docs
+      type: document
+      layer: project
+      scope:
+        context7_id: /vercel/next.js
+      auth:
+        env: CONTEXT7_API_KEY     # or file: /secrets/context7-key
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `name` | yes | Unique id; part of every fact slug. |
+| `type` | yes | Connector type registered in `pkg/knowledge/connector`. |
+| `layer` | yes | Knowledge layer the facts are written to. |
+| `interval` | no | Sync period (Go duration, at least `1m`); default `15m`. |
+| `enabled` | no | `false` keeps the entry configured but unscheduled. |
+| `scope` | per type | Type-specific settings (`map[string]string`). |
+| `auth.env` / `auth.file` | per type | Where the credential lives: an environment variable name or an absolute file path. At most one. |
+
+Credentials are never accepted inline: any other key under `auth` (for
+example `auth.token`) and any `scope` key that looks like a secret (`token`,
+`password`, `secret`, `api_key`, `private_key`, `credential`) fail config
+validation with an error naming the field.
+
+### Built-in connector types
+
+| Type | Scope keys | Notes |
+|------|------------|-------|
+| `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
+| `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
+
+Notion, Confluence, SharePoint/OneDrive, Google Drive and GitHub Wiki
+connectors land in #11070–#11074.
+
+### Facts written by connectors
+
+Each page becomes one fact with the deterministic slug
+`<type>-<name>-<source_id>` (lower-cased, reduced to `[a-z0-9-]`, with a short
+hash appended when that reduction loses information). Front-matter:
+
+```yaml
+---
+title: Deploy runbook
+type: reference
+layer: org
+status: active            # or deprecated
+tags: [connector, git, eng-handbook]
+source: git               # connector type
+connector: eng-handbook   # connector name
+source_id: docs-deploy
+source_url: https://github.com/acme/handbook.git
+synthesized: 2026-10-08T12:00:00Z   # upstream last-modified when known
+synced_at: 2026-10-08T12:00:00Z
+---
+```
+
+A fact is marked `status: deprecated` (a tombstone; the file stays so links
+resolve) when the upstream page is archived, or when a page disappears from a
+full listing. Incremental syncs never tombstone pages they did not list.
+Unchanged pages are not rewritten. Page bodies are capped at 1 MiB, each sync
+run at 10 minutes, and connector HTTP fetches at 30 seconds and 20 MiB with
+`Retry-After`-aware backoff on 429/5xx.
+
+### Status
+
+The syncer records, per connector: last successful sync, last attempt, pages
+emitted by the last sync, active and deprecated fact counts, last error and
+the incremental cursor.
+
+### Relationship to `git_sources` and `documents`
+
+`knowledge.git_sources` and `knowledge.documents` keep working exactly as
+before: same YAML keys, same boot-time behaviour, same
+`/api/knowledge/sources` output. The `git` and `document` connector types
+reuse their code paths for operators who want the connector lifecycle
+(interval, layer-targeted facts, tombstones, status). The connector syncer is
+not yet started by `hive` itself; scheduling, the
+`GET /api/knowledge/connectors` / `POST /api/knowledge/connectors/{name}/sync`
+endpoints and the Settings → Knowledge view are follow-ups tracked in #11069
+and #11068. Until then `knowledge.connectors` is parsed and validated only.
+
 ## Bead synthesizer (`knowledge.bead_synthesizer`)
 
 The bead synthesizer periodically scans every agent's **closed** beads,
