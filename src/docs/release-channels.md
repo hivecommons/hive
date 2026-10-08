@@ -177,3 +177,7 @@ How targets are now resolved (`reachableUpgradeTarget`, used by the manual upgra
 ## Grouping hives by upgrade state
 
 The My Hives **GROUP BY** selector includes an `Upgrade state` dimension ([#3805](https://github.com/hivecommons/hive/pull/3805)) with three buckets: `Queued (ready, not yet upgrading)` (auto-upgrade on and a target armed), `Upgrading`, and `Up to date`. Note that `Queued` requires auto-upgrade to be enabled — a hive that is behind latest with auto-upgrade off sorts under `Up to date`.
+
+## Release notes between two revisions
+
+`GET /api/version/release-notes?from=<sha>&to=<channel-or-sha>` answers "what changes if I upgrade from here to there?" ([#11065](https://github.com/hivecommons/hive/issues/11065)). The dashboard reads `CHANGELOG.md` at both revisions (through the configured GitHub credential, falling back to the public raw endpoint) and returns the `## <date> (vX.Y.Z)` sections that exist at `to` but not at `from`, newest first, grouped Added / Changed / Fixed / Security / Deprecated. The diff comes from repo content, never version arithmetic, so channel and nightly heads work. When `to` is not a release tag, `changelog.d/` fragments that are new at `to` are listed under an `Unreleased (in this build)` section, categorised by filename prefix. If the notes cannot be fetched the endpoint still returns 200 with `source: "unavailable"` and a reason, so an upgrade is never blocked on it. Responses are cached per (from, to) pair for an hour and capped at 400 entries (`truncated: true` when cut).

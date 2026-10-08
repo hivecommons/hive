@@ -34,6 +34,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerSwarmRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+	s.mux.HandleFunc("GET /api/version/release-notes", s.handleVersionReleaseNotes)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
 	s.mux.HandleFunc("GET /api/themes", s.handleThemesList)
 	s.mux.HandleFunc("GET /api/theme.css", s.handleThemeCSS)
