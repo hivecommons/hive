@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-08 (v5.143.3)
+
+### Fixed
+
+- fix(github): tolerate unsearchable author:app qualifier in PR/issue counts (#11033)
+- fix(dashboard): max merges per sweep placeholder shows the real default (3) (#11034)
+- fix(scanner): comment instead of pushing content to PRs the hive did not author (#11035)
+
 ## 2026-10-08 (v5.143.2)
 
 ### Fixed
