@@ -1,1 +1,0 @@
-- Add the `github-wiki` knowledge connector type: syncs `<owner>/<repo>.wiki.git` wikis through the git clone/SSRF path, emitting `Home` as the root page, ordering and nesting pages from `_Sidebar.md`, taking `updated_at` from git history, and reporting a clear error when a repository has no wiki (#11074).
