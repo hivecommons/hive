@@ -852,14 +852,6 @@ func feedbackHubDisplayName(cfg *config.Config) string {
 	return "hub"
 }
 
-func (s *Server) feedbackCredentialTokenLogin(r *http.Request) string {
-	return ""
-}
-
-func (s *Server) feedbackTokenLogin(token string) string {
-	return githubLoginForMention(lookupFeedbackTokenLogin(token))
-}
-
 // feedbackSourceEntered marks a submitter login the user typed into the form.
 // Nothing verifies it, so renderers must not @-mention it (see
 // feedbackSubmitterBodyText).
