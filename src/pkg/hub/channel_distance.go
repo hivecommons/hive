@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -52,10 +53,12 @@ var (
 //
 // A var so tests can supply distances without a network round-trip.
 var fetchCommitCompareCounts = func(base, head string, logger *slog.Logger) (channelDistance, error) {
-	client := &http.Client{Timeout: commitCompareTimeout}
+	client := hubGitHubHTTPClient()
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "channel_distance"), commitCompareTimeout)
+	defer cancel()
 	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
 		githubAPIBase, url.PathEscape(base), url.PathEscape(head))
-	req, err := http.NewRequest(http.MethodGet, compareURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, compareURL, nil)
 	if err != nil {
 		return channelDistance{}, err
 	}

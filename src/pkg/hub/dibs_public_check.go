@@ -1,12 +1,12 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,13 +35,6 @@ const (
 	dibsPublicCheckParallel = 4
 )
 
-// dibsHubGitHubTokenEnv optionally names a GitHub token the hub uses for the
-// public-repo checks, raising the API rate limit from 60/h (unauthenticated)
-// to 5000/h. No hub-level GitHub token env existed before this (the hub's App
-// credentials are per-installation), so this is a new, optional knob; unset
-// means unauthenticated checks, which the TTL math above fits.
-const dibsHubGitHubTokenEnv = hubGitHubTokenEnv
-
 // dibsPublicVerdict is one cached answer: whether the repo was public when
 // last checked, and when the answer stops being trusted.
 type dibsPublicVerdict struct {
@@ -59,7 +52,6 @@ type dibsPublicChecker struct {
 	// slot is acquired under mu in isPublic and released by refresh.
 	sem     chan struct{}
 	apiBase string // test seam; production is https://api.github.com
-	token   string // optional bearer for higher rate limits (env, read once)
 	client  *http.Client
 	logger  *slog.Logger
 	now     func() time.Time // test seam for TTL expiry
@@ -71,8 +63,7 @@ func newDibsPublicChecker(logger *slog.Logger) *dibsPublicChecker {
 		inflight: map[string]bool{},
 		sem:      make(chan struct{}, dibsPublicCheckParallel),
 		apiBase:  "https://api.github.com",
-		token:    strings.TrimSpace(os.Getenv(dibsHubGitHubTokenEnv)),
-		client:   &http.Client{Timeout: dibsPublicCheckTimeout},
+		client:   hubGitHubHTTPClient(),
 		logger:   logger,
 		now:      time.Now,
 	}
@@ -143,15 +134,15 @@ func (c *dibsPublicChecker) check(repoID string) (public, definitive bool) {
 		// Not an owner/repo pair at all — permanently excludable, no API call.
 		return false, true
 	}
-	req, err := http.NewRequest(http.MethodGet,
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "dibs_public_check"), dibsPublicCheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.apiBase+"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name), nil)
 	if err != nil {
 		return false, true
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
+	authGitHubRequest(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		c.logger.Warn("dibs public check: github unreachable", "repo", repoID, "error", err)

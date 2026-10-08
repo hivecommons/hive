@@ -133,6 +133,15 @@ func githubTransportChain(inner http.RoundTripper) http.RoundTripper {
 	return slowStartWrap(etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner))))
 }
 
+// NewHTTPTransport returns the shared GitHub REST transport chain wrapped
+// around base. Passing nil uses hive's proxy-trusting shared socket transport.
+func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
+	if base == nil {
+		base = sharedProxyTrust.sharedTransport()
+	}
+	return githubTransportChain(base)
+}
+
 // etagCacheKey identifies a cacheable representation: who asked, for what,
 // in which format.
 func etagCacheKey(req *http.Request) string {

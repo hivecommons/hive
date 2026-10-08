@@ -1617,6 +1617,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	logHubGitHubIdentityMode(logger)
 	// Rebuild the in-memory upgrade-delivery map from the durable registry
 	// BEFORE the server takes its first heartbeat, so a hub restart can never
 	// orphan an armed upgrade (#2476).
@@ -1645,6 +1646,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/hub/leaderboard", s.handleLeaderboard)
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
+	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	// Delegation-chain verification material (JWKS-equivalent). Registered
 	// WITHOUT requireAuth on purpose: the whole point of a verifiable chain is
@@ -4120,6 +4122,18 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})
+}
+
+func (s *HubServer) handleGHRateLimits(w http.ResponseWriter, r *http.Request) {
+	limits, err := hubGitHubRateLimits(r.Context())
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(limits)
 }
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
