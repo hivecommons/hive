@@ -1,1 +1,0 @@
-- Linkify GitHub repo issue and PR references in dashboard alert banners so stalled-plan alerts open in a new tab.

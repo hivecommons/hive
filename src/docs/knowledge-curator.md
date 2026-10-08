@@ -264,9 +264,20 @@ validation with an error naming the field.
 |------|------------|-------|
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
+| `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
 
-Notion, Confluence, SharePoint/OneDrive, Google Drive and GitHub Wiki
-connectors land in #11070–#11074.
+```yaml
+knowledge:
+  connectors:
+    - name: project-wikis
+      type: github-wiki
+      layer: project
+      scope:
+        repos: acme/app, acme/docs
+```
+
+Notion, Confluence, SharePoint/OneDrive and Google Drive connectors land in
+#11070–#11073.
 
 ### Facts written by connectors
 

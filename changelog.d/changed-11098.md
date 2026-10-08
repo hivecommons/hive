@@ -1,1 +1,0 @@
-- Cache per-PR detail fetches to cut GET /pulls/{number} quota burn (#11098)

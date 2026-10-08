@@ -2,7 +2,7 @@
 
 A **review evidence bundle** is one self-contained JSON document per pull request head commit. It records what Hive reviewed, under which policy, what the reviewers found, what CI reported, who acted on the PR, and how it was merged. A bundle is **evidence, not certification**: it lets your own control owners decide whether Hive's automated review satisfies your change-management policy. See [SOC 2 control mapping](soc2-control-mapping.md) for how to use it, and [general technical review](general-technical-review.md) for what Hive does and does not claim.
 
-> **Status.** The schema, canonical hash, signing and verification (`pkg/evidence`) exist today. The writer, the `GET /api/review/evidence` endpoint, the dashboard "Download evidence" action and `hivectl review evidence` are tracked in the [epic #11058](https://github.com/hivecommons/hive/issues/11058) and are **landing in follow-up issues #11060/#11061/#11062**. Sections below that describe those surfaces are the design, not yet shipped behaviour.
+> **Status.** The schema, canonical hash, signing and verification (`pkg/evidence`) exist today, and the review relay writes bundles (verdicts, posted reviews and the policy snapshot; see [Where it lives](#where-it-lives-and-retention)). Sentinel findings, CI, human actions and the merge event, the `GET /api/review/evidence` endpoint, the dashboard "Download evidence" action and `hivectl review evidence` are tracked in the [epic #11058](https://github.com/hivecommons/hive/issues/11058) and are **landing in follow-up issues #11060/#11061/#11062**. Sections below that describe those surfaces are the design, not yet shipped behaviour.
 
 ## What a bundle is
 
@@ -54,7 +54,21 @@ Any change to any covered field changes the hash and fails verification.
 
 ## Where it lives and retention
 
-Design (follow-up issues #11060/#11061/#11062): bundles are written under the hive data directory, not `/var/run`, so they survive restarts. They follow the same retention contract as `/api/runs/audit`: when a bundle ages out it is reported with an explicit `expired` marker, never as silent absence.
+Bundles are written under the hive data directory, not `/var/run`, so they survive restarts:
+
+```
+/data/evidence/<owner>/<repo>/<number>/<head_sha>.json
+```
+
+The review relay writes them whenever it records a validated verdict (with or without posting a comment) or posts a review:
+
+- The first write for a head fetches the PR once for `author` and `base_sha`, snapshots `policy` (ACMM level, `review.require_approval`, the repo's `auto_merge.human_merge_paths`, the perspective set, and a hash of the `sentinel` block), and sets `previous_bundle_id` to the newest bundle for an earlier head of the same PR.
+- Later writes append to `verdicts` and `posted_reviews`. A verdict identical to one already recorded (ignoring `recorded_at`), or a review URL already listed, is not added again, and a pass that adds nothing leaves the file untouched, so re-running the relay never duplicates entries. A changed verdict from the same perspective is kept beside the earlier one.
+- Every write recomputes `hash`, and signs when `evidence.signing_key_file` is set. Files are written then renamed, so a reader never sees a partial bundle. An existing bundle that cannot be parsed is left untouched rather than replaced.
+- A finding reported against the PR as a whole, with no file, is recorded with `path` `(pr)`. A verdict's `confidence` is that perspective's own 0 to 5 review confidence score divided by 5.
+- `evidence.enabled: false` stops new writes. Failures are logged and never fail or retry the review itself.
+
+Planned (follow-up issue #11061): reads follow the same retention contract as `/api/runs/audit`: when a bundle ages out it is reported with an explicit `expired` marker, never as silent absence.
 
 ## Downloading
 
@@ -67,7 +81,7 @@ Landing in follow-up issues #11060/#11061/#11062:
 
 ## Signing key
 
-Set a signing key path in configuration (landing with the writer). The file holds an Ed25519 private key as a 32-byte seed or 64-byte key, hex or base64 encoded. If the path is empty or the file is absent, bundles are written **unsigned** with `"signed": false`; they still carry a `hash`, which detects accidental change but not tampering by someone who can recompute it. Keep the private key off shared hosts and publish only the public key.
+Set `evidence.signing_key_file` in `hive.yaml` (see the [operator reference](operator-reference.md#notable-fields)). The file holds an Ed25519 private key as a 32-byte seed or 64-byte key, hex or base64 encoded. If the path is empty or the file is absent, bundles are written **unsigned** with `"signed": false`; they still carry a `hash`, which detects accidental change but not tampering by someone who can recompute it. Keep the private key off shared hosts and publish only the public key.
 
 ## Verify offline
 

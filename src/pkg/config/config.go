@@ -119,9 +119,14 @@ type Config struct {
 	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
-	// Sentinel flags PRs that look like security overrides, privilege escalation
-	// or codebase damage (default on); Compliance selects framework profiles.
-	Sentinel   SentinelConfig   `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	// Sentinel flags PRs that look like security overrides, privilege
+	// escalation or codebase damage, from any author. Default on; see
+	// SentinelConfig.
+	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	// Evidence controls the review evidence bundles the review relay writes
+	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
+	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Compliance selects framework profiles; see ComplianceConfig.
 	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
