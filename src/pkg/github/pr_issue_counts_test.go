@@ -142,3 +142,46 @@ func TestComputePRIssueCounts_AppAuthorFallback(t *testing.T) {
 		t.Errorf("app fallback counts = %+v, want both 9", counts)
 	}
 }
+
+func TestComputePRIssueCounts_UnsearchableAppQualifierIsTolerated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "author:app/alice") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid","message":"The listed users cannot be searched either because the users do not exist or you do not have permission to view the users."}]}`))
+			return
+		}
+		total := 5
+		if strings.Contains(q, "type:pr") {
+			total = 9
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	counts, err := c.ComputePRIssueCounts(context.Background(), "repo1", "alice")
+	if err != nil {
+		t.Fatalf("ComputePRIssueCounts: %v", err)
+	}
+	if counts.MergedPRs != 9 || counts.ClosedIssues != 5 {
+		t.Errorf("counts = %+v, want merged 9 closed 5", counts)
+	}
+}
+
+func TestComputePRIssueCounts_AllQualifiersRejected(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"message":"Validation Failed"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	if _, err := c.ComputePRIssueCounts(context.Background(), "repo1", "alice"); err == nil {
+		t.Error("expected error when every qualifier is rejected")
+	}
+}
