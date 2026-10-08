@@ -4001,6 +4001,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
+		if b.agentMgr != nil {
+			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
+		}
 		dashboard.SetProxyViolationsProvider(b.githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info

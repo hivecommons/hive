@@ -69,23 +69,28 @@ func notifySaveObserver() {
 var dashboardAuthTokenFile = "/secrets/dashboard-token"
 
 type Config struct {
-	Project       ProjectConfig          `yaml:"project"`
-	Policies      PoliciesConfig         `yaml:"policies"`
-	Agents        map[string]AgentConfig `yaml:"agents"`
-	Governor      GovernorConfig         `yaml:"governor"`
-	GitHub        GitHubConfig           `yaml:"github"`
-	GitLab        GitLabConfig           `yaml:"gitlab,omitempty"`
-	Gitea         GiteaConfig            `yaml:"gitea,omitempty"`
-	Notifications NotificationsConfig    `yaml:"notifications"`
-	Dashboard     DashboardConfig        `yaml:"dashboard"`
-	Data          DataConfig             `yaml:"data"`
-	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
-	Hub           HubConfig              `yaml:"hub"`
-	Contribute    ContributeConfig       `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID        string                 `yaml:"hive_id"`
-	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables     VariablesConfig        `yaml:"variables,omitempty"`
+	Project  ProjectConfig          `yaml:"project"`
+	Policies PoliciesConfig         `yaml:"policies"`
+	Agents   map[string]AgentConfig `yaml:"agents"`
+	// AgentsGitHubAPIHourlyCap is the fleet default for per-agent GitHub API
+	// reads through the proxy. It is encoded under agents.github_api_hourly_cap
+	// by Config's YAML hooks so existing agent-name keys remain unchanged.
+	AgentsGitHubAPIHourlyCap    int `yaml:"-" json:"-"`
+	agentsGitHubAPIHourlyCapSet bool
+	Governor                    GovernorConfig      `yaml:"governor"`
+	GitHub                      GitHubConfig        `yaml:"github"`
+	GitLab                      GitLabConfig        `yaml:"gitlab,omitempty"`
+	Gitea                       GiteaConfig         `yaml:"gitea,omitempty"`
+	Notifications               NotificationsConfig `yaml:"notifications"`
+	Dashboard                   DashboardConfig     `yaml:"dashboard"`
+	Data                        DataConfig          `yaml:"data"`
+	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
+	Hub                         HubConfig           `yaml:"hub"`
+	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID                      string              `yaml:"hive_id"`
+	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables                   VariablesConfig     `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
@@ -190,6 +195,98 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+const (
+	DefaultAgentsGitHubAPIHourlyCap = 300
+	DefaultGitHubAgentReserveFloor  = 400
+)
+
+// UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap
+// scalar alongside the existing agents.<name> map entries. The Agents field
+// remains a plain map everywhere else in the codebase.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	type plain Config
+	node := cloneYAMLNode(value)
+	if agents := mappingValueNode(&node, "agents"); agents != nil && agents.Kind == yaml.MappingNode {
+		for i := 0; i < len(agents.Content)-1; i += 2 {
+			if agents.Content[i].Value != "github_api_hourly_cap" {
+				continue
+			}
+			var cap int
+			if err := agents.Content[i+1].Decode(&cap); err != nil {
+				return fmt.Errorf("agents.github_api_hourly_cap: %w", err)
+			}
+			c.AgentsGitHubAPIHourlyCap = cap
+			c.agentsGitHubAPIHourlyCapSet = true
+			agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
+			break
+		}
+	}
+	var decoded plain
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	cap, capSet := c.AgentsGitHubAPIHourlyCap, c.agentsGitHubAPIHourlyCapSet
+	*c = Config(decoded)
+	c.AgentsGitHubAPIHourlyCap = cap
+	c.agentsGitHubAPIHourlyCapSet = capSet
+	return nil
+}
+
+func cloneYAMLNode(in *yaml.Node) yaml.Node {
+	if in == nil {
+		return yaml.Node{}
+	}
+	out := *in
+	if len(in.Content) > 0 {
+		out.Content = make([]*yaml.Node, len(in.Content))
+		for i, child := range in.Content {
+			clone := cloneYAMLNode(child)
+			out.Content[i] = &clone
+		}
+	}
+	return out
+}
+
+func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
+	node = mappingNode(node)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func mappingNode(node *yaml.Node) *yaml.Node {
+	if node != nil && node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return node.Content[0]
+	}
+	return node
+}
+
+func (c *Config) AgentGitHubAPIHourlyCap(agentName string) int {
+	if c == nil {
+		return DefaultAgentsGitHubAPIHourlyCap
+	}
+	if c.AgentsGitHubAPIHourlyCap == 0 && !c.agentsGitHubAPIHourlyCapSet {
+		return DefaultAgentsGitHubAPIHourlyCap
+	}
+	if a, ok := c.Agents[agentName]; ok && a.GitHubAPIHourlyCap != nil {
+		return *a.GitHubAPIHourlyCap
+	}
+	return c.AgentsGitHubAPIHourlyCap
+}
+
+func (c *Config) GitHubAgentReserveFloor() int {
+	if c == nil || c.GitHub.AgentReserveFloor == 0 {
+		return DefaultGitHubAgentReserveFloor
+	}
+	return c.GitHub.AgentReserveFloor
 }
 
 // DefaultOTelServiceName is the OTLP resource service.name used when the
@@ -1393,6 +1490,10 @@ type AgentConfig struct {
 	// hive on the next restart — the #5632/#5706 clobber family this field
 	// would otherwise join.
 	ReposOwner string `yaml:"repos_owner,omitempty" json:"repos_owner,omitempty"`
+
+	// GitHubAPIHourlyCap overrides agents.github_api_hourly_cap for this agent.
+	// Nil inherits the global value; 0 disables the cap for this agent.
+	GitHubAPIHourlyCap *int `yaml:"github_api_hourly_cap,omitempty" json:"github_api_hourly_cap,omitempty"`
 
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
@@ -3883,7 +3984,10 @@ type GitHubConfig struct {
 	DocsInstallationID int64  `yaml:"docs_installation_id"`
 	KeyFile            string `yaml:"key_file"`
 	Token              string `yaml:"token"`
-	OAuthClientID      string `yaml:"oauth_client_id"`
+	// AgentReserveFloor keeps agents from draining the shared App installation
+	// core bucket below the daemon's merge/scan reserve.
+	AgentReserveFloor int    `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -6009,6 +6113,12 @@ func (c *Config) applyCoinBudgetDefaults() {
 }
 
 func (c *Config) applyDefaults() {
+	if !c.agentsGitHubAPIHourlyCapSet {
+		c.AgentsGitHubAPIHourlyCap = DefaultAgentsGitHubAPIHourlyCap
+	}
+	if c.GitHub.AgentReserveFloor == 0 {
+		c.GitHub.AgentReserveFloor = DefaultGitHubAgentReserveFloor
+	}
 	c.applyUpstreamWatchDefaults()
 	// Runs before any review default so the pointer is settled on every load
 	// path (boot, reload, dashboard save) and Save() persists the explicit
@@ -6839,7 +6949,26 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			out.Agents[name] = agent
 		}
 	}
-	return out, nil
+	var node yaml.Node
+	if err := node.Encode(out); err != nil {
+		return nil, err
+	}
+	root := mappingNode(&node)
+	if root == nil {
+		return out, nil
+	}
+	agents := mappingValueNode(root, "agents")
+	if agents == nil {
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "agents"}, &yaml.Node{Kind: yaml.MappingNode})
+		agents = root.Content[len(root.Content)-1]
+	}
+	if agents.Kind == yaml.MappingNode {
+		agents.Content = append([]*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "github_api_hourly_cap"},
+			{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(c.AgentsGitHubAPIHourlyCap)},
+		}, agents.Content...)
+	}
+	return &node, nil
 }
 
 func (c *Config) EnabledAgents() map[string]AgentConfig {
