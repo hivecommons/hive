@@ -303,6 +303,7 @@ func TestReviewEvidenceRoutesRegistered(t *testing.T) {
 	reviewEvidenceTestEnv(t)
 	seedReviewEvidenceBundle(t, "aaaaaaa1", "", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), false)
 	s := NewServer(0, slog.Default())
+	s.RegisterAPI(testDeps(t))
 	for _, path := range []string{"/api/review/evidence?repo=acme/widget&number=7", "/api/review/evidence/list?repo=acme/widget&number=7"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("X-Hive-Role", config.RoleMerger)
