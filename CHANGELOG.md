@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-08 (v5.143.1)
+
+### Fixed
+
+- The review relay now records a verdict that no dispatch-state row binds only when the submitting lane is one the hive reviews with (`review.reviewer_agents`, or the dispatcher's review-token rule when that list is unset). Dispatch-less verdicts still feed the `review.require_approval` merge gate and the close recommendation, so any other lane that could reach the relay was able to approve or veto a PR it did not author; the two cases #10995 fixed — contributor PRs reviewed outside a swarm dispatch and combined verdict arrays — keep working for reviewer lanes.
+
 ## 2026-10-07 (v5.143.0)
 
 ### Added
