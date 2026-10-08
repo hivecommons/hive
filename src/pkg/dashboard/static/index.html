@@ -35263,8 +35263,8 @@ function burnAreaChart() {
           <div class="config-field"><label>Max alerts per sweep <span class="config-info">i<span class="config-tooltip">Caps label+comment actions per pass so a flood of PRs cannot spam a repo.</span></span></label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
-          <label>Sensitive files <span class="config-info">i<span class="config-tooltip">One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.</span></span>${sn.sensitivePathsDefault ? ' <span style="font-size:0.7rem;color:var(--muted)">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" style="margin-left:6px" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
-          <textarea rows="8" style="font-family:var(--mono);font-size:0.75rem;width:100%" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
+          <label>Sensitive files <span class="config-info">i<span class="config-tooltip">One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.</span></span>${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
         </div>
         <div class="config-field">
           <label>Behaviors <span class="config-info">i<span class="config-tooltip">Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.</span></span></label>

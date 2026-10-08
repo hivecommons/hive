@@ -401,7 +401,7 @@ func TestSentinelHeadsSeen(t *testing.T) {
 	if s.unchanged("k", "b") {
 		t.Fatal("new head is a change")
 	}
-	if s.unchanged("k", "") || s.unchanged("k", "") {
+	if s.unchanged("k", "") {
 		t.Fatal("an empty head is never treated as unchanged")
 	}
 }
