@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
 // AC6, AC15 (R15), AC35: two green PRs into one branch. Only one is ever at the
@@ -537,7 +539,7 @@ func TestFrontTimeout(t *testing.T) {
 		if rec.Front == nil || rec.Front.PR != 2 {
 			t.Fatalf("front = %+v, want #2 after the timeout", rec.Front)
 		}
-		if rec.LastExit == nil || rec.LastExit.PR != 1 || !strings.Contains(rec.LastExit.Reason, "within 1h0m0s") {
+		if rec.LastExit == nil || rec.LastExit.PR != 1 || !strings.Contains(rec.LastExit.Reason, "front timeout after 1h0m0s") {
 			t.Fatalf("last exit = %+v", rec.LastExit)
 		}
 		expectOutcome(t, h.acquire(1), OutcomeDeferred, ReasonNotAtFront)
@@ -556,7 +558,7 @@ func TestFrontTimeout(t *testing.T) {
 		h.now = h.now.Add(4 * time.Minute)
 		expectOutcome(t, h.advance(1), OutcomeDeferred, ReasonNotAtFront)
 		exits := h.eventsFor(ActionFrontExit)
-		if len(exits) != 1 || !strings.Contains(exits[0].Reason, "within 10m0s") {
+		if len(exits) != 1 || !strings.Contains(exits[0].Reason, "front timeout after 10m0s") {
 			t.Fatalf("exit audit = %+v", exits)
 		}
 	})
@@ -685,6 +687,71 @@ func TestMergeOnUnexpectedTipRaisesAlert(t *testing.T) {
 			expectOutcome(t, h.advance(1), OutcomeMerged, "")
 			if len(h.alerts) != 1 || !strings.Contains(h.alerts[0].Reason, tc.want) {
 				t.Fatalf("alerts = %+v, want %q", h.alerts, tc.want)
+			}
+		})
+	}
+}
+
+// #11023: the front PR is behind, the lane updates it, the required check
+// fails on the new head and GitHub reports it "blocked". The sweep rejects it
+// as not mergeable before the lane gate, yet hands it to the lane front-only;
+// it leaves the front at once with the check failure and the next waiter
+// reaches the front on the same tick, not after the front timeout.
+func TestRedFrontRejectedByItsPathLeavesWithTheCheckFailure(t *testing.T) {
+	h := newGateHarness(t)
+	p := h.f.addPR(1, "h1")
+	h.f.contained["h1"] = "old-tip"
+	h.f.addPR(2, "h2")
+
+	expectGate(t, h.gate(1), ghub.LaneOutcomeUpdated, "merged the tip in")
+	h.now = h.now.Add(time.Minute)
+	expectGate(t, h.gate(2), ghub.LaneOutcomeDeferred, ReasonNotAtFront)
+
+	h.f.setRun(p.Head, "build", "completed", "failure")
+	p.MergeableState = "blocked"
+	h.now = h.now.Add(time.Minute)
+	res := h.frontOnly(1)
+	expectGate(t, res, ghub.LaneOutcomeLeft, fmt.Sprintf("required check %q finished as failure on head %s", "build", short(p.Head)))
+	if h.frontPR() != 2 {
+		t.Fatalf("front = #%d after the red front left, want #2", h.frontPR())
+	}
+	if exit := h.record().LastExit; exit == nil || exit.PR != 1 || strings.Contains(exit.Reason, "front timeout") {
+		t.Fatalf("last exit = %+v, want #1 leaving with the check failure", exit)
+	}
+	expectGate(t, h.gate(2), ghub.LaneOutcomeMerged, "merged")
+	if want := []string{"2:h2"}; fmt.Sprint(h.f.merges) != fmt.Sprint(want) {
+		t.Fatalf("merges = %v, want %v", h.f.merges, want)
+	}
+}
+
+// A front timeout says what the lane last knew instead of claiming the
+// required checks did not finish.
+func TestFrontTimeoutReasonSaysWhatWasLastKnown(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, h *harness)
+		want  string
+	}{
+		{"updated head never evaluated", func(t *testing.T, h *harness) {
+			h.f.contained["h1"] = "old-tip"
+			expectOutcome(t, h.advance(1), OutcomeUpdated, "")
+		}, "the head after the branch update was never evaluated"},
+		{"waiting for checks", func(t *testing.T, h *harness) {
+			h.f.setRun("h1", "build", "in_progress", "")
+			expectOutcome(t, h.advance(1), OutcomeWaiting, "build (in_progress)")
+		}, "last known state: waiting for required checks on head h1: build (in_progress)"},
+		{"never evaluated", func(*testing.T, *harness) {}, "no evaluation of the front reached a verdict"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.f.addPR(1, "h1")
+			h.acquire(1)
+			tc.setup(t, h)
+			h.now = h.now.Add(DefaultFrontTimeout + time.Minute)
+			h.acquire(2)
+			exit := h.record().LastExit
+			if exit == nil || exit.PR != 1 || !strings.Contains(exit.Reason, "front timeout after 1h0m0s: "+tc.want) || strings.Contains(exit.Reason, "did not finish") {
+				t.Fatalf("last exit = %+v, want a timeout naming %q", exit, tc.want)
 			}
 		})
 	}

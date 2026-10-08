@@ -38,6 +38,11 @@ type LaneMergeRequest struct {
 	// Authorize re-checks the path's own authorization for head at the final
 	// re-check. nil fails closed.
 	Authorize func(ctx context.Context, head string) error
+	// FrontOnly reports that the path rejected the PR before the lane gate
+	// (#11023). The lane re-evaluates it only when it is the current front,
+	// never merges it, and lets it leave with the lane's own reason; any
+	// other PR is not recorded.
+	FrontOnly bool
 }
 
 // LaneMergeResult is what the lane did. Reason is set for every no-merge.

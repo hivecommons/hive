@@ -46,6 +46,9 @@ func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneM
 	if err := validArgs(req.Repo, branch, req.Number); err != nil {
 		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeRefused, Reason: err.Error()}, err
 	}
+	if req.FrontOnly {
+		return l.advanceRejectedFront(ctx, req.Repo, branch, req.Number)
+	}
 	if reason := l.nativeMergeQueue(ctx, req.Repo, branch); reason != "" {
 		err := l.Release(req.Repo, branch, req.Number, reason)
 		l.emit([]Event{{At: l.opts.Now(), Repo: req.Repo, Branch: branch, PR: req.Number, Action: ActionRefusal, Reason: reason}})
@@ -63,6 +66,24 @@ func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneM
 		res.Method = method.used
 	}
 	return res, err
+}
+
+// advanceRejectedFront serves a merge path that rejected pr before the lane
+// gate (#11023). A PR that is not the front is neither recorded nor read on
+// GitHub. The front runs one round without the path's authorization, so it
+// never merges, but it leaves with the lane's own reason (a failed required
+// check, a hold label, a draft, ...) instead of holding the front until the
+// front timeout.
+func (l *Lane) advanceRejectedFront(ctx context.Context, repo, branch string, pr int) (ghub.LaneMergeResult, error) {
+	rec, _, err := l.Snapshot(repo, branch)
+	if err != nil {
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeWaiting, Reason: "reading the lane failed: " + err.Error()}, err
+	}
+	if rec.Front == nil || rec.Front.PR != pr {
+		return ghub.LaneMergeResult{Outcome: ghub.LaneOutcomeDeferred, Reason: ReasonNotAtFront}, nil
+	}
+	dec, err := l.Advance(ctx, repo, branch, pr, nil)
+	return ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason}, err
 }
 
 // nativeMergeQueue returns a refusal when branch has GitHub's native merge

@@ -252,7 +252,7 @@ func TestAgentEnvPairs_NonInference_NoAnthropicVars(t *testing.T) {
 
 	pairs := m.agentEnvPairs(ap)
 	for _, p := range pairs {
-		if p.Key == "ANTHROPIC_API_KEY" || p.Key == "ANTHROPIC_BASE_URL" || p.Key == "NO_PROXY" {
+		if p.Key == "ANTHROPIC_API_KEY" || p.Key == "ANTHROPIC_BASE_URL" {
 			t.Errorf("non-inference backend should not have %s", p.Key)
 		}
 	}

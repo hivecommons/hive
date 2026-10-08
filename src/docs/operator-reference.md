@@ -311,9 +311,17 @@ example a 403 on a branch whose rulesets require no checks.
     branch; it only merges the target branch into it, pinned to the head it
     evaluated.
 
-A front pull request whose checks never finish leaves the front after the
-front timeout (60 minutes by default, restarted on every branch update) and
-the next one starts.
+A front pull request whose required check fails on the head the lane is
+evaluating leaves the front at once with that reason (for example
+`required check "test" finished as failure on head 4d9ac7c`), and the next
+one starts. This holds even when a merge path (the self-merge sweep or the
+`lgtm` queue sweep) rejects the front before the lane, for example as not
+mergeable once GitHub reports it `blocked`: the path still hands its current
+front to the lane, which re-evaluates it without merging and lets it leave
+with its own reason. The front timeout (60 minutes by default, restarted on
+every branch update) is the fallback for a front whose checks never finish;
+its reason says what the lane last knew, for example that the head after the
+branch update was never evaluated, or the last recorded waiting reason.
 
 ### The remaining window, and GitHub's up-to-date rule
 
