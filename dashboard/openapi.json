@@ -1720,6 +1720,103 @@
         }
       }
     },
+    "/api/version/release-notes": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Changelog delta between two revisions",
+        "description": "Returns the changelog.d sections present at `to` and absent at `from`, so the dashboard can show what an upgrade brings. Fetch failures are reported in-band with source `unavailable`; only a malformed request is an error status.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Commit SHA of the currently running build",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Target channel, branch, tag or commit SHA",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release-notes delta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "object",
+                      "properties": {
+                        "sha": { "type": "string" },
+                        "version": { "type": "string" }
+                      }
+                    },
+                    "to": {
+                      "type": "object",
+                      "properties": {
+                        "sha": { "type": "string" },
+                        "ref": { "type": "string" },
+                        "version": { "type": "string" }
+                      }
+                    },
+                    "sections": {
+                      "type": "array",
+                      "description": "Released changelog sections newer than `from`, newest first",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "version": { "type": "string" },
+                          "title": { "type": "string" },
+                          "date": { "type": "string" },
+                          "categories": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "array",
+                              "items": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "unreleased": {
+                      "type": "object",
+                      "description": "Pending changelog.d fragments at `to` not yet in a released section; omitted when none"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "True when the delta was cut at the section cap"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["changelog", "unavailable"],
+                      "description": "Where the sections came from; `unavailable` when the fetch failed"
+                    },
+                    "error": {
+                      "type": "string",
+                      "description": "In-band fetch/resolve failure detail; omitted on success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "from is not a commit SHA, or to is not a channel, branch, tag or SHA"
+          }
+        }
+      }
+    },
     "/api/config": {
       "get": {
         "tags": [
