@@ -2,9 +2,58 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOpenEventLogIsOwnerOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	f, err := openEventLog(path)
+	if err != nil {
+		t.Fatalf("openEventLog: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close event log: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat event log: %v", err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf("event log permissions = %04o, group/world bits must be clear", got)
+	}
+	if got := info.Mode().Perm(); got&0o600 != 0o600 {
+		t.Fatalf("event log permissions = %04o, want owner read/write", got)
+	}
+}
+
+func TestOpenEventLogTightensExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("seed event log: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+	f, err := openEventLog(path)
+	if err != nil {
+		t.Fatalf("openEventLog: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close event log: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat event log: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("pre-existing event log permissions = %04o, want 0600", got)
+	}
+}
 
 func TestDefaultProxyHostIsLoopback(t *testing.T) {
 	if defaultProxyHost != "127.0.0.1" {
