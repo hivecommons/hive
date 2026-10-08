@@ -26,12 +26,16 @@ func hubGitHubToken() string {
 	return strings.TrimSpace(os.Getenv(hubGitHubTokenEnv))
 }
 
-// authGitHubRequest attaches the hub's GitHub token to an api.github.com
-// request when one is configured. Every hub-originated GitHub API read goes
-// through here so the rate-limit budget is one decision, not one per call
-// site; a call site that forgets it is the bug this helper exists to remove.
+// authGitHubRequest attaches the hub's GitHub identity to an api.github.com
+// request. Prefer the hub GitHub App installation token so polling spends the
+// installation quota; fall back to the legacy PAT only while operators roll
+// out the App env vars, and otherwise stay anonymous.
 func authGitHubRequest(req *http.Request) {
 	if req == nil {
+		return
+	}
+	if tok, err := hubGitHubAppToken(req.Context(), nil); err == nil && strings.TrimSpace(tok) != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 		return
 	}
 	if tok := hubGitHubToken(); tok != "" {

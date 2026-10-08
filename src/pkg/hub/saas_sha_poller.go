@@ -55,6 +55,8 @@ var (
 	ghcrBase      = "https://ghcr.io"
 )
 
+const shaFetchTimeout = 10 * time.Second
+
 // GHCR image repositories built by .github/workflows/docker.yml. Each is a
 // SEPARATE build job tagged with the short git SHA, so one can succeed while
 // another fails for the same commit. The hub runs ghcrRepoHub; spokes run
@@ -212,7 +214,7 @@ func discoveredImageBranches() []string {
 	// the image tag is branchToTag(branch); e.g. real "feat/x" ⇒ image
 	// "feat-x-latest" ⇒ we must match it back to the live "feat/x".
 	live := map[string]struct{}{}
-	for _, b := range listRepoBranches(client) {
+	for _, b := range listRepoBranches(hubGitHubHTTPClient()) {
 		live[branchToTag(b)] = struct{}{}
 	}
 	branches := imageBranches
@@ -240,11 +242,13 @@ func listRepoBranches(client *http.Client) []string {
 	url := githubAPIBase + "/repos/hivecommons/hive/branches?per_page=100"
 	const maxPages = 10
 	for page := 0; url != "" && page < maxPages; page++ {
-		req, _ := http.NewRequest("GET", url, nil)
+		ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_branches"), shaFetchTimeout)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		authGitHubRequest(req)
 		resp, err := client.Do(req)
 		if err != nil {
+			cancel()
 			return nil
 		}
 		var body []struct {
@@ -253,6 +257,7 @@ func listRepoBranches(client *http.Client) []string {
 		decErr := json.NewDecoder(resp.Body).Decode(&body)
 		link := resp.Header.Get("Link")
 		_ = resp.Body.Close()
+		cancel()
 		if resp.StatusCode != http.StatusOK || decErr != nil {
 			return nil
 		}
@@ -841,13 +846,15 @@ func fetchAllBranchSHAs(logger *slog.Logger, branches []string) {
 
 func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// Step 1: get the latest commit SHA on the branch from the GitHub API
-	const shaFetchTimeout = 10 * time.Second
-	client := &http.Client{Timeout: shaFetchTimeout}
+	ghClient := hubGitHubHTTPClient()
+	ghcrClient := &http.Client{Timeout: shaFetchTimeout}
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_branch_tip"), shaFetchTimeout)
+	defer cancel()
 	branchURL := fmt.Sprintf("%s/repos/hivecommons/hive/branches/%s", githubAPIBase, branch)
-	req, _ := http.NewRequest("GET", branchURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, branchURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	authGitHubRequest(req)
-	resp, err := client.Do(req)
+	resp, err := ghClient.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: branch API request failed", "branch", branch, "error", err)
 		return
@@ -894,7 +901,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	recentListed := false
 	recentCommits := func() []branchSHAInfo {
 		if !recentListed {
-			recent = listRecentBranchCommits(client, branch, hubTargetWalkbackDepth, logger)
+			recent = listRecentBranchCommits(ghClient, branch, hubTargetWalkbackDepth, logger)
 			recentListed = true
 		}
 		return recent
@@ -904,12 +911,12 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// either order (or fail independently). Probe it on its own so the hub's
 	// upgrade target is never gated on the spoke build, and vice versa.
 	if currentHub := getLatestHubSHAForBranch(branch); candidateSHA != currentHub {
-		if ghcrTagExists(client, ghcrRepoHub, candidateSHA, logger) {
+		if ghcrTagExists(ghcrClient, ghcrRepoHub, candidateSHA, logger) {
 			latestSHAMu.Lock()
 			latestHubSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
 			latestSHAMu.Unlock()
 			logger.Info("SHA poll: hub image verified on GHCR", "branch", branch, "sha", candidateSHA)
-		} else if info, ok := newestPublishedAncestor(client, ghcrRepoHub, recentCommits(), candidateSHA, currentHub, logger); ok {
+		} else if info, ok := newestPublishedAncestor(ghcrClient, ghcrRepoHub, recentCommits(), candidateSHA, currentHub, logger); ok {
 			// The tip has no hub image (image-less release commit, or a build
 			// still in flight). Do not freeze on the last verified tip: target
 			// the newest OLDER commit whose hub image is published, so the hub
@@ -930,11 +937,11 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		return
 	}
 
-	if ghcrTagExists(client, ghcrRepoSpoke, candidateSHA, logger) {
+	if ghcrTagExists(ghcrClient, ghcrRepoSpoke, candidateSHA, logger) {
 		// If commit message is empty (rate-limited or missing), fetch it separately
 		// from the commits API using the full SHA (one-shot, only on new SHAs).
 		if commitMsg == "" {
-			commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+			commitMsg = fetchCommitMessage(ghClient, branchResult.Commit.SHA, logger)
 		}
 		latestSHAMu.Lock()
 		latestSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
@@ -949,7 +956,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// older commit whose image IS published (same walk as the hub image above),
 	// so a branch that merges faster than it builds does not freeze spokes on
 	// a stale commit. The branch head below still reports the tip as building.
-	if info, ok := newestPublishedAncestor(client, ghcrRepoSpoke,
+	if info, ok := newestPublishedAncestor(ghcrClient, ghcrRepoSpoke,
 		recentCommits(), candidateSHA, getLatestSHAForBranch(branch), logger); ok {
 		latestSHAMu.Lock()
 		latestSHAByBranch[branch] = info
@@ -961,7 +968,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 
 	// Image not on GHCR yet — ask the docker workflow whether the build for
 	// this head commit is still running or has failed.
-	buildState := fetchImageBuildState(client, branchResult.Commit.SHA, logger)
+	buildState := fetchImageBuildState(ghClient, branchResult.Commit.SHA, logger)
 	status := buildState.Status
 	if status == "" {
 		// Actions API unavailable (rate-limited/network): keep the last-known
@@ -973,7 +980,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		}
 	}
 	if commitMsg == "" && headChanged {
-		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+		commitMsg = fetchCommitMessage(ghClient, branchResult.Commit.SHA, logger)
 	}
 	setBranchHeadDetails(branch, candidateSHA, commitMsg, status, buildState.RunURL)
 	logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA, "image_status", status)
@@ -998,8 +1005,10 @@ func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Log
 }
 
 func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logger) imageBuildState {
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_workflow_runs"), shaFetchTimeout)
+	defer cancel()
 	runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
-	req, _ := http.NewRequest("GET", runsURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	authGitHubRequest(req)
 	resp, err := client.Do(req)
@@ -1047,8 +1056,10 @@ func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logg
 // Uses a separate endpoint that's less likely to be rate-limited since it's called
 // only once per new SHA (not every poll cycle).
 func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_commit_message"), shaFetchTimeout)
+	defer cancel()
 	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, fullSHA)
-	req, _ := http.NewRequest("GET", commitURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, commitURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	authGitHubRequest(req)
 	resp, err := client.Do(req)
