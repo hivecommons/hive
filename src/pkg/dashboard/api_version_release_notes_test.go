@@ -58,7 +58,8 @@ func rnSetup(t *testing.T, f releaseNotesFetcher) *Server {
 		newReleaseNotesFetcher = prev
 		resetReleaseNotesCache()
 	})
-	return newTestServer()
+	s, _ := apiServer(t)
+	return s
 }
 
 func resetReleaseNotesCache() {
@@ -292,8 +293,7 @@ func TestResolveReleaseNotesRef(t *testing.T) {
 		t.Errorf("policy channel = %q", got)
 	}
 	// Unresolved ref: the response is unavailable, never an error status.
-	rnSetup(t, &rnStubFetcher{})
-	rec := doGet(newTestServer(), "/api/version/release-notes?from="+rnFromSHA+"&to=nosuchbranch")
+	rec := doGet(rnSetup(t, &rnStubFetcher{}), "/api/version/release-notes?from="+rnFromSHA+"&to=nosuchbranch")
 	if out := rnDecode(t, rec); out["source"] != "unavailable" {
 		t.Errorf("unexpected %v", out)
 	}
