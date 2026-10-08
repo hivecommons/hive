@@ -300,6 +300,16 @@ func intentConfigFromCfg(cfg *config.Config) intent.Config {
 	}
 }
 
+// humanMergePathsFor returns auto_merge.human_merge_paths for repo
+// (owner/repo). Every automerge sweep lane consults it on each evaluation
+// (#11038); nil cfg means no paths.
+func humanMergePathsFor(cfg *config.Config, repo string) []string {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.AutoMerge.HumanMergePathsFor(repo)
+}
+
 // selfMergeIntentGate builds the intent-tier gate the App self-merge sweep
 // enforces (#6258) from the same config and bead evidence the human merge
 // lane uses. Enforce is read through cfg on every call so a reload applies.
