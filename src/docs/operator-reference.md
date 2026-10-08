@@ -49,6 +49,60 @@ agents:
     model: claude-sonnet-4-6
 ```
 
+## GitHub API quota — who is spending it?
+
+Every hive exposes `GET /api/gh-rate-limits` behind dashboard auth. The payload
+contains GitHub's core/search/GraphQL rate-limit windows, ETag cache counters,
+and a one-hour REST top-consumer list grouped by caller, method, and normalized
+endpoint. Operators can collect a hosted fleet view with:
+
+```bash
+make quota-report
+# or:
+bash src/scripts/gh-quota-report.sh --context hive-oke --top 3
+```
+
+For a single dashboard, use `--local <url> --token <dashboard-token>`; for saved
+fixtures or CI-free formatting checks, use `--from-file <json>`. The command
+prints one row per spoke plus the hub when available. The hub endpoint may lag a
+spoke rollout; a 404 or other unavailable hub response is reported as
+`endpoint-missing` without hiding spoke data. If none of the mounted/configured
+dashboard-token candidates authenticates, the row reports `auth-required`; the
+script does not forge `X-Hive-User` for localhost because the dashboard
+middleware strips unproved identity headers unless the hub proxy proof is valid.
+
+Interpret the top-consumer columns this way:
+
+- `charged` counts REST requests that consumed core quota in the last hour.
+- `not_modified` counts conditional `GET` requests answered from GitHub as
+  `304 Not Modified` and replayed by Hive's ETag cache; these are useful signal
+  but did not spend quota.
+- `requests` is `charged + not_modified` plus any other observed responses.
+- Any `rate_limited` entry, or any spoke below 10% remaining core quota, makes
+  the script exit non-zero so it can be used as a smoke check.
+
+The known hot endpoint in hosted fleets is
+`/repos/{owner}/{repo}/pulls/{number}`. It should be watched first when charged
+usage climbs, because repeated PR detail refreshes can dominate the one-hour
+window even when list endpoints are mostly free ETag revalidations.
+
+Hosted spokes authenticate as their GitHub App installation and normally show a
+5,000 requests/hour `core.limit` (`app/token` in the report). A 60/hour limit is
+anonymous and means credentials were not applied. The hub must use the App or
+installation identity too; do not configure a personal access token on the hub,
+because one operator's PAT would become a shared fleet bottleneck and audit
+liability.
+
+Before reference, captured 2026-10-08 from the hosted fleet:
+
+| Metric | Value |
+|---|---:|
+| Total charged REST requests/hour | 12995 |
+| Hub endpoint | `endpoint-missing` |
+| Top fleet consumer | `hive GET /repos/{owner}/{repo}/pulls/{number} 4259/9505` |
+| Second fleet consumer | `hive GET /repos/{owner}/{repo}/issues/{number}/comments 1819/3298` |
+| Third fleet consumer | `hive:enrich_pr_ci GET /repos/{owner}/{repo}/pulls/{number} 1157/2325` |
+
 ## Configuration blocks
 
 Top-level YAML keys accepted by `config.Config`:
