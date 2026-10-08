@@ -8827,6 +8827,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
 	})
+	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
+		return reviewEvidenceSettings(cfg, repo)
+	})
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.

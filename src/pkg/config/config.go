@@ -122,7 +122,10 @@ type Config struct {
 	// Sentinel flags PRs that look like security overrides, privilege
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
-	Sentinel   SentinelConfig   `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	// Evidence controls the review evidence bundles the review relay writes
+	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
+	Evidence   EvidenceConfig   `yaml:"evidence,omitempty" json:"evidence,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client

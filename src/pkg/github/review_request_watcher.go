@@ -350,7 +350,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// state record_verdict and a note, so the agent's own loop is done.
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
-			c.recordReviewVerdict(req, "")
+			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
 			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -369,7 +369,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
-		c.recordReviewVerdict(req, "")
+		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
 		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -483,8 +483,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 
 	// Persist the structured verdict now that the comment is posted. The two
 	// artifacts are recorded together so a verdict can never be attributed to a
-	// review that never actually landed.
-	c.recordReviewVerdict(req, "")
+	// review that never actually landed. The evidence bundle for the head
+	// records the same two things (review_evidence.go).
+	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), created, nowFn())
 	if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
