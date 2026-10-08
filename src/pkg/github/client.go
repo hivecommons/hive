@@ -124,6 +124,9 @@ type Client struct {
 	confidenceScore func() bool
 	// reviewBacklog controls review out-of-scope finding filing.
 	reviewBacklog func() (enabled bool, cap int)
+	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
+	// means no bundles are written (see review_evidence.go).
+	reviewEvidence func(repo string) ReviewEvidenceSettings
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
 	// false → no comment is fetched, no Issue carries claim fields. Read live
