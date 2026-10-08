@@ -7871,6 +7871,12 @@ type ReviewConfig struct {
 	// (hivecommons/hive#8317), which scores a PR against the approved plan
 	// wave its Hive-Run / Hive-Plan trailers name.
 	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+	// Severity is the blocking line for review findings
+	// (hivecommons/hive#11088). See ReviewSeverityConfig.
+	Severity ReviewSeverityConfig `yaml:"severity,omitempty" json:"severity,omitempty"`
+	// Backlog is where findings below the blocking line are filed
+	// (hivecommons/hive#11088). See ReviewBacklogConfig.
+	Backlog ReviewBacklogConfig `yaml:"backlog,omitempty" json:"backlog,omitempty"`
 }
 
 // PlanMatchConfig is the switch for the plan_match review perspective

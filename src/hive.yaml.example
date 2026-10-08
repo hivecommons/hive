@@ -660,6 +660,17 @@ governor:
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
+#   severity:                 # blocking line (#11088); Settings -> Features -> Review Gate
+#     block_at: P2            # P1 (ship fast: P0-P1 block) | P2 (strict: P0-P2) | P3 (everything); unset = unchanged
+#     comment_below: true     # post findings below the line as non-blocking comments (default true)
+#     backlog_below: true     # file findings below the line to review.backlog (default true)
+#   backlog:
+#     destination: github_issue # github_issue | github_project | linear | jira (last three need that governor.work_source.type)
+#     project_column_id: ""     # required for github_project: Projects v2 status option id
+#     linear_state: ""          # linear: workflow state; blank = team default
+#     jira_status: ""           # jira: status; blank = project initial status
+#     labels: [from-review]
+#     max_per_pr_per_day: 10    # 0/unset = 10
 
 # Compliance control mapping (#11078) — optional. Selects the framework
 # profiles (src/pkg/compliance/profiles) whose controls GET /api/compliance/status
@@ -684,7 +695,7 @@ governor:
 #     logins:
 #       - "chatgpt-codex-connector[bot]"
 #       - "Copilot"
-#     min_priority: P1            # optional: P0/P1 and unknown badges only
+#     min_priority: P1            # optional: P0/P1 and unknown badges only; unset falls back to review.severity.block_at
 #     max_attempts_per_thread: 1   # hive replies per thread before a human takes over
 #     resolve_after_fix: true      # false: reply but leave the thread open
 
