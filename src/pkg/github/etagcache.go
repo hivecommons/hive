@@ -133,13 +133,26 @@ func githubTransportChain(inner http.RoundTripper) http.RoundTripper {
 	return slowStartWrap(etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner))))
 }
 
+// externalSlowStartState paces requests made through NewHTTPTransport. It is
+// deliberately separate from sharedSlowStartState: NewHTTPTransport callers
+// (the hub's pollers) may run anonymously, and a per-IP anonymous 403 from
+// api.github.com must not throttle the authenticated go-github clients that
+// share the process — the cmd/hive test binary boots both.
+var externalSlowStartState = newSlowStartState()
+
 // NewHTTPTransport returns the shared GitHub REST transport chain wrapped
-// around base. Passing nil uses hive's proxy-trusting shared socket transport.
+// around base: ETag/304 replay, 404 negative caching and REST accounting are
+// shared with every other GitHub client in the process; rate-limit pacing
+// state is private to this chain. Passing nil uses hive's proxy-trusting
+// shared socket transport.
 func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = sharedProxyTrust.sharedTransport()
 	}
-	return githubTransportChain(base)
+	return &slowStartTransport{
+		inner: etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(base))),
+		state: externalSlowStartState,
+	}
 }
 
 // etagCacheKey identifies a cacheable representation: who asked, for what,

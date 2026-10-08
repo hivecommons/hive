@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -32,8 +34,17 @@ var (
 	commitBehindInFlight = map[commitBehindKey]bool{}
 )
 
+// Keep this client's transport independent of the process-global default.
+// hubGitHubHTTPClient honours a replaced http.DefaultTransport at call time;
+// a background commit-behind lookup may outlive the request that started it,
+// so reading that mutable global here would race with tests that swap it.
+var commitBehindHTTPClient = &http.Client{
+	Transport: hgithub.NewHTTPTransport(nil),
+	Timeout:   commitBehindCompareTimeout,
+}
+
 var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count int, known bool, err error) {
-	client := hubGitHubHTTPClient()
+	client := commitBehindHTTPClient
 	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "commit_behind"), commitBehindCompareTimeout)
 	defer cancel()
 	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
