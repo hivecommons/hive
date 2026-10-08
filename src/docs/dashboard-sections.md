@@ -407,6 +407,22 @@ Every open pull request in your projects, in the order Hive suggests reviewing t
 
 **Settings that change it.** The review settings in **Settings** change the ranking rules. See [Review queue triage](review-queue-triage.md).
 
+## Review Pipeline
+
+The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.
+
+**What it tells you.** Each column is one stage of the review loop: unreviewed, reviewing, changes requested, fixing, waiting for a human, approved, merged and abandoned. Each card shows the pull request, who has reviewed it, how many findings were raised at each severity and what should happen next.
+
+**How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
+
+**What it is good for.** See at a glance where review work is piling up, and which pull requests have gone round the review loop enough times that a person should step in.
+
+**Example.** Three cards sit in "changes requested" and one has looped twice. The next action on that card says a person should look at it.
+
+**When it appears.** Always. It is empty when there are no open pull requests.
+
+**Settings that change it.** The review settings in **Settings** change the loop cap and which repositories are included. See [Review queue triage](review-queue-triage.md).
+
 ## Strategy Lab
 
 An experimental planner that tries out changes to how Hive works and records what it learned.
