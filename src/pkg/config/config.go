@@ -119,10 +119,10 @@ type Config struct {
 	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
-	// Sentinel flags PRs that look like security overrides, privilege
-	// escalation or codebase damage, from any author. Default on; see
-	// SentinelConfig.
+	// Sentinel flags PRs that look like security overrides, privilege escalation
+	// or codebase damage (default on); Compliance selects framework profiles.
 	Sentinel   SentinelConfig   `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client

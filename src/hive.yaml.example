@@ -658,6 +658,15 @@ governor:
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 
+# Compliance control mapping (#11078) — optional. Selects the framework
+# profiles (src/pkg/compliance/profiles) whose controls GET /api/compliance/status
+# evaluates against this config. Read-only: each control points at an existing
+# setting. Not a certification — see src/docs/compliance.md. Default: none.
+# compliance:
+#   frameworks: [soc2-type2]
+#   posture_checks:
+#     interval: 1h   # 5m..168h; 0/unset = 1h
+
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the
 # governor lists the unresolved ones in /var/run/hive-metrics/review-threads.json,
