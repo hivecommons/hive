@@ -378,6 +378,22 @@ func hasFeatureSignal(title string, labels, signals []string) bool {
 	return false
 }
 
+// HumanMergePathMatches returns the changed filenames that match any of the
+// operator-configured human-merge patterns. It is tier-independent and
+// deliberately separate from Classify/EvaluateForAppSelfMerge.
+func HumanMergePathMatches(files []ChangedFile, patterns []string) []string {
+	if len(patterns) == 0 {
+		return nil
+	}
+	var matched []string
+	for _, f := range files {
+		if matchesAny(f.Filename, patterns) {
+			matched = append(matched, f.Filename)
+		}
+	}
+	return matched
+}
+
 func matchesAny(path string, patterns []string) bool {
 	path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
 	for _, pattern := range patterns {
