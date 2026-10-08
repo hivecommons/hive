@@ -15,6 +15,7 @@ type KnowledgeConfig struct {
 	Vaults          []VaultConfig         `yaml:"vaults"`
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
+	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
 	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`
 	Primer          KnowledgePrimer       `yaml:"primer"`
