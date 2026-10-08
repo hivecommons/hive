@@ -35689,7 +35689,7 @@ function burnAreaChart() {
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Max merges per sweep <span class="config-info">i<span class="config-tooltip">Caps how many PRs one sweep pass may merge. 0 or empty uses the default.</span></span></label>
-            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="5" data-change-action="gh71">
+            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
