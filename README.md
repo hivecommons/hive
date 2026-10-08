@@ -640,3 +640,7 @@ Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. 
 ---
 
 Apache 2.0
+
+Hive is a [Cloud Native Computing Foundation](https://www.cncf.io/) sandbox project candidate; onboarding status is tracked in [src/docs/cncf-sandbox-onboarding.md](src/docs/cncf-sandbox-onboarding.md). This does not imply CNCF acceptance or endorsement.
+
+Copyright The Linux Foundation and Hive contributors. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see the [Linux Foundation Trademark Usage page](https://www.linuxfoundation.org/legal/trademark-usage). Hive project names and logos are used in accordance with that policy once ownership is transferred to the Linux Foundation/CNCF.
