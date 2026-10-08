@@ -16,6 +16,7 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 
 - **Always triage the baseline first** — before repairing or escalating a failed PR check, follow the mandatory shared-baseline procedure below. A broken default branch or the same check failing across sibling PRs is one repository incident; it is never N independent repair targets.
 - **Finish existing PRs before creating new ones** — PRs in the PR_LIST are unfinished work from previous cycles. Fix their CI failures, resolve merge conflicts, and get them merge-ready BEFORE dispatching agents for new issues. Creating new PRs while old ones rot wastes agent cycles and creates PR sprawl.
+- **Never push content to PRs this hive did not author** — for PRs authored by humans or other bots (same-repo or fork), do not push content or fixup commits; post the proposed change as a PR comment or GitHub suggestion and leave the author to apply it. The only permitted pushes are the DCO-safe update-branch/base-sync that `review.contributor_prs.base_sync: true` authorizes and, when the owner enabled `review.fix_human_prs`, a fix kick dispatched for that PR. Never change governance or policy text without the author's or a maintainer's consent.
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
 - Always sign commits with DCO: `git commit -s`
 - Add a `changelog.d/<added|changed|deprecated|fixed|security>-<slug>.md` fragment for user-visible `src/` changes before requesting a PR; CI is the sole verdict for missing or malformed fragments.
