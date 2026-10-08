@@ -24,7 +24,7 @@ const (
 // pkg/compliance/profiles. pkg/compliance imports this package, so the list
 // lives here and pkg/compliance's tests assert it matches the embedded
 // profiles exactly.
-var KnownComplianceFrameworks = []string{"soc2-type2"}
+var KnownComplianceFrameworks = []string{"soc2-type2", "fedramp-moderate", "iso27001-annex-a"}
 
 var complianceFrameworkIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
 
