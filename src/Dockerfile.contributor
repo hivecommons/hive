@@ -453,7 +453,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
 # disabled and fail the image build if the binary is absent.
-ARG PI_CODING_AGENT_VERSION=1.0.0
+ARG PI_CODING_AGENT_VERSION=1.1.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
   && npm cache clean --force \
