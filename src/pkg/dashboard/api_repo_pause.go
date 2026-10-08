@@ -60,7 +60,9 @@ func repoPauseStateOf(repo string, rp config.RepoPause, paused bool) RepoPauseSt
 // config — so a failed write to a read-only config mount leaves the pause
 // working but not surviving a restart. That is a real and different state, and
 // saying "ok" without it would be a lie in the direction that matters.
-func repoPauseToggleResponse(w http.ResponseWriter, status string, changed bool, state RepoPauseState, persisted bool, warning string) {
+// minStatusSeq is the post-mutation StatusSeq floor (#4348); zero (the no-op
+// paths, which mutate nothing) is omitted.
+func repoPauseToggleResponse(w http.ResponseWriter, status string, changed bool, state RepoPauseState, persisted bool, warning string, minStatusSeq uint64) {
 	body := map[string]any{
 		"ok":        true,
 		"status":    status,
@@ -72,6 +74,9 @@ func repoPauseToggleResponse(w http.ResponseWriter, status string, changed bool,
 	}
 	if warning != "" {
 		body["warning"] = warning
+	}
+	if minStatusSeq > 0 {
+		body["minStatusSeq"] = minStatusSeq
 	}
 	jsonResponse(w, body)
 }
@@ -178,7 +183,7 @@ func (s *Server) handleRepoPause(w http.ResponseWriter, r *http.Request) {
 	// since Tuesday, which is the provenance failure #4041 was about.
 	if existing, paused := cfg.RepoPauseFor(body.Repo); paused {
 		s.auditFromRequest(r, "repo_pause", auditDetail("repo", body.Repo, "result", "noop-already-paused"), "")
-		repoPauseToggleResponse(w, "paused", false, repoPauseStateOf(body.Repo, existing, true), true, "")
+		repoPauseToggleResponse(w, "paused", false, repoPauseStateOf(body.Repo, existing, true), true, "", 0)
 		return
 	}
 
@@ -188,8 +193,8 @@ func (s *Server) handleRepoPause(w http.ResponseWriter, r *http.Request) {
 	}
 	state, _ := cfg.RepoPauseFor(body.Repo)
 	s.auditFromRequest(r, "repo_pause", auditDetail("repo", body.Repo, "reason", body.Reason), "")
-	s.refreshAndPersist()
-	repoPauseToggleResponse(w, "paused", changed, repoPauseStateOf(body.Repo, state, true), err == nil, repoPausePersistWarning(err))
+	floor := s.refreshAndPersistSeq()
+	repoPauseToggleResponse(w, "paused", changed, repoPauseStateOf(body.Repo, state, true), err == nil, repoPausePersistWarning(err), floor)
 }
 
 // handleRepoResume lifts a repository's pause.
@@ -214,7 +219,7 @@ func (s *Server) handleRepoResume(w http.ResponseWriter, r *http.Request) {
 	cfg := s.deps.Config
 	if _, paused := cfg.RepoPauseFor(body.Repo); !paused {
 		s.auditFromRequest(r, "repo_resume", auditDetail("repo", body.Repo, "result", "noop-not-paused"), "")
-		repoPauseToggleResponse(w, "resumed", false, RepoPauseState{Repo: body.Repo}, true, "")
+		repoPauseToggleResponse(w, "resumed", false, RepoPauseState{Repo: body.Repo}, true, "", 0)
 		return
 	}
 
@@ -223,8 +228,8 @@ func (s *Server) handleRepoResume(w http.ResponseWriter, r *http.Request) {
 		s.persistRepoPauseFailure(body.Repo, "resumed", err)
 	}
 	s.auditFromRequest(r, "repo_resume", auditDetail("repo", body.Repo), "")
-	s.refreshAndPersist()
-	repoPauseToggleResponse(w, "resumed", changed, RepoPauseState{Repo: body.Repo}, err == nil, repoPausePersistWarning(err))
+	floor := s.refreshAndPersistSeq()
+	repoPauseToggleResponse(w, "resumed", changed, RepoPauseState{Repo: body.Repo}, err == nil, repoPausePersistWarning(err), floor)
 }
 
 func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
@@ -262,17 +267,21 @@ func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to persist repo auto-merge policy", "repo", body.Repo, "error", err)
 	}
 	s.auditFromRequest(r, "repo_auto_merge", auditDetail("repo", body.Repo, "enabled", fmt.Sprintf("%t", enabled)), "")
-	s.refreshAndPersist()
+	// Hand the browser the post-mutation StatusSeq floor (#4348) so the
+	// pre-mutation /api/status it refetches cannot repaint the old switch
+	// state (#11020).
+	floor := s.refreshAndPersistSeq()
 	repo := body.Repo
 	if normalized, ok := config.NormalizeRepoForOrg(s.deps.Config.Project.Org, body.Repo); ok {
 		repo = normalized
 	}
 	jsonResponse(w, map[string]any{
-		"ok":        true,
-		"repo":      repo,
-		"enabled":   enabled,
-		"changed":   changed,
-		"persisted": err == nil,
+		"ok":           true,
+		"repo":         repo,
+		"enabled":      enabled,
+		"changed":      changed,
+		"persisted":    err == nil,
+		"minStatusSeq": floor,
 	})
 }
 

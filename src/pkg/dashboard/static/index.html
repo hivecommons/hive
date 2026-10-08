@@ -12672,6 +12672,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // would be a lie in the direction that matters.
         if (data.warning) showToast(data.warning, 'error', true);
         else showToast(resuming ? ('Resumed ' + repo) : ('Paused ' + repo + ' — agents will not write to it or be handed work on it'), 'success');
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast((resuming ? 'Resume' : 'Pause') + ' failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -12702,6 +12703,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo, 'success');
+        // The /api/status refetch usually beats the async rebuild and returns
+        // the pre-mutation snapshot; raising the floor first stops it from
+        // repainting the switch back to its old state (#11020).
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -25210,6 +25215,7 @@ function burnAreaChart() {
               const meta = row && row.querySelector('.level-automerge-row-meta');
               if (meta) meta.textContent = 'Auto-merge ' + (nextEnabled ? 'enabled' : 'disabled');
               showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo.repo, 'success');
+              noteStatusMutation(resBody.minStatusSeq);
               fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
             } catch (e) {
               showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
