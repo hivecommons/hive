@@ -2569,6 +2569,17 @@
     .hive-dialog-input { width: 100%; box-sizing: border-box; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--fg); font: inherit; }
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    .release-notes-dialog { width: 720px; }
+    .release-notes-caveat { margin-bottom: var(--sp-4); }
+    .release-notes-body { max-height: min(55vh, 520px); overflow: auto; margin-bottom: var(--sp-7); }
+    .release-notes-release { border: 1px solid var(--border); border-radius: var(--r); margin-bottom: var(--sp-3); }
+    .release-notes-release > summary { cursor: pointer; padding: var(--sp-3) var(--sp-4); font-weight: 600; }
+    .release-notes-release-body { padding: 0 var(--sp-4) var(--sp-3); }
+    .release-notes-also { margin-top: var(--sp-4); }
+    .release-notes-cat { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: var(--sp-3) 0 var(--sp-1); }
+    .release-notes-list { margin: 0; padding-left: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
+    .release-notes-banner { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-4); border: 1px solid var(--accent); border-radius: var(--r); background: var(--panel); }
+    .release-notes-banner-text { flex: 1; font-size: var(--fs-sm); }
     .level-automerge-dialog { width: min(760px, 94vw); }
     .level-automerge-list { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; }
     .level-automerge-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--panel) 92%, var(--fg) 8%); }
@@ -4608,6 +4619,7 @@
         <div class="config-body overview-settings-body" id="overview-chart-settings-body"></div>
       </div>
     </div>
+    <div id="release-notes-banner" class="hidden"></div>
     <div class="section-body">
       <div class="overview-card" id="overview-card"></div>
     </div>
@@ -28532,13 +28544,250 @@ function burnAreaChart() {
     // fetchGitVersion() — deferred to _deferredInit
 
     // SSE connection
+    // release-notes helpers begin
+    var RELEASE_NOTES_CATEGORY_ORDER = ['Added', 'Changed', 'Fixed', 'Security', 'Deprecated'];
+    var RELEASE_NOTES_STATE_KEY = 'hive-release-notes-v1';
+    var RELEASE_NOTES_REPO_URL = 'https://github.com/hivecommons/hive';
+    // Groups a section's categories in the canonical order; unknown categories follow.
+    function releaseNotesGroupSection(sec) {
+      var cats = (sec && sec.categories) || {};
+      var byLower = {};
+      Object.keys(cats).forEach(function(k) { byLower[k.toLowerCase()] = k; });
+      var out = [];
+      var used = {};
+      RELEASE_NOTES_CATEGORY_ORDER.forEach(function(name) {
+        var key = byLower[name.toLowerCase()];
+        if (key && Array.isArray(cats[key]) && cats[key].length) { out.push({ name: name, bullets: cats[key] }); used[key] = true; }
+      });
+      Object.keys(cats).forEach(function(k) {
+        if (!used[k] && Array.isArray(cats[k]) && cats[k].length) out.push({ name: k, bullets: cats[k] });
+      });
+      return out;
+    }
+    // Splits text into plain and #NNNN reference parts so callers can build DOM nodes without innerHTML.
+    function releaseNotesRefParts(text) {
+      var parts = [];
+      var re = /#(\d{1,7})\b/g;
+      var last = 0;
+      var m;
+      var str = String(text == null ? '' : text);
+      while ((m = re.exec(str)) !== null) {
+        if (m.index > last) parts.push({ text: str.slice(last, m.index) });
+        parts.push({ text: m[0], ref: m[1] });
+        last = m.index + m[0].length;
+      }
+      if (last < str.length) parts.push({ text: str.slice(last) });
+      return parts;
+    }
+    function releaseNotesSameSha(a, b) {
+      a = String(a || '').toLowerCase();
+      b = String(b || '').toLowerCase();
+      return !!a && !!b && (a.indexOf(b) === 0 || b.indexOf(a) === 0);
+    }
+    // Decides whether to show the post-upgrade banner. Never on first visit; once per SHA transition.
+    function releaseNotesBannerDecision(state, currentSha) {
+      var next = { lastSeenSha: String((state && state.lastSeenSha) || '') };
+      var cur = String(currentSha || '');
+      if (!cur) return { show: false, from: '', state: next };
+      if (!next.lastSeenSha) { next.lastSeenSha = cur; return { show: false, from: '', state: next }; }
+      if (releaseNotesSameSha(next.lastSeenSha, cur)) return { show: false, from: '', state: next };
+      var from = next.lastSeenSha;
+      next.lastSeenSha = cur;
+      return { show: true, from: from, state: next };
+    }
+    // release-notes helpers end
+    function releaseNotesLoadState() {
+      try { return safeJsonParse(localStorage.getItem(RELEASE_NOTES_STATE_KEY) || '{}', {}) || {}; } catch (e) { return {}; }
+    }
+    function releaseNotesSaveState(state) {
+      try { localStorage.setItem(RELEASE_NOTES_STATE_KEY, JSON.stringify(state)); } catch (e) { /* storage blocked — non-fatal */ }
+    }
+    function rnEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      if (cls) el.className = cls;
+      if (text != null) el.textContent = text;
+      return el;
+    }
+    function releaseNotesBulletNode(text) {
+      var li = rnEl('li');
+      releaseNotesRefParts(String(text).replace(/^\s*-\s+/, '')).forEach(function(part) {
+        if (part.ref) {
+          var a = rnEl('a', '', part.text);
+          a.href = RELEASE_NOTES_REPO_URL + '/issues/' + part.ref;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          li.appendChild(a);
+        } else {
+          li.appendChild(document.createTextNode(part.text));
+        }
+      });
+      return li;
+    }
+    function releaseNotesGroupsNode(sec, parent) {
+      releaseNotesGroupSection(sec).forEach(function(g) {
+        parent.appendChild(rnEl('div', 'release-notes-cat', g.name));
+        var ul = rnEl('ul', 'release-notes-list');
+        g.bullets.forEach(function(b) { ul.appendChild(releaseNotesBulletNode(b)); });
+        parent.appendChild(ul);
+      });
+    }
+    function releaseNotesRender(body, data) {
+      body.textContent = '';
+      if (!data || data.source === 'unavailable') {
+        var reason = (data && data.error) || 'no reason given';
+        body.appendChild(rnEl('div', 'muted-xs', 'Release notes unavailable (' + reason + ')'));
+        return;
+      }
+      var sections = Array.isArray(data.sections) ? data.sections : [];
+      sections.forEach(function(sec, i) {
+        var det = rnEl('details', 'release-notes-release');
+        if (i === 0) det.open = true;
+        var label = (sec.version || sec.title || 'release') + (sec.date ? ' · ' + sec.date : '');
+        det.appendChild(rnEl('summary', 'mono', label));
+        var inner = rnEl('div', 'release-notes-release-body');
+        releaseNotesGroupsNode(sec, inner);
+        det.appendChild(inner);
+        body.appendChild(det);
+      });
+      if (data.unreleased) {
+        var also = rnEl('div', 'release-notes-also');
+        also.appendChild(rnEl('div', 'hive-dialog-title', 'Also in this build'));
+        releaseNotesGroupsNode(data.unreleased, also);
+        body.appendChild(also);
+      }
+      if (!sections.length && !data.unreleased) body.appendChild(rnEl('div', 'muted-xs', 'No release notes between these revisions.'));
+      if (data.truncated) body.appendChild(rnEl('div', 'muted-xs', 'Showing the most recent entries only.'));
+    }
+    function releaseNotesFetch(from, to) {
+      if (!from || !to) return Promise.resolve({ source: 'unavailable', error: 'revision unknown', sections: [] });
+      return fetch('/api/version/release-notes?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to))
+        .then(function(r) { return r.ok ? r.json() : { source: 'unavailable', error: 'HTTP ' + r.status, sections: [] }; })
+        .catch(function(e) { return { source: 'unavailable', error: (e && e.message) || 'request failed', sections: [] }; });
+    }
+    // Opens the release-notes modal. Resolves true when Upgrade is chosen; read-only mode has no Upgrade button.
+    function releaseNotesOpenModal(opts) {
+      return new Promise(function(resolve) {
+        var opener = document.activeElement;
+        var overlay = rnEl('div', 'hive-dialog-overlay');
+        var dlg = rnEl('div', 'hive-dialog release-notes-dialog');
+        dlg.setAttribute('role', 'dialog');
+        dlg.setAttribute('aria-modal', 'true');
+        dlg.setAttribute('aria-labelledby', 'release-notes-title');
+        var title = rnEl('div', 'hive-dialog-title', opts.title);
+        title.id = 'release-notes-title';
+        dlg.appendChild(title);
+        if (opts.caveat) dlg.appendChild(rnEl('div', 'muted-xs release-notes-caveat', opts.caveat));
+        var body = rnEl('div', 'release-notes-body');
+        body.setAttribute('aria-live', 'polite');
+        body.appendChild(rnEl('div', 'muted-xs', 'Loading release notes…'));
+        dlg.appendChild(body);
+        var buttons = rnEl('div', 'hive-dialog-buttons');
+        var cancel = rnEl('button', 'hv-btn btn-secondary hive-dialog-btn', opts.readOnly ? 'Close' : 'Cancel');
+        cancel.type = 'button';
+        buttons.appendChild(cancel);
+        var ok = null;
+        if (!opts.readOnly) {
+          ok = rnEl('button', 'hv-btn btn-primary hive-dialog-btn', 'Upgrade');
+          ok.type = 'button';
+          buttons.appendChild(ok);
+        }
+        dlg.appendChild(buttons);
+        overlay.appendChild(dlg);
+        var done = false;
+        var close = function(val) {
+          if (done) return;
+          done = true;
+          document.removeEventListener('keydown', onKey, true);
+          overlay.remove();
+          var back = document.getElementById('spoke-upgrade-btn') || opener;
+          if (back && back.focus) back.focus();
+          resolve(val);
+        };
+        var onKey = function(e) {
+          if (e.key === 'Escape') { e.preventDefault(); close(false); return; }
+          if (e.key !== 'Tab') return;
+          var nodes = Array.from(dlg.querySelectorAll('button, a[href], summary')).filter(function(el) { return !el.disabled && el.offsetParent !== null; });
+          if (!nodes.length) return;
+          var first = nodes[0];
+          var last = nodes[nodes.length - 1];
+          if (e.shiftKey && (document.activeElement === first || !dlg.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && (document.activeElement === last || !dlg.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+        };
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) close(false); });
+        cancel.addEventListener('click', function() { close(false); });
+        if (ok) ok.addEventListener('click', function() { close(true); });
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(overlay);
+        (ok || cancel).focus();
+        releaseNotesFetch(opts.from, opts.to).then(function(data) {
+          if (done) return;
+          if (opts.onLoaded) opts.onLoaded(data);
+          releaseNotesRender(body, data);
+        });
+      });
+    }
+    function releaseNotesShowBanner(from, to) {
+      var host = document.getElementById('release-notes-banner');
+      if (!host) return;
+      var fromShort = versionShortSHA(from);
+      var toShort = versionShortSHA(to);
+      host.textContent = '';
+      host.className = 'release-notes-banner';
+      var text = rnEl('div', 'release-notes-banner-text', 'Upgraded ' + fromShort + ' → ' + toShort);
+      var open = rnEl('button', 'hv-btn btn-sm', 'What changed ▸');
+      open.type = 'button';
+      var dismiss = rnEl('button', 'hv-btn btn-sm', 'Dismiss');
+      dismiss.type = 'button';
+      dismiss.setAttribute('aria-label', 'Dismiss upgrade banner');
+      host.appendChild(text);
+      host.appendChild(open);
+      host.appendChild(dismiss);
+      dismiss.addEventListener('click', function() { host.className = 'hidden'; host.textContent = ''; });
+      open.addEventListener('click', function() {
+        releaseNotesOpenModal({ title: 'What changed: ' + fromShort + ' → ' + toShort, from: from, to: to, readOnly: true });
+      });
+      releaseNotesFetch(from, to).then(function(data) {
+        if (data && data.source !== 'unavailable' && Array.isArray(data.sections)) {
+          var n = data.sections.length;
+          text.textContent = 'Upgraded ' + fromShort + ' → ' + toShort + ': ' + n + (n === 1 ? ' release.' : ' releases.');
+        }
+      });
+    }
+    // Owner/merger only, matching the release-notes endpoint; waits for the role to resolve.
+    function releaseNotesBannerInit(currentSha) {
+      if (!currentSha) return;
+      var tries = 0;
+      var attempt = function() {
+        var role = window._hiveRole;
+        if (!role) {
+          if (++tries < 20) setTimeout(attempt, 1000);
+          return;
+        }
+        var decision = releaseNotesBannerDecision(releaseNotesLoadState(), currentSha);
+        releaseNotesSaveState(decision.state);
+        if (decision.show && dashboardRoleAtLeast(role, 'merger')) releaseNotesShowBanner(decision.from, currentSha);
+      };
+      attempt();
+    }
     var _upgradeInProgress = false;
     var _upgradeTargetHash = null;
     async function selfUpgrade(targetHash) {
       const target = window._lastVersionData && window._lastVersionData.target;
       let displayHash = targetHash || '';
-      if (target && target.ref && target.source === 'channel' && (targetHash === target.ref || targetHash === target.sha)) {
-        if (!(await hiveConfirm('Upgrade to ' + target.ref + ' (current channel revision ' + (target.short || 'unknown') + ')? The channel may advance before the host pulls it.'))) return;
+      const isChannel = !!(target && target.ref && target.source === 'channel' && (targetHash === target.ref || targetHash === target.sha));
+      const lv = window._lastVersionData || {};
+      const runtimeLabel = (lv.deployment && lv.deployment.runtime) ? String(lv.deployment.runtime) : 'unknown runtime';
+      const fromSha = lv.hash || lv.short || '';
+      const notesTo = isChannel ? target.ref : (targetHash || (target && target.sha) || '');
+      const targetLabel = isChannel ? target.ref : (versionShortSHA(targetHash) || 'latest');
+      const proceed = await releaseNotesOpenModal({
+        title: 'Upgrade ' + runtimeLabel + ': ' + (versionShortSHA(fromSha) || 'unknown') + ' → ' + targetLabel,
+        caveat: isChannel ? 'Current channel revision ' + (target.short || 'unknown') + '. The channel may advance before the host pulls it.' : '',
+        from: fromSha,
+        to: notesTo
+      });
+      if (!proceed) return;
+      if (isChannel) {
         targetHash = target.ref;
         displayHash = target.sha || '';
       }
@@ -28603,6 +28852,7 @@ function burnAreaChart() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
         setDashboardDocsLine(d.branch);
+        releaseNotesBannerInit(_initialVersionHash);
       }).catch(function() {});
       dashboardSetInterval('version-reload-check', function() {
         fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
