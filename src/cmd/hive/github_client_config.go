@@ -82,6 +82,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 		return
 	}
 	client.SetHoldLabels(b.githubHoldLabels())
+	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
 	// automerge sweep without a restart.

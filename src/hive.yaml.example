@@ -313,6 +313,9 @@ agents:
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
+  eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
+  conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
+  optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
@@ -658,6 +661,15 @@ governor:
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 
+# Compliance control mapping (#11078) — optional. Selects the framework
+# profiles (src/pkg/compliance/profiles) whose controls GET /api/compliance/status
+# evaluates against this config. Read-only: each control points at an existing
+# setting. Not a certification — see src/docs/compliance.md. Default: none.
+# compliance:
+#   frameworks: [soc2-type2]
+#   posture_checks:
+#     interval: 1h   # 5m..168h; 0/unset = 1h
+
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the
 # governor lists the unresolved ones in /var/run/hive-metrics/review-threads.json,
@@ -688,6 +700,12 @@ github:
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
   # agent_reserve_floor: 400              # Keep this many core requests reserved for daemon scan/merge paths.
+
+  # Shared GitHub App/PAT core API budget floors. When remaining core quota
+  # drops below reserve, Hive skips optional sweeps; below critical it sheds
+  # more work and stretches the governor eval interval further.
+  api_reserve: 800
+  api_critical: 250
 
 # Optional: OIDC token mint — issues short-lived scoped JWTs alongside the
 # GitHub App token, for in-process agent-credential consumers. Disabled by

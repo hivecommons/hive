@@ -1,0 +1,1 @@
+- Hide the Projects active-filter chip when no filter is active so clearing filters no longer leaves an empty pill.
