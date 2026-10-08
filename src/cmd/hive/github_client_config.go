@@ -96,6 +96,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
+	client.SetPRDetailTTLFunc(func() time.Duration { return b.cfg.GitHub.PRDetailTTL() })
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		client.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))

@@ -21,9 +21,17 @@ func (c *Client) AdvisoryWorkState(ctx context.Context, owner, repo string, numb
 	}
 	work := advisory.LinkedWork{Kind: "issue", State: strings.ToUpper(issue.GetState())}
 	if issue.IsPullRequest() {
-		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:advisory_work"), owner, repo, number)
-		if err != nil {
-			return advisory.LinkedWork{}, err
+		fullRepo := owner + "/" + repo
+		// Advisory work summaries are informational and rechecked on demand, so one
+		// PR-detail TTL of staleness is acceptable here.
+		pr, ok := c.cachedPRDetailAny(fullRepo, number)
+		if !ok {
+			var err error
+			pr, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:advisory_work"), owner, repo, number)
+			if err != nil {
+				return advisory.LinkedWork{}, err
+			}
+			c.storePRDetail(fullRepo, number, pr)
 		}
 		work.Kind, work.State = "pr", strings.ToUpper(pr.GetState())
 		if pr.GetMerged() {
