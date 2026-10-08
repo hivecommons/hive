@@ -8519,6 +8519,67 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 	})
 }
 
+// sentinelSweepInterval is the minimum spacing between sentinel passes. The
+// sweep lists open PRs per repo every pass but fetches a PR's files only when
+// its head SHA changed since the last evaluation, so steady state is one list
+// call per repo; fifteen minutes bounds how long a hostile PR sits unlabelled.
+const sentinelSweepInterval = 15 * time.Minute
+
+// runSentinelSweepIfDue flags open PRs that look like security overrides,
+// privilege escalation or codebase damage (pkg/sentinel) at most once per
+// sentinelSweepInterval. Default on; `sentinel.enabled: false` disables it.
+func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sentinelSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	sc := cfg.Sentinel
+	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
+		Label:            sc.LabelOrDefault(),
+		LabelColor:       config.DefaultSentinelLabelColor,
+		LabelDescription: config.DefaultSentinelLabelDescription,
+		Evaluator:        sc.EvaluatorConfig(),
+		RepoAllowed:      sc.RepoAllowed,
+		MaxActions:       sc.MaxActionsOrDefault(),
+		Audit: func(event github.SentinelSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, rules=%s",
+				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
+			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("sentinel sweep failed", "error", err)
+		return
+	}
+	for _, e := range result.Errors {
+		logger.Warn("sentinel sweep: PR skipped", "detail", e)
+	}
+	for _, ev := range result.Flagged {
+		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
+	}
+	if len(result.Flagged) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "skipped", result.Skipped, "errors", len(result.Errors))
+	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "sentinel sweep complete",
+		Attrs: map[string]string{
+			"seen":    strconv.Itoa(result.Seen),
+			"flagged": strconv.Itoa(len(result.Flagged)),
+			"skipped": strconv.Itoa(result.Skipped),
+		},
+	})
+}
+
 // issueUnparkSweepInterval is the minimum spacing between un-park sweeps. A
 // maintainer who replies "/hive approve" is waiting for something to happen, so
 // this runs more often than the task-list sweep; it only reads the comments of

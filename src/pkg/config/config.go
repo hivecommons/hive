@@ -114,8 +114,12 @@ type Config struct {
 	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
-	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
-	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
+	// Sentinel flags PRs that look like security overrides, privilege
+	// escalation or codebase damage, from any author. Default on; see
+	// SentinelConfig.
+	Sentinel   SentinelConfig   `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client
 	// that agents with jev_mode: assist reach through the hive's local decision
 	// endpoint (hivecommons/hive#8939). Zero value: OpenRouter-hosted

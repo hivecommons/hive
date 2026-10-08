@@ -76,6 +76,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
 | `claims` | The worker-claim ledger ([#8380](https://github.com/hivecommons/hive/issues/8380)): who is on an issue right now, ranked human > agent > contributor > external, so a person can take an issue over from a hive agent or a relay contributor and the displaced holder is told to stop. | Default ON. `enabled: false` turns recording, enforcement and `/api/claims` off. `human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m, `max_ttl_s` 24h; the owner can also set these four from **Governor Config → Features → Issue claims** (a value of 0 or *Reset to default* uses the default; human, agent and contributor may not exceed the max), and a saved change applies without a restart to claims made or renewed afterwards while existing claims keep their expiry ([#10981](https://github.com/hivecommons/hive/issues/10981)); `comment: false` / `label: false` suppress the GitHub issue comment / `claimed` label mirror. A governor kick only *lists* the issues it names (30-minute hold, no comment, not a claim); the agent claim, with its comment, is recorded on the agent's first start signal on an issue — its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it. `escalate_after_claims` (default `2`, negative turns it off) counts those claims only: once one agent's last that-many claims on a free issue were followed by no linked PR, referencing commit, label or assignee change and no close/reopen, the issue is withheld from every kick, labelled `needs-human` and given one comment listing the claims, instead of being claimed again. A `hive/likely-done` issue an agent already started on after the merged PR (its verification) is withheld from kicks until a person comments, labels, assigns, closes or reopens it, so it is verified once rather than every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527)). Driven from `hivectl claim` — see [hivectl.md](hivectl.md#claim--unclaim--claims--issue-claims). |
 | `removed_agents` | Persistent tombstones for deleted agents. | Dashboard/overlay-owned; do not seed casually. |
+| `sentinel` | Suspicious-activity alerts: flags open PRs (any author) that touch sensitive files or look like security overrides, privilege escalation, or codebase damage. | Default ON; observe-and-alert only. See [Suspicious-activity alerts](#suspicious-activity-alerts-sentinel). |
 
 ## Notable fields
 
@@ -224,6 +225,43 @@ configured repos. Above that, the interval scales so the sweep's list+candidate
 calls stay within 25% of the App's hourly REST allowance — a 45-repo hive on a
 fixed 10s tick used to exceed the whole allowance on list calls alone and
 starve every other GitHub caller, including the agents.
+
+## Suspicious-activity alerts (`sentinel`)
+
+The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
+(`pkg/sentinel`, `pkg/github.SweepSentinel`). It inspects every open PR in the
+watched repos — human, bot, or agent — and, when a PR matches one of the
+behaviors below, adds the alert label and posts one `<!-- hive-sentinel -->`
+comment per head SHA listing the matched rules and paths. It never merges,
+holds, closes, or removes labels; the point is to make the PR impossible for a
+reviewer to miss. Agents reading the reviewer-queue policy treat the label as
+"route to a human, never approve". A maintainer who removes the label keeps
+the PR clear until the author pushes again.
+
+| Behavior | Fires when |
+|---|---|
+| `sensitive_path` | Any changed file matches a sensitive-path glob. |
+| `owner_self_nomination` | The PR author adds their own login to an OWNERS/CODEOWNERS/MAINTAINERS file. |
+| `permission_escalation` | A workflow/CI file widens `permissions:` (`write-all`, `contents: write`, `id-token: write`, …), or a role/RBAC manifest grants `*`/cluster-admin. |
+| `secret_exposure` | Added lines look like credentials (PEM blocks, AWS/GitHub/Slack tokens, `password=`), or a workflow echoes/uploads `secrets.*`. |
+| `ci_gate_weakening` | Added `continue-on-error`, removed a required-check/branch-protection line, deleted a workflow or test job, added `--no-verify`/`skip ci`. |
+| `test_removal` | Tests are deleted or heavily reduced while production code is not. |
+| `security_policy_edit` | SECURITY.md, GOVERNANCE.md, `.github/rulesets/**`, dependabot/codeql config, or Hive's own policy/proxy rules change. |
+| `remote_code_execution` | Added `curl … \| sh`, `wget … \| bash`, `eval $(curl …)`, base64-decoded execution, or an unpinned third-party action in a workflow. |
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
+| `sentinel.label` | `sentinel-alert` | Label added to flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". |
+| `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
+| `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |
+| `sentinel.exempt_logins` | empty | GitHub logins never flagged (e.g. a release bot). Use sparingly. |
+| `sentinel.repos` | empty = all watched repos | Optional `owner/repo` allow-list. |
+| `sentinel.max_actions` | `20` | Caps label+comment actions per pass. |
+
+Owners edit all of this from **Settings → Security → Suspicious Activity**;
+the dashboard writes the owner-only `/api/config/governor/security` overlay.
+Every alert is also written to the dashboard audit log as `sentinel-alert`.
 
 ## Image provenance and tags
 
