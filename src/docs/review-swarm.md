@@ -93,6 +93,23 @@ When the relay accepts a review verdict, cited out-of-scope findings (`review_sc
 
 The PR receives one summary comment listing the backlog issues filed from that review. Filing is enabled by default and bounded by `review.max_out_of_scope_backlog_issues` (default `3`) per PR; set `review.out_of_scope_backlog_disabled: true` to opt out.
 
+### Pipeline stages
+
+`GET /api/review/pipeline` places every review-queue PR in exactly one stage, derived by the pure `pkg/review/pipeline.Derive` from the verdict artifact, the review dispatch state, the `review-links.json` ledger, labels, the escalation ledger, CI state and merge state. Rules are checked in this order; the first match wins:
+
+| Stage | Meaning |
+|---|---|
+| `merged` | The PR merged. |
+| `abandoned` | The PR closed without merging. |
+| `human_hold` | A `hold`/`needs-human` label or held queue entry, a `requires_human` or `reject` verdict on the current head, a dispatch-state human hold, an escalated escalation entry, or a `changes_requested`/`fixing` PR whose loop counter reached the fix-cycle cap. |
+| `approved` | A merge-eligible `approve` verdict on the current head, an `lgtm`/`approved`/`reviewer-passed` label, the escalation ledger's reviewer-passed SHA on the head, or an approving hive review on the head. The next action is merge, fix CI or wait for CI depending on the CI rollup. |
+| `fixing` | A fix is dispatched for the current head. |
+| `changes_requested` | The current head's verdict (or, without one, the hive's posted review) requests changes. |
+| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated. |
+| `unreviewed` | None of the above; a verdict on an older head does not count once the head moves. |
+
+Each card also carries the reviewers (perspective and model), in-scope finding counts on the P0–P3 scale `review_bots.min_priority` uses (critical → P0, high → P1, medium → P2, low/info → P3), the loop counter against its cap, one next action and the reasons for the stage. The review queue lists open PRs only, so the endpoint does not return `merged` or `abandoned` cards yet.
+
 ### Confidence score
 
 Every aggregate also carries a derived 0–5 **mergeability confidence** (`confidence.score`, with `confidence.reasons`) so a maintainer working a queue can sort or glance without reading each finding (hivecommons/hive#8182). It is computed from the same reports as the verdict — never asked of the model — so it means the same thing on every PR:
