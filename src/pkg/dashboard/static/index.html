@@ -5236,7 +5236,7 @@
     function updateFeedbackAttributionLine() {
       const el = document.getElementById('feedback-attribution-line'); if (!el) return;
       const status = window._feedbackStatus || {};
-      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'the hive');
+      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'your browser on GitHub');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
       // A verified login wins over the typed one; a typed login is only ever self-reported.
       const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
@@ -5287,7 +5287,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
-            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute and @-mention you on the issue.</span></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -5370,6 +5370,12 @@
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
+        const status = window._feedbackStatus || {};
+        if (!status.credential_login && !status.hub_linked && !feedbackGitHubLogin(status.submitter_login) && !feedbackGitHubLogin(rawUsername)) {
+          if (usernameField) { usernameField.required = true; usernameField.focus(); usernameField.setCustomValidity('Enter your GitHub username to open the prefilled issue on GitHub.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
+          showToast('Enter your GitHub username to open the issue on GitHub', 'error');
+          return;
+        }
         if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
           if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
           showToast('Enter a valid GitHub username, or leave it blank', 'error');
