@@ -55,6 +55,21 @@ func TestOpenEventLogTightensExistingFile(t *testing.T) {
 	}
 }
 
+func TestOpenEventLogFailsWhenParentDirMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "events.jsonl")
+	f, err := openEventLog(path)
+	if err == nil {
+		f.Close()
+		t.Fatal("openEventLog succeeded, want error for missing parent directory")
+	}
+	if f != nil {
+		t.Fatalf("file = %v, want nil on error", f)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("event log must not be created, stat err = %v", statErr)
+	}
+}
+
 func TestDefaultProxyHostIsLoopback(t *testing.T) {
 	if defaultProxyHost != "127.0.0.1" {
 		t.Fatalf("defaultProxyHost = %q, want loopback 127.0.0.1", defaultProxyHost)
