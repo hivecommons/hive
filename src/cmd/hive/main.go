@@ -9131,6 +9131,23 @@ func fullRepoName(repo, org string) string {
 	return org + "/" + repo
 }
 
+// reviewAgentCapability describes one configured lane the way the review
+// dispatcher sees it, so the relay judges reviewer-ness by the same rule.
+// An unknown lane has only its name to go on.
+func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapability {
+	cap := review.AgentCapability{Name: agent}
+	if cfg == nil {
+		return cap
+	}
+	if ac, ok := cfg.Agents[agent]; ok {
+		cap.Role = ac.Role
+		cap.LaneKeywords = ac.LaneKeywords
+		cap.DetectKeywords = ac.DetectKeywords
+		cap.Aliases = ac.Aliases
+	}
+	return cap
+}
+
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
 // review-relay knobs that live in cfg.Review: which repos may be revised in
 // place, which perspectives a verdict may name, and whether comments carry a
@@ -9143,6 +9160,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	}
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
+	client.SetReviewerAgentFunc(func(agent string) bool {
+		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
+	})
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues

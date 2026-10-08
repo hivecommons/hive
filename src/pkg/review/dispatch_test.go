@@ -382,3 +382,22 @@ func TestRequiresHumanVerdictProducesHold(t *testing.T) {
 		t.Fatalf("approve verdict must not hold for human: %+v", plan.State.Human)
 	}
 }
+
+func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
+	set := ReviewerAgentSet([]string{" auditor ", "", "sec-check"})
+	if len(set) != 2 || !set["auditor"] || !set["sec-check"] {
+		t.Fatalf("ReviewerAgentSet = %v", set)
+	}
+	if ReviewCapable(AgentCapability{Name: "reviewer"}, set) {
+		t.Fatal("lane outside reviewer_agents judged review-capable")
+	}
+	if !ReviewCapable(AgentCapability{Name: "auditor"}, set) {
+		t.Fatal("lane inside reviewer_agents judged not review-capable")
+	}
+	if !ReviewCapable(AgentCapability{Name: "qa", Role: "code review"}, nil) {
+		t.Fatal("review-token role judged not review-capable with no configured set")
+	}
+	if ReviewCapable(AgentCapability{Name: "docs-writer"}, nil) {
+		t.Fatal("non-review lane judged review-capable with no configured set")
+	}
+}
