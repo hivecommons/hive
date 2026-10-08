@@ -250,4 +250,4 @@ Read the numbers with care: the cohorts are not randomised. The reviewer reaches
 ## Deferred work
 
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.
-- Add dashboard visibility for review verdict artifacts.
+- Add dashboard visibility for review verdict artifacts. The per-PR [review evidence bundle](review-evidence.md) (tracked in #11058) is the planned durable, downloadable record; see also the [SOC 2 control mapping](soc2-control-mapping.md) (not a compliance claim).
