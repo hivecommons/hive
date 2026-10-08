@@ -1,0 +1,1 @@
+- Added a Review Pipeline kanban board to the dashboard: one column per review stage from `GET /api/review/pipeline`, with reviewer chips, P0–P3 counts, the fix-loop counter, next-action links, and repo/author/stage filters.
