@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-08 (v5.144.0)
+
+### Added
+
+- feat(automerge): add auto_merge.human_merge_paths config and intent path matcher (#11036)
+- Added `auto_merge.human_merge_paths` (per-repo glob patterns a person must merge) with a case-insensitive `HumanMergePathsFor` accessor and an `intent.HumanMergePathMatches` matcher. No enforcement yet.
+
+### Fixed
+
+- fix(dashboard): background status refreshes no longer jump the viewport or reset focus, input and Inception panel scroll (#11032)
+
 ## 2026-10-08 (v5.143.3)
 
 ### Fixed
