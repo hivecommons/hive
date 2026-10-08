@@ -863,7 +863,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: branch API non-200", "branch", branch, "status", resp.StatusCode)
 		// Backfill missing commit messages for already-cached SHAs
-		backfillCommitMessage(client, branch, logger)
+		backfillCommitMessage(ghClient, branch, logger)
 		return
 	}
 	var branchResult struct {
