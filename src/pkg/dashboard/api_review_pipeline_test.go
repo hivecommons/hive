@@ -2,12 +2,15 @@ package dashboard
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/pipeline"
@@ -153,5 +156,66 @@ func TestHandleReviewPipeline_UnreadableEvidence(t *testing.T) {
 				t.Fatalf("status %d, want 500: %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestReviewPipelineSendToHuman(t *testing.T) {
+	var labels, comments int
+	var commentBody string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
+			labels++
+			json.NewEncoder(w).Encode([]map[string]string{{"name": "needs-human"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			if commentBody == "" {
+				json.NewEncoder(w).Encode([]map[string]string{})
+				return
+			}
+			json.NewEncoder(w).Encode([]map[string]string{{"body": commentBody}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			comments++
+			var in struct {
+				Body string `json:"body"`
+			}
+			json.NewDecoder(r.Body).Decode(&in)
+			commentBody = in.Body
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+
+	s := NewServer(0, slog.Default())
+	s.deps = &Dependencies{
+		Config:   &config.Config{Project: config.ProjectConfig{Org: "acme", Repos: []string{"widget"}}},
+		GHClient: ghpkg.NewClient("app-token", "acme", []string{"widget"}, slog.Default(), api.URL),
+		Logger:   slog.Default(),
+	}
+	send := func(role string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/review/pipeline/acme/widget/7/send-to-human", strings.NewReader(`{"reason":"fix cycles at 2 of 3"}`))
+		req.SetPathValue("owner", "acme")
+		req.SetPathValue("repo", "widget")
+		req.SetPathValue("number", "7")
+		req.Header.Set("X-Hive-User", "alice")
+		req.Header.Set("X-Hive-Role", role)
+		w := httptest.NewRecorder()
+		s.handleReviewPipelineSendToHuman(w, req)
+		return w
+	}
+
+	if w := send(config.RoleReadWrite); w.Code != http.StatusForbidden || labels != 0 {
+		t.Fatalf("read-write: status %d labels %d", w.Code, labels)
+	}
+	if w := send(config.RoleMerger); w.Code != http.StatusOK || labels != 1 || comments != 1 {
+		t.Fatalf("first send: status %d body %s labels %d comments %d", w.Code, w.Body.String(), labels, comments)
+	}
+	if !strings.Contains(commentBody, reviewLoopMarker) || !strings.Contains(commentBody, "fix cycles at 2 of 3") {
+		t.Fatalf("comment body = %q", commentBody)
+	}
+	if w := send(config.RoleMerger); w.Code != http.StatusOK || comments != 1 {
+		t.Fatalf("repeat send: status %d comments %d, want one comment", w.Code, comments)
 	}
 }
