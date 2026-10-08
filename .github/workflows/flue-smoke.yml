@@ -54,7 +54,16 @@ jobs:
         run: |
           mkdir -p ../.hive-smoke-bin
           go build -tags extwork_flue -o ../.hive-smoke-bin/hive-flue ./cmd/hive
-          go test -tags 'integration extwork_flue' ./test/extwork -run TestFlueSmoke -count=1
+          go test -tags 'integration extwork_flue' ./test/extwork -run TestFlueSmoke -count=1 \
+            -coverpkg=./pkg/extwork/... -coverprofile=extwork-flue-coverage.out
+      - name: Upload Flue smoke coverprofile
+        if: matrix.lane == 'latest' && always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extwork-flue-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src/extwork-flue-coverage.out
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Require container engine
         if: matrix.lane == 'pinned'
         run: |
