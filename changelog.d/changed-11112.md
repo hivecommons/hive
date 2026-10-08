@@ -1,1 +1,0 @@
-- Hub: authenticate GitHub reads as the App and use the shared caching transport (#11112)
