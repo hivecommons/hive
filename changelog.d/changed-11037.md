@@ -1,0 +1,1 @@
+- docs(v6): L6 guide lane path, UI paths, and readiness bar channel/lane rows (#11037)
