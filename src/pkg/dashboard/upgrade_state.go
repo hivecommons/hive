@@ -9,6 +9,7 @@ import (
 
 const (
 	dashboardUpgradeStateStarted    = "started"
+	dashboardUpgradeStateQueued     = "queued"
 	dashboardUpgradeStateFailed     = "failed"
 	dashboardUpgradeStateDone       = "done"
 	dashboardUpgradeStateSuperseded = "superseded"
@@ -65,6 +66,12 @@ func upgradeAttemptFromDashboardState(st *dashboardUpgradeState) *UpgradeAttempt
 		Reason: st.Reason,
 	}
 	switch st.State {
+	case dashboardUpgradeStateQueued:
+		out.State = upgradeAttemptInProgress
+		out.Detail = "Upgrade queued — image building."
+		if st.Target != "" {
+			out.Detail = "Upgrade to " + shortSHADashboard(st.Target) + " queued — image building."
+		}
 	case dashboardUpgradeStateStarted:
 		out.State = upgradeAttemptInProgress
 		out.Detail = "Upgrade request accepted by the hub; waiting for this spoke to collect the instruction on heartbeat and roll its Deployment."
@@ -98,6 +105,12 @@ func upgradeAttemptFromDashboardState(st *dashboardUpgradeState) *UpgradeAttempt
 		return nil
 	}
 	return out
+}
+
+func upgradeImageBuildingReason(reason string) bool {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	return strings.Contains(reason, "is not published yet") ||
+		strings.Contains(reason, "not published yet")
 }
 
 func formatUpgradeTime(t time.Time) string {

@@ -362,3 +362,152 @@ func TestBuildAgentMessage_PackL6AdjudicatorGetsLaneReviewerKeepsQueue(t *testin
 		t.Errorf("the queue reviewer must still receive its templated kick, got:\n%s", queue)
 	}
 }
+
+const reviewerOneEscalatedFixture = `{"ci_failing":[
+  {"number":9,"repo":"test-org/console","title":"escalated split PR","agent":"scanner","escalated":true,
+   "failing_checks":["build-gate"]}
+]}`
+
+const reviewerNoneEscalatedFixture = `{"ci_failing":[{"number":1,"repo":"test-org/console","title":"red, not escalated"}]}`
+
+// reviewerMultiRepoScheduler is reviewerTestScheduler on a multi-repo project,
+// the shape where the repos section carries the MULTI-REPO COVERAGE rotation.
+func reviewerMultiRepoScheduler(t *testing.T, acmmLevel int, fixture string) *Scheduler {
+	t.Helper()
+	s := reviewerTestScheduler(t, acmmLevel, fixture)
+	s.cfg.Project.Repos = []string{"test-org/console", "test-org/docs", "test-org/infra"}
+	return s
+}
+
+// reviewerLaneGate is the one place that decides whether the lane is awake and
+// has work; both the kick text and the scheduled-kick skip read it (#11046).
+func TestReviewerLaneGate(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		level        int
+		fixture      string
+		wantReason   string
+		wantWorkList bool
+	}{
+		{name: "below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerFixture, wantReason: "dormant below ACMM 5"},
+		{name: "no ACMM level", level: 0, fixture: reviewerFixture, wantReason: "dormant below ACMM 5"},
+		{name: "empty escalated set", level: 5, fixture: reviewerNoneEscalatedFixture, wantReason: reviewerLaneIdleNothingToAdjudicate},
+		{name: "missing ci-failing.json", level: 6, fixture: "", wantReason: reviewerLaneIdleNothingToAdjudicate},
+		{name: "one escalated PR", level: 5, fixture: reviewerOneEscalatedFixture, wantWorkList: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerTestScheduler(t, tc.level, tc.fixture)
+			level, workList, reason := s.reviewerLaneGate()
+			if level != tc.level {
+				t.Errorf("level = %d, want %d", level, tc.level)
+			}
+			if reason != tc.wantReason {
+				t.Errorf("idle reason = %q, want %q", reason, tc.wantReason)
+			}
+			if (workList != "") != tc.wantWorkList {
+				t.Errorf("work list present = %v, want %v:\n%s", workList != "", tc.wantWorkList, workList)
+			}
+		})
+	}
+}
+
+// #11046: a scheduled reviewer-lane kick with nothing to adjudicate is not
+// sent. No KickMessage means nothing is dispatched, so no LastKick is stamped
+// and no stand-down outcome can mark the lane BLOCKED. Other due agents in the
+// same pass are unaffected, and one escalated PR still produces the contract.
+func TestBuildKickMessages_ReviewerLaneSkipsIdleKick(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		level    int
+		fixture  string
+		wantKick bool
+	}{
+		{name: "empty escalated set", level: 5, fixture: reviewerNoneEscalatedFixture},
+		{name: "missing ci-failing.json", level: 6, fixture: ""},
+		{name: "ACMM below the gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerFixture},
+		{name: "one escalated PR", level: 5, fixture: reviewerOneEscalatedFixture, wantKick: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerMultiRepoScheduler(t, tc.level, tc.fixture)
+			msgs := s.BuildKickMessages(&github.ActionableResult{}, []string{"adjudicator", "scanner"})
+			var lane *KickMessage
+			sawScanner := false
+			for i := range msgs {
+				switch msgs[i].Agent {
+				case "adjudicator":
+					lane = &msgs[i]
+				case "scanner":
+					sawScanner = true
+				}
+			}
+			if !sawScanner {
+				t.Error("skipping the reviewer lane must not drop other due agents' kicks")
+			}
+			if !tc.wantKick {
+				if lane != nil {
+					t.Fatalf("idle reviewer lane must not be kicked, got:\n%s", lane.Message)
+				}
+				return
+			}
+			if lane == nil {
+				t.Fatal("reviewer lane with an escalated PR must be kicked")
+			}
+			for _, want := range []string{"[agent:adjudicator]", "ADJUDICATION CONTRACT", "test-org/console#9"} {
+				if !strings.Contains(lane.Message, want) {
+					t.Errorf("working reviewer kick missing %q:\n%s", want, lane.Message)
+				}
+			}
+			if strings.Contains(strings.ToLower(lane.Message), "stand down this kick") {
+				t.Errorf("working reviewer kick must not stand down:\n%s", lane.Message)
+			}
+		})
+	}
+}
+
+// #11045: a reviewer stand-down that IS rendered (a forced or manual kick)
+// tells the agent to stand down and nothing else — no repo rotation and no
+// "pick a repo and work it" closing line — on a multi-repo project.
+func TestBuildAgentMessage_ReviewerStandDownHasNoRepoWorkInstruction(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		level   int
+		fixture string
+	}{
+		{name: "empty escalated set", level: 5, fixture: reviewerNoneEscalatedFixture},
+		{name: "dormant below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerFixture},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerMultiRepoScheduler(t, tc.level, tc.fixture)
+			msg, reason := s.buildAgentMessage("adjudicator", nil, &github.ActionableResult{})
+			if reason == "" {
+				t.Error("stand-down kick must carry an idle reason")
+			}
+			if public := s.BuildAgentMessage("adjudicator", nil, &github.ActionableResult{}); public != msg {
+				t.Errorf("BuildAgentMessage must render the same forced kick:\n%s\n---\n%s", public, msg)
+			}
+			if !strings.Contains(strings.ToLower(msg), "stand down") {
+				t.Errorf("stand-down kick must say stand down:\n%s", msg)
+			}
+			for _, banned := range []string{"MULTI-REPO COVERAGE", "Begin now: pick the authorized repo", concreteKickClosingInstruction} {
+				if strings.Contains(msg, banned) {
+					t.Errorf("stand-down kick must not contain %q:\n%s", banned, msg)
+				}
+			}
+		})
+	}
+}
+
+// A working reviewer kick and every other agent keep the concrete closing
+// instruction: only the stand-down drops it.
+func TestBuildAgentMessage_ClosingInstructionKeptWhenNotStandingDown(t *testing.T) {
+	s := reviewerMultiRepoScheduler(t, 5, reviewerOneEscalatedFixture)
+	for _, agent := range []string{"adjudicator", "scanner"} {
+		msg, reason := s.buildAgentMessage(agent, nil, &github.ActionableResult{})
+		if reason != "" {
+			t.Errorf("%s: unexpected idle reason %q", agent, reason)
+		}
+		if !strings.Contains(msg, concreteKickClosingInstruction) {
+			t.Errorf("%s: kick must carry the closing instruction:\n%s", agent, msg)
+		}
+	}
+}

@@ -970,6 +970,11 @@ type FrontendRepo struct {
 	// issue.
 	HeldIssues []any `json:"heldIssues"`
 	HeldPrs    []any `json:"heldPrs"`
+	// NonActionableIssues are display-only issue records for the counted
+	// buckets that are intentionally outside the agent lane (advisory,
+	// filtered, reporter triage, and similar named exclusions). They keep the
+	// repo card's total honest without adding anything to the queues.
+	NonActionableIssues []any `json:"nonActionableIssues,omitempty"`
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable
@@ -1060,6 +1065,14 @@ type FrontendBudget struct {
 	WeeklyBudget    int64   `json:"BUDGET_WEEKLY"`
 	Used            int64   `json:"BUDGET_USED"`
 	Remaining       int64   `json:"BUDGET_REMAINING"`
+	CoinBudget      float64 `json:"COIN_BUDGET,omitempty"`
+	CoinsUsed       float64 `json:"COINS_USED,omitempty"`
+	CoinsRemaining  float64 `json:"COINS_REMAINING,omitempty"`
+	CoinLabel       string  `json:"COIN_LABEL,omitempty"`
+	USDBudget       float64 `json:"USD_BUDGET,omitempty"`
+	USDUsed         float64 `json:"USD_USED,omitempty"`
+	USDRemaining    float64 `json:"USD_REMAINING,omitempty"`
+	ExhaustedUnit   string  `json:"BUDGET_EXHAUSTED_UNIT,omitempty"`
 	PctUsed         float64 `json:"BUDGET_PCT_USED"`
 	BurnRateHourly  float64 `json:"BURN_RATE_HOURLY"`
 	BurnRateInstant float64 `json:"BURN_RATE_INSTANT"`

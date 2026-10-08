@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +38,53 @@ const (
 	// weekly, so a finding untouched for a week is one no agent still sees.
 	defaultAdvisoryStalenessDays = 7
 )
+
+func (c *Config) applyCoinBudgetDefaults() {
+	if c.Governor.Budget.Coins == nil {
+		c.Governor.Budget.Coins = map[string]CoinBudgetConfig{}
+	}
+	bobKey := "bob"
+	for key := range c.Governor.Budget.Coins {
+		if strings.EqualFold(strings.TrimSpace(key), bobKey) {
+			bobKey = key
+			break
+		}
+	}
+	bob := c.Governor.Budget.Coins[bobKey]
+	if bob.TokensPerCoin == 0 {
+		bob.TokensPerCoin = DefaultBobTokensPerCoin
+	}
+	if bob.USDPerCoin == 0 {
+		bob.USDPerCoin = DefaultBobUSDPerCoin
+	}
+	if strings.TrimSpace(bob.Label) == "" {
+		bob.Label = DefaultBobCoinLabel
+	}
+	if v := strings.TrimSpace(os.Getenv(BobTokensPerCoinEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.TokensPerCoin = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobUSDPerCoinEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.USDPerCoin = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobCoinBudgetEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			bob.Budget = parsed
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(BobUSDBudgetEnvVar)); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			c.Governor.Budget.USD = parsed
+		}
+	}
+	if bobKey != "bob" {
+		delete(c.Governor.Budget.Coins, bobKey)
+	}
+	c.Governor.Budget.Coins["bob"] = bob
+}
 
 func (c *Config) applyDefaults() {
 	// Runs before any review default so the pointer is settled on every load
@@ -307,6 +356,7 @@ func (c *Config) applyDefaults() {
 	if c.Governor.Budget.CriticalPct == 0 {
 		c.Governor.Budget.CriticalPct = defaultBudgetCriticalPct
 	}
+	c.applyCoinBudgetDefaults()
 	// WARN, NEVER REJECT, on the load path (#5508). Three spokes are live
 	// right now with below-floor limits. If load REFUSED them they would fail
 	// to start on the next restart — converting a starving hive into a dead

@@ -254,6 +254,31 @@ func TestChannelPublishedImageTargetFallsBackWhenNoNewerImageExists(t *testing.T
 	}
 }
 
+func TestChannelPublishedImageTargetSkipsUnpublishedFloatingSHA(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "tip2222"},
+		{SHA: "old1111"},
+	}, map[string]bool{"old1111": true}, true)
+
+	got := channelPublishedImageTarget("v5", ReleaseChannelCandidate, "tip2222", targetingLogger())
+	if got.SHA != "old1111" || got.PendingImageCommits != 2 || got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want newest published ancestor old1111 when floating tip image is unpublished", got)
+	}
+}
+
+func TestChannelPublishedImageTargetSuppressesWhenNoPublishedImageExists(t *testing.T) {
+	stubChannelImageSelection(t, []branchSHAInfo{
+		{SHA: "head999"},
+		{SHA: "tip2222"},
+	}, map[string]bool{}, true)
+
+	got := channelPublishedImageTarget("v5", ReleaseChannelCandidate, "tip2222", targetingLogger())
+	if got.SHA != "" || got.FloatingSHA != "tip2222" || got.VerificationUnavailable {
+		t.Fatalf("channel target = %+v, want no reachable SHA while tip image is unpublished", got)
+	}
+}
+
 func TestChannelPublishedImageTargetFallsBackWhenVerificationUnavailable(t *testing.T) {
 	stubChannelImageSelection(t, []branchSHAInfo{
 		{SHA: "head999"},

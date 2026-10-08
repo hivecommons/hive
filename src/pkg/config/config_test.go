@@ -1301,3 +1301,33 @@ func TestAutoMergeConfigRepoPolicySets(t *testing.T) {
 		})
 	}
 }
+
+func TestHumanMergePathsFor(t *testing.T) {
+	cfg := AutoMergeConfig{HumanMergePaths: map[string][]string{
+		"Danathar/Goodreads-MCP": {".claude/settings.json", ".claude/hooks/**"},
+	}}
+	tests := []struct {
+		name string
+		cfg  AutoMergeConfig
+		repo string
+		want []string
+	}{
+		{"unset map", AutoMergeConfig{}, "o/r", nil},
+		{"repo not listed", cfg, "other/repo", nil},
+		{"exact key", cfg, "Danathar/Goodreads-MCP", []string{".claude/settings.json", ".claude/hooks/**"}},
+		{"case-insensitive", cfg, "danathar/goodreads-mcp", []string{".claude/settings.json", ".claude/hooks/**"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.cfg.HumanMergePathsFor(tc.repo)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

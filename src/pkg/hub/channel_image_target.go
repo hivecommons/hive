@@ -132,6 +132,7 @@ func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *sl
 	}
 	var best branchSHAInfo
 	bestPending := 0
+	sawFloating := false
 	for i, c := range commits {
 		sha := shortSHA(c.SHA)
 		if sha == "" {
@@ -147,14 +148,22 @@ func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *sl
 			bestPending = i
 		}
 		if sameCommit(sha, target.FloatingSHA) {
+			sawFloating = true
 			if best.SHA != "" {
 				target.SHA = best.SHA
 				target.PendingImageCommits = bestPending
 				return target
 			}
-			target.PendingImageCommits = i
+		}
+	}
+	if sawFloating {
+		if best.SHA != "" {
+			target.SHA = best.SHA
+			target.PendingImageCommits = bestPending
 			return target
 		}
+		target.SHA = ""
+		return target
 	}
 	target.VerificationUnavailable = true
 	return target

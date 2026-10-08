@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -225,5 +226,34 @@ func TestBootHeartbeatUpgradeCallback_NoMarkerStopsAtUptimeFloorWithoutWriting(t
 	// must not burn budget.
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("uptime-floor deferral wrote a marker (stat err=%v)", err)
+	}
+}
+
+func TestBootHeartbeatUpgradeCallback_UnpublishedTargetWaitsWithoutFailureMarker(t *testing.T) {
+	f := newBootHeartbeatFake()
+	b := newBootHeartbeatCollect(t, f, bootHeartbeatConfig())
+	b.startTime = time.Now().Add(-10 * time.Minute)
+	path := pinUpgradeMarker(t)
+
+	oldCheck := selfUpgradeTargetImageAvailable
+	selfUpgradeTargetImageAvailable = func(target string, logger *slog.Logger) (bool, bool) {
+		if target != "feedbeef" {
+			t.Fatalf("image check target = %q, want feedbeef", target)
+		}
+		return false, true
+	}
+	t.Cleanup(func() { selfUpgradeTargetImageAvailable = oldCheck })
+
+	heartbeatCallback[spoke.UpgradeCallback](t, f)("feedbeef")
+
+	log := f.log.String()
+	if !strings.Contains(log, "self-upgrade queued: target image is not published yet") {
+		t.Fatalf("unpublished image was not queued:\n%s", log)
+	}
+	if strings.Contains(log, "self-upgrade triggered") || strings.Contains(log, "self-upgrade FAILED") {
+		t.Fatalf("unpublished image was attempted or failed:\n%s", log)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unpublished target wrote a failure/in-flight marker (stat err=%v)", err)
 	}
 }

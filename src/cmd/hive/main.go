@@ -2359,8 +2359,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:           b.logger,
-		MergerAuthorizer: trustedMergerFunc(b.cfg),
+		Logger:              b.logger,
+		MergerAuthorizer:    trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2448,6 +2450,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// config, same bead evidence, same BlocksMerge predicate) and asks
 	// intent.EvaluateForAppSelfMerge before every self-merge.
 	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	// Human-merge paths (#11038): read through b.cfg on every evaluation so
+	// a reload of auto_merge.human_merge_paths applies without a restart.
+	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		relaysDone := deps.startRequestRelays(ctx, client, requestRelays{
 			prOpen:    b.agentMgr.AuthorizePROpen,
@@ -2542,9 +2547,11 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.gov.SeedLastKicks(b.saved.LastKicks)
 			b.logger.Info("governor last kicks restored", "agents", len(b.saved.LastKicks))
 		}
-		if b.saved.BudgetSpend > 0 || !b.saved.BudgetResetAt.IsZero() || len(b.saved.BudgetByAgent) > 0 {
+		if b.saved.BudgetSpend > 0 || b.saved.CoinBudgetSpend > 0 || b.saved.USDBudgetSpend > 0 || !b.saved.BudgetResetAt.IsZero() || len(b.saved.BudgetByAgent) > 0 {
 			b.gov.SeedBudget(b.saved.BudgetSpend, b.saved.BudgetByAgent, b.saved.BudgetByModel, b.saved.BudgetResetAt)
 			b.gov.SeedBudgetWindowBaseline(b.saved.BudgetWindowBaseline)
+			b.gov.SeedCoinBudget(b.saved.CoinBudgetSpend, b.saved.CoinWindowBaseline)
+			b.gov.SeedUSDBudget(b.saved.USDBudgetSpend, b.saved.USDWindowBaseline)
 			b.logger.Info("budget state restored", "spend", b.saved.BudgetSpend, "reset_at", b.saved.BudgetResetAt, "window_baseline", b.saved.BudgetWindowBaseline)
 		}
 		if len(b.saved.KickHistory) > 0 {
@@ -2590,6 +2597,24 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 
 	if b.gov.GetBudget().WeeklyLimit == 0 && b.cfg.Governor.Budget.TotalTokens > 0 {
 		b.gov.SetBudgetLimit(b.cfg.Governor.Budget.TotalTokens)
+	}
+	if b.cfg.Governor.Budget.USD > 0 {
+		limit := b.cfg.Governor.Budget.USD
+		if b.saved != nil && b.saved.USDBudgetLimit > 0 {
+			limit = b.saved.USDBudgetLimit
+		}
+		b.gov.SetUSDBudget(limit)
+	}
+	if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig("bob"); ok {
+		limit := coinCfg.Budget
+		if b.saved != nil && b.saved.CoinBudgetLimit > 0 {
+			limit = b.saved.CoinBudgetLimit
+		}
+		label := coinCfg.LabelOrDefault()
+		if b.saved != nil && b.saved.CoinBudgetLabel != "" {
+			label = b.saved.CoinBudgetLabel
+		}
+		b.gov.SetCoinBudget(limit, label)
 	}
 }
 
@@ -2906,8 +2931,15 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// nil client + provider: every collect reads the hive's current client,
 	// so a rebuilt (or first-delivered) App client is used without a restart
 	// (#9621).
-	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.Project.AIAuthor, b.cfg.Project.Name, b.logger)
+	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.EffectiveAIAuthor(), b.cfg.Project.Name, b.logger)
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
+	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
+		history := b.dashSrv.CostHistory()
+		if len(history) == 0 || history[0].Timestamp <= 0 {
+			return time.Time{}
+		}
+		return time.UnixMilli(history[0].Timestamp).UTC()
+	})
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
@@ -3818,6 +3850,13 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
 		syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 		b.gov.UpdateConfig(b.cfg.Governor)
+		if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
+			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
+		}
+		b.gov.SetUSDBudget(b.cfg.Governor.Budget.USD)
+		// governor.claims.*_ttl_s apply to claims made or renewed after the
+		// reload; live claims keep their expiry (#10981).
+		b.issueClaims.SetPolicy(b.cfg.Governor.Claims.Policy())
 		// A reload can add or archive repos, which moves every scaled default
 		// threshold — re-sync it alongside the repo list above.
 		b.gov.SetRepoCount(b.cfg.Project.RepoCount())
@@ -5085,6 +5124,16 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						"uptime", uptime.Round(time.Second),
 						"min_uptime", minUptimeBeforeUpgrade,
 					)
+					return
+				}
+
+				if exists, verified := selfUpgradeTargetImageAvailable(targetSHA, b.logger); verified && !exists {
+					b.logger.Info("self-upgrade queued: target image is not published yet",
+						"target", targetSHA,
+						"current", gitShort)
+					if err := os.Remove(upgradeMarkerPath); err != nil && !os.IsNotExist(err) {
+						b.logger.Warn("failed to clear upgrade marker for unpublished target", "path", upgradeMarkerPath, "error", err)
+					}
 					return
 				}
 
@@ -6633,6 +6682,19 @@ func actionableAfterGitHubEnumerate(cfg *config.Config, actionable *github.Actio
 	return actionable, true
 }
 
+func tokensForBackend(summary *tokens.AggregateSummary, backend string) int64 {
+	if summary == nil {
+		return 0
+	}
+	var total int64
+	for _, sess := range summary.Sessions {
+		if strings.EqualFold(sess.Backend, backend) {
+			total += sess.TotalTokens
+		}
+	}
+	return total
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -6858,7 +6920,12 @@ func runEvalCycle(
 	trans := gov.BudgetLevel()
 	if tokenCollector != nil {
 		if summary := tokenCollector.Summary(); summary != nil {
-			trans = gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
+			var bobCoins, bobUSD float64
+			if coinCfg, ok := cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
+				bobCoins = coinCfg.TokensToCoins(tokensForBackend(summary, tokens.BackendBob))
+				bobUSD = coinCfg.CoinsToUSD(bobCoins)
+			}
+			trans = gov.UpdateBudgetFromTotalsCoinsAndUSD(summary.TotalTokens, summary.ByAgent, summary.ByModel, bobCoins, bobUSD)
 		}
 	}
 	applyBudgetAlerts(gov, trans, dashSrv, notifier)
@@ -7783,7 +7850,14 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 		BudgetResetAt:        budget.ResetAt,
 		BudgetByAgent:        budget.ByAgent,
 		BudgetByModel:        budget.ByModel,
+		CoinBudgetLimit:      budget.CoinLimit,
+		CoinBudgetSpend:      budget.CoinSpend,
+		CoinBudgetLabel:      budget.CoinLabel,
+		USDBudgetLimit:       budget.USDLimit,
+		USDBudgetSpend:       budget.USDSpend,
 		BudgetWindowBaseline: budget.WindowBaseline,
+		CoinWindowBaseline:   budget.CoinWindowBaseline,
+		USDWindowBaseline:    budget.USDWindowBaseline,
 		KickHistory:          kickEntries,
 		LastEval:             govState.LastEval,
 		ACMMLevel:            cfg.ACMMLevel,
@@ -8667,22 +8741,31 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if lastRun != nil {
 		*lastRun = now
 	}
-	opts := automerge.Options{Logger: logger, MergerAuthorizer: trustedMergerFunc(cfg)}
+	opts := automerge.Options{
+		Logger:              logger,
+		MergerAuthorizer:    trustedMergerFunc(cfg),
+		TrustedAuthorizer:   trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
+	}
 	if cfg != nil {
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
+		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
+		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
+		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+	}
+	audit := func(event automerge.AutoMergeSweepEvent) {
+		if dashSrv == nil {
+			return
+		}
+		detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, tier=%s, head_sha=%s, merge_sha=%s",
+			event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.Tier, event.HeadSHA, event.MergeSHA)
+		dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
 	}
 	result, err := automerge.SweepQueuedAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
 		MaxMerges: automerge.DefaultAutoMergeSweepMaxMerges,
-		Audit: func(event automerge.AutoMergeSweepEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
-				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
-			dashSrv.AuditLogRecord("system", "automerge-sweep-merged", detail, "", event.Repo, event.Number)
-		},
+		Audit:     audit,
 	})
 	if err != nil {
 		logger.Warn("automerge sweep failed", "error", err)
@@ -8690,6 +8773,23 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	}
 	if len(result.Merged) > 0 || result.Seen > 0 {
 		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
+	}
+	remaining := automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
+	if remaining > 0 && opts.TrustedAuthorPolicy().Enabled {
+		trustedResult, trustedErr := automerge.SweepTrustedAuthorAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+			MaxMerges: remaining,
+			Audit:     audit,
+		})
+		if trustedErr != nil {
+			logger.Warn("trusted-author automerge sweep failed", "error", trustedErr)
+		} else {
+			result.Seen += trustedResult.Seen
+			result.Skipped += trustedResult.Skipped
+			result.Merged = append(result.Merged, trustedResult.Merged...)
+			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
+				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
+			}
+		}
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -8858,6 +8958,67 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 			"scanned":   strconv.Itoa(result.Scanned),
 			"clusters":  strconv.Itoa(len(result.Clusters)),
 			"commented": strconv.Itoa(result.Commented),
+		},
+	})
+}
+
+// sentinelSweepInterval is the minimum spacing between sentinel passes. The
+// sweep lists open PRs per repo every pass but fetches a PR's files only when
+// its head SHA changed since the last evaluation, so steady state is one list
+// call per repo; fifteen minutes bounds how long a hostile PR sits unlabelled.
+const sentinelSweepInterval = 15 * time.Minute
+
+// runSentinelSweepIfDue flags open PRs that look like security overrides,
+// privilege escalation or codebase damage (pkg/sentinel) at most once per
+// sentinelSweepInterval. Default on; `sentinel.enabled: false` disables it.
+func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sentinelSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	sc := cfg.Sentinel
+	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
+		Label:            sc.LabelOrDefault(),
+		LabelColor:       config.DefaultSentinelLabelColor,
+		LabelDescription: config.DefaultSentinelLabelDescription,
+		Evaluator:        sc.EvaluatorConfig(),
+		RepoAllowed:      sc.RepoAllowed,
+		MaxActions:       sc.MaxActionsOrDefault(),
+		Audit: func(event github.SentinelSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, rules=%s",
+				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
+			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("sentinel sweep failed", "error", err)
+		return
+	}
+	for _, e := range result.Errors {
+		logger.Warn("sentinel sweep: PR skipped", "detail", e)
+	}
+	for _, ev := range result.Flagged {
+		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
+	}
+	if len(result.Flagged) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "skipped", result.Skipped, "errors", len(result.Errors))
+	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "sentinel sweep complete",
+		Attrs: map[string]string{
+			"seen":    strconv.Itoa(result.Seen),
+			"flagged": strconv.Itoa(len(result.Flagged)),
+			"skipped": strconv.Itoa(result.Skipped),
 		},
 	})
 }
@@ -9035,6 +9196,23 @@ func fullRepoName(repo, org string) string {
 	return org + "/" + repo
 }
 
+// reviewAgentCapability describes one configured lane the way the review
+// dispatcher sees it, so the relay judges reviewer-ness by the same rule.
+// An unknown lane has only its name to go on.
+func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapability {
+	cap := review.AgentCapability{Name: agent}
+	if cfg == nil {
+		return cap
+	}
+	if ac, ok := cfg.Agents[agent]; ok {
+		cap.Role = ac.Role
+		cap.LaneKeywords = ac.LaneKeywords
+		cap.DetectKeywords = ac.DetectKeywords
+		cap.Aliases = ac.Aliases
+	}
+	return cap
+}
+
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
 // review-relay knobs that live in cfg.Review: which repos may be revised in
 // place, which perspectives a verdict may name, and whether comments carry a
@@ -9047,6 +9225,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	}
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
+	client.SetReviewerAgentFunc(func(agent string) bool {
+		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
+	})
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues

@@ -350,3 +350,18 @@ func TestIssueClaimTierCanComment(t *testing.T) {
 		t.Errorf("seam comment body must round-trip: %+v %v", claim, ok)
 	}
 }
+
+func TestFilterLiveIssueClaimsAddsDashboardDetail(t *testing.T) {
+	now := time.Now()
+	expires := now.Add(time.Hour)
+	result := &ActionableResult{Issues: IssueResultFromItems([]Issue{{
+		Repo: "hivecommons/hive", Number: 10998, Title: "claimed work", ClaimedBy: "scanner", ClaimExpiresAt: &expires, ClaimSource: IssueClaimSourceMarker,
+	}})}
+	if withheld := FilterLiveIssueClaims(result, now, testLogger()); withheld != 1 {
+		t.Fatalf("withheld = %d, want 1", withheld)
+	}
+	details := result.WorkDetailsByRepo["hivecommons/hive"].Issues
+	if len(details) != 1 || details[0].Bucket != "claimed" || !strings.Contains(details[0].Reason, "scanner") {
+		t.Fatalf("claim details = %+v, want claimed bucket naming scanner", details)
+	}
+}

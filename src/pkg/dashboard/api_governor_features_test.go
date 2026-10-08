@@ -3,8 +3,11 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
@@ -511,6 +514,98 @@ func TestGovernorFeatures_IssueClaimsToggle(t *testing.T) {
 	}
 	if !payload.Features.ClaimsEnabled || payload.Features.ClaimsTTLS != 600 {
 		t.Fatalf("claims payload = %+v, want enabled with 600s", payload.Features)
+	}
+}
+
+// #10981: the ranked-claim lifetimes are owner-writable through the features
+// PUT, reported with defaults applied, validated against the effective max,
+// and applied to the live ledger without a restart.
+func TestGovernorFeatures_ClaimsTTLs(t *testing.T) {
+	s := covApiServer(t)
+	ledger, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), s.deps.Config.Governor.Claims.Policy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	ledger.SetNow(func() time.Time { return now })
+	s.deps.IssueClaims = ledger
+
+	type ttlPayload struct {
+		Features struct {
+			Human       int             `json:"claimsHumanTtlS"`
+			Agent       int             `json:"claimsAgentTtlS"`
+			Contributor int             `json:"claimsContributorTtlS"`
+			Max         int             `json:"claimsMaxTtlS"`
+			Defaults    map[string]int  `json:"claimsTtlDefaults"`
+			Set         map[string]bool `json:"claimsTtlSet"`
+		} `json:"features"`
+	}
+	get := func() ttlPayload {
+		t.Helper()
+		rec := doOwnerGet(s, "/api/config/governor")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET governor config: %d — %s", rec.Code, rec.Body.String())
+		}
+		var p ttlPayload
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatalf("decoding governor payload: %v", err)
+		}
+		return p
+	}
+
+	p := get()
+	if p.Features.Human != int(claims.DefaultHumanTTL.Seconds()) || p.Features.Agent != int(claims.DefaultAgentTTL.Seconds()) ||
+		p.Features.Contributor != int(claims.DefaultContributorTTL.Seconds()) || p.Features.Max != int(claims.DefaultMaxTTL.Seconds()) {
+		t.Fatalf("default effective TTLs = %+v", p.Features)
+	}
+	if p.Features.Defaults["claimsAgentTtlS"] != int(claims.DefaultAgentTTL.Seconds()) || p.Features.Set["claimsAgentTtlS"] {
+		t.Fatalf("defaults/set = %v %v", p.Features.Defaults, p.Features.Set)
+	}
+
+	for name, body := range map[string]map[string]any{
+		"negative human":     {"claimsHumanTtlS": -1},
+		"negative max":       {"claimsMaxTtlS": -60},
+		"agent above max":    {"claimsMaxTtlS": 3600, "claimsAgentTtlS": 7200},
+		"max below defaults": {"claimsMaxTtlS": 600},
+	} {
+		if rec := doPut(s, "/api/config/governor/features", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status %d, want 400", name, rec.Code)
+		}
+	}
+	if c := s.deps.Config.Governor.Claims; c.HumanTTLS != 0 || c.AgentTTLS != 0 || c.MaxTTLS != 0 {
+		t.Fatalf("rejected PUT mutated config: %+v", c)
+	}
+
+	held, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 1, Holder: "alice", Kind: claims.KindHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"claimsHumanTtlS": 3600, "claimsAgentTtlS": 600, "claimsContributorTtlS": 300, "claimsMaxTtlS": 7200,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT claims TTLs: %d — %s", rec.Code, rec.Body.String())
+	}
+	p = get()
+	if p.Features.Human != 3600 || p.Features.Agent != 600 || p.Features.Contributor != 300 || p.Features.Max != 7200 {
+		t.Fatalf("effective TTLs after PUT = %+v", p.Features)
+	}
+	if !p.Features.Set["claimsHumanTtlS"] || p.Features.Defaults["claimsHumanTtlS"] != int(issueclaim.DefaultTTL.Seconds()) {
+		t.Fatalf("defaults/set after PUT = %v %v", p.Features.Defaults, p.Features.Set)
+	}
+
+	if c, ok := ledger.Lookup("o/r", 1); !ok || c.ExpiresAt != held.Claim.ExpiresAt {
+		t.Fatalf("live claim expiry changed: %+v", c)
+	}
+	res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 2, Holder: "bot", Kind: claims.KindAgent})
+	if err != nil || res.Claim.ExpiresAt != now.Add(10*time.Minute) {
+		t.Fatalf("agent claim after PUT expires=%v err=%v, want +10m", res.Claim.ExpiresAt, err)
+	}
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"claimsAgentTtlS": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("reset agent TTL: %d — %s", rec.Code, rec.Body.String())
+	}
+	if p = get(); p.Features.Agent != int(claims.DefaultAgentTTL.Seconds()) || p.Features.Set["claimsAgentTtlS"] {
+		t.Fatalf("agent TTL after reset = %d set=%v", p.Features.Agent, p.Features.Set)
 	}
 }
 

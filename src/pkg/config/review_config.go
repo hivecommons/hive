@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -376,6 +377,25 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// TrustedAuthors enables a separate, default-off sweep for human-authored
+	// PRs whose AUTHOR already holds merge authority. Unlike the App
+	// self-authored lane, this never bypasses to create new authority: the
+	// author must be in authorized_users at the configured role, and by default
+	// GitHub must also report push/maintain/admin permission on the repository.
+	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
+	// intent.guardrail_path_patterns) for paths a person must merge. Unset
+	// means no such paths. This key only declares the paths; enforcement
+	// lives in the merge sweeps.
+	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+}
+
+type TrustedAuthorAutoMergeConfig struct {
+	Enabled                 bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Repos                   []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	RequireRole             string   `yaml:"require_role,omitempty" json:"require_role,omitempty"`
+	RequireGitHubPermission *bool    `yaml:"require_github_permission,omitempty" json:"require_github_permission,omitempty"`
+	ExcludeLabels           []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used
@@ -399,6 +419,8 @@ var KnownBotAuthors = []string{
 	"github-actions[bot]",
 }
 
+var DefaultTrustedAuthorExcludeLabels = []string{"hold", "do-not-merge", "needs-human"}
+
 // TrustedBotAuthorSet returns the lower-cased membership set of bot logins the
 // self-authored sweep may merge. nil TrustedBotAuthors → DefaultTrustedBotAuthors;
 // an explicit empty list → empty set (lane disabled).
@@ -418,12 +440,67 @@ func (a AutoMergeConfig) TrustedBotAuthorSet() map[string]bool {
 	return set
 }
 
+func (t TrustedAuthorAutoMergeConfig) EffectiveRequireRole() string {
+	role := strings.ToLower(strings.TrimSpace(t.RequireRole))
+	if role == "" {
+		return RoleMerger
+	}
+	return role
+}
+
+func (t TrustedAuthorAutoMergeConfig) EffectiveRequireGitHubPermission() bool {
+	return t.RequireGitHubPermission == nil || *t.RequireGitHubPermission
+}
+
+func (t TrustedAuthorAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(t.Repos)
+}
+
+func (t TrustedAuthorAutoMergeConfig) ExcludeLabelSet() map[string]bool {
+	labels := t.ExcludeLabels
+	if labels == nil {
+		labels = DefaultTrustedAuthorExcludeLabels
+	}
+	set := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label == "" {
+			continue
+		}
+		set[label] = true
+	}
+	return set
+}
+
+func (t TrustedAuthorAutoMergeConfig) Validate() error {
+	if !t.Enabled {
+		return nil
+	}
+	role := t.EffectiveRequireRole()
+	if role != RoleMerger && role != RoleOwner {
+		return fmt.Errorf("auto_merge.trusted_authors.require_role must be %q or %q, got %q", RoleMerger, RoleOwner, t.RequireRole)
+	}
+	return nil
+}
+
 func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
 	return repoListSet(a.AllowUnprotectedBase)
 }
 
 func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
+}
+
+// HumanMergePathsFor returns the human-merge path patterns configured for repo
+// (owner/repo, matched case-insensitively), or nil when none are set.
+func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
+	repo = strings.TrimSpace(repo)
+	for k, patterns := range a.HumanMergePaths {
+		if strings.EqualFold(strings.TrimSpace(k), repo) && len(patterns) > 0 {
+			return patterns
+		}
+	}
+	return nil
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a

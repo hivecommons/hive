@@ -110,12 +110,15 @@ A push-reported entry still needs its stable identity (for example `id`, `name`,
 Heartbeat node health needs read-only cluster-scoped RBAC for:
 
 - core `nodes` `get,list` (capacity, allocatable, readiness, GPU labels)
-- core `pods` `list` (per-node pod and hosted-hive counts)
 - `metrics.k8s.io` `nodes` `list` (live CPU/memory usage from metrics-server)
 
 Do not grant `nodes/proxy` to a tenant ServiceAccount: it reaches every kubelet's `/exec`, `/attach` and `/pods` endpoints through the API server. The spoke's kubelet `stats/summary` disk-usage read is best-effort; without it the Node card shows disk capacity but no live usage percentage.
 
 When `metrics.k8s.io` is unavailable or forbidden, spokes still report node count, vCPU, memory and disk capacity from the core Node API. The hub marks only the live-usage data partial and carries the precise `node_health_error` reason, such as `metrics API failed: ... HTTP 403` or a missing metrics API, instead of the generic "check RBAC and metrics-server" note.
+
+Tenant roles deliberately omit `nodes/proxy` (which permits cross-tenant kubelet exec) and cluster-wide `pods list` (which exposes other tenants' pod specs). Push-reported tenant health therefore has no live disk percentage, pod/hive counts or request-based remaining hive capacity; the collector reports partial health (`pods API failed: ... HTTP 403`) while retaining node capacity and available CPU/memory metrics. Do not restore those grants to suppress the partial-health warning.
+
+On hub startup and every 15 minutes, the SHA poller narrows existing registered tenants' `hive-node-health-reader-*` roles on kubectl-reachable clusters. It does not restart pods, create missing roles, or touch shared operator roles. Failed reads/patches are logged and retried. For push-reported clusters the hub cannot perform this migration: a cluster administrator must replace each existing tenant role's rules with the safe node/NodeMetrics rules in [Manual provisioning](manual-provisioning.md). Apply the same correction to orphaned roles no longer represented in the hub registry. Deploy the hub fix as well as the provisioning template fix; upgrading tenant pods alone does not revoke previously issued RBAC grants.
 
 ## API surface to know
 

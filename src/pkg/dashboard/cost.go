@@ -57,23 +57,36 @@ type gatewayCost struct {
 // costResponse is the full /api/cost payload.
 type costResponse struct {
 	// Estimated cost derived from token counts × list prices.
-	Estimated costEstimated `json:"estimated"`
+	Estimated      costEstimated `json:"estimated"`
+	Coins          float64       `json:"coins,omitempty"`
+	CoinLabel      string        `json:"coin_label,omitempty"`
+	CoinBudget     *float64      `json:"coin_budget,omitempty"`
+	CoinsRemaining *float64      `json:"coins_remaining,omitempty"`
+	CoinUSD        float64       `json:"coin_usd,omitempty"`
+	CoinBudgetUSD  *float64      `json:"coin_budget_usd,omitempty"`
+	USDBudget      *float64      `json:"usd_budget,omitempty"`
+	USDRemaining   *float64      `json:"usd_remaining,omitempty"`
+	USDBudgetCoins *float64      `json:"usd_budget_coins,omitempty"`
 	// Native per-gateway spend where a metered backend reports it.
 	Gateways []gatewayCost `json:"gateways"`
 	// PriceTableDate / disclaimer travel with the payload so the UI can label
 	// the estimate without hardcoding the date.
 	PriceTableDate string `json:"price_table_date"`
 	Disclaimer     string `json:"disclaimer"`
-	// MergedPRs / ClosedIssues are hive-attributed all-time counts for the
-	// primary repo. The UI divides the same Estimated.TotalUSD it displays by
-	// these counts to derive cost-per-PR / cost-per-issue (issue #4110).
+	// MergedPRs / ClosedIssues are hive-attributed counts for the primary repo
+	// over the same persisted cost-history window the UI uses as the numerator.
+	// The UI divides the displayed estimate by these counts to derive
+	// cost-per-PR / cost-per-issue (issue #4110).
 	// Zero means "no data yet" (collector hasn't run, GitHub is unreachable, or
 	// no configured hive author has outcomes); the UI shows "—" rather than
 	// treating it as a real zero denominator.
-	MergedPRs    int    `json:"merged_prs"`
-	ClosedIssues int    `json:"closed_issues"`
-	CountAuthor  string `json:"count_author,omitempty"`
-	CountBasis   string `json:"count_basis,omitempty"`
+	MergedPRs        int    `json:"merged_prs"`
+	ClosedIssues     int    `json:"closed_issues"`
+	CountAuthor      string `json:"count_author,omitempty"`
+	CountBasis       string `json:"count_basis,omitempty"`
+	CountWindowStart int64  `json:"count_window_start,omitempty"`
+	CountWindowEnd   int64  `json:"count_window_end,omitempty"`
+	CountUpdatedAt   string `json:"count_updated_at,omitempty"`
 	// AdvisorByAgent is each agent's advisor-lane spend over the retained
 	// advisor records (#9725), reported beside Estimated.ByAgent rather than
 	// folded into it: the advisor's cost is the lane's, not the agent's
@@ -87,6 +100,7 @@ type costResponse struct {
 type costModelEntry struct {
 	Name        string  `json:"name"`
 	USD         float64 `json:"usd"`
+	Coins       float64 `json:"coins,omitempty"`
 	Source      string  `json:"source"` // "estimated" | "unpriced"
 	Input       int64   `json:"input"`
 	Output      int64   `json:"output"`
@@ -96,6 +110,15 @@ type costModelEntry struct {
 
 type costEstimated struct {
 	TotalUSD       float64          `json:"total_usd"`
+	Coins          float64          `json:"coins,omitempty"`
+	CoinLabel      string           `json:"coin_label,omitempty"`
+	CoinBudget     *float64         `json:"coin_budget,omitempty"`
+	CoinsRemaining *float64         `json:"coins_remaining,omitempty"`
+	CoinUSD        float64          `json:"coin_usd,omitempty"`
+	CoinBudgetUSD  *float64         `json:"coin_budget_usd,omitempty"`
+	USDBudget      *float64         `json:"usd_budget,omitempty"`
+	USDRemaining   *float64         `json:"usd_remaining,omitempty"`
+	USDBudgetCoins *float64         `json:"usd_budget_coins,omitempty"`
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
@@ -121,6 +144,7 @@ type costSessionEntry struct {
 	Agent     string  `json:"agent"`
 	Model     string  `json:"model"`
 	USD       float64 `json:"usd"`
+	Coins     float64 `json:"coins,omitempty"`
 	Source    string  `json:"source"` // "estimated" | "unpriced"
 	Input     int64   `json:"input"`
 	Output    int64   `json:"output"`
@@ -158,16 +182,37 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 
 	// --- Estimated cost from token counts ---
 	resp.Estimated = s.estimatedCost()
+	resp.Coins = resp.Estimated.Coins
+	resp.CoinLabel = resp.Estimated.CoinLabel
+	resp.CoinBudget = resp.Estimated.CoinBudget
+	resp.CoinsRemaining = resp.Estimated.CoinsRemaining
+	resp.CoinUSD = resp.Estimated.CoinUSD
+	resp.CoinBudgetUSD = resp.Estimated.CoinBudgetUSD
+	resp.USDBudget = resp.Estimated.USDBudget
+	resp.USDRemaining = resp.Estimated.USDRemaining
+	resp.USDBudgetCoins = resp.Estimated.USDBudgetCoins
 
 	// --- Merged-PR / closed-issue counts (for cost-per-PR / cost-per-issue) ---
+	haveCountSnapshot := false
 	if s.deps != nil && s.deps.MetricsCollector != nil {
 		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); counts != nil {
+			haveCountSnapshot = true
 			resp.MergedPRs = counts.MergedPRs
 			resp.ClosedIssues = counts.ClosedIssues
 			resp.CountAuthor = counts.Author
 			resp.CountBasis = counts.Basis
+			resp.CountUpdatedAt = counts.UpdatedAt
+			if counts.WindowStart != "" {
+				if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
+					resp.CountWindowStart = t.UnixMilli()
+				}
+			}
 		}
 	}
+	if !haveCountSnapshot && resp.CountWindowStart == 0 {
+		resp.CountWindowStart = s.costCountWindowStart()
+	}
+	resp.CountWindowEnd = time.Now().UnixMilli()
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {
@@ -185,6 +230,17 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
+func (s *Server) costCountWindowStart() int64 {
+	history := s.CostHistory()
+	if len(history) > 0 {
+		return history[0].Timestamp
+	}
+	if est := s.estimatedCost(); est.WindowStart > 0 {
+		return est.WindowStart
+	}
+	return 0
+}
+
 // estimatedCost computes the estimated per-model / per-agent breakdown (and the
 // all-time cumulative total) from the current token summary. Factored out so
 // both the /api/cost handler and the cost-history sampler produce the exact same
@@ -197,11 +253,13 @@ func (s *Server) estimatedCost() costEstimated {
 			est = flattenEstimated(tokens.EstimateFromSummary(summary))
 			est.BySession = estimatedSessions(summary)
 			est.WindowStart, est.WindowEnd = estimatedWindow(summary)
+			s.applyCoinEstimate(summary, &est)
 		}
 	}
 	if est.ByModel == nil {
 		est.ByModel = []costModelEntry{}
 	}
+
 	if est.ByAgent == nil {
 		est.ByAgent = []costModelEntry{}
 	}
@@ -212,6 +270,58 @@ func (s *Server) estimatedCost() costEstimated {
 		est.BySession = []costSessionEntry{}
 	}
 	return est
+}
+
+func (s *Server) applyCoinEstimate(summary *tokens.AggregateSummary, est *costEstimated) {
+	if summary == nil || est == nil || s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	coinCfg, ok := s.deps.Config.Governor.Budget.CoinConfig(tokens.BackendBob)
+	if !ok {
+		return
+	}
+	byAgent := map[string]float64{}
+	for _, sess := range summary.Sessions {
+		if !strings.EqualFold(sess.Backend, tokens.BackendBob) {
+			continue
+		}
+		coins := coinCfg.TokensToCoins(sess.TotalTokens)
+		est.Coins += coins
+		byAgent[sess.Agent] += coins
+		for i := range est.BySession {
+			if est.BySession[i].SessionID == sess.SessionID {
+				est.BySession[i].Coins = coins
+				break
+			}
+		}
+	}
+	est.CoinLabel = coinCfg.LabelOrDefault()
+	est.CoinUSD = coinCfg.CoinsToUSD(est.Coins)
+	if coinCfg.Budget > 0 {
+		budget := coinCfg.Budget
+		remaining := budget - est.Coins
+		if remaining < 0 {
+			remaining = 0
+		}
+		est.CoinBudget = &budget
+		est.CoinsRemaining = &remaining
+		budgetUSD := coinCfg.CoinsToUSD(budget)
+		est.CoinBudgetUSD = &budgetUSD
+	}
+	if s.deps.Config.Governor.Budget.USD > 0 {
+		budget := s.deps.Config.Governor.Budget.USD
+		remaining := budget - est.CoinUSD
+		if remaining < 0 {
+			remaining = 0
+		}
+		equivCoins := coinCfg.USDToCoins(budget)
+		est.USDBudget = &budget
+		est.USDRemaining = &remaining
+		est.USDBudgetCoins = &equivCoins
+	}
+	for i := range est.ByAgent {
+		est.ByAgent[i].Coins = byAgent[est.ByAgent[i].Name]
+	}
 }
 
 func estimatedWindow(summary *tokens.AggregateSummary) (start, end int64) {

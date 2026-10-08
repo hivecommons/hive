@@ -271,7 +271,18 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			targetIssues = filterIssuesByRepo(classifiedIssues, repo)
 		}
 		elideStuffed := s.dropStuffedContext(agentName)
-		msg := s.buildAgentMessage(agentName, targetIssues, targetActionable, elideStuffed)
+		msg, idleReason := s.buildAgentMessage(agentName, targetIssues, targetActionable, elideStuffed)
+		if idleReason != "" {
+			// The reviewer lane is dormant or has nothing to adjudicate
+			// (#11046): skip the kick rather than spend a model turn on a
+			// stand-down. Nothing is dispatched, so no LastKick is recorded
+			// and no stand-down outcome marks the lane blocked; the next
+			// tick checks the gates again.
+			if s.logger != nil {
+				s.logger.Info("reviewer-lane kick skipped: lane idle", "agent", agentName, "target", targetKey, "reason", idleReason)
+			}
+			continue
+		}
 		if msg != "" {
 			msg = s.finalizeKickMessage(agentName, repo, msg)
 			if elideStuffed && s.logger != nil {
@@ -394,11 +405,20 @@ func prListOverflowLine(omitted, limit int) string {
 
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
-func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) (message string) {
-	return s.buildAgentMessage(agentName, issues, actionable, s.dropStuffedContext(agentName))
+func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	message, _ := s.buildAgentMessage(agentName, issues, actionable, s.dropStuffedContext(agentName))
+	return message
 }
 
-func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult, elideStuffed bool) (message string) {
+// buildAgentMessage is BuildAgentMessage plus the reviewer lane's idle reason
+// (reviewerLaneGate). A non-empty idleReason marks the message as a reviewer
+// stand-down: BuildKickMessages drops it, and a forced kick that does render
+// it gets no closing instruction to go and work a repo (#11045).
+func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult, elideOpt ...bool) (message, idleReason string) {
+	elideStuffed := false
+	if len(elideOpt) > 0 {
+		elideStuffed = elideOpt[0]
+	}
 	// Hold-gated PRs are deliberately absent from actionable.PRs: fetchPRs moves
 	// them into actionable.Hold as soon as it sees the hold label. Wrap every
 	// resolution path here so config templates, repo-sourced prompts, embedded
@@ -445,7 +465,9 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 		message = s.addTaskMCPPointer(message, elideStuffed)
 		message = s.addQuestionAnswerContract(agentName, message, issues)
 		message = addGovernorWorkSourceRule(message)
-		message = addConcreteKickClosingInstruction(message)
+		if idleReason == "" {
+			message = addConcreteKickClosingInstruction(message)
+		}
 	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)
@@ -465,9 +487,9 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 				s.logger.Info("using GitHub-sourced kick prompt", "agent", agentName, "source", res.Source)
 				body, failClosed := s.substituteTemplateWithPolicy(res.Body, actionable, agentName, issues, elideStuffed)
 				if failClosed {
-					return ""
+					return "", ""
 				}
-				return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
+				return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body), ""
 			}
 		}
 	}
@@ -479,9 +501,9 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 			s.logger.Info("using config kick_template", "agent", agentName, "template", agentCfg.KickTemplate, "source", source)
 			body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 			if failClosed {
-				return ""
+				return "", ""
 			}
-			return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
+			return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body), ""
 		}
 		// The configured template does not exist anywhere. Say so — with the
 		// same weight the success path gets — naming what the kick falls back
@@ -502,9 +524,9 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 						s.logger.Info("using ACMM pack template", "agent", agentName, "level", *s.cfg.ACMMLevel, "template", pa.KickTemplate)
 						body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 						if failClosed {
-							return ""
+							return "", ""
 						}
-						return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
+						return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body), ""
 					}
 				}
 			}
@@ -516,9 +538,9 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 		s.logger.Info("using prompt template for kick", "agent", agentName)
 		body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues, elideStuffed)
 		if failClosed {
-			return ""
+			return "", ""
 		}
-		return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
+		return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body), ""
 	}
 
 	// 3. Legacy hardcoded fallback (removed in Phase 4 when all agents use templates)
@@ -532,25 +554,25 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 	// agent (hivecommons/hive#9477). A kick_template on a reviewer-role
 	// agent shadows the lane.
 	if s.agentRole(agentName) == RoleReviewer {
-		return s.buildReviewerMessage(agentName, actionable)
+		return s.buildReviewerLaneMessage(agentName, actionable)
 	}
 	switch baseName {
 	case "scanner":
-		return s.buildScannerMessage(issues, actionable, elideStuffed)
+		return s.buildScannerMessage(issues, actionable, elideStuffed), ""
 	case "ci-maintainer":
-		return s.buildCIMaintainerMessage(actionable)
+		return s.buildCIMaintainerMessage(actionable), ""
 	case "supervisor":
-		return s.buildSupervisorMessage(actionable)
+		return s.buildSupervisorMessage(actionable), ""
 	case "quality":
-		return s.buildQualityMessage(issues, actionable, elideStuffed)
+		return s.buildQualityMessage(issues, actionable, elideStuffed), ""
 	case "architect":
-		return s.buildArchitectMessage(issues, actionable, elideStuffed)
+		return s.buildArchitectMessage(issues, actionable, elideStuffed), ""
 	case "outreach":
-		return s.buildOutreachMessage(actionable)
+		return s.buildOutreachMessage(actionable), ""
 	case "sec-check":
-		return s.buildSecCheckMessage(actionable)
+		return s.buildSecCheckMessage(actionable), ""
 	default:
-		return s.buildGenericMessage(agentName, issues, actionable, elideStuffed)
+		return s.buildGenericMessage(agentName, issues, actionable, elideStuffed), ""
 	}
 }
 

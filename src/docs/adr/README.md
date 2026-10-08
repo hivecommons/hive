@@ -58,4 +58,5 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0020: External work sources over a versioned HTTP/JSON contract](0020-external-work-source-boundary.md)
 - [ADR-0021: Named planning-engine boundary for Project Inception runs](0021-planning-engine-boundary.md)
 - [ADR-0022: Opt-in redemption of earned Codex resets](0022-opt-in-earned-codex-reset-redemption.md)
-- [ADR-0023: Spek continuous convergence](0023-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)
+- [ADR-0023: Hive may merge PRs whose author could merge them](0023-trusted-author-automerge.md)
+- [ADR-0024: Spek continuous convergence](0024-spek-continuous-convergence.md) (v6 addendum: run-rewind semantics for recheck)

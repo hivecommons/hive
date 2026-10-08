@@ -25,6 +25,7 @@ type sweepPR struct {
 	author          string
 	queuedBy        string
 	reviewAuthor    string
+	reviewState     string
 	headSHA         string
 	reviewCommitID  *string
 	label           bool
@@ -34,6 +35,7 @@ type sweepPR struct {
 	statusState     string
 	checkStatus     string
 	checkConclusion string
+	headRepo        string
 }
 
 func issueLabels(primary string, extra []string) []map[string]string {
@@ -117,6 +119,7 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
 	}
+
 	if len(result.Merged) != 1 || len(merged) != 1 || merged[0] != 7 {
 		t.Fatalf("merged result=%v merge calls=%v, want PR 7 merged", result.Merged, merged)
 	}
@@ -125,6 +128,239 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	}
 	if audits[0].HeadSHA != "sha7" {
 		t.Fatalf("audit head SHA = %q, want sha7", audits[0].HeadSHA)
+	}
+}
+
+func TestSweepTrustedAuthorAutoMergesEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		pr                sweepPR
+		roleAllowed       bool
+		permission        string
+		roleName          string
+		permissionStatus  int
+		requirePermission bool
+		wantMerged        bool
+		wantSkipped       int
+	}{
+		{
+			name:        "happy path",
+			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permission: "write", roleName: "maintain", requirePermission: true, wantMerged: true,
+		},
+		{
+			name:       "role missing",
+			pr:         sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			permission: "write", requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "github permission missing",
+			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permission: "read", requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "permission api error fails closed",
+			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permissionStatus: http.StatusInternalServerError, requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "fork non-member",
+			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success", headRepo: "alice/widget"},
+			roleAllowed: true, permission: "read", requirePermission: false, wantSkipped: 1,
+		},
+		{
+			name:        "label excluded",
+			pr:          sweepPR{number: 7, author: "alice", extraLabels: []string{"needs-human"}, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "changes requested",
+			pr:          sweepPR{number: 7, author: "alice", reviewAuthor: "reviewer", reviewState: "CHANGES_REQUESTED", mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "ci red",
+			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "failure", checkStatus: "completed", checkConclusion: "failure"},
+			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
+		},
+		{
+			name:        "draft",
+			pr:          sweepPR{number: 7, author: "alice", draft: true, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var merged []int
+			commented := false
+			api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{tc.pr}, &merged, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/collaborators/alice/permission":
+					if tc.permissionStatus != 0 {
+						http.Error(w, "permission error", tc.permissionStatus)
+						return
+					}
+					json.NewEncoder(w).Encode(map[string]string{"permission": tc.permission, "role_name": tc.roleName})
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+					commented = true
+					json.NewEncoder(w).Encode(map[string]any{"id": 1})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+			})
+			defer api.Close()
+			client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			client.SetAppBotLogin(testHiveAppBotLogin)
+			requirePerm := tc.requirePermission
+			engine := New(client, Options{
+				TrustedAuthorPolicy: func() TrustedAuthorPolicy {
+					return TrustedAuthorPolicy{
+						Enabled:                 true,
+						RequireRole:             "merger",
+						RequireGitHubPermission: requirePerm,
+						ExcludeLabels:           map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true},
+					}
+				},
+				TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+					if !tc.roleAllowed {
+						return TrustedAuthorDecision{}
+					}
+					return TrustedAuthorDecision{Allowed: true, Role: "merger"}
+				},
+			})
+			result, err := engine.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
+			if err != nil {
+				t.Fatalf("SweepTrustedAuthorAutoMerges returned error: %v", err)
+			}
+			if gotMerged := len(merged) == 1; gotMerged != tc.wantMerged {
+				t.Fatalf("merged=%v result=%+v calls=%v, want merged=%v", gotMerged, result, merged, tc.wantMerged)
+			}
+			if result.Skipped != tc.wantSkipped {
+				t.Fatalf("skipped=%d, want %d (result=%+v)", result.Skipped, tc.wantSkipped, result)
+			}
+			if commented != tc.wantMerged {
+				t.Fatalf("commented=%v, want %v", commented, tc.wantMerged)
+			}
+		})
+	}
+}
+
+func TestTrustedAuthorPolicyHelpers(t *testing.T) {
+	policy := TrustedAuthorPolicy{
+		Enabled:       true,
+		Repos:         map[string]bool{"widget": true},
+		ExcludeLabels: map[string]bool{"needs-human": true},
+	}
+	if !policy.repoAllowed("widget") || policy.repoAllowed("other") {
+		t.Fatalf("repoAllowed did not honor allow-list")
+	}
+	if got := policy.excludedLabel([]string{"bug", "Needs-Human"}); got != "needs-human" {
+		t.Fatalf("excludedLabel = %q, want needs-human", got)
+	}
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	engine := New(client, Options{
+		TrustedAuthorPolicy: func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} },
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			return TrustedAuthorDecision{Allowed: strings.EqualFold(login, "alice"), Role: requireRole}
+		},
+	})
+	defaults := engine.currentTrustedAuthorPolicy()
+	if !defaults.Enabled || defaults.RequireRole != "merger" || !defaults.ExcludeLabels["hold"] {
+		t.Fatalf("currentTrustedAuthorPolicy defaults = %+v", defaults)
+	}
+	if decision := engine.trustedAuthorDecision("alice", "owner"); !decision.Allowed || decision.Role != "owner" {
+		t.Fatalf("trustedAuthorDecision = %+v, want allowed owner", decision)
+	}
+	if decision := engine.trustedAuthorDecision("", "owner"); decision.Allowed {
+		t.Fatalf("empty trusted author should fail closed: %+v", decision)
+	}
+}
+
+func TestPrefilterTrustedAuthorPR(t *testing.T) {
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	engine := New(client, Options{
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			if login == "alice" {
+				return TrustedAuthorDecision{Allowed: true, Role: "merger"}
+			}
+			return TrustedAuthorDecision{}
+		},
+	})
+	policy := TrustedAuthorPolicy{RequireRole: "merger", ExcludeLabels: map[string]bool{"needs-human": true}}
+	pr := func(mutators ...func(*gh.PullRequest)) *gh.PullRequest {
+		out := &gh.PullRequest{
+			State:  gh.Ptr("open"),
+			User:   &gh.User{Login: gh.Ptr("alice")},
+			Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
+			Labels: []*gh.Label{},
+		}
+		for _, mutate := range mutators {
+			mutate(out)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name string
+		pr   *gh.PullRequest
+		want string
+	}{
+		{name: "nil", want: "missing-head-sha"},
+		{name: "closed", pr: pr(func(p *gh.PullRequest) { p.State = gh.Ptr("closed") }), want: "closed"},
+		{name: "draft", pr: pr(func(p *gh.PullRequest) { p.Draft = gh.Ptr(true) }), want: "draft"},
+		{name: "excluded", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}} }), want: "excluded-label:needs-human"},
+		{name: "missing head", pr: pr(func(p *gh.PullRequest) { p.Head = nil }), want: "missing-head-sha"},
+		{name: "role", pr: pr(func(p *gh.PullRequest) { p.User = &gh.User{Login: gh.Ptr("bob")} }), want: "untrusted-author-role"},
+		{name: "ok", pr: pr(), want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := engine.prefilterTrustedAuthorPR(tc.pr, policy); got != tc.want {
+				t.Fatalf("prefilterTrustedAuthorPR = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrustedAuthorGitHubSignals(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/collaborators/alice/permission":
+			json.NewEncoder(w).Encode(map[string]string{"permission": "write", "role_name": "maintain"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/collaborators/bob/permission":
+			json.NewEncoder(w).Encode(map[string]string{"permission": "read", "role_name": "read"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"state": "CHANGES_REQUESTED", "user": map[string]string{"login": "reviewer"}},
+				{"state": "APPROVED", "user": map[string]string{"login": "reviewer"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/8/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"state": "CHANGES_REQUESTED", "user": map[string]string{"login": "reviewer"}},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer api.Close()
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	engine := New(client, Options{})
+	permission, err := engine.authorRepoPermission(context.Background(), "acme", "widget", "alice")
+	if err != nil || !permission.Allowed || permission.Level != "maintain" {
+		t.Fatalf("alice permission = %+v err=%v, want allowed maintain", permission, err)
+	}
+	permission, err = engine.authorRepoPermission(context.Background(), "acme", "widget", "bob")
+	if err != nil || permission.Allowed {
+		t.Fatalf("bob permission = %+v err=%v, want denied", permission, err)
+	}
+	if blocked, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 7); err != nil || blocked {
+		t.Fatalf("PR 7 blocked=%v err=%v, want cleared by later approval", blocked, err)
+	}
+	if blocked, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 8); err != nil || !blocked {
+		t.Fatalf("PR 8 blocked=%v err=%v, want outstanding changes requested", blocked, err)
+	}
+	if !engine.isForkPR(&gh.PullRequest{
+		Head: &gh.PullRequestBranch{Repo: &gh.Repository{FullName: gh.Ptr("alice/widget")}},
+		Base: &gh.PullRequestBranch{Repo: &gh.Repository{FullName: gh.Ptr("acme/widget")}},
+	}) {
+		t.Fatal("isForkPR should detect cross-repo head")
 	}
 }
 
@@ -2139,6 +2375,33 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				})
 			}
 			json.NewEncoder(w).Encode(issues)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
+			var pulls []map[string]any
+			for _, pr := range prs {
+				headSHA := "sha" + strconv.Itoa(pr.number)
+				if pr.headSHA != "" {
+					headSHA = pr.headSHA
+				}
+				headRepo := pr.headRepo
+				if headRepo == "" {
+					headRepo = "acme/widget"
+				}
+				pulls = append(pulls, map[string]any{
+					"number": pr.number,
+					"state":  "open",
+					"draft":  pr.draft,
+					"user":   map[string]string{"login": pr.author},
+					"head": map[string]any{
+						"sha":  headSHA,
+						"repo": map[string]string{"full_name": headRepo},
+					},
+					"base": map[string]any{
+						"repo": map[string]string{"full_name": "acme/widget"},
+					},
+					"labels": issueLabels(expectedLabel, pr.extraLabels),
+				})
+			}
+			json.NewEncoder(w).Encode(pulls)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/reviews")
 			pr := byNumber[number]
@@ -2155,8 +2418,12 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			if reviewAuthor == "" {
 				reviewAuthor = testHiveAppBotLogin
 			}
+			reviewState := pr.reviewState
+			if reviewState == "" {
+				reviewState = "APPROVED"
+			}
 			json.NewEncoder(w).Encode([]map[string]any{{
-				"state":     "APPROVED",
+				"state":     reviewState,
 				"body":      body,
 				"commit_id": reviewCommitID,
 				"user":      map[string]string{"login": reviewAuthor},
@@ -2172,6 +2439,10 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			for _, extra := range pr.extraLabels {
 				prLabels = append(prLabels, map[string]string{"name": extra})
 			}
+			headRepo := pr.headRepo
+			if headRepo == "" {
+				headRepo = "acme/widget"
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"number":          pr.number,
 				"state":           "open",
@@ -2179,7 +2450,8 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"mergeable_state": pr.mergeableState,
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
-				"head":            map[string]string{"sha": headSHA},
+				"head":            map[string]any{"sha": headSHA, "repo": map[string]string{"full_name": headRepo}},
+				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          prLabels,
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status") && hasShaNumber(r.URL.Path):

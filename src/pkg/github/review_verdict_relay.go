@@ -99,7 +99,7 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	// several verdicts, so each element is checked on its own: the dispatch is
 	// recorded per perspective, and a perspective nothing dispatched is refused
 	// here exactly as it would be for a single-object verdict.
-	ok, reason, dispatchHead := verdictDispatchAuthorized(report, req)
+	ok, reason, dispatchHead := c.verdictDispatchAuthorized(report, req)
 	if !ok {
 		c.logger.Warn("review-request watcher: verdict does not match a review dispatch, discarded",
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
@@ -152,11 +152,11 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 		slog.String("path", path))
 }
 
-func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return advisoryVerdictAuthorized(report, req)
+			return c.advisoryVerdictAuthorized(report, req)
 		}
 		return false, "dispatch_state_unavailable", ""
 	}
@@ -183,13 +183,29 @@ func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewReques
 		}
 		return true, "", r.HeadSHA
 	}
-	return false, "no_matching_dispatch", ""
+	// Queue-mode reviewer prompts can reach the relay through the ordinary
+	// PR-list comment path rather than a review-swarm dispatch. That still is
+	// an authorized hive-review request, and with an explicit head SHA it is
+	// precise enough to record as an advisory verdict. Without this fallback,
+	// contributor PRs that were actually reviewed stayed permanently
+	// "awaiting review approval", and combined verdict arrays from the
+	// reviewer recorded only the one perspective whose dispatch happened to be
+	// assigned to that same agent.
+	return c.advisoryVerdictAuthorized(report, req)
 }
 
-func advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+// advisoryVerdictAuthorized admits a verdict no dispatch row binds. The
+// verdict feeds the same aggregate that gates merge eligibility and
+// recommends closing a PR, so the submitting lane must be one this hive
+// reviews with: any other lane that can reach the relay could otherwise
+// approve or veto any PR it did not author.
+func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
 	head := strings.TrimSpace(report.HeadSHA)
 	if head == "" {
 		return false, "missing_head_sha_without_dispatch", ""
+	}
+	if !c.isReviewerAgent(req.Agent) {
+		return false, "non_reviewer_without_dispatch", ""
 	}
 	if sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
 		return false, "author_self_approval", ""

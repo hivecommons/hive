@@ -38,6 +38,35 @@ func trustedMergerFunc(cfg *config.Config) automerge.MergerAuthorizer {
 	}
 }
 
+func trustedAuthorFunc(cfg *config.Config) automerge.TrustedAuthorizer {
+	return func(login, requireRole string) automerge.TrustedAuthorDecision {
+		if cfg == nil || strings.TrimSpace(login) == "" {
+			return automerge.TrustedAuthorDecision{}
+		}
+		role, ok := cfg.Dashboard.AuthorizedRole(login)
+		if !ok || !config.RoleAtLeast(role, requireRole) {
+			return automerge.TrustedAuthorDecision{}
+		}
+		return automerge.TrustedAuthorDecision{Allowed: true, Role: role}
+	}
+}
+
+func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorPolicy {
+	return func() automerge.TrustedAuthorPolicy {
+		if cfg == nil {
+			return automerge.TrustedAuthorPolicy{}
+		}
+		p := cfg.AutoMerge.TrustedAuthors
+		return automerge.TrustedAuthorPolicy{
+			Enabled:                 p.Enabled,
+			Repos:                   p.RepoSet(),
+			RequireRole:             p.EffectiveRequireRole(),
+			RequireGitHubPermission: p.EffectiveRequireGitHubPermission(),
+			ExcludeLabels:           p.ExcludeLabelSet(),
+		}
+	}
+}
+
 // mergeEligiblePath is a var (not a const) only so tests can point
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"

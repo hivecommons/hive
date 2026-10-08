@@ -1,0 +1,1 @@
+- Tolerate an unsearchable `author:app/<login>` qualifier (422) in the dashboard's PR/issue counts so a user-login `ai_author` still yields cost-per-PR/issue divisors.

@@ -138,6 +138,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		ClaimsEnabled *bool `json:"claimsEnabled"`
 		ClaimsTTLS    *int  `json:"claimsTtlS"`
+		// #10981: ranked-claim lifetimes. 0 means the default; the ledger
+		// policy is updated live on save.
+		ClaimsHumanTTLS       *int `json:"claimsHumanTtlS"`
+		ClaimsAgentTTLS       *int `json:"claimsAgentTtlS"`
+		ClaimsContributorTTLS *int `json:"claimsContributorTtlS"`
+		ClaimsMaxTTLS         *int `json:"claimsMaxTtlS"`
 
 		PRFollowUpEnabled *bool `json:"prFollowUpEnabled"`
 
@@ -180,9 +186,15 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if body.ClaimsTTLS != nil && *body.ClaimsTTLS < 0 {
-		jsonError(w, "claims ttl_s must be zero (default) or positive", http.StatusBadRequest)
-		return
+	claimsTTLsChanged := body.ClaimsTTLS != nil || body.ClaimsHumanTTLS != nil || body.ClaimsAgentTTLS != nil ||
+		body.ClaimsContributorTTLS != nil || body.ClaimsMaxTTLS != nil
+	if claimsTTLsChanged {
+		probe := s.deps.Config.Governor.Claims
+		applyClaimsTTLs(&probe, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
+		if err := probe.ValidateTTLs(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if body.SpektacularPollS != nil && *body.SpektacularPollS <= 0 {
 		jsonError(w, "spektacular poll interval must be positive", http.StatusBadRequest)
@@ -387,8 +399,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ClaimsEnabled != nil {
 		cfg.Governor.Claims.Enabled = *body.ClaimsEnabled
 	}
-	if body.ClaimsTTLS != nil {
-		cfg.Governor.Claims.TTLS = *body.ClaimsTTLS
+	if claimsTTLsChanged {
+		applyClaimsTTLs(&cfg.Governor.Claims, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
+		// Live claims keep their expiry; claims made or renewed from now on
+		// use the new lifetimes.
+		s.claimsLedger().SetPolicy(cfg.Governor.Claims.Policy())
 	}
 	if body.PRFollowUpEnabled != nil {
 		cfg.Turn.PRFollowUp.Enabled = *body.PRFollowUpEnabled
@@ -560,6 +575,50 @@ func (s *Server) applySpektacularChange() string {
 	return spektacularApplyRestart
 }
 
+// applyClaimsTTLs sets each claim lifetime the request carried.
+func applyClaimsTTLs(c *config.ClaimsConfig, ttl, human, agent, contributor, max *int) {
+	for _, f := range []struct {
+		src *int
+		dst *int
+	}{
+		{ttl, &c.TTLS},
+		{human, &c.HumanTTLS},
+		{agent, &c.AgentTTLS},
+		{contributor, &c.ContributorTTLS},
+		{max, &c.MaxTTLS},
+	} {
+		if f.src != nil {
+			*f.dst = *f.src
+		}
+	}
+}
+
+// claimsTTLsResponse reports the ranked-claim lifetimes for the Features
+// dialog (#10981): the effective value in force, the default each falls back
+// to when unset, and whether the key is set explicitly.
+func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
+	human, agent, contributor, max := c.EffectiveTTLs()
+	dHuman, dAgent, dContributor, dMax := c.DefaultTTLs()
+	return map[string]interface{}{
+		"claimsHumanTtlS":       int(human.Seconds()),
+		"claimsAgentTtlS":       int(agent.Seconds()),
+		"claimsContributorTtlS": int(contributor.Seconds()),
+		"claimsMaxTtlS":         int(max.Seconds()),
+		"claimsTtlDefaults": map[string]int{
+			"claimsHumanTtlS":       int(dHuman.Seconds()),
+			"claimsAgentTtlS":       int(dAgent.Seconds()),
+			"claimsContributorTtlS": int(dContributor.Seconds()),
+			"claimsMaxTtlS":         int(dMax.Seconds()),
+		},
+		"claimsTtlSet": map[string]bool{
+			"claimsHumanTtlS":       c.HumanTTLS > 0,
+			"claimsAgentTtlS":       c.AgentTTLS > 0,
+			"claimsContributorTtlS": c.ContributorTTLS > 0,
+			"claimsMaxTtlS":         c.MaxTTLS > 0,
+		},
+	}
+}
+
 // featuresSectionResponse builds the opt-in-features payload for the governor
 // config GET so the Features dialog can prefill its controls. The mint signing
 // key (Config.Mint.KeyPath) is intentionally never returned — only whether mint
@@ -595,7 +654,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	otelCfg := cfg.EffectiveOTel()
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"ioscanEnabled":                       cfg.Ioscan.IsEnabled(),
 		"tracingEnabled":                      otelCfg.Enabled,
 		"tracingEndpoint":                     otelCfg.Endpoint,
@@ -676,6 +735,10 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"rotationProviders":                   rotationCfg.Providers,
 		"rotationAgents":                      rotationCfg.AgentTiers,
 	}
+	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
+		out[k] = v
+	}
+	return out
 }
 
 func trimStringSlice(in []string) []string {

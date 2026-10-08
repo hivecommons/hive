@@ -101,6 +101,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeHeader("hive_estimated_cost_usd_total",
 		"All-time cumulative ESTIMATED cost in USD (token counts x list price; not a bill).", "counter")
 	fmt.Fprintf(&b, "hive_estimated_cost_usd_total{hive_id=%s} %g\n", promQuote(hiveID), est.TotalUSD)
+	if est.CoinLabel != "" {
+		writeHeader("hive_backend_coins_total",
+			"All-time cumulative backend coin usage from configured operator conversion.", "counter")
+		fmt.Fprintf(&b, "hive_backend_coins_total{hive_id=%s,backend=%s,label=%s} %g\n",
+			promQuote(hiveID), promQuote("bob"), promQuote(est.CoinLabel), est.Coins)
+	}
 
 	// Per-model cost.
 	writeHeader("hive_estimated_cost_usd",

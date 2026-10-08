@@ -405,9 +405,9 @@
     .oc-version-hive { position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
     .oc-version-hive svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
     .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
-    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--sp-4); height: var(--sp-4); display: grid; place-items: center; color: var(--amber); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; contain: layout paint style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
-    .oc-version-bee--phase-b { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
-    .oc-version-bee--phase-c { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
+    .oc-version-bee { --oc-version-bee-radius: 17px; --oc-version-bee-size: var(--sp-4); --oc-version-bee-orbit-offset-x: 5px; --oc-version-bee-orbit-offset-y: -4px; --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--oc-version-bee-size); height: var(--oc-version-bee-size); display: grid; place-items: center; color: var(--amber); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; contain: layout paint style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
+    .oc-version-bee--phase-b { --oc-version-bee-radius: 15.5px; --oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) * 1.04); animation-delay: calc(var(--oc-version-bee-duration) / -3); }
+    .oc-version-bee--phase-c { --oc-version-bee-radius: 18.5px; --oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) * 0.96); animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
     .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-glyph * { transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--terminal-bg); stroke-width: 1.7; }
@@ -425,14 +425,16 @@
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; }
     .oc-version-navbar-upgrade .oc-version-hive svg { width: 18px; height: 18px; }
-    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 7px; font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-bee { --oc-version-bee-radius: 9.8px; --oc-version-bee-size: 19.25px; --oc-version-bee-orbit-offset-x: 2.7px; --oc-version-bee-orbit-offset-y: -2.5px; font-size: var(--fs-xs); }
+    .oc-version-navbar-upgrade .oc-version-bee--phase-b { --oc-version-bee-radius: 8.7px; }
+    .oc-version-navbar-upgrade .oc-version-bee--phase-c { --oc-version-bee-radius: 10.5px; }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
     .oc-version-navbar-upgrade .oc-version-progress-copy { min-width: 0; padding-left: var(--oc-version-bee-lane); line-height: 1.1; overflow: hidden; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
-      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
+      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
+      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0); }
     }
     @keyframes ocBeeWaggle {
       0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -1610,9 +1612,9 @@
       outline: 2px solid var(--amber); outline-offset: -2px;
     }
     .repo-provider-label { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.08em; color:var(--muted); text-transform:uppercase; margin-bottom:var(--sp-2); }
-    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; text-align: left; }
-    .repo-name a { flex: 1 1 auto; min-width: 6rem; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
+    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }
+    .repo-name a { flex: 1 1 8rem; min-width: 0; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-header-actions { justify-content: flex-end; }
     .repo-header-spacer { min-width: var(--sp-2); }
     .repo-card-order-handle { margin-right:var(--sp-0); cursor:grab; }
@@ -1687,7 +1689,8 @@
     .repo-pills.repo-pills-issues-only, .repo-pills.repo-pills-prs-only { grid-template-columns: minmax(0, 1fr); }
     .repo-pills-issues-only .repo-pill-col-prs, .repo-pills-prs-only .repo-pill-col-issues { display: none; }
     .repo-pills-issues-only .repo-pill-col-issues, .repo-pills-prs-only .repo-pill-col-prs { grid-column: 1 / -1; }
-    .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow: hidden; }
+    .repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; overflow-x: hidden; overflow-y: auto; max-height: min(42rem, 62vh); padding-right: var(--sp-1); scrollbar-gutter: stable; overscroll-behavior: contain; }
+    .repo-pill-col:hover { box-shadow: inset 0 -10px 12px -14px var(--fg); }
     .repo-pill-run-title { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: var(--sp-1); }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
     .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
@@ -2711,6 +2714,9 @@
     .am-trusted-bots { margin-top: 12px; }
     .am-bot-row { margin-top: 6px; }
     .am-bot-source { color: var(--muted); font-weight: 400; }
+    #am-trusted-authors { margin-top: var(--sp-5); border-top: 1px solid var(--border); }
+    .am-trusted-authors-note { font-size: var(--fs-xs); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
     .am-bot-add input { flex: 1; }
@@ -2862,6 +2868,11 @@
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+    .claims-ttl-fields { margin-top: var(--sp-3); }
+    .claims-ttl-controls { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+    .claims-ttl-input { width: 80px; }
+    .claims-ttl-note { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-2) var(--sp-0) var(--sp-0); }
+    .claims-ttl-footnote { font-size: var(--fs-sm); color: var(--muted); margin: var(--sp-3) var(--sp-0) var(--sp-0); }
     .config-stat-row .config-field { min-width: 0; }
     .config-stat-row .config-field label { font-size: 0.65rem; margin-bottom: var(--sp-1); }
     /* compact stat-row inputs — size step re-declared after the input recipe */
@@ -3512,8 +3523,8 @@
     .agent-collapsed-tile.disabled .agent-tile-dot, .repo-collapsed-tile.paused .agent-tile-dot, .repo-collapsed-tile.idle .agent-tile-dot { background: var(--muted); box-shadow: none; }
     .agent-navbar-upnext {
       display: inline-flex; align-items: stretch; justify-content: flex-start; gap: var(--sp-2);
-      min-width: 0; max-width: min(640px, 100%); overflow-x: auto; overflow-y: hidden;
-      scrollbar-width: thin; mask-image: linear-gradient(90deg, var(--text) 0, var(--text) calc(100% - var(--sp-4)), transparent 100%);
+      min-width: 0; max-width: 100%; box-sizing: border-box; overflow-x: auto; overflow-y: hidden;
+      padding-inline-end: var(--sp-2); scroll-padding-inline-end: var(--sp-2); scrollbar-width: thin;
     }
     .agent-navbar-upnext[hidden] { display: none; }
     .agent-navbar-tile { flex: 0 0 auto; min-width: 136px; min-height: calc(var(--nav-chip-h) + var(--sp-4)); border: 1px solid var(--line-subtle); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 64%, transparent); color: var(--text); cursor: pointer; display: inline-grid; grid-template-columns: max-content auto; grid-template-rows: max-content max-content; align-content: center; align-items: center; gap: var(--sp-1) var(--sp-2); padding: var(--sp-2) var(--nav-chip-px); box-sizing: border-box; font: inherit; font-size: var(--fs-2xs); line-height: 1.2; text-align: left; opacity: 1; transform: translateX(0); transition: transform var(--navbar-motion-duration) var(--anim-ease-out-cubic), opacity var(--duration-fast) ease, box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease, background var(--duration-fast) ease; will-change: transform; }
@@ -5396,7 +5407,7 @@
     function updateFeedbackAttributionLine() {
       const el = document.getElementById('feedback-attribution-line'); if (!el) return;
       const status = window._feedbackStatus || {};
-      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'the hive');
+      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'your browser on GitHub');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
       // A verified login wins over the typed one; a typed login is only ever self-reported.
       const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
@@ -5447,7 +5458,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
-            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute and @-mention you on the issue.</span></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -5530,6 +5541,12 @@
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
+        const status = window._feedbackStatus || {};
+        if (!status.credential_login && !status.hub_linked && !feedbackGitHubLogin(status.submitter_login) && !feedbackGitHubLogin(rawUsername)) {
+          if (usernameField) { usernameField.required = true; usernameField.focus(); usernameField.setCustomValidity('Enter your GitHub username to open the prefilled issue on GitHub.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
+          showToast('Enter your GitHub username to open the issue on GitHub', 'error');
+          return;
+        }
         if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
           if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
           showToast('Enter a valid GitHub username, or leave it blank', 'error');
@@ -5599,16 +5616,65 @@
      * introduce unescaped markup from untrusted text (hivecommons/hive#9390).
      */
     function escapeHtmlAndLinkify(str) {
-      var escaped = escapeHtml(str);
-      return escaped.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
-        // Trim trailing punctuation that's likely sentence syntax, not part of the URL.
+      return linkifyGitHubRefs(str);
+    }
+
+    function githubRefsBaseURL(defaultHost) {
+      var base = defaultHost || (typeof window !== 'undefined' && window._githubBaseUrl) || 'https://github.com';
+      base = String(base || '').trim().replace(/\/+$/, '');
+      if (!base) base = 'https://github.com';
+      if (!/^https?:\/\//i.test(base)) base = 'https://' + base.replace(/^\/+/, '');
+      return base;
+    }
+
+    function normalizeGitHubRepoContext(repoContext) {
+      var repo = String(repoContext || '').trim();
+      if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return repo;
+      return '';
+    }
+
+    function linkifyGitHubRefs(text, defaultHost, repoContext) {
+      var s = escapeHtml(text);
+      var links = [];
+      var base = githubRefsBaseURL(defaultHost);
+      function stash(html) {
+        var idx = links.length;
+        links.push(html);
+        return '\u0000GH_LINK_' + idx + '\u0000';
+      }
+      function githubIssueAnchor(label, owner, repo, number) {
+        var href = base + '/' + owner + '/' + repo + '/issues/' + number;
+        return '<a class="system-alert-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+      }
+      s = s.replace(/https?:\/\/[^\s<>"']+/g, function(url) {
         var trailing = '';
         var trailingMatch = url.match(/[).,;:!?]+$/);
         if (trailingMatch) {
           trailing = trailingMatch[0];
           url = url.slice(0, url.length - trailing.length);
         }
-        return '<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing;
+        return stash('<a class="system-alert-link" href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>' + trailing);
+      });
+      s = s.replace(/\b([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#(\d+)\b/g, function(match, owner, repo, number) {
+        return stash(githubIssueAnchor(match, owner, repo, number));
+      });
+      var context = normalizeGitHubRepoContext(repoContext);
+      if (context) {
+        var parts = context.split('/');
+        s = s.replace(/(^|[\s("'])#(\d+)\b/g, function(match, lead, number) {
+          return lead + stash(githubIssueAnchor('#' + number, parts[0], parts[1], number));
+        });
+      }
+      s = s.replace(/\u0000GH_LINK_(\d+)\u0000/g, function(_, idx) {
+        return links[Number(idx)] || '';
+      });
+      return s;
+    }
+
+    function stopSystemAlertLinkClicks(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('a.system-alert-link').forEach(function(a) {
+        a.addEventListener('click', function(event) { event.stopPropagation(); });
       });
     }
 
@@ -12251,9 +12317,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + escapeHtmlAndLinkify(a.message) + '</span>'
+          + '<span style="color:' + textColor + '">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
           + '</div>';
       }).join('');
+      stopSystemAlertLinkClicks(banner);
     }
 
     async function submitGitHubInstallationID() {
@@ -13339,9 +13406,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const v = p && p.merge_verdict ? p.merge_verdict : null;
       const state = p && p.mergeable_state ? String(p.mergeable_state) : '';
       const reason = v && v.reason ? String(v.reason) : '';
+      const tier = v && v.tier ? String(v.tier) : '';
+      const tierNote = tier ? ' tier=' + tier + ': ' : ' ';
       switch (prMergeState(p)) {
         case 'eligible':
-          return ' (merge eligible: ' + (reason || 'the sweep would merge this now') + ')';
+          return ' (merge eligible:' + tierNote + (reason || 'the sweep would merge this now') + ')';
         case 'outstanding':
           if (reason) return ' (mergeable on GitHub, not yet eligible: ' + reason + ')';
           if (state === 'unstable') return ' (mergeable on GitHub, sweep verdict not available — GitHub state: unstable; non-required checks may be red)';
@@ -13398,6 +13467,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // would be a lie in the direction that matters.
         if (data.warning) showToast(data.warning, 'error', true);
         else showToast(resuming ? ('Resumed ' + repo) : ('Paused ' + repo + ' — agents will not write to it or be handed work on it'), 'success');
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast((resuming ? 'Resume' : 'Pause') + ' failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -13428,6 +13498,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo, 'success');
+        // The /api/status refetch usually beats the async rebuild and returns
+        // the pre-mutation snapshot; raising the floor first stops it from
+        // repainting the switch back to its old state (#11020).
+        noteStatusMutation(data.minStatusSeq);
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       } catch (e) {
         showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -14459,6 +14533,48 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
 
+    function repoNonActionableIssueBucketSpec(issue) {
+      const bucket = String((issue && issue.bucket) || 'other');
+      if (bucket === 'hive_advisory') return { key: bucket, label: 'Advisory', short: 'advisory', rank: 0, tip: 'Hive advisory report — counted, but not agent work' };
+      if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or a hard-suppress label' };
+      if (bucket === 'reporter_triage') return { key: bucket, label: 'Needs triage', short: 'triage', rank: 2, tip: 'Waiting for a maintainer triage/admission label before agents can work it' };
+      if (bucket === 'dependency_dashboard') return { key: bucket, label: 'Dependency dashboard', short: 'deps', rank: 3, tip: 'Bot control-panel issue — counted, but not work' };
+      if (bucket === 'claimed_by_pr') return { key: bucket, label: 'Claimed by PR', short: 'claimed', rank: 4, tip: 'Originally actionable, but withheld from agent queues because an open PR already claims it' };
+      if (bucket === 'claimed') return { key: bucket, label: 'Claimed', short: 'claimed', rank: 5, tip: 'Originally actionable, but withheld from agent queues because another live claim covers it' };
+      return { key: bucket, label: 'Other counted', short: 'other', rank: 9, tip: 'Counted outside the actionable and held issue lists' };
+    }
+
+    function groupedRepoNonActionableIssues(issues) {
+      const groups = new Map();
+      (issues || []).forEach(issue => {
+        if (!issue) return;
+        const spec = repoNonActionableIssueBucketSpec(issue);
+        if (!groups.has(spec.key)) groups.set(spec.key, Object.assign({ issues: [] }, spec));
+        groups.get(spec.key).issues.push(issue);
+      });
+      const out = Array.from(groups.values());
+      out.forEach(g => g.issues.sort((a, b) => issueUpdatedAt(a) - issueUpdatedAt(b) || Number(a.number || 0) - Number(b.number || 0)));
+      out.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+      return out;
+    }
+
+    function repoCardIssueGroups(repo, overviewIssueKeys) {
+      const sourceIssues = (repo && (repo.actionableIssues || []) || []).concat(repo && (repo.heldIssues || []) || []);
+      const issueGroups = groupedRepoIssues(sourceIssues).map(g => {
+        const shown = overviewIssueKeys ? g.issues.filter(entry => overviewIssueKeys.has(String(entry.issue.number))) : g.issues;
+        return Object.assign({}, g, { issues: shown });
+      }).filter(g => g.issues.length);
+      const nonActionableIssueGroups = overviewIssueKeys ? [] : groupedRepoNonActionableIssues((repo && repo.nonActionableIssues) || []);
+      return { issueGroups, nonActionableIssueGroups };
+    }
+
+    function repoCardIssueRenderedCount(groups) {
+      if (!groups) return 0;
+      const actionHeld = (groups.issueGroups || []).reduce((n, g) => n + ((g.issues || []).length), 0);
+      const nonActionable = (groups.nonActionableIssueGroups || []).reduce((n, g) => n + ((g.issues || []).length), 0);
+      return actionHeld + nonActionable;
+    }
+
     function overviewRepoName(repo) {
       return (repo && (repo.full || repo.name)) || '';
     }
@@ -14612,7 +14728,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function overviewProjectFilterState() {
-      const key = overviewProjectFilterSpec(_overviewProjectFilterKey) ? _overviewProjectFilterKey : overviewProjectFilterKeyFromURL();
+      const key = _overviewProjectFilterKey == null ? overviewProjectFilterKeyFromURL() : _overviewProjectFilterKey;
       const spec = overviewProjectFilterSpec(key);
       return spec ? Object.assign({ key, selectedCount: _overviewProjectFilterCount }, spec) : null;
     }
@@ -14712,7 +14828,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewSetProjectFilterHash(key) {
       const hash = key ? ('#projects?band=' + encodeURIComponent(key)) : '#section-repos-section';
-      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(hash) : hash);
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('band');
+        u.searchParams.delete('kpi');
+        const qs = u.searchParams.toString();
+        history.replaceState(null, '', u.pathname + (qs ? '?' + qs : '') + hash);
+      } catch {
+        history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(hash) : hash);
+      }
     }
 
     function overviewApplyKPIProjectFilter(key, count) {
@@ -14727,6 +14851,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function clearOverviewProjectFilter() {
+      _overviewProjectFilterKey = '';
+      _overviewProjectFilterCount = null;
+      overviewSetProjectFilterHash('');
+      repaintReposForWidth();
+    }
+
+    function clearProjectsFilter() {
+      writeRepoPillFilterState({ mode: repoPillFilterState().mode, kinds: [], repo: '' });
       _overviewProjectFilterKey = '';
       _overviewProjectFilterCount = null;
       overviewSetProjectFilterHash('');
@@ -15990,7 +16122,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const resetBtn = document.getElementById('repos-reset-layout-btn');
       if (resetBtn) resetBtn.style.display = (Object.keys(repoCardWidths()).length || repoOrderHasCustom(repos)) ? 'inline-block' : 'none';
       const clearFilterBtn = document.getElementById('repos-clear-pill-filter-btn');
-      if (clearFilterBtn) clearFilterBtn.hidden = !pillFilterIsActive;
+      if (clearFilterBtn) {
+        clearFilterBtn.hidden = !(pillFilterIsActive || overviewFilter);
+        clearFilterBtn.dataset.action = overviewFilter ? 'clearProjectsFilter' : 'clearRepoPillFilter';
+        clearFilterBtn.title = overviewFilter ? 'Clear the active Projects filter' : 'Clear the active repository pill filter';
+      }
       const overviewFilterChip = document.getElementById('repos-overview-filter-chip');
       if (overviewFilterChip) {
         overviewFilterChip.hidden = !overviewFilter;
@@ -16014,6 +16150,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);
         const overviewRepoMatches = overviewFilter ? overviewProjectFilterRepoMatches(r, overviewFilter) : null;
         const filteredIssues = overviewRepoMatches ? overviewRepoMatches.issues.map(entry => entry.issue) : (r.actionableIssues || []).concat(r.heldIssues || []);
+        const filteredNonActionableIssues = overviewRepoMatches ? [] : (r.nonActionableIssues || []);
         const filteredOpenPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => !entry.held).map(entry => entry.pr) : (r.openPrs || []);
         const filteredHeldPrs = overviewRepoMatches ? overviewRepoMatches.prs.filter(entry => entry.held).map(entry => entry.pr) : (r.heldPrs || []);
         const filteredBuckets = overviewRepoMatches ? overviewRepoMatches.buckets : [];
@@ -16021,8 +16158,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const overviewPRKeys = overviewRepoMatches ? new Set(filteredOpenPrs.concat(filteredHeldPrs).map(p => String(p.number))) : null;
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
         const repoIssueFilterRows = filteredIssues.map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
+        const repoNonActionableFilterRows = filteredNonActionableIssues.map(i => ({ kinds: ['issue:non-actionable', 'issue:' + repoNonActionableIssueBucketSpec(i).key] }));
         const repoPRFilterRows = filteredOpenPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat(filteredHeldPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
-        const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoPRFilterRows), pillFilter);
+        const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoNonActionableFilterRows, repoPRFilterRows), pillFilter);
+        const repoIssueGroups = repoCardIssueGroups(r, overviewIssueKeys);
         const renderIssuePill = (i, info) => {
           const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
           const repoFull = r.full || r.name || '';
@@ -16056,11 +16195,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const statusKind = isHeldIssue ? 'issue:held' : ('issue:' + info.band);
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
-        const issuePills = groupedRepoIssues((r.actionableIssues || []).concat(r.heldIssues || [])).map(g => {
-          const shown = overviewIssueKeys ? g.issues.filter(entry => overviewIssueKeys.has(String(entry.issue.number))) : g.issues;
-          if (!shown.length) return '';
-          const items = shown.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
-          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+        const issuePills = repoIssueGroups.issueGroups.map(g => {
+          const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
+        }).join('');
+        const renderNonActionableIssuePill = (i) => {
+          const spec = repoNonActionableIssueBucketSpec(i);
+          const title = pillDisplayTitle(i.title, MAX_PILL_TITLE_LEN);
+          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const labels = (i.labels || []).map(l => String(l)).filter(Boolean).join(', ');
+          const reason = i.reason || spec.tip;
+          const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
+          const rowKinds = ['issue:non-actionable', 'issue:' + spec.key];
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill held repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main held" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
+        };
+        const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {
+          const items = g.issues.map(renderNonActionableIssuePill).join('');
+          return `<div class="repo-issue-band repo-issue-band-${esc(g.key)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderPrPill = (p, held, info) => {
           const title = pillDisplayTitle(p.title, MAX_PILL_TITLE_LEN);
@@ -16159,7 +16310,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // grouped into the same display bands) under "issues", PR pills grouped
         // into state bands under "PRs". Position says what a pill is; tint says
         // what state it is in.
-        const issueCol = issuePills ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}` : '';
+        const issueCol = (issuePills || nonActionableIssuePills) ? `<div class="repo-pill-run-title">ISSUES</div>${issuePills}${nonActionableIssuePills}` : '';
         const prCol = prPills ? `<div class="repo-pill-run-title">PULL REQUESTS</div>${prPills}` : '';
         const pillColClass = issueCol && prCol ? '' : (issueCol ? ' repo-pills-issues-only' : ' repo-pills-prs-only');
         const bucketHtml = overviewProjectBucketRowsHTML(filteredBuckets);
@@ -16726,12 +16877,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderBudgetBar(budget) {
-      if (!budget || !budget.BUDGET_WEEKLY) return '';
+      if (!budget || (!budget.BUDGET_WEEKLY && !budget.COIN_BUDGET && !budget.USD_BUDGET)) return '';
       const PCT_SAFE = 50;
       const PCT_WARN = 85;
+      const coinBudget = Number(budget.COIN_BUDGET) || 0;
+      const coinUsed = Number(budget.COINS_USED) || 0;
+      const coinLabel = budget.COIN_LABEL || 'coins';
+      const usdBudget = Number(budget.USD_BUDGET) || 0;
+      const usdUsed = Number(budget.USD_USED) || 0;
       const used = budget.BUDGET_USED || 0;
       const weekly = budget.BUDGET_WEEKLY;
-      const pctUsed = budget.BUDGET_PCT_USED || 0;
+      const tokenPct = weekly > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
+      const coinPct = coinBudget > 0 ? (coinUsed / coinBudget * 100) : 0;
+      const usdPct = usdBudget > 0 ? (usdUsed / usdBudget * 100) : 0;
+      const choices = [
+        weekly > 0 ? { pct: tokenPct, label: `${fmtTokens(used)} / ${fmtTokens(weekly)}`, name: 'tokens' } : null,
+        coinBudget > 0 ? { pct: coinPct, label: `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinBudget, coinLabel)}`, name: coinLabel } : null,
+        usdBudget > 0 ? { pct: usdPct, label: `${fmtUSD(usdUsed)} / ${fmtUSD(usdBudget)}`, name: 'USD' } : null,
+      ].filter(Boolean);
+      const primary = choices.slice().sort((a, b) => b.pct - a.pct)[0] || choices[0];
+      const pctUsed = primary ? primary.pct : 0;
+      const usedText = primary ? primary.label : '';
+      const secondaryBudgetText = choices.length > 1 ? ' · ' + choices.filter(c => c !== primary).map(c => `${c.name} ${c.label}`).join(' · ') : '';
       const projPct = budget.PROJECTED_PCT || 0;
       const burnRate = budget.BURN_RATE_HOURLY || 0;
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
@@ -16739,6 +16906,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const dailyRate = burnRate * HOURS_PER_DAY;
       const PCT_BUDGET_WARN = 90; // mirrors governor.BudgetWarnPct: soft-warning threshold
       const exhausted = !!budget.BUDGET_EXHAUSTED;
+      const useCoinPrimary = !!primary && primary.name !== 'tokens'; // projection is token-based
       // Red is reserved for exhausted (kicks suspended); >=90% shows amber.
       const usedFillCls = budgetIgnored ? 'safe' : exhausted ? 'danger' : pctUsed >= PCT_SAFE ? 'warning' : 'safe';
 
@@ -16764,13 +16932,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
       return `<div class="budget-bar">
         <div class="budget-bar-label">
-          <span>Used: ${fmtTokens(used)} / ${fmtTokens(weekly)} (${pctUsed}%)${ignoreCheck}</span>
+          <span>Used: ${usedText} (${Math.round(pctUsed)}%)${secondaryBudgetText}${ignoreCheck}</span>
           <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
         </div>
         <div class="budget-bar-track"><div class="budget-bar-fill ${usedFillCls}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-2)">
           <span>Burn: ${fmtTokens(burnRate)}/hr · ${fmtTokens(dailyRate)}/day</span>
-          <span>Projected: ${fmtTokens(used + burnRate * hoursLeft)} (${projPct}%)</span>
+          <span>Projected: ${useCoinPrimary ? '—' : fmtTokens(used + burnRate * hoursLeft)} (${useCoinPrimary ? Math.round(pctUsed) : projPct}%)</span>
         </div>
         <div style="font-size:var(--fs-xs);margin-top:3px">${govAction}</div>
         ${budgetHistoryChart()}
@@ -18093,6 +18261,11 @@ function burnAreaChart() {
       };
     }
 
+    function costOutcomeWindowLabel(cost, fallbackTotal) {
+      const start = Number(cost && cost.count_window_start) || 0;
+      return start > 0 ? `since ${fmtCostDateTime(start)}` : 'outcome window pending refresh';
+    }
+
     // Last cost payload, so the range pills can re-render the trend chart
     // instantly (client-only bucketing) without waiting for the next poll.
     let _lastCost = null;
@@ -18232,20 +18405,36 @@ function burnAreaChart() {
       // status poll — so the Cost panel cannot disagree with the Governor bar.
       const budget = window._lastBudget || null;
       const limit = budget && budget.BUDGET_WEEKLY;
-      if (!limit) {
-        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured — set <b>Total Tokens</b> and <b>Period Days</b> under Settings → Governor to track spend against a limit. The figures above are dollar ESTIMATES and are not what any limit is enforced against.</div>`;
+      const coinLimit = Number(budget && budget.COIN_BUDGET) || 0;
+      const coinLabel = (budget && budget.COIN_LABEL) || 'coins';
+      const usdLimit = Number(budget && budget.USD_BUDGET) || 0;
+      if (!limit && !coinLimit && !usdLimit) {
+        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured (and no dollar or coin budget) — set <b>Total Tokens</b>, <b>USD Budget</b>, or a backend coin budget and <b>Period Days</b> under Settings → Governor to track spend against a limit. Token budgets are enforced in tokens, not dollars; Bob dollar/coin budgets use the configured backend conversion.</div>`;
       }
       const used = budget.BUDGET_USED || 0;
-      const pctUsed = budget.BUDGET_PCT_USED || 0;
+      const coinUsed = Number(budget.COINS_USED) || 0;
+      const usdUsed = Number(budget.USD_USED) || 0;
+      const tokenPct = limit > 0 ? (budget.BUDGET_PCT_USED || 0) : 0;
+      const coinPct = coinLimit > 0 ? (coinUsed / coinLimit * 100) : 0;
+      const usdPct = usdLimit > 0 ? (usdUsed / usdLimit * 100) : 0;
+      const choices = [
+        limit > 0 ? { unit: 'Token', pct: tokenPct, label: `${fmtTokens(used)} / ${fmtTokens(limit)}` } : null,
+        coinLimit > 0 ? { unit: 'Coin', pct: coinPct, label: `${fmtCoins(coinUsed, coinLabel)} / ${fmtCoins(coinLimit, coinLabel)}` } : null,
+        usdLimit > 0 ? { unit: 'Dollar', pct: usdPct, label: `${fmtUSD(usdUsed)} / ${fmtUSD(usdLimit)}` } : null,
+      ].filter(Boolean);
+      const primary = choices.slice().sort((a, b) => b.pct - a.pct)[0] || choices[0];
+      const pctUsed = primary.pct || 0;
+      const usedLabel = primary.label;
+      const secondaryBudgetText = choices.length > 1 ? ' · ' + choices.filter(c => c !== primary).map(c => `${c.unit.toLowerCase()}s ${c.label}`).join(' · ') : '';
       const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
       const exhausted = !!budget.BUDGET_EXHAUSTED;
       const PCT_BUDGET_WARN = 90;
       const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
       return `<div class="cost-token-budget" style="margin-top:14px;padding-top:var(--sp-5);border-top:1px solid var(--border)">
-        <div class="cost-subtitle mb-3"><b>Token budget</b> — this is the limit the governor actually enforces (tokens, not dollars). Used tokens and each history bar cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
+        <div class="cost-subtitle mb-3"><b>${esc(primary.unit)} budget</b> — this is the most-used enforced limit (token limits are in tokens, not dollars). Used amounts cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
         <div class="budget-bar">
           <div class="budget-bar-label">
-            <span>Used this budget period: ${fmtTokens(used)} / ${fmtTokens(limit)} (${pctUsed}%)</span>
+            <span>Used this budget period: ${usedLabel} (${Math.round(pctUsed)}%)${secondaryBudgetText}</span>
             <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
           </div>
           <div class="budget-bar-track"><div class="budget-bar-fill ${fill}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
@@ -18253,6 +18442,12 @@ function burnAreaChart() {
           ${budgetHistoryChart()}
         </div>
       </div>`;
+    }
+
+    function fmtCoins(n, label) {
+      const v = Number(n) || 0;
+      const digits = Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : 2;
+      return `${v.toLocaleString('en-US', { maximumFractionDigits: digits })} ${esc(label || 'coins')}`;
     }
 
     function renderCost(cost) {
@@ -18446,6 +18641,14 @@ function burnAreaChart() {
       const allTimeCost = costAllTimeEstimate(est);
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const outcomeWindow = costOutcomeWindowLabel(cost, allTimeCost);
+      const coinLabel = est.coin_label || '';
+      const coinEquiv = Number(est.coin_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_usd)}` : '';
+      const coinBudgetEquiv = Number(est.coin_budget_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_budget_usd)}` : '';
+      const usdBudgetEquiv = Number(est.usd_budget_coins) > 0 ? ` (${fmtCoins(est.usd_budget_coins, coinLabel)})` : '';
+      const coinStat = coinLabel && Number(est.coins) > 0
+        ? `<div class="cost-stat"><div class="cval" title="Bob backend coin usage estimated from configured tokens-per-coin conversion">${fmtCoins(est.coins, coinLabel)}${coinEquiv}</div><div class="clabel">Bob coins${est.coin_budget ? ` — ${fmtCoins(est.coins, coinLabel)} of ${fmtCoins(est.coin_budget, coinLabel)}${coinBudgetEquiv}` : ''}${est.usd_budget ? ` · USD cap ${fmtUSD(est.usd_budget)}${usdBudgetEquiv}` : ''}</div></div>`
+        : '';
       const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
         ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
         : '';
@@ -18455,8 +18658,9 @@ function burnAreaChart() {
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
-            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs</div></div>
-            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues</div></div>
+            ${coinStat}
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs ${esc(outcomeWindow)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues ${esc(outcomeWindow)}</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
@@ -19890,7 +20094,7 @@ function burnAreaChart() {
         return `<div class="gh-rate-alert-item">
           <span class="gh-rate-alert-agent">${esc(a.agent)}${cliTag}</span>
           <span class="gh-rate-alert-age">${ageStr}</span>
-          <span class="gh-rate-alert-msg">${esc(a.message || 'GitHub API rate limited')}</span>
+          <span class="gh-rate-alert-msg">${linkifyGitHubRefs(a.message || 'GitHub API rate limited', window._githubBaseUrl)}</span>
         </div>`;
       }).join('');
       const pullbackHtml = activePullbacks.map(p => {
@@ -19909,6 +20113,7 @@ function burnAreaChart() {
         </div>`;
       }).join('');
       setIfChanged(el, `<div class="gh-rate-alert-title">GitHub API Rate Limit (${active.length} agent${active.length > 1 ? 's' : ''})</div>${items}${pullbackHtml}`);
+      stopSystemAlertLinkClicks(el);
     }
 
     const GH_RATE_LIMIT_POLL_MS = 5 * 60 * 1000;
@@ -23885,6 +24090,62 @@ function burnAreaChart() {
       if (typeof refreshVersionProgressSurfaces === 'function') refreshVersionProgressSurfaces();
     }
 
+    // ── Background-refresh stability (#11032) ──
+    // Status pushes repaint every section; these helpers keep the reader on
+    // the same content and keep refreshes away from fields being edited.
+    function isEditableElement(el) {
+      if (!el || el === document.body) return false;
+      if (el.isContentEditable) return true;
+      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+    }
+
+    // True when focus sits in a form field inside el, or a field inside el
+    // (other than those matching ignoreSelector) differs from its rendered default.
+    function sectionHoldsUserInput(el, ignoreSelector) {
+      if (!el) return false;
+      const active = document.activeElement;
+      if (isEditableElement(active) && el.contains(active)) return true;
+      const fields = el.querySelectorAll('input, textarea, select');
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        if (ignoreSelector && f.matches(ignoreSelector)) continue;
+        if (f.tagName === 'SELECT') {
+          for (let j = 0; j < f.options.length; j++) {
+            if (f.options[j].selected !== f.options[j].defaultSelected) return true;
+          }
+        } else if (f.type === 'checkbox' || f.type === 'radio') {
+          if (f.checked !== f.defaultChecked) return true;
+        } else if (f.type !== 'hidden' && f.value !== f.defaultValue) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Remember the topmost visible section and the reader's offset within it,
+    // so a repaint that resizes content above doesn't move them elsewhere.
+    function captureScrollAnchor() {
+      const anchor = { el: null, top: 0, scrollY: window.scrollY };
+      if (window.scrollY <= 0) return anchor;
+      const sections = document.querySelectorAll('[data-dashboard-section]');
+      for (let i = 0; i < sections.length; i++) {
+        const el = sections[i];
+        if (!el.getClientRects().length) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > 0) { anchor.el = el; anchor.top = rect.top; break; }
+      }
+      return anchor;
+    }
+
+    function restoreScrollAnchor(anchor) {
+      if (anchor.el && anchor.el.isConnected && anchor.el.getClientRects().length) {
+        const delta = anchor.el.getBoundingClientRect().top - anchor.top;
+        if (delta) window.scrollBy(0, delta);
+        return;
+      }
+      window.scrollTo(0, anchor.scrollY);
+    }
+
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
       // ── Stale-snapshot guard (#4348) ──────────────────────────────────
@@ -23909,7 +24170,7 @@ function burnAreaChart() {
         _lastStatusSeq = data.statusSeq;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
-      const scrollY = window.scrollY;
+      const scrollAnchor = captureScrollAnchor();
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
       noteAgentNowUpdate(data && data.timestamp);
@@ -24014,9 +24275,9 @@ function burnAreaChart() {
         }
       } else if (_ocSelectedAgent) {
         ocRenderAgentDetail(); ocUpdateFocusedState(); ocStartPanePoll();
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       } else {
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
 
@@ -24090,7 +24351,17 @@ function burnAreaChart() {
             wizard = renderInceptionModeSelect();
         }
       }
+      // Rebuilding the panel resets its own scroll and the campaign filters;
+      // carry both across so refreshes don't move the reader (#11032).
+      const panelScrollTop = panel.scrollTop;
+      const campaignFilters = {};
+      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
       panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
+      Object.keys(campaignFilters).forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
+      });
+      panel.scrollTop = panelScrollTop;
       renderCampaignsList();
       if (!_inceptionPollTimer) startInceptionPoll();
     }
@@ -24827,8 +25098,13 @@ function burnAreaChart() {
       } catch (e) { /* ignore poll errors */ }
 
       try {
-        // Don't clobber the textarea while the user is typing their idea
+        // Don't clobber the textarea while the user is typing their idea, nor
+        // any panel field that is focused or holds unsaved input (#11032);
+        // the next poll retries once the user is done.
         if (_inceptionState && _inceptionState.phase === 'capture' && !_inceptionState.idea_text) {
+          return;
+        }
+        if (sectionHoldsUserInput(document.getElementById('inception-panel'), '.campaigns-filters input')) {
           return;
         }
         const sr = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
@@ -25915,6 +26191,9 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
+        case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;
+        case 'toggleSentinelBehavior': toggleSentinelBehavior(el); break;
+        case 'resetSentinelPaths': resetSentinelPaths(); break;
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
@@ -26184,6 +26463,7 @@ function burnAreaChart() {
               const meta = row && row.querySelector('.level-automerge-row-meta');
               if (meta) meta.textContent = 'Auto-merge ' + (nextEnabled ? 'enabled' : 'disabled');
               showToast((nextEnabled ? 'Enabled' : 'Disabled') + ' auto-merge for ' + repo.repo, 'success');
+              noteStatusMutation(resBody.minStatusSeq);
               fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
             } catch (e) {
               showToast('Auto-merge toggle failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -29268,6 +29548,25 @@ function burnAreaChart() {
 
     var _initialVersionHash = null;
     var VERSION_CHECK_INTERVAL_MS = 60000;
+    var _versionReloadPending = false;
+    // Defer a version-triggered reload while the user is in a form field so
+    // the reload doesn't discard what they are typing (#11032).
+    function reloadForNewVersion() {
+      if (isEditableElement(document.activeElement)) {
+        if (!_versionReloadPending) {
+          _versionReloadPending = true;
+          document.addEventListener('focusout', function onFocusOut() {
+            setTimeout(function() {
+              if (isEditableElement(document.activeElement)) return;
+              document.removeEventListener('focusout', onFocusOut);
+              window.location.reload();
+            }, 0);
+          });
+        }
+        return;
+      }
+      window.location.reload();
+    }
     function startVersionCheck() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
@@ -29278,7 +29577,7 @@ function burnAreaChart() {
           var current = d.hash || d.short || '';
           if (_initialVersionHash && current && current !== _initialVersionHash) {
             console.log('[hive] version changed from', _initialVersionHash, 'to', current, '— reloading');
-            window.location.reload();
+            reloadForNewVersion();
           }
         }).catch(function() {});
       }, VERSION_CHECK_INTERVAL_MS);
@@ -29401,6 +29700,9 @@ function burnAreaChart() {
       // its hint shows the fallback host/org. Refresh it now that both are known.
       if (typeof renderGitHubAppInstallIdHint === 'function') {
         renderGitHubAppInstallIdHint(window._lastStatus || null);
+      }
+      if (window._lastStatus && Array.isArray(window._lastStatus.systemAlerts)) {
+        renderSystemAlerts(window._lastStatus.systemAlerts);
       }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced in
@@ -35196,10 +35498,21 @@ function burnAreaChart() {
     function renderGovBudget(b, h) {
       loadBudgetExemptions();
       h = h || {};
+      const bobCoin = ((b.coins || {}).bob) || {};
+      const coinLabel = bobCoin.label || 'BC';
       return `
         <div class="config-field-row">
           <div class="config-field"><label>Total Tokens <span class="config-info">i<span class="config-tooltip">Maximum token budget for the period. When usage approaches this limit, the governor will downgrade models or skip low-priority kicks. Set to 0 to disable budget tracking.</span></span></label><input type="number" value="${b.totalTokens || 0}" data-change-action="gh43"></div>
           <div class="config-field"><label>Period (days) <span class="config-info">i<span class="config-tooltip">Rolling window length in days for token budget accounting. Default is 7 (weekly). The budget resets at the end of each period.</span></span></label><input type="number" value="${b.periodDays || 7}" data-change-action="gh44"></div>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>USD Budget <span class="config-info">i<span class="config-tooltip">Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.</span></span></label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
+          <div class="config-field"><label>${esc(coinLabel)} Budget <span class="config-info">i<span class="config-tooltip">Optional Bob coin cap for the period. Uses the configured Bob coin conversion; confirm the conversion with your Bob team.</span></span></label><input id="gov-budget-coin" type="number" step="0.01" min="0" value="${bobCoin.budget || 0}" data-change-action="gh86"></div>
+        </div>
+        <div class="config-field">
+          <label>Bob budget entry unit</label>
+          <select data-change-action="gh87"><option value="usd">USD</option><option value="coins">${esc(coinLabel)}</option></select>
+          <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:4px">USD and ${esc(coinLabel)} caps are both first-class; set either or both. The governor stops kicks when the first configured cap is exhausted.</div>
         </div>
         <div class="config-field">
           <label>Critical Percent <span class="config-info">i<span class="config-tooltip">When token usage exceeds this percentage of the total budget, the governor enters budget-critical mode: downgrading models to cheaper alternatives and potentially skipping non-essential kicks. Default is 90%.</span></span></label>
@@ -36165,6 +36478,105 @@ function burnAreaChart() {
       renderConfigTab('Features');
     }
 
+    // Claim lifetimes (#10981): duration inputs for governor.claims.*_ttl_s
+    // under the Issue claims toggle. Reset sends 0, which the server treats as
+    // "use the default"; a saved change applies to claims made or renewed
+    // afterwards without a restart. Owner-only, like the PUT it feeds.
+    const CLAIMS_TTL_FIELDS = [
+      { key: 'claimsHumanTtlS', label: 'Human claims', yaml: 'human_ttl_s', tip: 'How long a person\'s claim holds an issue before it lapses unless renewed. Falls back to ttl_s, then 4 hours.' },
+      { key: 'claimsAgentTtlS', label: 'Agent claims', yaml: 'agent_ttl_s', tip: 'How long the claim recorded when one of this hive\'s agents starts on a kicked issue lasts. Defaults to 2 hours.' },
+      { key: 'claimsContributorTtlS', label: 'Contributor claims', yaml: 'contributor_ttl_s', tip: 'How long a relay contributor\'s claim lasts. Defaults to 30 minutes, the relay lease length.' },
+      { key: 'claimsMaxTtlS', label: 'Maximum claim', yaml: 'max_ttl_s', tip: 'Cap on any requested claim lifetime; the three lifetimes above may not exceed it. Defaults to 24 hours.' },
+    ];
+
+    function claimsTTLSplit(secs) {
+      const n = Math.max(0, Math.round(Number(secs) || 0));
+      if (n > 0 && n % 3600 === 0) return { value: n / 3600, unit: 'h' };
+      return { value: Math.round(n / 60), unit: 'm' };
+    }
+
+    function claimsTTLText(secs) {
+      const d = claimsTTLSplit(secs);
+      const word = d.unit === 'h' ? 'hour' : 'minute';
+      return d.value + ' ' + word + (d.value === 1 ? '' : 's');
+    }
+
+    function claimsTTLNote(key, isSet) {
+      const f = (_configState.data && _configState.data.features) || {};
+      const def = (f.claimsTtlDefaults || {})[key] || 0;
+      return isSet ? 'Default: ' + claimsTTLText(def) : 'Using the default';
+    }
+
+    function renderClaimsTTLFields(f) {
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const defaults = f.claimsTtlDefaults || {};
+      const set = f.claimsTtlSet || {};
+      const off = canEdit ? '' : ' disabled';
+      const fields = CLAIMS_TTL_FIELDS.map(fd => {
+        const d = claimsTTLSplit(f[fd.key] || defaults[fd.key] || 0);
+        const isSet = !!set[fd.key];
+        return `<div class="config-field" data-claims-ttl="${fd.key}">
+            <label>${esc(fd.label)} <span class="config-info">i<span class="config-tooltip">${esc(fd.tip)} (governor.claims.${fd.yaml})</span></span></label>
+            <div class="claims-ttl-controls">
+              <input type="number" min="1" step="1" class="claims-ttl-input" value="${d.value}" aria-label="${esc(fd.label)} lifetime"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
+              <select aria-label="${esc(fd.label)} unit"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
+                <option value="m"${d.unit === 'm' ? ' selected' : ''}>minutes</option>
+                <option value="h"${d.unit === 'h' ? ' selected' : ''}>hours</option>
+              </select>
+              ${canEdit ? `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="claimsTTLReset" data-arg0="${fd.key}" data-arg-types="s"${isSet ? '' : ' hidden'}>Reset to default</button>` : ''}
+            </div>
+            <p class="claims-ttl-note">${esc(claimsTTLNote(fd.key, isSet))}</p>
+          </div>`;
+      }).join('');
+      return `<div class="config-field-row claims-ttl-fields">${fields}</div>
+          <p class="claims-ttl-footnote">${canEdit
+            ? 'Changes apply to claims made or renewed after Save; existing claims keep their expiry.'
+            : 'Only the hive owner can change claim lifetimes.'}</p>`;
+    }
+
+    function claimsTTLRow(key) {
+      return document.querySelector('#config-body [data-claims-ttl="' + key + '"]');
+    }
+
+    function claimsTTLStage(key, secs, isSet) {
+      const f = rotationFeaturesState();
+      const defaults = f.claimsTtlDefaults || {};
+      f[key] = isSet ? secs : (defaults[key] || 0);
+      f.claimsTtlSet = Object.assign({}, f.claimsTtlSet, { [key]: isSet });
+      markDirty('features', key, isSet ? secs : 0);
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const btn = row.querySelector('[data-action="claimsTTLReset"]');
+      if (btn) btn.hidden = !isSet;
+      const note = row.querySelector('.claims-ttl-note');
+      if (note) note.textContent = claimsTTLNote(key, isSet);
+    }
+
+    function claimsTTLChanged(key) {
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const input = row.querySelector('input[type="number"]');
+      const unit = row.querySelector('select');
+      const n = Math.round(Number(input && input.value));
+      if (!input || input.value === '' || !(n > 0)) {
+        claimsTTLReset(key);
+        return;
+      }
+      claimsTTLStage(key, n * (unit && unit.value === 'h' ? 3600 : 60), true);
+    }
+
+    function claimsTTLReset(key) {
+      claimsTTLStage(key, 0, false);
+      const row = claimsTTLRow(key);
+      if (!row) return;
+      const f = rotationFeaturesState();
+      const d = claimsTTLSplit((f.claimsTtlDefaults || {})[key] || 0);
+      const input = row.querySelector('input[type="number"]');
+      const unit = row.querySelector('select');
+      if (input) input.value = d.value;
+      if (unit) unit.value = d.unit;
+    }
+
     async function loadRotationHeadroom() {
       const host = document.getElementById('rotation-headroom-host');
       if (!host) return;
@@ -36279,6 +36691,38 @@ function burnAreaChart() {
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
+      /* Suspicious Activity (sentinel): flags PRs that look like security
+         overrides, privilege escalation or codebase damage. Observe-and-alert
+         only — it never merges, holds or removes labels. */
+      const sn = sec.sentinel || {};
+      const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
+      const snBehaviors = (sn.behaviors || []).map(b => `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
+          <span class="config-toggle-label"><code>${esc(b.name)}</code> <span class="config-info">i<span class="config-tooltip">${esc(b.description || '')}</span></span></span>
+        </div>`).join('');
+      const suspicious = `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
+          <span class="config-toggle-label">Suspicious-activity alerts <span class="config-info">i<span class="config-tooltip">Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets the alert label and one explanatory comment per push so reviewers can route it to a human. Nothing is merged, held or auto-closed.</span></span></span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep <span class="config-info">i<span class="config-tooltip">Caps label+comment actions per pass so a flood of PRs cannot spam a repo.</span></span></label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>
+        <div class="config-field">
+          <label>Sensitive files <span class="config-info">i<span class="config-tooltip">One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.</span></span>${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
+        </div>
+        <div class="config-field">
+          <label>Behaviors <span class="config-info">i<span class="config-tooltip">Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.</span></span></label>
+          ${snBehaviors}
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Exempt logins <span class="config-info">i<span class="config-tooltip">Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.</span></span></label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Repos (optional allow-list)</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>`;
+
       return `
         ${securityModelDatalistHtml()}${agentList}
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
@@ -36287,6 +36731,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Access', renderGovAccess())}
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
+        ${renderSecuritySection('Suspicious Activity', suspicious)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
         ${renderSecuritySection('Backup', backupKey)}`;
@@ -36812,6 +37257,15 @@ function burnAreaChart() {
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
+      const amTrustedAuthors = am.trusted_authors || {};
+      const amTrustedAuthorRoles = Array.isArray(amTrustedAuthors.roles) && amTrustedAuthors.roles.length ? amTrustedAuthors.roles : ['merger','owner'];
+      const amTrustedAuthorRole = amTrustedAuthors.require_role || 'merger';
+      const amTrustedAuthorLabels = Array.isArray(amTrustedAuthors.exclude_labels) ? amTrustedAuthors.exclude_labels : ['hold','do-not-merge','needs-human'];
+      const amTrustedAuthorRepos = Array.isArray(amTrustedAuthors.repos) ? amTrustedAuthors.repos : [];
+      const watchedRepos = Array.isArray((_configState.data || {}).repos) ? (_configState.data || {}).repos : [];
+      const amTrustedAuthorRepoSet = new Set(amTrustedAuthorRepos.map(r => String(r).toLowerCase()));
+      const amTrustedAuthorRoleOptions = amTrustedAuthorRoles.map(r => `<option value="${esc(r)}"${r === amTrustedAuthorRole ? ' selected' : ''}>${esc(r)}</option>`).join('');
+      const amTrustedAuthorRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amTrustedAuthorRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
       const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
@@ -37006,7 +37460,7 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
             <span class="config-toggle-label">Issue claims <span class="config-info">i<span class="config-tooltip">OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.</span></span></span>
           </div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Claims expire after ${Math.round(Number(f.claimsTtlS || 0) / 60)} minutes.</p>
+          ${renderClaimsTTLFields(f)}
         </div>
 
 
@@ -37042,7 +37496,7 @@ function burnAreaChart() {
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Max merges per sweep <span class="config-info">i<span class="config-tooltip">Caps how many PRs one sweep pass may merge. 0 or empty uses the default.</span></span></label>
-            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="5" data-change-action="gh71">
+            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
@@ -37054,6 +37508,36 @@ function burnAreaChart() {
             <div class="am-bot-add">
               <input type="text" id="am-new-bot" placeholder="another bot login, e.g. snyk-bot">
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
+            </div>
+          </div>
+          <div class="config-field" id="am-trusted-authors">
+            <label>Trusted-author auto-merge <span class="config-info">i<span class="config-tooltip">Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.</span></span></label>
+            <div class="config-toggle mt-3">
+              <div id="am-trusted-authors-enabled" class="config-toggle-switch ${amTrustedAuthors.enabled ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable trusted-author tier <span class="config-info">i<span class="config-tooltip">Default off. Lets Hive merge green human-authored PRs whose author already holds merge authority in authorized_users at the configured role; it never creates new authority.</span></span></span>
+            </div>
+            <div class="config-field-row mt-4">
+              <div class="config-field">
+                <label for="am-trusted-authors-require-role">Required author role</label>
+                <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
+              </div>
+              <div class="config-field">
+                <label>GitHub permission check <span class="config-info">i<span class="config-tooltip">When on (the default), GitHub must also report push, maintain, or admin permission for the author on the repository.</span></span></label>
+                <div class="config-toggle">
+                  <div id="am-trusted-authors-require-github-permission" class="config-toggle-switch ${amTrustedAuthors.require_github_permission !== false ? 'on' : ''}" data-action="gh100" role="switch" aria-checked="${amTrustedAuthors.require_github_permission !== false ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Require push/maintain/admin <span class="config-info">i<span class="config-tooltip">When on (the default), GitHub must also report push, maintain, or admin permission for the author on the repository.</span></span></span>
+                </div>
+              </div>
+            </div>
+            <div class="config-field mt-4">
+              <label for="am-trusted-authors-exclude-labels">Excluded labels</label>
+              <input id="am-trusted-authors-exclude-labels" type="text" value="${esc(amTrustedAuthorLabels.join(', '))}" placeholder="hold, do-not-merge, needs-human" data-change-action="gh102">
+              <p class="am-trusted-authors-note">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
+            </div>
+            <div class="config-field mt-4">
+              <label for="am-trusted-authors-repos">Repositories</label>
+              <select id="am-trusted-authors-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh102" class="am-trusted-authors-repos">${amTrustedAuthorRepoOptions}</select>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Eligibility still requires green CI, mergeable state, no excluded label, no outstanding CHANGES_REQUESTED review, and no fork non-member.</p>
             </div>
           </div>
         </div>
@@ -37989,6 +38473,49 @@ function burnAreaChart() {
       markDirty(section, key, value === true || value === 'true');
     }
 
+    /* Sentinel dirty-tracking: the security PUT takes a nested `sentinel`
+       object with "absent means unchanged" fields, so edits are merged into
+       one bag rather than flattened into the security section. */
+    function sentinelState() {
+      const d = _configState.data || {};
+      d.security = d.security || {};
+      d.security.sentinel = d.security.sentinel || {};
+      return d.security.sentinel;
+    }
+    function markSentinelDirty(key, value) {
+      if (!_configState.dirty.security) _configState.dirty.security = {};
+      const bag = _configState.dirty.security.sentinel || {};
+      bag[key] = value;
+      _configState.dirty.security.sentinel = bag;
+      sentinelState()[key] = value;
+    }
+    function toggleSentinelEnabled(el) {
+      if (!el) return;
+      const isOn = el.classList.toggle('on');
+      markSentinelDirty('enabled', isOn);
+      renderConfigTab('Security');
+    }
+    function toggleSentinelBehavior(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      const sn = sentinelState();
+      sn.behaviors = (sn.behaviors || []).map(b => b.name === el.dataset.rule ? Object.assign({}, b, { enabled: isOn }) : b);
+      markSentinelDirty('disabledBehaviors', sn.behaviors.filter(b => !b.enabled).map(b => b.name));
+    }
+    function resetSentinelPaths() {
+      const sn = sentinelState();
+      sn.sensitivePaths = (sn.defaultSensitivePaths || []).slice();
+      sn.sensitivePathsDefault = true;
+      /* An empty list tells the backend to drop the override. */
+      markSentinelDirty('sensitivePaths', []);
+      renderConfigTab('Security');
+    }
+    function markSentinelPathsFromText(text) {
+      const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+      /* An emptied box restores defaults rather than disabling the rule. */
+      markSentinelDirty('sensitivePaths', lines);
+    }
+
     function toggleContributorPRBaseSync(el) {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
@@ -38017,6 +38544,21 @@ function burnAreaChart() {
         .map(r => r.dataset.botLogin)
         .filter(Boolean);
       markDirty('auto-merge', 'trusted_bot_authors', list);
+    }
+
+    function markDirtyTrustedAuthors() {
+      const enabled = document.getElementById('am-trusted-authors-enabled');
+      const permission = document.getElementById('am-trusted-authors-require-github-permission');
+      const role = document.getElementById('am-trusted-authors-require-role');
+      const labels = document.getElementById('am-trusted-authors-exclude-labels');
+      const repos = document.getElementById('am-trusted-authors-repos');
+      markDirty('auto-merge', 'trusted_authors', {
+        enabled: !!(enabled && enabled.classList.contains('on')),
+        require_role: role ? role.value : 'merger',
+        require_github_permission: !!(permission && permission.classList.contains('on')),
+        exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
+        repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : []
+      });
     }
 
     function markDirtyPerspectives() {
@@ -42061,6 +42603,13 @@ function burnAreaChart() {
         if (row) row.remove();
         markDirtyTrustedBots();
       },
+      gh100: function (event, A) {
+        const isOn = this.classList.toggle('on');
+        this.setAttribute('aria-checked', isOn ? 'true' : 'false');
+        markDirtyTrustedAuthors();
+      },
+      gh101: function (event, A) { markDirtyTrustedAuthors(); },
+      gh102: function (event, A) { markDirtyTrustedAuthors(); },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();
@@ -42135,6 +42684,9 @@ function burnAreaChart() {
       gh43: function (event, A) { markDirty('budget','totalTokens',Number(this.value)); },
       gh44: function (event, A) { markDirty('budget','periodDays',Number(this.value)); },
       gh45: function (event, A) { markDirty('budget','criticalPct',Number(this.value)); },
+      gh85: function (event, A) { markDirty('budget','usd',Number(this.value)); },
+      gh86: function (event, A) { markDirty('budget','coinBudget',Number(this.value)); },
+      gh87: function (event, A) { const id=this.value==='coins'?'gov-budget-coin':'gov-budget-usd'; const el=document.getElementById(id); if(el) el.focus(); },
       gh48: function (event, A) { markDirty('sensing','ttlSeconds',Number(this.value)); },
       gh49: function (event, A) { markDirty('sensing','pullbackSeconds',Number(this.value)); },
       gh50: function (event, A) { markDirty('logging','maxSizeMB',Number(this.value)); },
@@ -42170,6 +42722,11 @@ function burnAreaChart() {
       wsExternalTimeoutChanged: function (event, A) { markWorkSourceDirty('external.timeout_seconds',Number(this.value)||0); },
       gh79: function (event, A) { wsWavefrontSetSource(this.value); },
       gh80: function (event, A) { wsWavefrontSetLocation(this.dataset.source || 'path', this.value); },
+      gh81: function (event, A) { markSentinelDirty('label', this.value.trim()); },
+      gh82: function (event, A) { markSentinelDirty('maxActions', Number(this.value) || 0); },
+      gh83: function (event, A) { markSentinelPathsFromText(this.value); },
+      gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
+      gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
 
   </script>

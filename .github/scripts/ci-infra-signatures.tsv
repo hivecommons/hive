@@ -18,6 +18,10 @@
 #                when that step printed nothing before it failed. A `go test
 #                -list` that exits 1 with no output never reached a test.
 #
+# upstream-download-5xx (2026-10-07, run 37638156130): a tool download from
+# github.com releases (curl -f in "Install just") got an HTTP 5xx - a transient
+# upstream outage. 4xx is deliberately NOT matched: a 404 is a wrong version pin.
+#
 # Every class below was observed on the self-hosted pool on 2026-09-29; the
 # fixtures under testdata/ci-infra/ are real excerpts from those jobs.
 
@@ -36,6 +40,7 @@ toolcache-clobbered	step	: (npm|node|go): command not found$
 runner-lost	annotation	The runner has received a shutdown signal
 test-list-empty	step	^##\[error\]go test -list produced no test functions
 test-list-empty	silent-step	\bgo test\b.*\s-list\b
+upstream-download-5xx	step	^curl: \(22\) The requested URL returned error: 5\d\d$
 
 # Reserved class `derived`: the job failed only to REPORT that other jobs
 # failed (v2 Tests' shard gate). Keep these rows last.
