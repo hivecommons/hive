@@ -1,0 +1,1 @@
+- Keep repository card names left-aligned next to the drag handle across built-in dashboard themes.

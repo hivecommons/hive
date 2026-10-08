@@ -1,0 +1,1 @@
+- Add a GitHub API budget governor that sheds optional eval sweeps and stretches eval cadence when core quota runs low.

@@ -4,8 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // hivecommons/hive#8000: every Repositories card was exactly as wide as every
@@ -82,7 +85,7 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 		// hivecommons/hive#10968: the header wraps instead of letting the
 		// auto-merge toggle and swarm chip overlap a long repo name.
 		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
-		".repo-name a { flex: 1 1 8rem; min-width: 0; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+		".repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
 		".repo-name .repo-automerge-toggle { margin-left: auto; }",
 		`<div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}"`,
 	} {
@@ -90,6 +93,7 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 			t.Errorf("index.html is missing %q", snippet)
 		}
 	}
+
 	for _, gone := range []string{
 		"display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto;",
 		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: grid;",
@@ -97,6 +101,34 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 	} {
 		if strings.Contains(html, gone) {
 			t.Errorf("repo card name can still be centred/clipped by the old header layout: %q", gone)
+		}
+	}
+}
+
+func TestRepoCardNameThemeCSSDoesNotRecenterHeader(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
+		".repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("index.html base repo-name rule is missing %q", snippet)
+		}
+	}
+
+	repoNameBlockRE := regexp.MustCompile(`(?s)([^{}]*\.repo-name[^{}]*)\{([^{}]*)\}`)
+	centeringRE := regexp.MustCompile(`(?i)(text-align\s*:\s*center|justify-content\s*:\s*center|margin\s*:\s*0\s+auto)`)
+	for _, th := range config.DashboardThemeCatalog() {
+		css, err := config.DashboardThemeCSS(th)
+		if err != nil {
+			t.Fatalf("theme %s CSS: %v", th.ID, err)
+		}
+		for _, match := range repoNameBlockRE.FindAllStringSubmatch(css, -1) {
+			selector := strings.TrimSpace(match[1])
+			body := strings.TrimSpace(match[2])
+			if centeringRE.MatchString(body) {
+				t.Fatalf("built-in theme %s recenters repo card name in selector %q: %s", th.ID, selector, body)
+			}
 		}
 	}
 }
