@@ -254,3 +254,75 @@ func TestLaneMergedBranchesWithoutPassContext(t *testing.T) {
 		t.Fatal("a transport without the lane capability is direct")
 	}
 }
+
+// #11023: a PR a sweep path rejects before the lane gate (not mergeable,
+// checks not green, held, draft) is still handed to the lane front-only, so a
+// red lane front leaves instead of holding the lane until the front timeout.
+// The path keeps its own reason and never merges; a lane error is only logged.
+func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
+	blocked := greenSelfPR(11)
+	blocked.mergeableState = "blocked"
+	red := greenSelfPR(12)
+	red.statusState = "pending"
+	held := greenSelfPR(13)
+	held.extraLabels = []string{"hold"}
+	draft := greenSelfPR(14)
+	draft.draft = true
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{blocked, red, held, draft}, &merged)
+	defer api.Close()
+	g := &laneGate{answer: func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		if req.Number == 12 {
+			return hgithub.LaneMergeResult{}, errors.New("lane record unwritable")
+		}
+		return laneAnswer(hgithub.LaneOutcomeLeft, `required check "build" finished as failure`)(ctx, req)
+	}}
+	c := newLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, g.gate, Options{})
+	for _, tc := range []struct {
+		number int
+		want   string
+	}{{11, "not-mergeable"}, {12, ""}, {13, "held"}, {14, "draft"}} {
+		event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", tc.number, false)
+		if err != nil || event.Number != 0 || reason == "" || (tc.want != "" && reason != tc.want) {
+			t.Fatalf("#%d: trySweepSelfAuthoredPR = %+v, %q, %v; want the path's own rejection %q", tc.number, event, reason, err, tc.want)
+		}
+	}
+	if len(g.reqs) != 4 {
+		t.Fatalf("lane requests = %+v, want one front-only request per rejected PR", g.reqs)
+	}
+	for i, req := range g.reqs {
+		if !req.FrontOnly || req.Authorize != nil || req.Repo != "acme/widget" || req.Path != hgithub.PRAuditPathSweep || req.Number != 11+i {
+			t.Fatalf("lane request %d = %+v, want a front-only sweep request without authorization", i, req)
+		}
+	}
+
+	queuedBlocked := greenLanePR(7)
+	queuedBlocked.mergeableState = "blocked"
+	queuedRed := greenLanePR(8)
+	queuedRed.statusState = "failure"
+	qapi := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{queuedBlocked, queuedRed}, &merged)
+	defer qapi.Close()
+	q := &laneGate{answer: laneAnswer(hgithub.LaneOutcomeLeft, "required check failed")}
+	c = newLaneSweepEngine(qapi.URL, config.MergeStrategyHiveSerialized, q.gate, Options{})
+	if _, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel); err != nil || reason != "not-mergeable" {
+		t.Fatalf("queued #7: reason = %q, err = %v; want not-mergeable", reason, err)
+	}
+	if _, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 8, hgithub.AutoMergeQueuedLabel); err != nil || reason == "" {
+		t.Fatalf("queued #8: reason = %q, err = %v; want the not-green rejection", reason, err)
+	}
+	if len(q.reqs) != 2 || !q.reqs[0].FrontOnly || q.reqs[0].Number != 7 || q.reqs[0].Path != hgithub.PRAuditPathQueue || !q.reqs[1].FrontOnly || q.reqs[1].Number != 8 {
+		t.Fatalf("queued lane requests = %+v", q.reqs)
+	}
+
+	direct := &laneGate{answer: func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+		t.Fatal("a direct repo must never consult the lane")
+		return hgithub.LaneMergeResult{}, nil
+	}}
+	c = newLaneSweepEngine(api.URL, config.MergeStrategyDirect, direct.gate, Options{})
+	if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 11, false); err != nil || reason != "not-mergeable" {
+		t.Fatalf("direct: reason = %q, err = %v", reason, err)
+	}
+	if len(merged) != 0 {
+		t.Fatalf("merge calls = %v, want none", merged)
+	}
+}

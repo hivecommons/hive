@@ -1013,8 +1013,17 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}
+	// Merge strategy (#10889): the single branch point, decided from
+	// configuration alone. A direct repo takes exactly today's path. A
+	// hive-serialized repo keeps every gate here and merges only through the
+	// lane; a behind PR goes to the lane, which brings only its front PR up
+	// to date (pinned to the evaluated head) instead of this unpinned update.
+	serialized, laneGate := c.serializedLane(displayRepo)
+	reject := func(reason string) (AutoMergeSweepEvent, string, error) {
+		return c.rejectBeforeLane(ctx, serialized, laneGate, owner, repo, number, pr, hgithub.PRAuditPathSweep, reason)
+	}
 	if pr.GetDraft() {
-		return AutoMergeSweepEvent{}, "draft", nil
+		return reject("draft")
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	lane, laneOK := c.sweepLaneForAuthor(author)
@@ -1029,10 +1038,10 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	selfLabels := labelNames(pr.Labels)
 	if c.isHeld(selfLabels) {
-		return AutoMergeSweepEvent{}, "held", nil
+		return reject("held")
 	}
 	if c.transport.IsExemptLabels(selfLabels) {
-		return AutoMergeSweepEvent{}, "exempt-label", nil
+		return reject("exempt-label")
 	}
 
 	evaluatedHeadSHA := ""
@@ -1043,12 +1052,6 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 
-	// Merge strategy (#10889): the single branch point, decided from
-	// configuration alone. A direct repo takes exactly today's path. A
-	// hive-serialized repo keeps every gate here and merges only through the
-	// lane; a behind PR goes to the lane, which brings only its front PR up
-	// to date (pinned to the evaluated head) instead of this unpinned update.
-	serialized, laneGate := c.serializedLane(displayRepo)
 	laneBehind := serialized && strings.EqualFold(pr.GetMergeableState(), "behind")
 
 	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
@@ -1063,7 +1066,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "updated-branch", nil
 	}
 	if mergeable != hgithub.MergeableYes && !laneBehind {
-		return AutoMergeSweepEvent{}, "not-mergeable", nil
+		return reject("not-mergeable")
 	}
 	baseBranch := ""
 	if pr.GetBase() != nil {
@@ -1083,7 +1086,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, err
 	}
 	if !green {
-		return AutoMergeSweepEvent{}, reason, nil
+		return reject(reason)
 	}
 
 	// Intent tier gate (#6258). The human merge lane never lets a PR reach
@@ -1216,6 +1219,32 @@ func (c *Engine) serializedLane(repo string) (bool, hgithub.SerializedLaneGate) 
 	}
 	strategy, gate := provider.SerializedLane()
 	return hgithub.SerializedStrategy(strategy, repo), gate
+}
+
+// rejectBeforeLane returns a sweep path's own rejection of pr. In a
+// hive-serialized repo the PR is first handed to the lane front-only
+// (#11023): when it is the current front, the lane re-evaluates it and lets
+// it leave with its own reason (for example a failed required check), so a
+// front the path stopped feeding does not hold the lane until the front
+// timeout. Any other PR is untouched, and the lane never merges here.
+func (c *Engine) rejectBeforeLane(ctx context.Context, serialized bool, gate hgithub.SerializedLaneGate, owner, repo string, number int, pr *gh.PullRequest, path, reason string) (AutoMergeSweepEvent, string, error) {
+	if !serialized {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
+	res, err := hgithub.RunSerializedLane(ctx, gate, hgithub.LaneMergeRequest{
+		Repo:      owner + "/" + repo,
+		Branch:    pr.GetBase().GetRef(),
+		Number:    number,
+		Path:      path,
+		FrontOnly: true,
+	})
+	switch {
+	case err != nil:
+		c.warn("automerge sweep: serialized lane could not re-evaluate a rejected PR", "repo", owner+"/"+repo, "pr", number, "reason", reason, "error", err)
+	case res.Outcome == hgithub.LaneOutcomeLeft:
+		c.info("automerge sweep: rejected PR left the serialized lane front", "repo", owner+"/"+repo, "pr", number, "reason", reason, "lane_reason", res.Reason)
+	}
+	return AutoMergeSweepEvent{}, reason, nil
 }
 
 // mergeThroughLane hands a PR that passed every gate of its sweep path to the
@@ -1402,8 +1431,14 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}
+	// Merge strategy (#10889): the single branch point, decided from
+	// configuration alone; see trySweepSelfAuthoredPR.
+	serialized, laneGate := c.serializedLane(displayRepo)
+	reject := func(reason string) (AutoMergeSweepEvent, string, error) {
+		return c.rejectBeforeLane(ctx, serialized, laneGate, owner, repo, number, pr, hgithub.PRAuditPathQueue, reason)
+	}
 	if pr.GetDraft() {
-		return AutoMergeSweepEvent{}, "draft", nil
+		return reject("draft")
 	}
 	labels := hgithub.ExtractPRLabels(pr.Labels)
 	if !hasLabel(labels, label) {
@@ -1413,10 +1448,10 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	// merger queued the PR — including the hold guard re-applying one because
 	// the branch moved while hold-gated — must stop the sweep, not race it.
 	if c.isHeld(labels) {
-		return AutoMergeSweepEvent{}, "held", nil
+		return reject("held")
 	}
 	if c.transport.IsExemptLabels(labels) {
-		return AutoMergeSweepEvent{}, "exempt-label", nil
+		return reject("exempt-label")
 	}
 
 	author := hgithub.SafeGetLogin(pr.GetUser())
@@ -1472,14 +1507,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, autoMergeReasonUntrustedMerger, nil
 	}
 
-	// Merge strategy (#10889): the single branch point, decided from
-	// configuration alone; see trySweepSelfAuthoredPR.
-	serialized, laneGate := c.serializedLane(displayRepo)
 	laneBehind := serialized && strings.EqualFold(pr.GetMergeableState(), "behind")
 
 	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
 	if mergeable != hgithub.MergeableYes && !laneBehind {
-		return AutoMergeSweepEvent{}, "not-mergeable", nil
+		return reject("not-mergeable")
 	}
 	baseBranch := ""
 	if pr.GetBase() != nil {
@@ -1499,7 +1531,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, reason, err
 	}
 	if !green {
-		return AutoMergeSweepEvent{}, reason, nil
+		return reject(reason)
 	}
 
 	// Approval desk (RFC #4000) for the trusted human merge-queue lane.

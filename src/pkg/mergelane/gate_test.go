@@ -380,3 +380,48 @@ func TestRESTGitHubWithoutClient(t *testing.T) {
 		}
 	}
 }
+
+func (h *harness) frontOnly(pr int) ghub.LaneMergeResult {
+	h.t.Helper()
+	res, err := h.lane.Merge(context.Background(), ghub.LaneMergeRequest{
+		Repo: testRepo, Branch: testBranch, Number: pr, Path: ghub.PRAuditPathSweep, Authorize: h.authorize, FrontOnly: true,
+	})
+	if err != nil {
+		h.t.Fatalf("Merge(#%d, front-only): %v", pr, err)
+	}
+	return res
+}
+
+// #11023: a path's front-only hand-off never enqueues or reads GitHub for a
+// PR that is not the front, and never merges the front, even a green one.
+func TestGateFrontOnlyNeverEnqueuesOrMerges(t *testing.T) {
+	h := newGateHarness(t)
+	h.f.addPR(1, "h1")
+	h.f.addPR(2, "h2")
+
+	expectGate(t, h.frontOnly(1), ghub.LaneOutcomeDeferred, ReasonNotAtFront)
+	if rec := h.record(); rec.Front != nil || len(rec.Waiting) != 0 || len(h.f.calls) != 0 {
+		t.Fatalf("lane = %+v, calls = %v; a front-only call must not record a PR or read GitHub", rec, h.f.calls)
+	}
+
+	h.f.setRun("h1", "build", "in_progress", "")
+	expectGate(t, h.gate(1), ghub.LaneOutcomeWaiting, "build (in_progress)")
+	expectGate(t, h.gate(2), ghub.LaneOutcomeDeferred, ReasonNotAtFront)
+	calls := len(h.f.calls)
+	expectGate(t, h.frontOnly(2), ghub.LaneOutcomeDeferred, ReasonNotAtFront)
+	if len(h.f.calls) != calls {
+		t.Fatalf("a front-only call for a waiter read GitHub: %v", h.f.calls[calls:])
+	}
+
+	h.f.pass("h1")
+	expectGate(t, h.frontOnly(1), ghub.LaneOutcomeWaiting, "no merge-path authorization")
+	if len(h.f.merges) != 0 || h.frontPR() != 1 {
+		t.Fatalf("merges = %v, front = #%d; a front-only call must never merge", h.f.merges, h.frontPR())
+	}
+
+	h.f.prs[1].Labels = []string{"hold"}
+	expectGate(t, h.frontOnly(1), ghub.LaneOutcomeLeft, "hold label")
+	if h.frontPR() != 2 {
+		t.Fatalf("front = #%d, want #2 after the held front left", h.frontPR())
+	}
+}
