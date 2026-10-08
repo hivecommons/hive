@@ -23,7 +23,7 @@ func TestDashboardRateLimitUIUsesRemainingSemantics(t *testing.T) {
 		"async function maybeRefreshGhRateLimits(ghRateLimits)",
 		"fetch('/api/gh-rate-limits', { cache: 'no-store' })",
 		"!status.resetPassed && !dueForPeriodicRefresh",
-		"function renderGitHubAPIBudgetPanel(ghRate, cardStyle, labelStyle, rowStyle)",
+		"function renderGitHubAPIBudgetPanel(ghRate)",
 		"id=\"gh-api-budget-panel\"",
 		"GitHub API budget (1h)",
 		"id=\"gh-api-budget-core-bar\"",

@@ -3521,6 +3521,19 @@
     .debug-quota-ok { color: var(--green); }
     .debug-quota-warn { color: var(--yellow); }
     .debug-quota-bad { color: var(--red); }
+    .gh-api-budget-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); }
+    .gh-api-budget-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
+    .gh-api-budget-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: var(--fs-sm); }
+    .gh-api-budget-strong { font-weight: 600; }
+    .gh-api-budget-bar { margin-top: var(--sp-3); height: 6px; }
+    .gh-api-budget-bar svg { display: block; width: 100%; height: 6px; }
+    .gh-api-budget-track { fill: var(--line); }
+    .gh-api-budget-fill.debug-quota-ok { fill: var(--green); }
+    .gh-api-budget-fill.debug-quota-warn { fill: var(--yellow); }
+    .gh-api-budget-fill.debug-quota-bad { fill: var(--red); }
+    .gh-api-budget-table-wrap { overflow: auto; margin-top: var(--sp-4); }
+    .gh-api-budget-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .gh-api-budget-empty { color: var(--muted); }
     @media (max-width: 640px) { .debug-headline-tokens { display: none; } }
     .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
@@ -24708,7 +24721,8 @@ function burnAreaChart() {
         };
       }).filter(Boolean);
     }
-    function renderGitHubAPIBudgetPanel(ghRate, cardStyle, labelStyle, rowStyle) {
+    function renderGitHubAPIBudgetPanel(ghRate) {
+
       ghRate = ghRate || {};
       const core = debugGhRateLimitStatus(ghRate.core || {});
       const etag = ghRate.etag_cache || ghRate.etagCache || {};
@@ -24717,17 +24731,19 @@ function burnAreaChart() {
       const etagTotal = hits + misses;
       const etagPct = etagTotal > 0 ? Math.round((hits / etagTotal) * 100) : 0;
       const top = (ghRate.top_consumers || ghRate.topConsumers || []).slice(0, 8);
-      const bar = `<div id="gh-api-budget-core-bar" style="margin-top:var(--sp-3);height:6px;background:var(--line);border-radius:3px;overflow:hidden"><div style="height:100%;width:${core.remainingPct}%;background:${core.remainingPct <= GH_RATE_CRITICAL_REMAINING_PCT ? 'var(--red)' : core.remainingPct <= GH_RATE_WARN_REMAINING_PCT ? 'var(--yellow)' : 'var(--green)'};border-radius:3px;transition:width 0.3s"></div></div>`;
+      const barWidth = Math.max(0, Math.min(100, core.remainingPct));
+      const bar = `<div id="gh-api-budget-core-bar" class="gh-api-budget-bar"><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="gh-api-budget-track" x="0" y="0" width="100" height="6" rx="3"/><rect class="gh-api-budget-fill ${core.headlineClass}" x="0" y="0" width="${barWidth}" height="6" rx="3"/></svg></div>`;
       const rows = top.map(c => `<tr><td>${esc(c.caller || 'unknown')}</td><td>${esc(c.endpoint || '')}</td><td>${Number(c.charged) || 0}</td><td>${Number(c.requests) || 0}</td><td>${Number(c.not_modified) || 0}</td><td>${Number(c.rate_limited) || 0}</td></tr>`).join('');
-      return `<div id="gh-api-budget-panel" style="${cardStyle}">
-        <div style="${labelStyle}">GitHub API budget (1h)</div>
-        <div style="${rowStyle}"><span>Core remaining</span><span style="font-weight:600">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
-        <div style="${rowStyle}"><span>ETag hit rate</span><span style="font-weight:600">${etagPct}%</span></div>
+      return `<div id="gh-api-budget-panel" class="gh-api-budget-card">
+        <div class="gh-api-budget-label">GitHub API budget (1h)</div>
+        <div class="gh-api-budget-row"><span>Core remaining</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
+        <div class="gh-api-budget-row"><span>ETag hit rate</span><span class="gh-api-budget-strong">${etagPct}%</span></div>
         ${bar}
-        <div style="overflow:auto;margin-top:var(--sp-4)">
-          <table id="gh-api-budget-consumers" style="width:100%;border-collapse:collapse;font-size:var(--fs-xs)">
+        <div class="gh-api-budget-table-wrap">
+          <table id="gh-api-budget-consumers" class="gh-api-budget-table">
             <thead><tr><th>Caller</th><th>Endpoint</th><th>Charged</th><th>Req</th><th>304</th><th>429</th></tr></thead>
-            <tbody>${rows || '<tr><td colspan="6" style="color:var(--muted)">No recent GitHub API traffic</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="6" class="gh-api-budget-empty">No recent GitHub API traffic</td></tr>'}</tbody>
+
           </table>
         </div>
       </div>`;
@@ -24844,7 +24860,8 @@ function burnAreaChart() {
         <div style="${cardStyle}" class="platform-diagnostics"><div style="${labelStyle}">Platform</div>${platformFactTiles(platform)}</div>
         ${renderQualityStatsCard(agents)}
         <div style="${cardStyle}"><div style="${labelStyle}">Agent States</div>${agentRows || '<div style="color:var(--muted);font-size:0.8rem">No agents</div>'}</div>
-        ${renderGitHubAPIBudgetPanel(ghRate, cardStyle, labelStyle, rowStyle)}
+        ${renderGitHubAPIBudgetPanel(ghRate)}
+
         <div style="${cardStyle}">
           <div style="${labelStyle}">GitHub API</div>
           <div style="${rowStyle}"><span>Identity</span><span>${ghIdentityBadge} ${esc(ghIdentityLabel)}</span></div>
