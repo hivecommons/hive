@@ -298,6 +298,10 @@ func publicKnowledgeFilter(facts []knowledge.Fact, tags []string) []knowledge.Fa
 		if len(tags) > 0 && !factHasAnyTag(f, tags) {
 			continue
 		}
+		// Only approved (current) knowledge is ever published (#11102).
+		if f.EffectiveState() != knowledge.StateApproved {
+			continue
+		}
 		out = append(out, f)
 	}
 	return out

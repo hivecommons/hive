@@ -325,20 +325,46 @@ func (k *KnowledgeAPI) CreateFact(ctx context.Context, req CreateFactRequest) er
 }
 
 // UpdateFactRequest is the payload for updating an existing fact.
+//
+// State and SupersededBy change a fact's lifecycle (#11102). On a local
+// vault (channel) they rewrite the fact's frontmatter; SupersededBy marks the
+// fact superseded and links both facts. Remote wiki layers only carry a
+// status, so State is forwarded as the status there and SupersededBy is
+// rejected.
 type UpdateFactRequest struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Type       string   `json:"type"`
-	Tags       []string `json:"tags"`
-	Status     string   `json:"status"`
-	Confidence float64  `json:"confidence"`
+	Title        string   `json:"title"`
+	Body         string   `json:"body"`
+	Type         string   `json:"type"`
+	Tags         []string `json:"tags"`
+	Status       string   `json:"status"`
+	Confidence   float64  `json:"confidence"`
+	State        string   `json:"state,omitempty"`
+	SupersededBy string   `json:"superseded_by,omitempty"`
 }
 
 // UpdateFact modifies an existing fact in the specified layer.
 func (k *KnowledgeAPI) UpdateFact(ctx context.Context, layer LayerType, slug string, req UpdateFactRequest) error {
+	if req.State != "" || req.SupersededBy != "" {
+		if v := k.vaultByName(string(layer)); v != nil {
+			return k.updateVaultLifecycle(v, slug, req)
+		}
+	}
+
 	client := k.clientForLayer(layer)
 	if client == nil {
 		return fmt.Errorf("layer %s has no configured endpoint", layer)
+	}
+	if req.SupersededBy != "" {
+		return fmt.Errorf("layer %s does not support supersession links; supersede facts in a local channel", layer)
+	}
+	if req.State != "" {
+		st, err := ParseLifecycleState(req.State)
+		if err != nil {
+			return err
+		}
+		if req.Status == "" {
+			req.Status = string(st)
+		}
 	}
 
 	update := pageUpdateRequest{
@@ -355,6 +381,35 @@ func (k *KnowledgeAPI) UpdateFact(ctx context.Context, layer LayerType, slug str
 	}
 
 	k.logger.Info("fact updated", "slug", slug, "layer", layer)
+	return nil
+}
+
+// updateVaultLifecycle applies a lifecycle change to a fact in a local vault.
+func (k *KnowledgeAPI) updateVaultLifecycle(v *FileStore, slug string, req UpdateFactRequest) error {
+	if req.SupersededBy != "" {
+		if req.State != "" {
+			st, err := ParseLifecycleState(req.State)
+			if err != nil {
+				return err
+			}
+			if st != StateSuperseded {
+				return fmt.Errorf("superseded_by requires state %q, got %q", StateSuperseded, st)
+			}
+		}
+		if err := v.Supersede(slug, req.SupersededBy); err != nil {
+			return fmt.Errorf("superseding fact %s: %w", slug, err)
+		}
+		k.logger.Info("fact superseded", "slug", slug, "superseded_by", req.SupersededBy, "channel", v.Name())
+		return nil
+	}
+	st, err := ParseLifecycleState(req.State)
+	if err != nil {
+		return err
+	}
+	if err := v.SetLifecycleState(slug, st); err != nil {
+		return fmt.Errorf("updating lifecycle of fact %s: %w", slug, err)
+	}
+	k.logger.Info("fact lifecycle updated", "slug", slug, "state", st, "channel", v.Name())
 	return nil
 }
 
