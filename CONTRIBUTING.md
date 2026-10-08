@@ -11,7 +11,7 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 - Not sure why the hive has not picked up your issue? It automatically works issues only from OWNER, MEMBER, and COLLABORATOR authors; anyone else waits for a maintainer to add `triage/accepted`. See [Reporter trust and escalation](GOVERNANCE.md#reporter-trust-and-escalation) for what those roles mean and how to escalate.
 - Pull requests are welcome too, and nothing above changes how they are reviewed.
 - Discuss design and review questions in public issues and pull requests so decisions remain public and searchable.
-- Follow the [KubeStellar Code of Conduct](CODE_OF_CONDUCT.md) and [Hive governance](GOVERNANCE.md).
+- Follow the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md), adopted in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [Hive governance](GOVERNANCE.md).
 - Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 - Extending Hive? Start with the [Integration guide](src/docs/integration-guide.md) for the current work source, ClankeR/Flue-style external execution, and Spektacular Project Inception seams.
 
