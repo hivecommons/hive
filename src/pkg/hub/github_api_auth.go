@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -26,19 +27,23 @@ func hubGitHubToken() string {
 	return strings.TrimSpace(os.Getenv(hubGitHubTokenEnv))
 }
 
-// authGitHubRequest attaches the hub's GitHub identity to an api.github.com
-// request. Prefer the hub GitHub App installation token so polling spends the
-// installation quota; fall back to the legacy PAT only while operators roll
-// out the App env vars, and otherwise stay anonymous.
+// hubGitHubAuthTokenForRequest resolves the hub identity token for read-only
+// api.github.com calls. Prefer the hub GitHub App installation token so polling
+// spends the installation quota; fall back to the legacy PAT only while
+// operators roll out the App env vars, and otherwise stay anonymous.
+var hubGitHubAuthTokenForRequest = func(ctx context.Context) string {
+	if tok, err := hubGitHubAppToken(ctx, nil); err == nil && strings.TrimSpace(tok) != "" {
+		return strings.TrimSpace(tok)
+	}
+	return hubGitHubToken()
+}
+
+// authGitHubRequest attaches the hub's GitHub identity to an api.github.com request.
 func authGitHubRequest(req *http.Request) {
 	if req == nil {
 		return
 	}
-	if tok, err := hubGitHubAppToken(req.Context(), nil); err == nil && strings.TrimSpace(tok) != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-		return
-	}
-	if tok := hubGitHubToken(); tok != "" {
+	if tok := hubGitHubAuthTokenForRequest(req.Context()); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 }

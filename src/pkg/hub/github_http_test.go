@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -91,6 +92,18 @@ func TestAuthGitHubRequestFallsBackToPATWhenAppUnavailable(t *testing.T) {
 	authGitHubRequest(req)
 	if got := req.Header.Get("Authorization"); got != "Bearer pat-token" {
 		t.Fatalf("Authorization = %q, want PAT fallback", got)
+	}
+}
+
+func TestAuthGitHubRequestUsesInjectedResolver(t *testing.T) {
+	prev := hubGitHubAuthTokenForRequest
+	hubGitHubAuthTokenForRequest = func(_ context.Context) string { return "injected-token" }
+	t.Cleanup(func() { hubGitHubAuthTokenForRequest = prev })
+
+	req := httptest.NewRequest(http.MethodGet, "https://api.github.com/repos/hivecommons/hive", nil)
+	authGitHubRequest(req)
+	if got := req.Header.Get("Authorization"); got != "Bearer injected-token" {
+		t.Fatalf("Authorization = %q, want injected token", got)
 	}
 }
 

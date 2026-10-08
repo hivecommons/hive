@@ -47,6 +47,7 @@ var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
 var mintHubFeedbackAppToken = func(ctx context.Context, s *HubServer, hiveID string) (string, string) {
 	return s.feedbackAppIssueToken(ctx, hiveID)
 }
+var hubFeedbackAuthoringHTTPClient = func() *http.Client { return http.DefaultClient }
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -231,7 +232,7 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req.CredentialLogin = hubGitHubLoginForMention(botLogin)
-	result, warning, err := createHubFeedbackIssue(r.Context(), hubGitHubHTTPClient(), token, req, feedbackGitHubAPIBase)
+	result, warning, err := createHubFeedbackIssue(r.Context(), hubFeedbackAuthoringHTTPClient(), token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
 		if s.logger != nil {
