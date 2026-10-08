@@ -128,7 +128,9 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 		allFacts = append(allFacts, facts...)
 	}
 
-	merged := p.mergeWithPrecedence(allFacts)
+	// Filter after the precedence merge so a higher-precedence layer that
+	// deprecates a slug hides it rather than surfacing a lower layer's copy.
+	merged := FilterByLifecycle(p.mergeWithPrecedence(allFacts), p.config.IncludeStates)
 	reranked := p.rerankFisherRao(query, merged)
 	prioritized := p.applyPriority(reranked)
 
@@ -283,6 +285,9 @@ func (p *Primer) expandWithGraph(facts []Fact) []Fact {
 			slugSet[relSlug] = true
 			for _, ls := range p.fileStores {
 				if relFact, err := ls.store.ReadPage(relSlug); err == nil {
+					if !lifecycleAllowed(relFact.EffectiveState(), p.config.IncludeStates) {
+						break
+					}
 					relFact.Confidence *= graphExpansionConfidenceDecay
 					relFact.Layer = ls.layerType
 					expanded = append(expanded, *relFact)
