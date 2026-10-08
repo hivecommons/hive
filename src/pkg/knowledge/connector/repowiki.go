@@ -271,6 +271,16 @@ func parseRepoWikiFrontMatter(raw string) (map[string]string, string, error) {
 		return fm, norm, nil
 	}
 	lines := strings.Split(norm[len("---\n"):], "\n")
+	closed := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		return nil, "", fmt.Errorf("front matter is not closed with ---")
+	}
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "---" {
 			return fm, strings.TrimLeft(strings.Join(lines[i+1:], "\n"), "\n"), nil
