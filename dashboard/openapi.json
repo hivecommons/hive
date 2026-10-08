@@ -20611,6 +20611,106 @@
         }
       }
     },
+    "/api/review/pipeline/{owner}/{repo}/{number}/send-to-human": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Hand a review-pipeline PR to a human",
+        "description": "Applies the needs-human label to the PR and, once, posts the loop-safety comment explaining why the automated review loop stopped. Merger or owner role required. Idempotent: a PR that already carries the marker comment only gets the label refreshed.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository owner."
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository name."
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the PR is handed to a human; defaults to the loop-safety cap wording."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PR labelled and comment posted (or already present)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "sent_to_human"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "posted": {
+                      "type": "boolean",
+                      "description": "true when this call posted the loop-safety comment; false when it was already present."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository, PR number or JSON body"
+          },
+          "403": {
+            "description": "Merger/owner role required, authenticated user required, or repository not managed by this hive"
+          },
+          "502": {
+            "description": "GitHub label or comment write failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
     "/api/review/outcomes": {
       "get": {
         "tags": [

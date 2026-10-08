@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/pipeline"
@@ -137,7 +137,7 @@ const reviewLoopMarker = "<!-- hive-review-loop -->"
 
 func reviewLoopComment(reason, user string) string {
 	return reviewLoopMarker + "\n## Sent to a human\n\nThe automatic review/fix loop is stopping here: " +
-		reason + ". @" + user + " handed this PR to a human with the `" + escalation.NeedsHumanLabel + "` label."
+		reason + ". @" + user + " handed this PR to a human with the `" + config.DefaultNeedsHumanLabel + "` label."
 }
 
 // handleReviewPipelineSendToHuman serves
@@ -189,8 +189,8 @@ func (s *Server) handleReviewPipelineSendToHuman(w http.ResponseWriter, r *http.
 	}
 
 	gh := s.deps.GHClient
-	if err := gh.AddLabels(r.Context(), repo, number, []string{escalation.NeedsHumanLabel}); err != nil {
-		jsonError(w, fmt.Sprintf("applying %s: %v", escalation.NeedsHumanLabel, err), http.StatusBadGateway)
+	if err := gh.AddLabels(r.Context(), repo, number, []string{config.DefaultNeedsHumanLabel}); err != nil {
+		jsonError(w, fmt.Sprintf("applying %s: %v", config.DefaultNeedsHumanLabel, err), http.StatusBadGateway)
 		return
 	}
 	posted, err := gh.IssueCommentsContain(r.Context(), repo, number, reviewLoopMarker)
@@ -209,7 +209,7 @@ func (s *Server) handleReviewPipelineSendToHuman(w http.ResponseWriter, r *http.
 		"status": "sent_to_human",
 		"repo":   repo,
 		"number": number,
-		"label":  escalation.NeedsHumanLabel,
+		"label":  config.DefaultNeedsHumanLabel,
 		"posted": !posted,
 	})
 }
