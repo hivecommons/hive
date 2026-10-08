@@ -539,7 +539,7 @@ func TestFrontTimeout(t *testing.T) {
 		if rec.Front == nil || rec.Front.PR != 2 {
 			t.Fatalf("front = %+v, want #2 after the timeout", rec.Front)
 		}
-		if rec.LastExit == nil || rec.LastExit.PR != 1 || !strings.Contains(rec.LastExit.Reason, "within 1h0m0s") {
+		if rec.LastExit == nil || rec.LastExit.PR != 1 || !strings.Contains(rec.LastExit.Reason, "front timeout after 1h0m0s") {
 			t.Fatalf("last exit = %+v", rec.LastExit)
 		}
 		expectOutcome(t, h.acquire(1), OutcomeDeferred, ReasonNotAtFront)
@@ -558,7 +558,7 @@ func TestFrontTimeout(t *testing.T) {
 		h.now = h.now.Add(4 * time.Minute)
 		expectOutcome(t, h.advance(1), OutcomeDeferred, ReasonNotAtFront)
 		exits := h.eventsFor(ActionFrontExit)
-		if len(exits) != 1 || !strings.Contains(exits[0].Reason, "within 10m0s") {
+		if len(exits) != 1 || !strings.Contains(exits[0].Reason, "front timeout after 10m0s") {
 			t.Fatalf("exit audit = %+v", exits)
 		}
 	})
