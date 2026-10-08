@@ -436,6 +436,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or contributor-authored, in one ranked order with the reasons for each
 	// position. Read-only; paged like /api/v1/queue (#6537).
 	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
+	// Review pipeline (#11086): the same queue, one card per PR placed in its
+	// review stage (unreviewed … approved) with reviewers, severity counts,
+	// loop counter and next action. Read-only; paged like /api/review/queue.
+	s.mux.HandleFunc("GET /api/review/pipeline", s.handleReviewPipeline)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)

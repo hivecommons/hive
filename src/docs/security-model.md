@@ -212,6 +212,8 @@ Security documentation that only lists strengths is marketing. The current, deli
 - **DCO is policy-driven** inside hive; enforce it repo-side (DCO check) for a hard guarantee.
 - **Shared-container execution remains a material risk.** Per-UID isolation reduces cross-agent access but is not equivalent to per-run containers or microVMs; see the residual-risks discussion in [security-threat-model.md](security-threat-model.md).
 
+Review evidence: the per-PR [review evidence bundle](review-evidence.md) is a hashed, optionally Ed25519-signed record of what Hive reviewed and why it merged. It is evidence, not certification; see the [SOC 2 control mapping](soc2-control-mapping.md) for what it does and does not show.
+
 ## Reporting vulnerabilities
 
 Do not report suspected vulnerabilities in public issues, pull requests, or discussions. Follow the repository Security Policy: use GitHub private vulnerability reporting from the repository **Security** tab, or contact a maintainer directly if private reporting is unavailable. Include the affected component, branch/commit, impact, reproduction steps, and any relevant logs or configuration.

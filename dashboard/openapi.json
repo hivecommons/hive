@@ -20403,6 +20403,214 @@
         }
       }
     },
+    "/api/review/pipeline": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review pipeline stage per PR",
+        "description": "One card per review-queue PR, placed in its review pipeline stage (unreviewed, reviewing, changes_requested, fixing, human_hold, approved, merged, abandoned) by the pure pkg/review/pipeline derivation, with since, reviewers, P0-P3 severity counts, loop count vs cap, the next action and the reasons. Reads only the last enumeration snapshot, the review verdict artifact, the review dispatch state and the review-links ledger, so a request never calls GitHub. Keeps review-queue order; repo and stage filter before paging with limit/offset.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only PRs in this repository (owner/repo or bare name)."
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unreviewed",
+                "reviewing",
+                "changes_requested",
+                "fixing",
+                "human_hold",
+                "approved",
+                "merged",
+                "abandoned"
+              ]
+            },
+            "description": "Only cards in this pipeline stage."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of cards to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of review pipeline cards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "snapshot_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "cards": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "hive_authored": {
+                            "type": "boolean"
+                          },
+                          "ci_state": {
+                            "type": "string"
+                          },
+                          "stage": {
+                            "type": "string",
+                            "enum": [
+                              "unreviewed",
+                              "reviewing",
+                              "changes_requested",
+                              "fixing",
+                              "human_hold",
+                              "approved",
+                              "merged",
+                              "abandoned"
+                            ]
+                          },
+                          "since": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "perspective": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "severity": {
+                            "type": "object",
+                            "properties": {
+                              "p0": {
+                                "type": "integer"
+                              },
+                              "p1": {
+                                "type": "integer"
+                              },
+                              "p2": {
+                                "type": "integer"
+                              },
+                              "p3": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "loop_count": {
+                            "type": "integer"
+                          },
+                          "loop_cap": {
+                            "type": "integer"
+                          },
+                          "next_action": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "reasons": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit, offset or stage"
+          },
+          "500": {
+            "description": "Review verdicts, dispatch state or review links unreadable"
+          }
+        }
+      }
+    },
     "/api/review/outcomes": {
       "get": {
         "tags": [
