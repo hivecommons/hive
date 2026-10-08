@@ -375,6 +375,36 @@ Engage pauses every agent that is currently running and is not `on_demand`. Agen
 
 Fixes #2953.
 
+## GitHub API quota
+
+Agents reach `api.github.com` through the Hive GitHub proxy, which injects the
+agent-scoped App installation token and records charged requests. The App
+installation quota is shared with the daemon's scan, merge, and maintenance
+loops, so the proxy enforces two safeguards:
+
+- `agents.github_api_hourly_cap` (default `300`) limits each agent to that many
+  charged GitHub API responses in a sliding one-hour window. A charged response
+  is any proxied response other than `304 Not Modified`; the proxy's own token
+  minting is not agent-attributed and is not counted. Set the value to `0` to
+  disable the fleet default, or set `agents.<name>.github_api_hourly_cap` to
+  override one agent (`0` disables that agent's cap).
+- `github.agent_reserve_floor` (default `400`) protects the shared core bucket.
+  When the latest rate-limit reading shows `core.remaining` below the floor,
+  agent read requests receive the same proxy `429` even if the agent has not
+  reached its personal cap. This keeps daemon merge/scan work from being
+  starved by agent polling.
+
+The proxy returns JSON shaped for the GitHub CLI:
+
+```json
+{"message":"hive: agent GitHub API hourly cap reached (N/cap); stop polling and continue with local work","documentation_url":"…docs/operator-reference.md#github-api-quota"}
+```
+
+It also sets `Retry-After` to when the one-hour window (or observed reset) can
+make progress, logs once at 80% of each agent window, and sends one
+stop-polling nudge per agent window. Hive-authored write relays are not
+agent-attributed and are not capped by this path.
+
 ## `HIVE_GITHUB_TOKEN` permissions
 
 `github.token: ${HIVE_GITHUB_TOKEN}` creates the main GitHub client when a GitHub

@@ -128,6 +128,7 @@ ioscan:
 # All behavior metadata (color, sort, keywords, etc.) is optional and auto-populated
 # for known agent names. New/custom agents should set these fields explicitly.
 agents:
+  # github_api_hourly_cap: 300            # Per-agent charged GitHub API responses/hour through the proxy; 0 disables.
   scanner:
     # id: scan-01                         # Stable internal key (defaults to YAML key)
     enabled: true
@@ -153,6 +154,7 @@ agents:
     # repos: [repo-one]                   # WHICH repos this agent serves. Omit (the default)
                                           #   for the whole hive. Naming repos makes the agent
                                           #   a specialist: handed work only on these, its
+    # github_api_hourly_cap: 200          # Optional per-agent override; 0 disables this agent's cap.
                                           #   $HIVE_REPO/$HIVE_REPOS follow, and writes to any
                                           #   other repo are REFUSED by the proxy and the
                                           #   hive-open-pr / hive-merge / hive-open-issue
@@ -683,6 +685,7 @@ github:
   # app_id: 12345
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
+  # agent_reserve_floor: 400              # Keep this many core requests reserved for daemon scan/merge paths.
 
 # Optional: OIDC token mint — issues short-lived scoped JWTs alongside the
 # GitHub App token, for in-process agent-credential consumers. Disabled by

@@ -2519,6 +2519,24 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 				core["observed_at"] = coreEntry.ObservedAt.Format(time.RFC3339)
 			}
 			result["core"] = core
+			result["etag_cache"] = map[string]any{
+				"hits":    limits.ETagCache.Hits,
+				"misses":  limits.ETagCache.Misses,
+				"entries": limits.ETagCache.Entries,
+			}
+			top := make([]map[string]any, 0, len(limits.TopConsumers))
+			for _, c := range limits.TopConsumers {
+				top = append(top, map[string]any{
+					"caller":       c.Caller,
+					"endpoint":     c.Endpoint,
+					"method":       c.Method,
+					"requests":     c.Requests,
+					"charged":      c.Charged,
+					"not_modified": c.NotModified,
+					"rate_limited": c.RateLimited,
+				})
+			}
+			result["top_consumers"] = top
 		}
 	}
 
