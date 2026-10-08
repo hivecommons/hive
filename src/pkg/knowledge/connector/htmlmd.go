@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 // richHTMLToMarkdown converts an HTML (or Confluence storage-format XHTML)
@@ -39,7 +40,9 @@ func richHTMLToMarkdown(src string, base *url.URL, pageID string) string {
 		return html.EscapeString(reCDATA.FindStringSubmatch(m)[1])
 	})
 	src = reSelfClose.ReplaceAllString(src, "<$1$2></$1>")
-	ctx := &html.Node{Type: html.ElementNode, Data: "body"}
+	// ParseFragment rejects a context node whose DataAtom does not match
+	// its Data, so both must be set for the body context.
+	ctx := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
 	nodes, err := html.ParseFragment(strings.NewReader(src), ctx)
 	if err != nil {
 		return ""
