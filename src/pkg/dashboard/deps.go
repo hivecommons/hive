@@ -23,6 +23,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -75,7 +76,11 @@ type Dependencies struct {
 	// inline (used by tests that construct a bare Dependencies).
 	RepoCost        *collect.RepoCostCollector
 	BeadSynthesizer *knowledge.BeadSynthesizer
-	BeadStores      map[string]*beads.Store
+	// KnowledgeConnectors runs the `knowledge.connectors` entries (#11069).
+	// Nil when none are configured; the connector API then reports an empty
+	// list.
+	KnowledgeConnectors *connector.Syncer
+	BeadStores          map[string]*beads.Store
 	// ChatResponder handles dashboard Hive Chat free-text messages that are
 	// not satisfied by local deterministic intents. Nil means no responder is
 	// configured, so /api/chat must return a visible unavailable message rather

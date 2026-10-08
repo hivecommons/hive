@@ -445,6 +445,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
 	s.mux.HandleFunc("PUT /api/config/write-surface", s.handleWriteSurfacePut)
+	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
+	s.registerKnowledgeConnectorRoutes()
 }
 
 var (

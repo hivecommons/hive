@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -164,6 +165,7 @@ type boot struct {
 
 	// bootKnowledge
 	gitSyncer            *knowledge.GitSyncer
+	knowledgeConnectors  *connector.Syncer
 	promotionScheduler   *knowledge.PromotionScheduler
 	quotaAccount         string
 	quotaPoolDir         string

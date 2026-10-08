@@ -51,6 +51,24 @@ func TestValidateKnowledgeConnectors(t *testing.T) {
 		{name: "scope secret", mutate: func(c *KnowledgeConnector) { c.Scope["api_token"] = "x" }, wantErr: ".scope.api_token looks like an inline secret"},
 		{name: "scope password", mutate: func(c *KnowledgeConnector) { c.Scope["Password"] = "x" }, wantErr: ".scope.Password looks like an inline secret"},
 		{name: "scope empty key", mutate: func(c *KnowledgeConnector) { c.Scope[" "] = "x" }, wantErr: ".scope has an empty key"},
+		{name: "valid confluence cloud", mutate: func(c *KnowledgeConnector) {
+			c.Type = "confluence"
+			c.Scope = map[string]string{"base_url": "https://acme.atlassian.net/wiki", "email": "bot@acme.example", "spaces": "ENG,OPS", "include_labels": "runbook"}
+			c.Auth = KnowledgeConnectorAuth{Env: "CONFLUENCE_API_TOKEN"}
+		}},
+		{name: "confluence inline api token", mutate: func(c *KnowledgeConnector) {
+			c.Type = "confluence"
+			c.Scope = map[string]string{"base_url": "https://wiki.acme.example", "api_token": "x"}
+		}, wantErr: ".scope.api_token looks like an inline secret"},
+		{name: "valid notion", mutate: func(c *KnowledgeConnector) {
+			c.Type = "notion"
+			c.Scope = map[string]string{"root_page_ids": "0123456789abcdef0123456789abcdef", "include_archived": "false"}
+			c.Auth = KnowledgeConnectorAuth{File: "/var/run/secrets/notion/token"}
+		}},
+		{name: "notion inline secret", mutate: func(c *KnowledgeConnector) {
+			c.Type = "notion"
+			c.Auth = KnowledgeConnectorAuth{Inline: map[string]any{"token": "secret_x"}}
+		}, wantErr: ".auth.token is not allowed: inline secrets are rejected"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

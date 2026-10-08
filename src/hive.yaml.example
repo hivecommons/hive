@@ -866,6 +866,26 @@ knowledge:
     # - name: style-guide
     #   url: https://example.com/style-guide.pdf   # Or file_path: /data/docs/guide.pdf
     #   layer: project                       # personal, project, org, or community
+  connectors:                                # Scheduled external sources → vault facts
+                                             # (docs/knowledge-connectors.md). Secrets only
+                                             # via auth.env / auth.file, never inline.
+    # - name: eng-wiki                       # Unique: lowercase letters, digits, dashes
+    #   type: confluence                     # Cloud + Data Center
+    #   layer: org
+    #   interval: 1h                         # Default 15m, minimum 1m
+    #   scope:
+    #     base_url: https://acme.atlassian.net/wiki
+    #     email: hive-bot@acme.com           # Cloud only (Basic auth with the API token)
+    #     spaces: ENG, OPS                   # And/or root_page_ids: 12345, 67890
+    #   auth:
+    #     env: CONFLUENCE_API_TOKEN          # Data Center: a personal access token
+    # - name: product-notes
+    #   type: notion                         # Share pages with the integration first
+    #   layer: project
+    #   scope:
+    #     root_page_ids: 1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6   # Optional; default: all shared pages
+    #   auth:
+    #     file: /var/run/secrets/notion/token
   bead_synthesizer:                          # Bead→wiki synthesis. ON BY DEFAULT — runs
                                              # hourly even when knowledge.enabled is false.
     # enabled: false                         # The only way to turn it off
