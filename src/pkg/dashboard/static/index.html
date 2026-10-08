@@ -23168,6 +23168,62 @@ function burnAreaChart() {
       if (typeof refreshVersionProgressSurfaces === 'function') refreshVersionProgressSurfaces();
     }
 
+    // ── Background-refresh stability (#11032) ──
+    // Status pushes repaint every section; these helpers keep the reader on
+    // the same content and keep refreshes away from fields being edited.
+    function isEditableElement(el) {
+      if (!el || el === document.body) return false;
+      if (el.isContentEditable) return true;
+      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+    }
+
+    // True when focus sits in a form field inside el, or a field inside el
+    // (other than those matching ignoreSelector) differs from its rendered default.
+    function sectionHoldsUserInput(el, ignoreSelector) {
+      if (!el) return false;
+      const active = document.activeElement;
+      if (isEditableElement(active) && el.contains(active)) return true;
+      const fields = el.querySelectorAll('input, textarea, select');
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        if (ignoreSelector && f.matches(ignoreSelector)) continue;
+        if (f.tagName === 'SELECT') {
+          for (let j = 0; j < f.options.length; j++) {
+            if (f.options[j].selected !== f.options[j].defaultSelected) return true;
+          }
+        } else if (f.type === 'checkbox' || f.type === 'radio') {
+          if (f.checked !== f.defaultChecked) return true;
+        } else if (f.type !== 'hidden' && f.value !== f.defaultValue) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Remember the topmost visible section and the reader's offset within it,
+    // so a repaint that resizes content above doesn't move them elsewhere.
+    function captureScrollAnchor() {
+      const anchor = { el: null, top: 0, scrollY: window.scrollY };
+      if (window.scrollY <= 0) return anchor;
+      const sections = document.querySelectorAll('[data-dashboard-section]');
+      for (let i = 0; i < sections.length; i++) {
+        const el = sections[i];
+        if (!el.getClientRects().length) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > 0) { anchor.el = el; anchor.top = rect.top; break; }
+      }
+      return anchor;
+    }
+
+    function restoreScrollAnchor(anchor) {
+      if (anchor.el && anchor.el.isConnected && anchor.el.getClientRects().length) {
+        const delta = anchor.el.getBoundingClientRect().top - anchor.top;
+        if (delta) window.scrollBy(0, delta);
+        return;
+      }
+      window.scrollTo(0, anchor.scrollY);
+    }
+
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
       // ── Stale-snapshot guard (#4348) ──────────────────────────────────
@@ -23192,7 +23248,7 @@ function burnAreaChart() {
         _lastStatusSeq = data.statusSeq;
       }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
-      const scrollY = window.scrollY;
+      const scrollAnchor = captureScrollAnchor();
       updateNavbarClockTimeZone(data);
       noteStatusPayloadTimestamp(data);
       noteAgentNowUpdate(data && data.timestamp);
@@ -23295,9 +23351,9 @@ function burnAreaChart() {
         }
       } else if (_ocSelectedAgent) {
         ocRenderAgentDetail(); ocUpdateFocusedState(); ocStartPanePoll();
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       } else {
-        if (!_hashScrollPending) window.scrollTo(0, scrollY);
+        if (!_hashScrollPending) restoreScrollAnchor(scrollAnchor);
       }
     }
 
@@ -23370,7 +23426,17 @@ function burnAreaChart() {
             wizard = renderInceptionModeSelect();
         }
       }
+      // Rebuilding the panel resets its own scroll and the campaign filters;
+      // carry both across so refreshes don't move the reader (#11032).
+      const panelScrollTop = panel.scrollTop;
+      const campaignFilters = {};
+      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
       panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
+      Object.keys(campaignFilters).forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
+      });
+      panel.scrollTop = panelScrollTop;
       renderCampaignsList();
       if (!_inceptionPollTimer) startInceptionPoll();
     }
@@ -23962,8 +24028,13 @@ function burnAreaChart() {
       } catch (e) { /* ignore poll errors */ }
 
       try {
-        // Don't clobber the textarea while the user is typing their idea
+        // Don't clobber the textarea while the user is typing their idea, nor
+        // any panel field that is focused or holds unsaved input (#11032);
+        // the next poll retries once the user is done.
         if (_inceptionState && _inceptionState.phase === 'capture' && !_inceptionState.idea_text) {
+          return;
+        }
+        if (sectionHoldsUserInput(document.getElementById('inception-panel'), '.campaigns-filters input')) {
           return;
         }
         const sr = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
@@ -28217,6 +28288,25 @@ function burnAreaChart() {
 
     var _initialVersionHash = null;
     var VERSION_CHECK_INTERVAL_MS = 60000;
+    var _versionReloadPending = false;
+    // Defer a version-triggered reload while the user is in a form field so
+    // the reload doesn't discard what they are typing (#11032).
+    function reloadForNewVersion() {
+      if (isEditableElement(document.activeElement)) {
+        if (!_versionReloadPending) {
+          _versionReloadPending = true;
+          document.addEventListener('focusout', function onFocusOut() {
+            setTimeout(function() {
+              if (isEditableElement(document.activeElement)) return;
+              document.removeEventListener('focusout', onFocusOut);
+              window.location.reload();
+            }, 0);
+          });
+        }
+        return;
+      }
+      window.location.reload();
+    }
     function startVersionCheck() {
       fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
         _initialVersionHash = d.hash || d.short || '';
@@ -28227,7 +28317,7 @@ function burnAreaChart() {
           var current = d.hash || d.short || '';
           if (_initialVersionHash && current && current !== _initialVersionHash) {
             console.log('[hive] version changed from', _initialVersionHash, 'to', current, '— reloading');
-            window.location.reload();
+            reloadForNewVersion();
           }
         }).catch(function() {});
       }, VERSION_CHECK_INTERVAL_MS);
