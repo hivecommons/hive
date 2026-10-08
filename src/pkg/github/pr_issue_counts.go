@@ -23,6 +23,8 @@ type PRIssueCounts struct {
 	Author       string `json:"author,omitempty"`
 	Basis        string `json:"basis,omitempty"`
 	WindowStart  string `json:"window_start,omitempty"`
+	Stale        bool   `json:"stale,omitempty"`
+	Status       string `json:"status,omitempty"`
 }
 
 // ComputePRIssueCounts fetches the hive-attributed number of merged pull
@@ -33,19 +35,26 @@ func (c *Client) ComputePRIssueCounts(ctx context.Context, repo, author string) 
 	return c.ComputePRIssueCountsSince(ctx, repo, author, time.Time{})
 }
 
+// ComputePRIssueCountsForRepos aggregates ComputePRIssueCounts across every
+// configured repository.
+func (c *Client) ComputePRIssueCountsForRepos(ctx context.Context, repos []string, author string) (*PRIssueCounts, error) {
+	return c.ComputePRIssueCountsForReposSince(ctx, repos, author, time.Time{})
+}
+
 // ComputePRIssueCountsSince is ComputePRIssueCounts scoped to outcomes that
 // landed no earlier than since. A zero since preserves the historical all-time
 // behavior.
 func (c *Client) ComputePRIssueCountsSince(ctx context.Context, repo, author string, since time.Time) (*PRIssueCounts, error) {
-	owner, repoName := c.splitRepo(repo)
+	return c.ComputePRIssueCountsForReposSince(ctx, []string{repo}, author, since)
+}
+
+// ComputePRIssueCountsForReposSince aggregates ComputePRIssueCountsSince across
+// every configured repository.
+func (c *Client) ComputePRIssueCountsForReposSince(ctx context.Context, repos []string, author string, since time.Time) (*PRIssueCounts, error) {
+	repos = uniqueNonEmpty(repos)
 	author = strings.TrimSpace(author)
-	mergedQualifier := fmt.Sprintf("repo:%s/%s type:pr is:merged", owner, repoName)
-	closedQualifier := fmt.Sprintf("repo:%s/%s type:issue is:closed", owner, repoName)
 	windowStart := ""
 	if !since.IsZero() {
-		day := since.UTC().Format("2006-01-02")
-		mergedQualifier += " merged:>=" + day
-		closedQualifier += " closed:>=" + day
 		windowStart = since.UTC().Format(time.RFC3339)
 	}
 	if author == "" {
@@ -53,17 +62,31 @@ func (c *Client) ComputePRIssueCountsSince(ctx context.Context, repo, author str
 			UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
 			Basis:       "hive-attributed",
 			WindowStart: windowStart,
+			Status:      "unavailable: missing hive author",
 		}, nil
 	}
 
-	merged, err := c.searchAuthorTotal(ctx, mergedQualifier, author)
-	if err != nil {
-		return nil, fmt.Errorf("counting merged PRs for %s/%s: %w", owner, repoName, err)
-	}
+	var merged, closed int
+	for _, repo := range repos {
+		owner, repoName := c.splitRepo(repo)
+		mergedQualifier := fmt.Sprintf("repo:%s/%s type:pr is:merged", owner, repoName)
+		closedQualifier := fmt.Sprintf("repo:%s/%s type:issue is:closed", owner, repoName)
+		if !since.IsZero() {
+			day := since.UTC().Format("2006-01-02")
+			mergedQualifier += " merged:>=" + day
+			closedQualifier += " closed:>=" + day
+		}
+		repoMerged, err := c.searchAuthorTotal(ctx, mergedQualifier, author)
+		if err != nil {
+			return nil, fmt.Errorf("counting merged PRs for %s/%s: %w", owner, repoName, err)
+		}
+		merged += repoMerged
 
-	closed, err := c.searchAuthorTotal(ctx, closedQualifier, author)
-	if err != nil {
-		return nil, fmt.Errorf("counting closed issues for %s/%s: %w", owner, repoName, err)
+		repoClosed, err := c.searchAuthorTotal(ctx, closedQualifier, author)
+		if err != nil {
+			return nil, fmt.Errorf("counting closed issues for %s/%s: %w", owner, repoName, err)
+		}
+		closed += repoClosed
 	}
 
 	return &PRIssueCounts{
@@ -73,6 +96,7 @@ func (c *Client) ComputePRIssueCountsSince(ctx context.Context, repo, author str
 		Author:       author,
 		Basis:        "hive-attributed",
 		WindowStart:  windowStart,
+		Status:       "fresh",
 	}, nil
 }
 
@@ -95,6 +119,9 @@ func (c *Client) searchAuthorTotal(ctx context.Context, baseQualifier, author st
 			return 0, err
 		}
 		accepted++
+		if total > 0 {
+			return total, nil
+		}
 		if total > best {
 			best = total
 		}
@@ -111,9 +138,28 @@ func authorQualifiers(author string) []string {
 		return nil
 	}
 	if strings.HasSuffix(strings.ToLower(author), "[bot]") {
-		return []string{"author:" + author}
+		slug := strings.TrimSuffix(author, "[bot]")
+		return []string{"author:app/" + slug, "author:" + author}
 	}
-	return []string{"author:" + author, "author:app/" + author}
+	return []string{"author:app/" + author, "author:" + author}
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 // searchTotal runs a GitHub search-issues query and returns the reported total
