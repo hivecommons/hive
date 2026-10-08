@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,9 +34,9 @@ type StablePromotionBuild struct {
 }
 
 type MaintainedHiveSummary struct {
-	ID               string `json:"id"`
-	ImageRef         string `json:"image_ref,omitempty"`
-	GitHash          string `json:"git_hash,omitempty"`
+	ID       string `json:"id"`
+	ImageRef string `json:"image_ref,omitempty"`
+	GitHash  string `json:"git_hash,omitempty"`
 	// Generation is the docker.yml run number of the build the hive is
 	// running (0 when unknown), so the promotion gate can accept a hive on a
 	// later candidate as smoke evidence for an older eligible build.
@@ -154,18 +155,21 @@ const stablePromotionRunPages = 5
 // stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
 // through stablePromotionRuns, which caches the answer.
 var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := hubGitHubHTTPClient()
 	var runs []stablePromotionWorkflowRun
 	for page := 1; page <= stablePromotionRunPages; page++ {
+		ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "stable_promotion"), 5*time.Second)
 		runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=%d&page=%d", githubAPIBase, stablePromotionRunsPerPage, page)
-		req, err := http.NewRequest(http.MethodGet, runsURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, runsURL, nil)
 		if err != nil {
+			cancel()
 			return runs
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		authGitHubRequest(req)
 		resp, err := client.Do(req)
 		if err != nil {
+			cancel()
 			logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
 			return runs
 		}
@@ -174,6 +178,7 @@ var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkfl
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body)
 		_ = resp.Body.Close()
+		cancel()
 		if resp.StatusCode != http.StatusOK {
 			logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
 			return runs

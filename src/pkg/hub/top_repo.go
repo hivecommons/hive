@@ -126,7 +126,7 @@ func topRepoRefreshDue(u *SaaSUser, now time.Time) bool {
 }
 
 func (s *HubServer) refreshUserTopRepo(ctx context.Context, u *SaaSUser, now time.Time) error {
-	resolver := topRepoResolver{client: &http.Client{Timeout: topRepoHTTPTimeout}}
+	resolver := topRepoResolver{client: hubGitHubHTTPClient()}
 	assoc, err := resolver.resolve(ctx, s.topRepoProfile(u))
 	if err != nil {
 		if errors.Is(err, errTopRepoNoData) {
@@ -451,6 +451,7 @@ func (r topRepoResolver) fetchUserOrgs(ctx context.Context, p topRepoProfile) ([
 }
 
 func topRepoRequest(ctx context.Context, method, target string, body io.Reader, p topRepoProfile) (*http.Request, error) {
+	ctx = hubGitHubCallerContext(ctx, "top_repo")
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, err
@@ -761,7 +762,7 @@ func (r topRepoResolver) httpClient() *http.Client {
 	if r.client != nil {
 		return r.client
 	}
-	return &http.Client{Timeout: topRepoHTTPTimeout}
+	return hubGitHubHTTPClient()
 }
 
 func (r topRepoResolver) now() time.Time {

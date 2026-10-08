@@ -96,10 +96,12 @@ func slowStartWrap(inner http.RoundTripper) http.RoundTripper {
 // caution window for the whole test binary (every later request through the
 // shared chain is spaced ~2s apart); call this in that test's Cleanup.
 func ResetRateLimitPacingForTest() {
-	sharedSlowStartState.mu.Lock()
-	sharedSlowStartState.cautiousUntil = time.Time{}
-	sharedSlowStartState.nextSlot = time.Time{}
-	sharedSlowStartState.mu.Unlock()
+	for _, st := range []*slowStartState{sharedSlowStartState, externalSlowStartState} {
+		st.mu.Lock()
+		st.cautiousUntil = time.Time{}
+		st.nextSlot = time.Time{}
+		st.mu.Unlock()
+	}
 }
 
 func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error) {
