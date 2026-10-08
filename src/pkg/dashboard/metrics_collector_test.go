@@ -404,15 +404,19 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		if !strings.Contains(q, "author:hive-bot[bot]") {
+		if !strings.Contains(q, "author:app/hive-bot") && !strings.Contains(q, "author:hive-bot[bot]") {
 			t.Fatalf("query missing hive author qualifier: %q", q)
 		}
 		total := 0
 		switch {
-		case strings.Contains(q, "type:pr"):
+		case strings.Contains(q, "repo:myorg/repo1") && strings.Contains(q, "type:pr"):
 			total = 8
-		case strings.Contains(q, "type:issue"):
+		case strings.Contains(q, "repo:myorg/repo1") && strings.Contains(q, "type:issue"):
 			total = 5
+		case strings.Contains(q, "repo:myorg/repo2") && strings.Contains(q, "type:pr"):
+			total = 13
+		case strings.Contains(q, "repo:myorg/repo2") && strings.Contains(q, "type:issue"):
+			total = 21
 		}
 		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
 	})
@@ -424,6 +428,7 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 		ghClient: ghpkg.NewClientForTest(srv.URL, "myorg", []string{"repo1"}, logger),
 		org:      "myorg",
 		repo:     "repo1",
+		repos:    []string{"repo1", "repo2"},
 		aiAuthor: "hive-bot[bot]",
 		logger:   logger,
 		metrics:  make(map[string]any),
@@ -434,11 +439,11 @@ func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected non-nil PR/issue counts")
 	}
-	if got.MergedPRs != 8 {
-		t.Errorf("MergedPRs = %d, want 8", got.MergedPRs)
+	if got.MergedPRs != 21 {
+		t.Errorf("MergedPRs = %d, want 21", got.MergedPRs)
 	}
-	if got.ClosedIssues != 5 {
-		t.Errorf("ClosedIssues = %d, want 5", got.ClosedIssues)
+	if got.ClosedIssues != 26 {
+		t.Errorf("ClosedIssues = %d, want 26", got.ClosedIssues)
 	}
 }
 

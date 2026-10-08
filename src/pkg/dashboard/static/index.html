@@ -17403,15 +17403,25 @@ function burnAreaChart() {
       return parts.join(' ');
     }
 
-    function costPerUnitDisplay(totalUSD, count, unitLabel) {
+    function costCountLabel(cost, count, unitLabel, outcomeWindow) {
+      if (!cost || !cost.count_available) return 'counts unavailable (GitHub rate-limited)';
+      const n = Number(count) || 0;
+      const stale = cost.count_stale ? ` · ${cost.count_status || 'stale'}` : '';
+      const window = outcomeWindow ? ` ${outcomeWindow}` : '';
+      return `${n.toLocaleString('en-US')} ${unitLabel}${window}${stale}`;
+    }
+
+    function costPerUnitDisplay(totalUSD, count, unitLabel, countsAvailable = true, countStatus = '') {
       const total = Number(totalUSD) || 0;
       const n = Number(count) || 0;
       if (!(total > 0)) return { value: '—', title: 'no cost records yet' };
+      if (!countsAvailable) return { value: '—', title: countStatus || 'counts unavailable (GitHub rate-limited)' };
       if (!(n > 0)) return { value: '—', title: `no ${unitLabel} yet` };
       const value = total / n;
+      const status = countStatus ? ` (${countStatus})` : '';
       return {
         value: fmtUSD(value),
-        title: `${fmtUSD(total)} ÷ ${n.toLocaleString('en-US')} ${unitLabel} = ${fmtUSD(value)}`,
+        title: `${fmtUSD(total)} ÷ ${n.toLocaleString('en-US')} ${unitLabel} = ${fmtUSD(value)}${status}`,
       };
     }
 
@@ -17793,9 +17803,11 @@ function burnAreaChart() {
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
       const allTimeCost = costAllTimeEstimate(est);
-      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs');
-      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues');
+      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs', cost.count_available, cost.count_status);
+      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues', cost.count_available, cost.count_status);
       const outcomeWindow = costOutcomeWindowLabel(cost, allTimeCost);
+      const prCountLabel = costCountLabel(cost, cost.merged_prs, 'hive-attributed merged PRs', outcomeWindow);
+      const issueCountLabel = costCountLabel(cost, cost.closed_issues, 'hive-attributed closed issues', outcomeWindow);
       const coinLabel = est.coin_label || '';
       const coinEquiv = Number(est.coin_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_usd)}` : '';
       const coinBudgetEquiv = Number(est.coin_budget_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_budget_usd)}` : '';
@@ -17813,8 +17825,8 @@ function burnAreaChart() {
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}
-            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${Number(cost.merged_prs || 0).toLocaleString('en-US')} hive-attributed merged PRs ${esc(outcomeWindow)}</div></div>
-            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${Number(cost.closed_issues || 0).toLocaleString('en-US')} hive-attributed closed issues ${esc(outcomeWindow)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${esc(prCountLabel)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${esc(issueCountLabel)}</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}

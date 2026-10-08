@@ -15,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -86,6 +87,9 @@ type costResponse struct {
 	CountWindowStart int64  `json:"count_window_start,omitempty"`
 	CountWindowEnd   int64  `json:"count_window_end,omitempty"`
 	CountUpdatedAt   string `json:"count_updated_at,omitempty"`
+	CountStatus      string `json:"count_status,omitempty"`
+	CountStale       bool   `json:"count_stale,omitempty"`
+	CountAvailable   bool   `json:"count_available"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -183,23 +187,24 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	resp.USDBudgetCoins = resp.Estimated.USDBudgetCoins
 
 	// --- Merged-PR / closed-issue counts (for cost-per-PR / cost-per-issue) ---
-	haveCountSnapshot := false
-	if s.deps != nil && s.deps.MetricsCollector != nil {
-		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); counts != nil {
-			haveCountSnapshot = true
-			resp.MergedPRs = counts.MergedPRs
-			resp.ClosedIssues = counts.ClosedIssues
-			resp.CountAuthor = counts.Author
-			resp.CountBasis = counts.Basis
-			resp.CountUpdatedAt = counts.UpdatedAt
-			if counts.WindowStart != "" {
-				if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
-					resp.CountWindowStart = t.UnixMilli()
-				}
+	if counts := s.costOutcomeCounts(); counts != nil {
+		resp.CountAvailable = true
+		resp.MergedPRs = counts.MergedPRs
+		resp.ClosedIssues = counts.ClosedIssues
+		resp.CountAuthor = counts.Author
+		resp.CountBasis = counts.Basis
+		resp.CountUpdatedAt = counts.UpdatedAt
+		resp.CountStatus = counts.Status
+		resp.CountStale = counts.Stale
+		if counts.WindowStart != "" {
+			if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
+				resp.CountWindowStart = t.UnixMilli()
 			}
 		}
+	} else {
+		resp.CountStatus = "counts unavailable (GitHub rate-limited)"
 	}
-	if !haveCountSnapshot && resp.CountWindowStart == 0 {
+	if !resp.CountAvailable && resp.CountWindowStart == 0 {
 		resp.CountWindowStart = s.costCountWindowStart()
 	}
 	resp.CountWindowEnd = time.Now().UnixMilli()
@@ -218,6 +223,98 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, resp)
+}
+
+func (s *Server) costOutcomeCounts() *ghpkg.PRIssueCounts {
+	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
+		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 && !counts.Stale {
+			return counts
+		}
+	}
+	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
+		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 {
+			return counts
+		}
+	}
+	if counts := s.persistedCostOutcomeCounts(); prIssueCountsTotal(counts) > 0 {
+		return counts
+	}
+	return nil
+}
+
+func (s *Server) persistedCostOutcomeCounts() *ghpkg.PRIssueCounts {
+	if s == nil || s.audit == nil {
+		return nil
+	}
+	c := s.audit.PRThroughputCounters()
+	merged, closed, since := s.persistedCostOutcomeCountsForConfiguredRepos(c)
+	if merged+closed == 0 {
+		return nil
+	}
+	author := ""
+	if s.deps != nil && s.deps.Config != nil {
+		author = s.deps.Config.EffectiveAIAuthor()
+	}
+	return &ghpkg.PRIssueCounts{
+		MergedPRs:    merged,
+		ClosedIssues: closed,
+		UpdatedAt:    since,
+		Author:       author,
+		Basis:        "persisted-pr-throughput",
+		WindowStart:  since,
+		Status:       "persisted",
+		Stale:        true,
+	}
+}
+
+func (s *Server) persistedCostOutcomeCountsForConfiguredRepos(c PRThroughputCounters) (merged, closed int, since string) {
+	repos := s.costConfiguredRepos()
+	if len(repos) == 0 || len(c.ByRepo) == 0 {
+		return actorMatrixCount(c.ByActor, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorHive),
+			actorMatrixCount(c.ByActor, prThroughputKindIssue, prThroughputRoleClosed, prThroughputActorHive),
+			c.Since
+	}
+	for _, repo := range repos {
+		rc := c.forRepo(repo)
+		merged += actorMatrixCount(rc.ByActor, prThroughputKindPR, prThroughputRoleMerged, prThroughputActorHive)
+		closed += actorMatrixCount(rc.ByActor, prThroughputKindIssue, prThroughputRoleClosed, prThroughputActorHive)
+		if since == "" || (rc.Since != "" && rc.Since < since) {
+			since = rc.Since
+		}
+	}
+	return merged, closed, since
+}
+
+func (s *Server) costConfiguredRepos() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	project := s.deps.Config.Project
+	seen := map[string]bool{}
+	var out []string
+	for _, repo := range project.Repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		if !strings.Contains(repo, "/") && project.Org != "" {
+			repo = config.QualifyRepo(project.Org, repo)
+		}
+		key := strings.ToLower(repo)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, repo)
+	}
+	return out
+}
+
+func actorMatrixCount(m PRThroughputActorMatrix, kind, role, actor string) int {
+	if m == nil || m[kind] == nil || m[kind][role] == nil {
+		return 0
+	}
+	return m[kind][role][actor]
 }
 
 func (s *Server) costCountWindowStart() int64 {
