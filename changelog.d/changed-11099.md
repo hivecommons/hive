@@ -1,0 +1,1 @@
+- Cache owner token identity lookups instead of hitting GET /user every heartbeat (#11099)
