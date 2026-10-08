@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -47,10 +48,12 @@ var (
 // stub the network round-trip; stub and restore it only while holding
 // commitOrderMu (commitAtOrAheadOfTarget captures it under that mutex).
 var fetchCommitCompareStatus = func(base, head string, logger *slog.Logger) (string, error) {
-	client := &http.Client{Timeout: commitCompareTimeout}
+	client := hubGitHubHTTPClient()
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "commit_order"), commitCompareTimeout)
+	defer cancel()
 	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
 		githubAPIBase, url.PathEscape(base), url.PathEscape(head))
-	req, err := http.NewRequest(http.MethodGet, compareURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, compareURL, nil)
 	if err != nil {
 		return "", err
 	}

@@ -89,6 +89,9 @@ func TestGitHubReadsCarryTheHubToken(t *testing.T) {
 	oldBase := githubAPIBase
 	githubAPIBase = srv.URL
 	t.Cleanup(func() { githubAPIBase = oldBase })
+	t.Setenv(hubGitHubAppIDEnv, "")
+	t.Setenv(hubGitHubInstallationIDEnv, "")
+	t.Setenv(hubGitHubAppKeyFileEnv, "")
 	t.Setenv(hubGitHubTokenEnv, "ghp_test")
 
 	if _, err := fetchCommitCompareCounts("aaa", "bbb", testChannelLogger()); err != nil {
@@ -110,6 +113,9 @@ func TestGitHubReadsCarryTheHubToken(t *testing.T) {
 // With no token configured the reads stay anonymous — no empty Bearer header,
 // which GitHub rejects with 401 rather than treating as unauthenticated.
 func TestGitHubReadsStayAnonymousWithoutToken(t *testing.T) {
+	t.Setenv(hubGitHubAppIDEnv, "")
+	t.Setenv(hubGitHubInstallationIDEnv, "")
+	t.Setenv(hubGitHubAppKeyFileEnv, "")
 	t.Setenv(hubGitHubTokenEnv, "  ")
 	req, _ := http.NewRequest(http.MethodGet, "http://example.invalid", nil)
 	authGitHubRequest(req)

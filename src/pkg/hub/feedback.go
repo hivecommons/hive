@@ -47,6 +47,7 @@ var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
 var mintHubFeedbackAppToken = func(ctx context.Context, s *HubServer, hiveID string) (string, string) {
 	return s.feedbackAppIssueToken(ctx, hiveID)
 }
+var hubFeedbackAuthoringHTTPClient = func() *http.Client { return http.DefaultClient }
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -231,7 +232,7 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req.CredentialLogin = hubGitHubLoginForMention(botLogin)
-	result, warning, err := createHubFeedbackIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase)
+	result, warning, err := createHubFeedbackIssue(r.Context(), hubFeedbackAuthoringHTTPClient(), token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
 		if s.logger != nil {
@@ -331,7 +332,7 @@ func (s *HubServer) handleFeedbackIssues(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	items, err := fetchHubFeedbackIssueStatuses(r.Context(), http.DefaultClient, feedbackGitHubAPIBase, token, refs)
+	items, err := fetchHubFeedbackIssueStatuses(r.Context(), hubGitHubHTTPClient(), feedbackGitHubAPIBase, token, refs)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("feedback: issue lookup failed", "hive", hiveID, "error", err)
@@ -529,6 +530,7 @@ func fetchHubFeedbackIssueStatuses(ctx context.Context, client *http.Client, api
 }
 
 func fetchHubFeedbackIssueStatus(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int) (feedbackIssueStatus, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_status")
 	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -706,6 +708,7 @@ func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, sub
 	}
 }
 func postHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo, title, body string, labels []string) (feedbackIssueResult, int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_issue")
 	payload := map[string]any{"title": title, "body": body}
 	if labels != nil {
 		payload["labels"] = labels
@@ -803,6 +806,7 @@ func putHubGitHubContent(ctx context.Context, client *http.Client, apiBase, toke
 	return dl, err
 }
 func putHubGitHubContentOnBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_upload")
 	payload := map[string]string{
 		"message": "Add feedback screenshot",
 		"content": base64.StdEncoding.EncodeToString(content),
@@ -868,6 +872,7 @@ func ensureHubGitHubBranch(ctx context.Context, client *http.Client, apiBase, to
 	return nil
 }
 func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u string, payload any, out any) (int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_json")
 	var body io.Reader
 	if payload != nil {
 		data, _ := json.Marshal(payload)
@@ -899,6 +904,7 @@ func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u st
 	return resp.StatusCode, nil
 }
 func postHubGitHubComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, body string) (string, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_comment")
 	payload := map[string]string{"body": body}
 	data, _ := json.Marshal(payload)
 	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", strings.TrimRight(apiBase, "/"), owner, repo, issue)
