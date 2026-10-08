@@ -21197,6 +21197,56 @@
         }
       }
     },
+    "/api/system-alerts/dismiss": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dismiss a plan-stall system alert",
+        "description": "Owner-only acknowledgement for a needs-human plan-stall banner. The replan lane may reassert the alert if the plan remains stalled.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or non-dismissible alert id"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
     "/api/feedback/nps/status": {
       "get": {
         "tags": [

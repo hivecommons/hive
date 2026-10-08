@@ -12140,12 +12140,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var bg = a.severity === 'error' ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'color-mix(in srgb, var(--yellow) 14%, transparent)';
         var border = a.severity === 'error' ? 'var(--red)' : 'var(--yellow)';
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
+        var dismiss = (a.id || '').indexOf('plan-stall-') === 0
+          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
+          : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
           + '<span style="font-size:1.3rem">⚠️</span>'
-          + '<span style="color:' + textColor + '">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
+          + '<span style="color:' + textColor + ';flex:1">' + linkifyGitHubRefs(a.message, window._githubBaseUrl) + '</span>'
+          + dismiss
           + '</div>';
       }).join('');
       stopSystemAlertLinkClicks(banner);
+    }
+
+    async function dismissSystemAlert(id) {
+      id = (id || '').trim();
+      if (!id) return;
+      try {
+        const resp = await fetch('/api/system-alerts/dismiss', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const last = window._lastStatus;
+        if (last && Array.isArray(last.systemAlerts)) {
+          last.systemAlerts = last.systemAlerts.filter(a => a.id !== id);
+          renderSystemAlerts(last.systemAlerts);
+        }
+        showToast('Alert dismissed', 'success');
+      } catch (err) {
+        showToast('Could not dismiss alert: ' + (err && err.message ? err.message : err), 'error');
+      }
     }
 
     async function submitGitHubInstallationID() {
@@ -25592,6 +25617,7 @@ function burnAreaChart() {
         case 'showTerminalKeyboardHint': e.stopPropagation(); showTerminalKeyboardHint(); break;
         case 'togglePin': togglePin(agent, el.dataset.pinType, el.dataset.unpin === 'true'); break;
         case 'resetRestarts': resetRestarts(agent); break;
+        case 'dismissSystemAlert': dismissSystemAlert(el.dataset.arg0 || ''); break;
         case 'deleteAgentFromConfig': deleteAgentFromConfig(agent); break;
         case 'ocRenameSidebarGroup': ocRenameSidebarGroup(el.dataset.group); break;
         case 'ocRemoveSidebarGroup': ocRemoveSidebarGroup(el.dataset.group); break;

@@ -2371,6 +2371,24 @@ func (s *Server) ClearSystemAlert(id string) {
 	}
 }
 
+// ClearSystemAlertsExcept removes alerts under prefix except the IDs present in
+// keep. Level-triggered alert producers use this to expire banners they did not
+// reassert in the current reconciliation pass.
+func (s *Server) ClearSystemAlertsExcept(prefix string, keep map[string]struct{}) {
+	s.systemAlertsMu.Lock()
+	defer s.systemAlertsMu.Unlock()
+	filtered := s.systemAlerts[:0]
+	for _, a := range s.systemAlerts {
+		if strings.HasPrefix(a.ID, prefix) {
+			if _, ok := keep[a.ID]; !ok {
+				continue
+			}
+		}
+		filtered = append(filtered, a)
+	}
+	s.systemAlerts = filtered
+}
+
 // SetHubBanner sets the hub admin banner displayed on the spoke dashboard. It is
 // called on every heartbeat that carries a banner, so it logs the first display
 // only when the banner ID actually changes (a new banner became active), not on
@@ -2438,6 +2456,32 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 
 	if s.logger != nil {
 		s.logger.Info("hub banner dismissed", "banner_id", body.ID, "by", username, "role", role)
+	}
+	jsonResponse(w, map[string]bool{"ok": true})
+}
+
+// handleSystemAlertDismiss lets an owner acknowledge a plan-stall/needs-human
+// banner after they have reviewed it. The replan lane remains level-triggered:
+// if the plan is still truly stalled on a later reconciliation pass, it can
+// reassert the alert; if the source issue disappeared, the pass clears it.
+func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		jsonError(w, "missing alert id", http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(body.ID, planning.ReplanAlertPrefix) {
+		jsonError(w, "only plan-stall alerts are dismissible", http.StatusBadRequest)
+		return
+	}
+	s.ClearSystemAlert(body.ID)
+	if s.logger != nil {
+		s.logger.Info("system alert dismissed", "alert_id", body.ID)
 	}
 	jsonResponse(w, map[string]bool{"ok": true})
 }
