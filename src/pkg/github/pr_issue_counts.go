@@ -2,7 +2,9 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -74,16 +76,31 @@ func (c *Client) ComputePRIssueCountsSince(ctx context.Context, repo, author str
 	}, nil
 }
 
+// searchAuthorTotal returns the best total across the author qualifiers. A
+// qualifier GitHub rejects as unsearchable (422, e.g. author:app/<login> when
+// no such App exists) contributes zero; the error is only returned when every
+// qualifier is rejected. Any other error fails the count immediately.
 func (c *Client) searchAuthorTotal(ctx context.Context, baseQualifier, author string) (int, error) {
 	best := 0
+	var rejected error
+	accepted := 0
 	for _, q := range authorQualifiers(author) {
 		total, err := c.searchTotal(ctx, baseQualifier+" "+q)
 		if err != nil {
+			var ghErr *gh.ErrorResponse
+			if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+				rejected = err
+				continue
+			}
 			return 0, err
 		}
+		accepted++
 		if total > best {
 			best = total
 		}
+	}
+	if accepted == 0 && rejected != nil {
+		return 0, rejected
 	}
 	return best, nil
 }
