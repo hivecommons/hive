@@ -45,10 +45,13 @@ compliance:
   frameworks: [soc2-type2]     # profile ids; default none
   posture_checks:
     interval: 1h               # 5m..168h; unset = 1h
+    window_days: 30            # look-back of the merged-PR checks; 1..90, unset = 30
+    history_days: 365          # posture-history retention; 30..1095, unset = 365
 ```
 
 Validation rejects unknown, malformed or duplicate framework ids and an
-interval outside 5 minutes–7 days, so a typo cannot leave you believing a
+interval outside 5 minutes–7 days (or a window / history retention outside
+the ranges above), so a typo cannot leave you believing a
 profile is being evaluated when it is not. Shipped profile ids:
 `soc2-type2`. FedRAMP Moderate and ISO 27001 Annex A profiles are follow-ups
 under [#11077](https://github.com/hivecommons/hive/issues/11077).
@@ -157,19 +160,48 @@ reference for what the registry evaluates.
 ## Posture checks catalogue
 
 Posture checks are continuous checks over what the hive actually *did*, not
-just how it is configured. The runner and its history store land in
-[#11079](https://github.com/hivecommons/hive/issues/11079); its cadence is
-`compliance.posture_checks.interval`. The designed catalogue:
+just how it is configured
+([#11079](https://github.com/hivecommons/hive/issues/11079)). While at least
+one framework is selected, the dashboard runs every check once a minute after
+start and then every `compliance.posture_checks.interval`; with no framework
+selected the runner stays idle. Each check records a result with `status`
+`pass`, `fail`, `skip` (the evidence is unavailable — for example no GitHub
+client or no repos configured — so nothing was asserted) or `error` (the
+evidence fetch failed), a short `detail`, the profile `control_ids` it
+evidences and `evidence_refs` (PR URLs, config file paths, doc links) an
+auditor can follow. Details never echo a secret value.
 
-| Check | Passes when | Evidence source |
-|---|---|---|
-| Non-author review | Every merge in the window had a review from someone other than the author | Audit log merge entries, review evidence bundles ([#11058](https://github.com/hivecommons/hive/issues/11058)) |
-| Owner does not self-merge | No owner also authored a PR that auto-merged | Audit log merge entries joined with PR authors |
-| Audit retention | Audit retention is at least the profile's floor (365 days for SOC 2) | Audit log configuration |
-| Agent confinement | Every agent backend runs confined (sandbox on, T1/T2 tier) | `agent_sandbox`, agent backend config |
-| Sentinel enabled | The sentinel sweep is on with no behaviours disabled | `sentinel` config, sentinel audit entries |
-| No credentials in config | No literal tokens or keys in `hive.yaml` or overlays; secrets come from env or mounted Secrets | Config scan |
-| Human-merge paths honoured | No PR touching `auto_merge.human_merge_paths` was merged by automation | Audit log merge entries |
+| Check id | Passes when | Controls (SOC 2) | Evidence source |
+|---|---|---|---|
+| `non_author_review` | Every PR merged in the last `window_days` had an approving, change-requesting or commenting review from someone other than its author | CC8.1, CC6.3 | GitHub merged-PR search and reviews |
+| `owner_not_auto_merge_author` | No dashboard owner (`dashboard.authorized_users` with the owner role) authored a PR that a bot merged in the window | CC6.3 | GitHub merged-PR search (merger is a bot) |
+| `audit_retention` | The audit log's retention (`audit.retention_days`, today the built-in 90 days) is at least the strictest floor of the selected profiles (365 days for SOC 2 CC7.2) | CC7.2 | [Audit log](audit-log.md#rotation-and-retention) |
+| `agent_confinement` | Every enabled agent runs at tier T2 or better: T1 = credential-free sandbox, T2 = proxy-injected GitHub credential (`HIVE_PROXY_INJECT_GH_AUTH`), T3 = unconfined. The floor becomes `agent_backends.min_confinement_tier` under [#11077](https://github.com/hivecommons/hive/issues/11077) | CC6.6, CC6.1 | Agent and sandbox config, process env |
+| `sentinel_enabled` | `sentinel.enabled` is on with no behaviour disabled and the sentinel label exists on every repo | CC6.8, CC7.1 | `sentinel` config, repo labels |
+| `no_secrets_in_config` | No secret-looking value in `hive.yaml`, the dashboard overlay, the runtime config or the per-agent overlays (the log scrubber's token patterns, PEM blocks, and literal values under credential-named keys such as `*_token`; `$ENV` references and paths are fine) | CC6.1 | Config file scan (file and line only) |
+| `dashboard_auth` | The dashboard is hub-proxied, enforces per-user login (`dashboard.authorized_users`) or requires the shared auth token | CC6.1, CC6.2 | `dashboard` config |
+| `hold_labels_exist` | The hive's hold label and the needs-human label exist on every repo, so a human can stop automation | CC8.1, CC7.3 | Repo labels |
+
+Results are appended to `/data/compliance-posture.jsonl`, so the history
+survives restarts and upgrades; runs older than
+`compliance.posture_checks.history_days` (and beyond a hard cap of 9000 runs)
+are pruned. When a check goes from `pass` to `fail` the hive writes a
+`compliance_posture_failed` [audit log](audit-log.md) entry naming the check,
+its controls and the detail; manual runs are audited as
+`compliance_posture_run`.
+
+- `GET /api/compliance/posture` (merger or owner) returns the catalogue, the
+  effective `interval`, `window_days` and `history_days`, and the `latest`
+  run. Add `?since=` (an RFC 3339 time, a `YYYY-MM-DD` date or a look-back
+  such as `168h`) for every run since then, oldest first (at most 1000, with
+  `truncated: true` when more matched).
+- `POST /api/compliance/posture/run` (merger or owner) runs one pass now and
+  returns it; `409` when no framework is selected or a pass is already
+  running.
+
+A passing posture check is evidence that the hive behaved as configured over
+the window; it is not an attestation that your organisation meets the
+control, and it is not a certification.
 
 ## Evidence exports and attestations
 
