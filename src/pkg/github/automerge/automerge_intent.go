@@ -2,10 +2,10 @@ package automerge
 
 import (
 	"context"
-	"fmt"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/beads"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 )
 
@@ -83,34 +83,7 @@ func (c *Engine) currentIntentGate() *IntentGate {
 // classification on a partial file list could miss a guardrail path, so the
 // caller must treat the error as "tier unknown" and fail closed.
 func ListChangedFiles(ctx context.Context, client *gh.Client, owner, repo string, pr *gh.PullRequest) ([]intent.ChangedFile, error) {
-	if client == nil || pr == nil {
-		return nil, fmt.Errorf("listing PR files: no client or PR")
-	}
-	number := pr.GetNumber()
-	var files []intent.ChangedFile
-	fileOpts := &gh.ListOptions{PerPage: 100}
-	for {
-		page, resp, err := client.PullRequests.ListFiles(ctx, owner, repo, number, fileOpts)
-		if err != nil {
-			return nil, fmt.Errorf("listing PR files: %w", err)
-		}
-		for _, f := range page {
-			files = append(files, intent.ChangedFile{
-				Filename:  f.GetFilename(),
-				Status:    f.GetStatus(),
-				Additions: f.GetAdditions(),
-				Deletions: f.GetDeletions(),
-			})
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		fileOpts.Page = resp.NextPage
-	}
-	if reported := pr.GetChangedFiles(); reported > len(files) {
-		return nil, fmt.Errorf("incomplete PR file list: GitHub reported %d changed files but API returned %d; intent alignment requires the complete changed-file list", reported, len(files))
-	}
-	return files, nil
+	return hgithub.ListPRChangedFiles(ctx, client, owner, repo, pr)
 }
 
 // selfMergeIntentGate answers whether the intent-tier policy lets the App

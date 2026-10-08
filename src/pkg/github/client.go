@@ -94,6 +94,7 @@ type Client struct {
 	mergePolicyMu             sync.RWMutex
 	allowUnprotectedBaseRepos map[string]bool
 	noCIAllowedRepos          map[string]bool
+	humanMergePaths           map[string][]string // auto_merge.human_merge_paths; see SetHumanMergePaths
 	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink

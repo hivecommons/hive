@@ -32,6 +32,8 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *github.Clie
 	ghClient.SetRequiredChecks(set)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
+	// The merge-request relay refuses PRs touching these paths (#11039).
+	ghClient.SetHumanMergePaths(cfg.AutoMerge.HumanMergePaths)
 	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())
 	return set, ok
 }
