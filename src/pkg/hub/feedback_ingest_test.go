@@ -2,6 +2,7 @@ package hub
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -58,13 +59,18 @@ func interceptFeedbackGitHub(t *testing.T, handler http.HandlerFunc) *feedbackGi
 	prevTransport := http.DefaultTransport
 	prevClientTransport := http.DefaultClient.Transport
 	prevLogin := lookupHubFeedbackTokenLogin
+	prevMint := mintHubFeedbackAppToken
 	http.DefaultTransport = capture
 	http.DefaultClient.Transport = nil
 	lookupHubFeedbackTokenLogin = func(string) string { return "" }
+	mintHubFeedbackAppToken = func(_ context.Context, _ *HubServer, _ string) (string, string) {
+		return "hub-app-token", "hub-bot"
+	}
 	t.Cleanup(func() {
 		http.DefaultTransport = prevTransport
 		http.DefaultClient.Transport = prevClientTransport
 		lookupHubFeedbackTokenLogin = prevLogin
+		mintHubFeedbackAppToken = prevMint
 	})
 	return capture
 }
@@ -142,7 +148,6 @@ func TestHubFeedbackIngestRejectsBeforeReachingGitHub(t *testing.T) {
 		{name: "hive id fails name check", body: `{"title":"t","description":"d","request_type":"bug","hive_id":"a/b"}`, bearer: good, status: http.StatusBadRequest, message: "invalid hive_id"},
 		{name: "bearer for another hive", body: feedbackValidBody, bearer: s.heartbeatKeyFor("h2"), status: http.StatusUnauthorized, message: "unauthorized"},
 		{name: "unregistered hive", body: `{"title":"t","description":"d","request_type":"bug","hive_id":"h9"}`, bearer: s.heartbeatKeyFor("h9"), status: http.StatusForbidden, message: "heartbeat first"},
-		{name: "no github token", mutate: func(s *HubServer) { s.envGitHubToken = "" }, body: feedbackValidBody, bearer: good, status: http.StatusServiceUnavailable, message: "GitHub token is not configured"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,15 +171,9 @@ func TestHubFeedbackIngestRejectsBeforeReachingGitHub(t *testing.T) {
 	}
 }
 
-func TestHubFeedbackIngestCreatesIssueWithHubToken(t *testing.T) {
+func TestHubFeedbackIngestCreatesIssueWithAppToken(t *testing.T) {
 	resetHubFeedbackRate(t)
 	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(77))
-	lookupHubFeedbackTokenLogin = func(token string) string {
-		if token != "hub-token" {
-			t.Fatalf("lookup token = %q want hub-token", token)
-		}
-		return "hub-bot"
-	}
 	s := npsTestHub("h1")
 	s.envGitHubToken = "hub-token"
 
@@ -197,8 +196,8 @@ func TestHubFeedbackIngestCreatesIssueWithHubToken(t *testing.T) {
 	if req.Method != http.MethodPost || req.URL.Path != "/repos/hivecommons/docs/issues" {
 		t.Fatalf("GitHub request = %s %s", req.Method, req.URL)
 	}
-	if got := req.Header.Get("Authorization"); got != "Bearer hub-token" {
-		t.Fatalf("Authorization = %q want the configured hub token", got)
+	if got := req.Header.Get("Authorization"); got != "Bearer hub-app-token" {
+		t.Fatalf("Authorization = %q want the minted App token", got)
 	}
 	var payload struct {
 		Title  string   `json:"title"`
@@ -219,7 +218,28 @@ func TestHubFeedbackIngestCreatesIssueWithHubToken(t *testing.T) {
 	}
 }
 
-func TestHubFeedbackIngestFallsBackToEnvToken(t *testing.T) {
+func TestHubFeedbackIngestRequiresAppTokenForAuthoring(t *testing.T) {
+	resetHubFeedbackRate(t)
+	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(5))
+	prevMint := mintHubFeedbackAppToken
+	mintHubFeedbackAppToken = func(_ context.Context, _ *HubServer, _ string) (string, string) { return "", "" }
+	t.Cleanup(func() { mintHubFeedbackAppToken = prevMint })
+	s := npsTestHub("h1")
+	s.envGitHubToken = "hub-token"
+
+	rec := feedbackIngest(s, feedbackValidBody, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if msg := feedbackIngestError(t, rec); !strings.Contains(msg, "GitHub App token is not configured") {
+		t.Fatalf("error = %q", msg)
+	}
+	if gh.count() != 0 {
+		t.Fatalf("GitHub was called without an App token: %d", gh.count())
+	}
+}
+
+func TestHubFeedbackIngestDoesNotUseEnvTokenForAuthoring(t *testing.T) {
 	resetHubFeedbackRate(t)
 	t.Setenv(hubGitHubTokenEnv, "  env-token  ")
 	gh := interceptFeedbackGitHub(t, feedbackCreatedHandler(5))
@@ -230,8 +250,8 @@ func TestHubFeedbackIngestFallsBackToEnvToken(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := gh.requests[0].Header.Get("Authorization"); got != "Bearer env-token" {
-		t.Fatalf("Authorization = %q want trimmed env token", got)
+	if got := gh.requests[0].Header.Get("Authorization"); got != "Bearer hub-app-token" {
+		t.Fatalf("Authorization = %q want minted App token", got)
 	}
 	if gh.requests[0].URL.Path != "/repos/hivecommons/hive/issues" {
 		t.Fatalf("default target repo path = %s", gh.requests[0].URL.Path)

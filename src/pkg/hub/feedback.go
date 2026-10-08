@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	ghauth "github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -42,6 +44,9 @@ const (
 
 var feedbackGitHubAPIBase = "https://api.github.com"
 var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
+var mintHubFeedbackAppToken = func(ctx context.Context, s *HubServer, hiveID string) (string, string) {
+	return s.feedbackAppIssueToken(ctx, hiveID)
+}
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -219,16 +224,13 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	token := strings.TrimSpace(s.envGitHubToken)
-	if token == "" {
-		token = hubGitHubToken()
-	}
+	token, botLogin := mintHubFeedbackAppToken(r.Context(), s, hiveID)
 	if token == "" {
 		release()
-		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
+		npsJSONError(w, "hub GitHub App token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	req.CredentialLogin = hubGitHubLoginForMention(lookupHubFeedbackTokenLogin(token))
+	req.CredentialLogin = hubGitHubLoginForMention(botLogin)
 	result, warning, err := createHubFeedbackIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
@@ -244,6 +246,53 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, IssueNumber: result.Number, IssueURL: result.URL, Warning: warning})
+}
+
+func (s *HubServer) feedbackAppIssueToken(ctx context.Context, hiveID string) (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	var hive RegistryEntry
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if h.ID == hiveID {
+			hive = h
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if hive.ID == "" || hive.GitHubAppID == 0 || hive.GitHubInstallationID == 0 {
+		return "", ""
+	}
+	key := s.appKeysByAppID()[hive.GitHubAppID]
+	if key.PrivateKey == "" {
+		return "", ""
+	}
+	auth, err := ghauth.NewAppAuthFromPEM(hive.GitHubAppID, hive.GitHubInstallationID, []byte(key.PrivateKey), s.logger, hive.GitHubAPIURL)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("feedback: could not load hub GitHub App key", "hive", hiveID, "app_id", hive.GitHubAppID, "error", err)
+		}
+		return "", ""
+	}
+	token, _, err := auth.MintInstallationToken(ctx, nil)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("feedback: could not mint hub GitHub App token", "hive", hiveID, "app_id", hive.GitHubAppID, "installation_id", hive.GitHubInstallationID, "error", err)
+		}
+		return "", ""
+	}
+	slug := strings.TrimSpace(hive.GitHubAppSlug)
+	if slug == "" && hive.GitHubAppID == config.PublicGitHubAppID {
+		slug = config.DefaultGitHubAppSlug
+	}
+	if slug == "" {
+		slug = key.AppSlug
+	}
+	if slug == "" {
+		return strings.TrimSpace(token), ""
+	}
+	return strings.TrimSpace(token), slug + "[bot]"
 }
 
 func (s *HubServer) handleFeedbackIssues(w http.ResponseWriter, r *http.Request) {

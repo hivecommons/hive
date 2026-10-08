@@ -1,0 +1,1 @@
+- Author dashboard feedback issues as the submitter when possible, then the GitHub App, and never an operator PAT.
