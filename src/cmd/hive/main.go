@@ -1373,18 +1373,41 @@ func (b *boot) wireBootClosures() {
 		return out
 	}
 
+	var ownerHeartbeatTokenPath string
+	var ownerHeartbeatTokenMTime time.Time
+	var ownerHeartbeatTokenSize int64
+	var ownerHeartbeatLogin string
+	var ownerHeartbeatMu sync.Mutex
 	b.ownerForHeartbeat = func() string {
-		if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
-			tok := strings.TrimSpace(string(td))
-			if tok != "" {
-				// gh-user-token is a github.com OAuth token — validate its identity against github.com,
-				// not the (possibly GHE) repo host.
-				if u, err := github.ValidateToken(tok, b.cfg.GitHub.OAuthAPIURL()); err == nil {
-					return u.Login
+		ownerHeartbeatMu.Lock()
+		defer ownerHeartbeatMu.Unlock()
+		const tokenPath = "/data/gh-user-token"
+		st, err := os.Stat(tokenPath)
+		if err == nil && tokenPath == ownerHeartbeatTokenPath && st.ModTime().Equal(ownerHeartbeatTokenMTime) && st.Size() == ownerHeartbeatTokenSize {
+			return ownerHeartbeatLogin
+		}
+		ownerHeartbeatTokenPath = tokenPath
+		if err == nil {
+			ownerHeartbeatTokenMTime = st.ModTime()
+			ownerHeartbeatTokenSize = st.Size()
+		} else {
+			ownerHeartbeatTokenMTime = time.Time{}
+			ownerHeartbeatTokenSize = 0
+		}
+		ownerHeartbeatLogin = ""
+		if err == nil {
+			if td, err := os.ReadFile(tokenPath); err == nil {
+				tok := strings.TrimSpace(string(td))
+				if tok != "" {
+					// gh-user-token is a github.com OAuth token — validate its identity against github.com,
+					// not the (possibly GHE) repo host.
+					if u, err := github.ValidateTokenCached(tok, b.cfg.GitHub.OAuthAPIURL()); err == nil {
+						ownerHeartbeatLogin = u.Login
+					}
 				}
 			}
 		}
-		return ""
+		return ownerHeartbeatLogin
 	}
 
 	b.dashboardURLForHeartbeat = func() string {
