@@ -18826,6 +18826,106 @@
         }
       }
     },
+    "/api/compliance/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance control status",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Read-only; requires merger or owner role. Not a certification.",
+        "responses": {
+          "200": {
+            "description": "compliance.Report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "frameworks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "unknown_frameworks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "available": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "controls": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "posture_check_interval": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "meets": {
+                          "type": "integer"
+                        },
+                        "deviates": {
+                          "type": "integer"
+                        },
+                        "off": {
+                          "type": "integer"
+                        },
+                        "not_covered": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "controls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.ControlStatus: framework, control_id, title, citation, domain, status, not_covered, rationale, settings[] (setting_path, evaluator, current, recommended, status, builtin)"
+                      }
+                    },
+                    "profile_load_error": {
+                      "type": "string"
+                    },
+                    "posture_checks_pending": {
+                      "type": "boolean"
+                    },
+                    "posture_checks_tracking": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/acmm-recommendation": {
       "get": {
         "tags": [

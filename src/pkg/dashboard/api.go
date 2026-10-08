@@ -312,6 +312,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)
 	s.mux.HandleFunc("PUT /api/acmm-recommendation/repo-pin", s.handleACMMRepoPin)
 	s.mux.HandleFunc("GET /api/hive-advice", s.handleHiveAdvice)
+	s.mux.HandleFunc("GET /api/compliance/status", s.handleComplianceStatus)
 
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)

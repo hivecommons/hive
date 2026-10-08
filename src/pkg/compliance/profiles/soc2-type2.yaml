@@ -1,0 +1,232 @@
+# SOC 2 Type II — Hive control mapping (hivecommons/hive#11078).
+#
+# Control text below is a short paraphrase for orientation, NOT the AICPA's
+# wording; the authoritative criteria are the AICPA 2017 Trust Services
+# Criteria (with revised points of focus, 2022). Selecting this profile is
+# not a certification and does not make a hive "SOC 2 compliant": it shows
+# which Hive settings an operator's own control owners can point to as part
+# of THEIR controls, and whether those settings are currently in the
+# recommended posture. See src/docs/compliance.md.
+#
+# Every mapping's setting_path must be a key pkg/compliance knows how to read
+# (TestProfileSchema enforces it); evaluator must be one of the closed set in
+# pkg/compliance/evaluators.go. The mapping tables in docs/compliance.md are
+# rendered from this file by src/scripts/render-compliance-tables.py.
+id: soc2-type2
+name: SOC 2 Type II (Trust Services Criteria, Common Criteria)
+version: "2017 TSC (2022 points of focus)"
+controls:
+  # ── CC6 Logical and physical access ──────────────────────────────────────
+  - id: CC6.1
+    title: Logical access security over protected information assets
+    text: >-
+      Access to the system is restricted through logical access controls, and
+      credentials that grant access are protected.
+    citation: AICPA TSC 2017 CC6.1
+    domain: Access control
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: "2"
+        evaluator: max_owners
+      - setting_path: env.HIVE_PROXY_INJECT_GH_AUTH
+        recommended: "true"
+        evaluator: equals
+  - id: CC6.2
+    title: Registration and authorization of users before access is granted
+    text: >-
+      Users are registered and authorized by the entity before they are issued
+      credentials, and access is removed when no longer needed.
+    citation: AICPA TSC 2017 CC6.2
+    domain: Access control
+    rationale: >-
+      On a hub-proxied hive the hub's Manage Access screen is the registration
+      point and delivers this list; on a standalone spoke the list itself is
+      the gate. Either way an empty list means no named-user allowlist exists.
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+  - id: CC6.3
+    title: Role-based access, least privilege and segregation of duties
+    text: >-
+      Access is granted, changed and removed by role, following least
+      privilege, and incompatible duties are separated.
+    citation: AICPA TSC 2017 CC6.3
+    domain: Segregation of duties
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: "1"
+        evaluator: min_mergers
+      - setting_path: auto_merge.trusted_authors.enabled
+        recommended: "false"
+        evaluator: equals
+      - setting_path: auto_merge.trusted_authors.require_github_permission
+        recommended: "true"
+        evaluator: equals
+  - id: CC6.4
+    title: Physical access to facilities and protected information assets
+    text: >-
+      Physical access to facilities, data centres and media is restricted to
+      authorized personnel.
+    citation: AICPA TSC 2017 CC6.4
+    domain: Access control
+    not_covered: true
+    rationale: >-
+      Hive is software running on infrastructure the operator chooses. Physical
+      security belongs to the operator's hosting provider and facilities
+      controls; no Hive setting can evidence it.
+  - id: CC6.6
+    title: Protection against threats from outside system boundaries
+    text: >-
+      Logical access security measures protect the system against threats from
+      sources outside its boundaries.
+    citation: AICPA TSC 2017 CC6.6
+    domain: Access control
+    mappings:
+      - setting_path: agent_sandbox.enabled
+        recommended: "true"
+        evaluator: equals
+  - id: CC6.8
+    title: Prevention and detection of unauthorized or malicious software
+    text: >-
+      Controls prevent or detect and act upon the introduction of unauthorized
+      or malicious software.
+    citation: AICPA TSC 2017 CC6.8
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: "true"
+        evaluator: equals
+      - setting_path: sentinel.disabled_behaviors
+        recommended: none
+        evaluator: empty
+  # ── CC7 System operations ────────────────────────────────────────────────
+  - id: CC7.1
+    title: Detection of configuration changes that introduce vulnerabilities
+    text: >-
+      Detection and monitoring procedures identify changes to configurations
+      that result in new vulnerabilities, and susceptibilities to newly
+      discovered vulnerabilities.
+    citation: AICPA TSC 2017 CC7.1
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: "true"
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+  - id: CC7.2
+    title: Monitoring of system components for anomalies
+    text: >-
+      System components are monitored for anomalies indicative of malicious
+      acts, natural disasters and errors, and the anomalies are analysed.
+    citation: AICPA TSC 2017 CC7.2
+    domain: Logging & monitoring
+    rationale: >-
+      Audit retention is currently fixed in code (90 days, size-rotated); the
+      configurable audit.retention_days floor is tracked by the Compliance
+      epic (hivecommons/hive#11077), so this control reports a deviation until
+      it lands.
+    mappings:
+      - setting_path: audit.retention_days
+        recommended: "365"
+        evaluator: at_least
+      - setting_path: review.post_comments
+        recommended: "true"
+        evaluator: equals
+  - id: CC7.3
+    title: Evaluation of security events
+    text: >-
+      Security events are evaluated to determine whether they could or did
+      result in a failure to meet objectives, and if so are acted upon.
+    citation: AICPA TSC 2017 CC7.3
+    domain: Incident response
+    mappings:
+      - setting_path: escalation.disabled
+        recommended: "false"
+        evaluator: equals
+      - setting_path: sentinel.enabled
+        recommended: "true"
+        evaluator: equals
+  - id: CC7.4
+    title: Incident response
+    text: >-
+      Identified security incidents are responded to through a defined
+      programme to understand, contain, remediate and communicate them.
+    citation: AICPA TSC 2017 CC7.4
+    domain: Incident response
+    not_covered: true
+    rationale: >-
+      The incident-response programme is the operator's. Hive supplies tools
+      such a programme can use (pause, hold labels, sentinel alerts, the audit
+      log) but no setting can evidence that a programme exists or was followed.
+  - id: CC7.5
+    title: Recovery from identified security incidents
+    text: >-
+      Activities to recover from identified security incidents are identified,
+      developed and implemented.
+    citation: AICPA TSC 2017 CC7.5
+    domain: Incident response
+    not_covered: true
+    rationale: >-
+      Backup, restore and disaster recovery are run by the operator (see the
+      hub disaster-recovery guide); Hive has no setting that evidences a
+      tested recovery.
+  # ── CC8 Change management ────────────────────────────────────────────────
+  - id: CC8.1
+    title: Authorization, testing and approval of changes
+    text: >-
+      Changes to infrastructure, data, software and procedures are authorized,
+      designed, developed, configured, documented, tested, approved and
+      implemented in a controlled way.
+    citation: AICPA TSC 2017 CC8.1
+    domain: Change management
+    rationale: >-
+      Whether an automated review satisfies "approved" is a decision for the
+      organisation's own change-management policy, not for Hive. These
+      recommendations describe the conservative posture in which every merge
+      has an independent approval, CI evidence and a human on sensitive paths.
+    mappings:
+      - setting_path: review.require_approval
+        recommended: "true"
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.human_merge_paths
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.self_authored
+        recommended: "false"
+        evaluator: equals
+      - setting_path: acmm_level
+        recommended: "5"
+        evaluator: at_most
+  # ── CC9 Risk mitigation ──────────────────────────────────────────────────
+  - id: CC9.1
+    title: Mitigation of risks from potential business disruptions
+    text: >-
+      Risk mitigation activities are identified, selected and developed for
+      risks arising from potential business disruptions.
+    citation: AICPA TSC 2017 CC9.1
+    domain: Risk management
+    mappings:
+      - setting_path: tool_approval.enabled
+        recommended: "true"
+        evaluator: equals
+      - setting_path: acmm_level
+        recommended: "5"
+        evaluator: at_most
+  - id: CC9.2
+    title: Vendor and business partner risk
+    text: >-
+      Risks associated with vendors and business partners are assessed and
+      managed.
+    citation: AICPA TSC 2017 CC9.2
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Model providers, GitHub and the hosting platform are the operator's
+      vendors. Assessing them is the operator's vendor-management process;
+      Hive can only list which backends and gateways are configured.

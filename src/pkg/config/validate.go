@@ -138,6 +138,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}
+	if err := c.Compliance.Validate(); err != nil {
+		return err
+	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
 		return err
 	} else {
@@ -162,6 +165,26 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
+	}
+	apiReserve := c.GitHub.APIReserve
+	if apiReserve == 0 {
+		apiReserve = defaultGitHubAPIReserve
+	}
+	apiCritical := c.GitHub.APICritical
+	if apiCritical == 0 {
+		apiCritical = defaultGitHubAPICritical
+	}
+	if apiCritical >= apiReserve {
+		return fmt.Errorf("github.api_critical must be less than github.api_reserve")
+	}
+	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
+		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
+	}
+	if c.Governor.ConserveIntervalMultiplier < 0 {
+		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
+	}
+	if c.Governor.OptionalSweepEveryNCycles < 0 {
+		return fmt.Errorf("governor.optional_sweep_every_n_cycles must be at least 1")
 	}
 	if c.Governor.Budget.USD < 0 {
 		return fmt.Errorf("governor.budget.usd must be non-negative")

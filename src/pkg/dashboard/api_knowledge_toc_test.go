@@ -71,7 +71,7 @@ func TestKnowledgeTOCDefaultsToApprovedWithoutBodies(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if got, want := tocIDs(t, body), "current-gotcha,other-repo,org-wide-pattern"; got != want {
+	if got, want := tocIDs(t, body), "current-gotcha,org-wide-pattern,other-repo"; got != want {
 		t.Fatalf("ids = %s, want %s", got, want)
 	}
 	if body["total"] != float64(3) || body["truncated"] != false {
@@ -180,6 +180,8 @@ func TestKnowledgeEntryHonoursLifecycleAndScope(t *testing.T) {
 func TestKnowledgeTOCAndEntryWithoutDeps(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServerWithAuth(0, "", logger)
+	s.RegisterAPI(testDeps(t))
+	s.deps = nil
 	for _, target := range []string{"/api/knowledge/toc", "/api/knowledge/entry/x"} {
 		rec := httptest.NewRecorder()
 		s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))

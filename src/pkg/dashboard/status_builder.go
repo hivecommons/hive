@@ -277,6 +277,7 @@ func BuildFrontendStatus(
 	}
 
 	issueToMerge := buildIssueToMerge(metricsCollector)
+	ghRateLimits := buildGHRateLimits(ghClient, ctx, cfg)
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	health := buildHealth(ghClient, ctx)
@@ -302,7 +303,8 @@ func BuildFrontendStatus(
 		Health:              health,
 		Budget:              buildBudget(gov, tokenCollector),
 		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
-		GHRateLimits:        buildGHRateLimits(ghClient, ctx, cfg),
+		GHRateLimits:        ghRateLimits,
+		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
 		AgentMetrics:        agentMetrics,
 		Hold:                buildHold(actionable),
 		IssueToMerge:        issueToMerge,
@@ -2472,9 +2474,10 @@ func normalizeGHRateLimitForDisplay(entry github.RateLimitEntry, now time.Time) 
 
 func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config.Config) map[string]any {
 	result := map[string]any{
-		"core":      map[string]any{},
-		"alerts":    []any{},
-		"pullbacks": []any{},
+		"core":       map[string]any{},
+		"alerts":     []any{},
+		"pullbacks":  []any{},
+		"api_budget": map[string]any{"mode": "normal", "skipped_steps": []string{}},
 	}
 
 	authType := "token"
@@ -2497,6 +2500,7 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 	if ghClient != nil && ctx != nil {
 		limits, err := ghClient.RateLimits(ctx)
 		if err == nil && limits != nil {
+			result["api_budget"] = apiBudgetMap(limits.APIBudget)
 			now := time.Now()
 			coreEntry := normalizeGHRateLimitForDisplay(limits.Core, now)
 			core := map[string]any{
@@ -2905,4 +2909,34 @@ func buildReleaseLineLag() *FrontendReleaseLineLag {
 		}
 	}
 	return fn()
+}
+
+func apiBudgetMap(snapshot github.APIBudgetSnapshot) map[string]any {
+	mode := snapshot.Mode
+	if mode == "" {
+		mode = "normal"
+	}
+	out := map[string]any{
+		"mode":          mode,
+		"remaining":     snapshot.Remaining,
+		"limit":         snapshot.Limit,
+		"skipped_steps": append([]string(nil), snapshot.SkippedSteps...),
+	}
+	if !snapshot.Reset.IsZero() {
+		out["reset"] = snapshot.Reset.Format(time.RFC3339)
+	}
+	if !snapshot.Since.IsZero() {
+		out["since"] = snapshot.Since.Format(time.RFC3339)
+	}
+	return out
+}
+
+func apiBudgetFromRateLimits(rateLimits map[string]any) map[string]any {
+	if rateLimits == nil {
+		return map[string]any{"mode": "normal", "skipped_steps": []string{}}
+	}
+	if budget, ok := rateLimits["api_budget"].(map[string]any); ok {
+		return budget
+	}
+	return map[string]any{"mode": "normal", "skipped_steps": []string{}}
 }
