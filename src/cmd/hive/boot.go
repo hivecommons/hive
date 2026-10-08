@@ -202,6 +202,7 @@ type boot struct {
 	lastDuplicateSweep    time.Time
 	lastSupersessionSweep time.Time
 	lastIssueUnparkSweep  time.Time
+	lastSentinelSweep     time.Time
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

@@ -30,10 +30,63 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		ReviewReviewerAgents *[]string `json:"reviewReviewerAgents"`
 		ReviewFixerAgent     *string   `json:"reviewFixerAgent"`
 		AgentSandboxEnabled  *bool     `json:"agentSandboxEnabled"`
+		// Sentinel (suspicious-activity alerts) is pointer-typed per field
+		// so an absent key means "unchanged" — a save that only toggled a
+		// behavior must not wipe the sensitive-path list.
+		Sentinel *struct {
+			Enabled           *bool     `json:"enabled"`
+			Label             *string   `json:"label"`
+			SensitivePaths    *[]string `json:"sensitivePaths"`
+			DisabledBehaviors *[]string `json:"disabledBehaviors"`
+			ExemptLogins      *[]string `json:"exemptLogins"`
+			Repos             *[]string `json:"repos"`
+			MaxActions        *int      `json:"maxActions"`
+		} `json:"sentinel"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	var nextSentinel *config.SentinelConfig
+	if body.Sentinel != nil {
+		sc := s.deps.Config.Sentinel
+		if body.Sentinel.Enabled != nil {
+			v := *body.Sentinel.Enabled
+			sc.Enabled = &v
+		}
+		if body.Sentinel.Label != nil {
+			label := strings.TrimSpace(*body.Sentinel.Label)
+			if err := validateGovernorLabels([]string{label}); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			sc.Label = sanitizeString(label)
+		}
+		if body.Sentinel.SensitivePaths != nil {
+			// An empty list restores the shipped defaults (nil). Operators
+			// who want no path rule switch off the sensitive_path behavior.
+			sc.SensitivePaths = trimNonEmpty(*body.Sentinel.SensitivePaths)
+			if len(sc.SensitivePaths) == 0 {
+				sc.SensitivePaths = nil
+			}
+		}
+		if body.Sentinel.DisabledBehaviors != nil {
+			sc.DisabledBehaviors = trimNonEmpty(*body.Sentinel.DisabledBehaviors)
+		}
+		if body.Sentinel.ExemptLogins != nil {
+			sc.ExemptLogins = trimNonEmpty(*body.Sentinel.ExemptLogins)
+		}
+		if body.Sentinel.Repos != nil {
+			sc.Repos = trimNonEmpty(*body.Sentinel.Repos)
+		}
+		if body.Sentinel.MaxActions != nil {
+			sc.MaxActions = *body.Sentinel.MaxActions
+		}
+		if err := config.ValidateSentinel(sc); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		nextSentinel = &sc
 	}
 	if body.IoscanFailMode != nil {
 		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
@@ -86,6 +139,9 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.AgentSandboxEnabled != nil {
 		cfg.AgentSandbox.Enabled = *body.AgentSandboxEnabled
+	}
+	if nextSentinel != nil {
+		cfg.Sentinel = *nextSentinel
 	}
 
 	if err := s.saveConfig(); err != nil {
@@ -160,7 +216,45 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"sandboxedAgents":                  sandboxed,
 		"totalAgents":                      len(cfg.Agents),
 		"sandboxWarnings":                  sandboxWarnings,
+		"sentinel":                         sentinelSectionResponse(cfg.Sentinel),
 	}
+}
+
+// sentinelSectionResponse renders the suspicious-activity block. It sends
+// the EFFECTIVE sensitive-path list plus whether that list is the shipped
+// default, so the UI can show the defaults pre-filled and offer a reset.
+func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
+	rules := config.SentinelBehaviors()
+	behaviors := make([]map[string]interface{}, 0, len(rules))
+	disabled := map[string]bool{}
+	for _, d := range sc.DisabledBehaviors {
+		disabled[strings.ToLower(strings.TrimSpace(d))] = true
+	}
+	for _, r := range rules {
+		behaviors = append(behaviors, map[string]interface{}{
+			"name":        r.Name,
+			"description": r.Description,
+			"enabled":     !disabled[r.Name],
+		})
+	}
+	return map[string]interface{}{
+		"enabled":               sc.IsEnabled(),
+		"label":                 sc.LabelOrDefault(),
+		"sensitivePaths":        sc.EffectiveSensitivePaths(),
+		"sensitivePathsDefault": sc.SensitivePaths == nil,
+		"defaultSensitivePaths": config.DefaultSentinelSensitivePaths(),
+		"behaviors":             behaviors,
+		"exemptLogins":          nonNilStrings(sc.ExemptLogins),
+		"repos":                 nonNilStrings(sc.Repos),
+		"maxActions":            sc.MaxActionsOrDefault(),
+	}
+}
+
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 // credentialPostureWarnings returns config.ProxyInjectGHAuthWarnings as an

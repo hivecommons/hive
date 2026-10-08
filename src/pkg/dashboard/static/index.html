@@ -25023,6 +25023,9 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
+        case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;
+        case 'toggleSentinelBehavior': toggleSentinelBehavior(el); break;
+        case 'resetSentinelPaths': resetSentinelPaths(); break;
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
@@ -35246,6 +35249,38 @@ function burnAreaChart() {
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
+      /* Suspicious Activity (sentinel): flags PRs that look like security
+         overrides, privilege escalation or codebase damage. Observe-and-alert
+         only — it never merges, holds or removes labels. */
+      const sn = sec.sentinel || {};
+      const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
+      const snBehaviors = (sn.behaviors || []).map(b => `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${b.enabled ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelBehavior" data-rule="${esc(b.name)}"></div>
+          <span class="config-toggle-label"><code>${esc(b.name)}</code> <span class="config-info">i<span class="config-tooltip">${esc(b.description || '')}</span></span></span>
+        </div>`).join('');
+      const suspicious = `
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
+          <span class="config-toggle-label">Suspicious-activity alerts <span class="config-info">i<span class="config-tooltip">Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets the alert label and one explanatory comment per push so reviewers can route it to a human. Nothing is merged, held or auto-closed.</span></span></span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep <span class="config-info">i<span class="config-tooltip">Caps label+comment actions per pass so a flood of PRs cannot spam a repo.</span></span></label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>
+        <div class="config-field">
+          <label>Sensitive files <span class="config-info">i<span class="config-tooltip">One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.</span></span>${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
+        </div>
+        <div class="config-field">
+          <label>Behaviors <span class="config-info">i<span class="config-tooltip">Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.</span></span></label>
+          ${snBehaviors}
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Exempt logins <span class="config-info">i<span class="config-tooltip">Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.</span></span></label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Repos (optional allow-list)</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
+        </div>`;
+
       return `
         ${securityModelDatalistHtml()}${agentList}
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
@@ -35254,6 +35289,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Access', renderGovAccess())}
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
+        ${renderSecuritySection('Suspicious Activity', suspicious)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
         ${renderSecuritySection('Backup', backupKey)}`;
@@ -36629,6 +36665,49 @@ function burnAreaChart() {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+    }
+
+    /* Sentinel dirty-tracking: the security PUT takes a nested `sentinel`
+       object with "absent means unchanged" fields, so edits are merged into
+       one bag rather than flattened into the security section. */
+    function sentinelState() {
+      const d = _configState.data || {};
+      d.security = d.security || {};
+      d.security.sentinel = d.security.sentinel || {};
+      return d.security.sentinel;
+    }
+    function markSentinelDirty(key, value) {
+      if (!_configState.dirty.security) _configState.dirty.security = {};
+      const bag = _configState.dirty.security.sentinel || {};
+      bag[key] = value;
+      _configState.dirty.security.sentinel = bag;
+      sentinelState()[key] = value;
+    }
+    function toggleSentinelEnabled(el) {
+      if (!el) return;
+      const isOn = el.classList.toggle('on');
+      markSentinelDirty('enabled', isOn);
+      renderConfigTab('Security');
+    }
+    function toggleSentinelBehavior(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      const sn = sentinelState();
+      sn.behaviors = (sn.behaviors || []).map(b => b.name === el.dataset.rule ? Object.assign({}, b, { enabled: isOn }) : b);
+      markSentinelDirty('disabledBehaviors', sn.behaviors.filter(b => !b.enabled).map(b => b.name));
+    }
+    function resetSentinelPaths() {
+      const sn = sentinelState();
+      sn.sensitivePaths = (sn.defaultSensitivePaths || []).slice();
+      sn.sensitivePathsDefault = true;
+      /* An empty list tells the backend to drop the override. */
+      markSentinelDirty('sensitivePaths', []);
+      renderConfigTab('Security');
+    }
+    function markSentinelPathsFromText(text) {
+      const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
+      /* An emptied box restores defaults rather than disabling the rule. */
+      markSentinelDirty('sensitivePaths', lines);
     }
 
     function toggleContributorPRBaseSync(el) {
@@ -40291,6 +40370,11 @@ function burnAreaChart() {
       gh78: function (event, A) { const v=!((_configState.data.work_source||{}).jira||{}).insecure_skip_verify; markWorkSourceDirty('jira.insecure_skip_verify',v);renderConfigTab('Work Source'); },
       gh79: function (event, A) { wsWavefrontSetSource(this.value); },
       gh80: function (event, A) { wsWavefrontSetLocation(this.dataset.source || 'path', this.value); },
+      gh81: function (event, A) { markSentinelDirty('label', this.value.trim()); },
+      gh82: function (event, A) { markSentinelDirty('maxActions', Number(this.value) || 0); },
+      gh83: function (event, A) { markSentinelPathsFromText(this.value); },
+      gh84: function (event, A) { markSentinelDirty('exemptLogins', parseSecurityList(this.value)); },
+      gh85: function (event, A) { markSentinelDirty('repos', parseSecurityList(this.value)); },
     };
 
   </script>

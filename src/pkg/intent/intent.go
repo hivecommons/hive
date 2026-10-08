@@ -394,6 +394,13 @@ func HumanMergePathMatches(files []ChangedFile, patterns []string) []string {
 	return matched
 }
 
+// PathMatchesAny reports whether path matches any pattern using the same glob
+// syntax as guardrail_path_patterns and auto_merge.human_merge_paths, so
+// every path-sensitive gate in hive agrees on what a pattern means.
+func PathMatchesAny(path string, patterns []string) bool {
+	return matchesAny(path, patterns)
+}
+
 func matchesAny(path string, patterns []string) bool {
 	path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
 	for _, pattern := range patterns {
