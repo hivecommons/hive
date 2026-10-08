@@ -8,17 +8,21 @@ being retrofitted later (the gap
 
 See the maintainer [v6 readiness live-exercise runbook](v6-readiness-runbook.md) for the step-by-step evidence template that closes the live rows below.
 
-Status today: `v6` publishes **no channel**
-(see the release-lines table in [ROADMAP.md](../../ROADMAP.md)). Every track
-named on the line epic
+Status today: merges to `v6` retag the **`edge`** channel (see
+[release channels](release-channels.md) and the `v6 false edge` publish step in
+`.github/workflows/docker.yml`); `candidate` and `stable` remain v5-only. Every
+track named on the line epic
 ([#7563](https://github.com/hivecommons/hive/issues/7563)) has merged code,
-but **merged is not exercised** — no v6 surface has yet run against a live
-hive. This bar is what turns one into the other.
+but **merged is not exercised** — only the surfaces with a ✅ or partial
+evidence row in section 3 have run against a live hive (so far one passing
+runs-via-chat exercise, and a partial exercise of the serialized merge lane).
+This bar is what turns one into the other.
 
 ## 1. Channel binding
 
-`v6` earns its first moving tag (an `edge`-successor or a `v6-edge` channel —
-the name is a maintainer decision recorded here) only when:
+`v6` already retags `edge` on every green merge. It earns a **promotable**
+channel (a `candidate`-equivalent for the v6 line; the name is a maintainer
+decision recorded here) only when:
 
 - [ ] The **v5 GA bar's Release-train rows are green**
       ([#6016](https://github.com/hivecommons/hive/issues/6016)). v6 does not
@@ -112,6 +116,7 @@ not a unit test:
 | Runs via chat | One live run reaches a human gate and is approved from the chat spine; the next runs snapshot shows it advancing. | ✅ Live exercise passed with `just runs-e2e-v6` against `clubanderson/hive-runs-e2e#11`; evidence on [#8466](https://github.com/hivecommons/hive/issues/8466#issuecomment-5805851875) and tracker row checked in the [#7563 v6 readiness bar section](https://github.com/hivecommons/hive/issues/7563). |
 | Email | One HUMAN DECISION NEEDED escalation delivered; one allowlisted inbound reply acted on (or reply-to-act explicitly deferred here). | ⬜ |
 | Push / on-call | One `requires_human` verdict pages a real device via at least one provider. | ⬜ |
+| Serialized merge lane (`merge_strategy: hive-serialized`, [#10884](https://github.com/hivecommons/hive/issues/10884)) | On a personal-account repo with no GitHub merge queue, following the [runbook](v6-readiness-runbook.md#evidence-template) evidence template: (1) strategy switch and ACMM Eval credit ("satisfied by Hive serialized merge lane"); (2) a single merge; (3) two PRs at once (ordering, and the behind PR is updated); (4) a hold refused at the front; (5) a failed required check at the front; (6) the front timeout; (7) a fork PR. | 🟨 Partial. A self-hosted v6 hive at `f55b5fe66` merged four PRs through the lane, which produced [#10984](https://github.com/hivecommons/hive/issues/10984) (fixed by [#10985](https://github.com/hivecommons/hive/pull/10985)) and [#11023](https://github.com/hivecommons/hive/issues/11023). **Done:** single merge; update-then-merge on the App sweep path; front timeout. **Not yet done:** hold at the front; red-at-front leave (blocked by #11023); fork PR. Row stays unchecked until every step has linked evidence. |
 
 ## Admin MCP readiness evidence
 
