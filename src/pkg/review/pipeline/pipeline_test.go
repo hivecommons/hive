@@ -419,3 +419,36 @@ func TestSameRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestDerive_LoopWarning(t *testing.T) {
+	changes := agg(review.VerdictChangesRequested, "head", t1)
+	changes.Perspectives = map[review.Perspective]review.Verdict{"security": review.VerdictChangesRequested}
+	base := func() Inputs {
+		return Inputs{PR: basePR(), Verdicts: []review.Aggregate{changes}}
+	}
+
+	if w := Derive(base()).LoopWarning; w != nil {
+		t.Fatalf("fresh PR warned: %+v", w)
+	}
+
+	in := base()
+	in.FixCycleCap = 3
+	in.Dispatch.FixAttempts = []review.FixAttempt{{Repo: testRepo, Number: 7, Attempts: 2}}
+	w := Derive(in).LoopWarning
+	if w == nil || w.Reviewer != "security" || !strings.Contains(w.Reason, "2 of 3") {
+		t.Fatalf("cap-1 warning = %+v", w)
+	}
+
+	in = base()
+	in.BotMaxAttempts = 2
+	in.BotThreads = []BotThread{{Reviewer: "codex", Thread: "T1", Attempts: 1}, {Reviewer: "copilot", Thread: "T2", Attempts: 2}}
+	w = Derive(in).LoopWarning
+	if w == nil || w.Reviewer != "copilot" || w.Thread != "T2" {
+		t.Fatalf("thread warning = %+v", w)
+	}
+
+	in.PR = withPR(func(pr *ghpkg.ReviewQueueEntry) { pr.Labels = []string{escalation.NeedsHumanLabel} })
+	if w := Derive(in).LoopWarning; w != nil {
+		t.Fatalf("needs-human PR warned: %+v", w)
+	}
+}
