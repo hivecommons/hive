@@ -196,6 +196,23 @@ own (default 4h for a person, 2h for an agent kick, 30m for a relay task — con
 transition onto the GitHub issue as a `🔒`/`🔁`/`🔓` comment with a machine-readable `<!-- hive:claim … -->`
 marker and a `claimed` label, so a human, a script or another hive can see the hold without asking the API.
 
+### review — review evidence
+
+```bash
+hivectl review evidence hivecommons/hive#11061                  # newest bundle as JSON on stdout
+hivectl review evidence hivecommons/hive#11061 --head 1a2b3c4   # a specific head (unique 7+ char prefix)
+hivectl review evidence hivecommons/hive#11061 -o bundle.json   # save the bundle
+hivectl review evidence hivecommons/hive#11061 --zip -o ev.zip  # bundle + verdict reports + review links
+hivectl review evidence verify bundle.json --pubkey <hex>       # offline: hash + Ed25519 signature
+hivectl review evidence verify ev.zip                           # uses the public key carried in the zip
+```
+
+`review evidence` reads `GET /api/review/evidence` and needs owner or merger role. A bundle removed by retention
+fails with `evidence expired`, not a generic not-found. `verify` needs no hive access: it recomputes the canonical
+hash, then checks the signature with `--pubkey` (hex, base64, or a file holding either) or, when omitted, the public
+key embedded in the file (a zip manifest's `public_key`). Unsigned bundles, hash mismatches and bad signatures exit
+non-zero. See [Review evidence bundle](review-evidence.md).
+
 ### observe — read-only metrics
 
 ```bash

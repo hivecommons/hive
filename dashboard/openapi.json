@@ -20403,6 +20403,289 @@
         }
       }
     },
+    "/api/review/evidence": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review evidence bundle for a PR",
+        "description": "Owner or merger role. Returns the signed review-evidence bundle (pkg/evidence) persisted for a PR. Default is the bundle for the latest head; `head` selects a specific head SHA (full or unique 7+ char prefix). `format=json` (default) returns the bundle bytes exactly as stored so the hash/signature verify offline; `download=1` adds a Content-Disposition attachment. `format=zip` streams a zip with bundle.json, verdicts.json (matching review verdict reports), review-links.json (the PR's review-links slice) and manifest.json (sha256 per file plus the signing public key when available).",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository as owner/repo."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          },
+          {
+            "name": "head",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Head SHA (or unique prefix of at least 7 characters) selecting one bundle; default is the newest bundle."
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "zip"
+              ],
+              "default": "json"
+            },
+            "description": "Response format."
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "When 1 with format=json, sets Content-Disposition: attachment."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence bundle (JSON) or zip archive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "head_sha": {
+                      "type": "string"
+                    },
+                    "previous_bundle_id": {
+                      "type": "string"
+                    },
+                    "verdicts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "merge": {
+                      "type": "object"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "signed": {
+                      "type": "boolean"
+                    },
+                    "hash": {
+                      "type": "string"
+                    },
+                    "signature": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid repo/number/format"
+          },
+          "403": {
+            "description": "Caller lacks owner or merger role"
+          },
+          "404": {
+            "description": "No bundle for the PR/head. `status` is `expired` (with `expired: true`) when the retention policy aged the bundle out, otherwise `not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "expired",
+                        "not_found"
+                      ]
+                    },
+                    "expired": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "head": {
+                      "type": "string"
+                    },
+                    "retention": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "head prefix matches more than one bundle"
+          }
+        }
+      }
+    },
+    "/api/review/evidence/list": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review evidence bundles recorded for a PR",
+        "description": "Owner or merger role. Lists every retained evidence bundle for a PR (oldest first) with its id, head, hash, signed flag, verdict count and merged flag; `latest` names the bundle /api/review/evidence returns by default. `expired` is true when bundles existed but retention removed them.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository as owner/repo."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence bundle index for the PR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "latest": {
+                      "type": "string"
+                    },
+                    "bundles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "previous_bundle_id": {
+                            "type": "string"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updated_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "hash": {
+                            "type": "string"
+                          },
+                          "signed": {
+                            "type": "boolean"
+                          },
+                          "verdicts": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "expired": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "retention": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid repo/number"
+          },
+          "403": {
+            "description": "Caller lacks owner or merger role"
+          }
+        }
+      }
+    },
     "/api/review/pipeline": {
       "get": {
         "tags": [
