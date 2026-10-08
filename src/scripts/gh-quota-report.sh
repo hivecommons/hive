@@ -100,10 +100,13 @@ def normalize_node(obj, default_name="local"):
     if not isinstance(obj, dict):
         return {"name": default_name, "payload": {}, "error": "invalid non-object payload"}
     if "payload" in obj or "error" in obj:
+        err = obj.get("error") or ""
+        if err == "unauthorized":
+            err = "auth-required"
         return {
             "name": str(obj.get("name") or default_name),
             "payload": obj.get("payload") if isinstance(obj.get("payload"), dict) else None,
-            "error": obj.get("error") or "",
+            "error": err,
             "kind": obj.get("kind") or "spoke",
         }
     return {"name": str(obj.get("name") or default_name), "payload": obj, "error": "", "kind": "spoke"}
@@ -192,6 +195,8 @@ for node in nodes:
     error = node.get("error") or ""
     if not error and isinstance(payload, dict) and payload.get("error") and not payload.get("core"):
         error = str(payload.get("error"))
+        if error == "unauthorized":
+            error = "auth-required"
     name = short_name(node)
     if error or not payload:
         if not JSON_MODE:
@@ -302,8 +307,14 @@ fetch_kube_node() {
   local err="${work_dir}/${short}.err"
   local out="${work_dir}/${short}.json"
   local status=ok
-  # shellcheck disable=SC2016 # This command is evaluated inside the hive pod.
-  local remote_cmd='T=""; if [ -r /secrets/dashboard-token ]; then T=$(tr -d "\r\n" </secrets/dashboard-token); fi; if [ -z "$T" ] && [ -n "${DASHBOARD_AUTH_TOKEN:-}" ]; then T=$DASHBOARD_AUTH_TOKEN; fi; if [ -z "$T" ] && [ -n "${HIVE_DASHBOARD_TOKEN:-}" ]; then T=$HIVE_DASHBOARD_TOKEN; fi; if [ -z "$T" ]; then T=$(awk "/^dashboard:/{f=1} f&&/auth_token:/{print $2; exit}" /etc/hive/hive.yaml); fi; curl -s -H "Authorization: Bearer $T" -H "X-Hive-Internal: $T" localhost:3002/api/gh-rate-limits'
+  local remote_cmd
+  if [ "$kind" = "hub" ]; then
+    # shellcheck disable=SC2016 # This command is evaluated inside the hub pod.
+    remote_cmd='P=${HIVE_HUB_PORT:-80}; code=$(curl -s -o /dev/null -w "%{http_code}" "localhost:${P}/api/gh-rate-limits" || true); case "$code" in 404) printf "%s\n" "{\"error\":\"endpoint-missing\"}" ;; 000) exit 7 ;; *) curl -s "localhost:${P}/api/gh-rate-limits" ;; esac'
+  else
+    # shellcheck disable=SC2016 # This command is evaluated inside the hive pod.
+    remote_cmd='P=${DASHBOARD_PORT:-${HIVE_DASHBOARD_PORT:-}}; if [ -z "$P" ] && [ -r /etc/hive/hive.yaml ]; then P=$(awk "/^[[:space:]]*dashboard:/{f=1; next} f&&/^[^[:space:]][^:]*:/{exit} f&&/^[[:space:]]*port:/{print \$2; exit}" /etc/hive/hive.yaml); fi; P=${P:-3002}; C=""; if [ -r /etc/hive/hive.yaml ]; then C=$(awk "/^[[:space:]]*dashboard:/{f=1; next} f&&/^[^[:space:]][^:]*:/{exit} f&&/^[[:space:]]*auth_token:/{print \$2; exit}" /etc/hive/hive.yaml); fi; S=""; if [ -r /secrets/dashboard-token ]; then S=$(tr -d "\r\n" </secrets/dashboard-token); fi; for T in "$C" "$S" "${DASHBOARD_AUTH_TOKEN:-}" "${HIVE_DASHBOARD_TOKEN:-}"; do [ -n "$T" ] || continue; code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $T" -H "X-Hive-Internal: $T" "localhost:${P}/api/gh-rate-limits" || true); case "$code" in 200) curl -s -H "Authorization: Bearer $T" -H "X-Hive-Internal: $T" "localhost:${P}/api/gh-rate-limits"; exit 0 ;; 404) printf "%s\n" "{\"error\":\"endpoint-missing\"}"; exit 0 ;; esac; done; code=$(curl -s -o /dev/null -w "%{http_code}" "localhost:${P}/api/gh-rate-limits" || true); case "$code" in 200) curl -s "localhost:${P}/api/gh-rate-limits" ;; 404) printf "%s\n" "{\"error\":\"endpoint-missing\"}" ;; 000) exit 7 ;; *) printf "%s\n" "{\"error\":\"auth-required\"}" ;; esac'
+  fi
   local container_args=()
   if [ -n "$container" ]; then
     container_args=(-c "$container")
