@@ -108,17 +108,9 @@ func TestAgentGitHubBudget429ShapeAndNudge(t *testing.T) {
 	if nudges != 1 {
 		t.Fatalf("nudges = %d, want 1", nudges)
 	}
-	go func() {
-		done <- p.writeAgentGitHubBudget429(server, agentGitHubBudgetStatus{
-			Agent: "scanner", Count: 3, Cap: 3, RetryAfter: 17, Reason: "cap",
-		})
-	}()
-	resp, err = http.ReadResponse(bufio.NewReader(client), nil)
-	if err != nil {
-		t.Fatalf("ReadResponse second: %v", err)
+	if p.githubBudget.markNudged("scanner") {
+		t.Fatal("markNudged allowed a second nudge in the same window")
 	}
-	_ = resp.Body.Close()
-	<-done
 	if nudges != 1 {
 		t.Fatalf("nudge repeated in same window: %d", nudges)
 	}

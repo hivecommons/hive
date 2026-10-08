@@ -23,7 +23,7 @@ type agentGitHubBudget struct {
 	now    func() time.Time
 	events map[string][]time.Time
 	warned map[string]bool
-	nudged map[string]bool
+	nudged map[string]time.Time
 }
 
 func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
@@ -34,7 +34,7 @@ func newAgentGitHubBudget(now func() time.Time) *agentGitHubBudget {
 		now:    now,
 		events: make(map[string][]time.Time),
 		warned: make(map[string]bool),
-		nudged: make(map[string]bool),
+		nudged: make(map[string]time.Time),
 	}
 }
 
@@ -81,11 +81,10 @@ func (b *agentGitHubBudget) markNudged(agentName string) bool {
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	_ = b.pruneLocked(agentName, now)
-	if b.nudged[agentName] {
+	if until, ok := b.nudged[agentName]; ok && now.Before(until) {
 		return false
 	}
-	b.nudged[agentName] = true
+	b.nudged[agentName] = now.Add(agentGitHubBudgetWindow)
 	return true
 }
 
@@ -103,7 +102,6 @@ func (b *agentGitHubBudget) pruneLocked(agentName string, now time.Time) []time.
 	if len(events) == 0 {
 		delete(b.events, agentName)
 		delete(b.warned, agentName)
-		delete(b.nudged, agentName)
 	}
 	return events
 }

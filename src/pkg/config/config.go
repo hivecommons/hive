@@ -6962,7 +6962,7 @@ func (c Config) MarshalYAML() (interface{}, error) {
 		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "agents"}, &yaml.Node{Kind: yaml.MappingNode})
 		agents = root.Content[len(root.Content)-1]
 	}
-	if agents.Kind == yaml.MappingNode {
+	if c.agentsGitHubAPIHourlyCapSet && agents.Kind == yaml.MappingNode {
 		agents.Content = append([]*yaml.Node{
 			{Kind: yaml.ScalarNode, Value: "github_api_hourly_cap"},
 			{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(c.AgentsGitHubAPIHourlyCap)},
