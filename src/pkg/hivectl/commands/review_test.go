@@ -299,12 +299,8 @@ func TestReviewEvidenceVerifyPrintError(t *testing.T) {
 	}
 }
 
-type failingReader struct{}
-
-func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
-
 func TestReadEvidenceInputStdinError(t *testing.T) {
-	if _, err := readEvidenceInput(failingReader{}, "-"); err == nil || !strings.Contains(err.Error(), "reading stdin") {
+	if _, err := readEvidenceInput(failingReader{err: io.ErrUnexpectedEOF}, "-"); err == nil || !strings.Contains(err.Error(), "reading stdin") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -20,6 +20,9 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`data-action="reviewQueuePrevPage"`,
 		`data-action="reviewQueueNextPage"`,
 		`fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset)`,
+		`reviewEvidenceButtonHtml(e.repo, e.number) +`,
+		`function reviewEvidenceButtonHtml(repo, number)`,
+		`data-action="openReviewEvidence"`,
 		`() => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
 	} {
 		if !strings.Contains(html, want) {
@@ -60,6 +63,9 @@ func TestReviewQueueEntryRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
+	// The evidence button is role-gated on window state that does not exist
+	// under node; its wiring is pinned in TestReviewQueueViewStaticWiring.
+	source.WriteString("function reviewEvidenceButtonHtml() { return ''; }\n")
 	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "renderReviewQueueEntry"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
