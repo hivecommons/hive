@@ -161,6 +161,8 @@ func agentGitIdentity(agentName string) (name, email string, ok bool) {
 // NODE_EXTRA_CA_CERTS and GIT_SSL_CAINFO.
 const ProxyCACertPath = proxyCACertPath
 
+const loopbackNoProxy = "127.0.0.1,localhost,::1"
+
 // ProxyURL is the local egress proxy URL agents receive as HTTP(S)_PROXY. It
 // carries no userinfo: the proxy names the caller from the socket UID.
 func ProxyURL() string {
@@ -214,6 +216,10 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	proxyURL := ProxyURL()
 	vars = append(vars, agentEnvPair{"HTTPS_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
+	// Loopback must bypass the proxy for every backend so a repo's own tests
+	// see real connection errors instead of the proxy's 502.
+	vars = append(vars, agentEnvPair{"NO_PROXY", loopbackNoProxy, false})
+	vars = append(vars, agentEnvPair{"no_proxy", loopbackNoProxy, false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
 	vars = append(vars, agentEnvPair{"GIT_TERMINAL_PROMPT", "0", false})
 	vars = append(vars, agentEnvPair{"NODE_EXTRA_CA_CERTS", proxyCACertPath, false})
@@ -267,7 +273,6 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
-		vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost", false})
 		// Cap the CLI output-token budget at a value every commercial model
 		// litellm may front will accept. A prior 128000 (chosen so verbose
 		// OSS models would not truncate) exceeds Azure GPT-4o's 16384

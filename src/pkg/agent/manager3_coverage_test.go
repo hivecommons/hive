@@ -494,3 +494,32 @@ func TestAgentEnvPairs_OptionalEnvVars(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentEnvPairs_DirectBackendBypassesProxyForLoopback(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"quality": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["quality"]
+	m.mu.RUnlock()
+
+	counts := map[string]int{}
+	found := map[string]string{}
+	for _, p := range m.agentEnvPairs(agent) {
+		counts[p.Key]++
+		found[p.Key] = p.Value
+	}
+	if found["HTTP_PROXY"] == "" {
+		t.Fatal("expected HTTP_PROXY to be set")
+	}
+	for _, key := range []string{"NO_PROXY", "no_proxy"} {
+		if counts[key] != 1 {
+			t.Errorf("%s emitted %d times, want 1", key, counts[key])
+		}
+		for _, host := range []string{"127.0.0.1", "localhost"} {
+			if !strings.Contains(found[key], host) {
+				t.Errorf("%s = %q, missing %s", key, found[key], host)
+			}
+		}
+	}
+}
