@@ -270,6 +270,13 @@ type Fact struct {
 	Supersedes   string    `json:"supersedes,omitempty"`
 	SupersededBy string    `json:"superseded_by,omitempty"`
 	Phase        FactPhase `json:"phase,omitempty"`
+
+	// Updated, BodySize and Origin feed the table of contents (#11103). They
+	// are populated by file-backed stores only and never serialized, so
+	// existing fact payloads are unchanged.
+	Updated  time.Time `json:"-"`
+	BodySize int       `json:"-"`
+	Origin   string    `json:"-"`
 }
 
 // Source tracks where a fact was extracted from.

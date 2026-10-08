@@ -51,7 +51,7 @@ counters, confidence reasoning, and lifecycle phase are stripped.
 
 There is no write method on this surface. The endpoint serves the MCP
 handshake (`initialize`, `ping`, `notifications/*`), `tools/list`, and
-`tools/call` for three tools. Nothing in the handler reaches
+`tools/call` for four tools. Nothing in the handler reaches
 `CreateFact`, `UpdateFact`, `DeleteFact`, import, promotion, or vault
 mutation. Anonymous callers cannot alter a knowledge base, and every tool is
 annotated `readOnlyHint: true` so MCP clients run them without confirmation.
@@ -71,6 +71,7 @@ re-read per hit.
 | Tool | Arguments | Returns |
 |---|---|---|
 | `knowledge_search` | `query` (required), `type`, `limit` (default 10, max 50) | JSON `{query, count, results[]}` |
+| `knowledge_toc` | `type`, `repo`, `limit` (all optional; default 50, max 200) | A compact table of contents of public facts — `id`, `title`, `type`, `layer`, `repo`, `tags`, `status`, `updated`, `size_bytes` — with `total`/`returned`/`truncated`, no bodies and no source URLs. Read a chosen `id` with `knowledge_get` |
 | `knowledge_get` | `slug` (required) | One public fact as JSON, or an `isError` "fact not found" |
 | `knowledge_export` | none | The whole public base as one Markdown document, grouped by type; `_meta.etag` and `_meta.facts` |
 
