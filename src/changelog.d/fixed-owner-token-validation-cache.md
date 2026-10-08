@@ -1,0 +1,1 @@
+- Cache spoke owner GitHub token identity validation so dashboard auth checks and hub heartbeats no longer hit `GET /user` on every request or heartbeat.

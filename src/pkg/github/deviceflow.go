@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -164,8 +165,19 @@ type GitHubUser struct {
 // apiURL allows overriding the API endpoint for GHE; pass empty string for
 // default github.com behavior.
 func ValidateToken(token, apiURL string) (*GitHubUser, error) {
+	return ValidateTokenWithContext(context.Background(), token, apiURL)
+}
+
+// ValidateTokenWithContext validates a GitHub token by fetching the authenticated user.
+// apiURL allows overriding the API endpoint for GHE; pass empty string for
+// default github.com behavior.
+func ValidateTokenWithContext(ctx context.Context, token, apiURL string) (*GitHubUser, error) {
 	_, _, uURL := deviceFlowURLs("", apiURL)
-	req, err := http.NewRequest("GET", uURL, nil)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = WithRESTCaller(ctx, "hive:validate_token")
+	req, err := http.NewRequestWithContext(ctx, "GET", uURL, nil)
 	if err != nil {
 		return nil, err
 	}

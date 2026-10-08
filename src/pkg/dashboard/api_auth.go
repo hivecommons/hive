@@ -74,7 +74,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token := strings.TrimSpace(string(tokenData))
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	user, err := github.ValidateTokenCached(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"logged_in": false, "error": "token expired or revoked"})
 		return
@@ -177,7 +177,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// user's token must never be written to disk or wired in as the hive's user
 	// client — otherwise a rejected login would still leak its token into the
 	// shared client and become the hive's identity.
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	user, err := github.ValidateTokenCached(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
 		s.deviceFlowID = ""
@@ -490,11 +490,16 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
 	if loggedOutRole == config.RoleOwner {
+		var removedToken string
+		if tokenData, err := os.ReadFile(userTokenPath); err == nil {
+			removedToken = strings.TrimSpace(string(tokenData))
+		}
 		if err := os.Remove(userTokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.deps.Logger.Error("GitHub user token removal failed", "error", err)
 			jsonError(w, "failed to remove persisted GitHub credentials", http.StatusInternalServerError)
 			return
 		}
+		github.InvalidateTokenIdentity(removedToken)
 	}
 	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")
