@@ -11,6 +11,33 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-08 (v5.146.0)
+
+### Added
+
+- Added `pkg/evidence`, the per-PR review evidence bundle schema (v1) as Go types and a checked-in JSON Schema, with deterministic canonical JSON, a SHA-256 content hash that excludes the hash and signature fields, and optional detached Ed25519 signing and offline verification; an absent signing key yields an unsigned bundle with `signed: false`. Documented in the new `docs/review-evidence.md` and a non-certification `docs/soc2-control-mapping.md` that makes no compliance claim ([#11059](https://github.com/hivecommons/hive/issues/11059), [#11063](https://github.com/hivecommons/hive/issues/11063), part of [#11058](https://github.com/hivecommons/hive/issues/11058)).
+- New `GET /api/version/release-notes?from=<sha>&to=<channel-or-sha>` dashboard endpoint computes the changelog gap between the running revision and an upgrade target: the `CHANGELOG.md` release sections present at the target and absent from the running build, newest first and grouped by Added/Changed/Fixed/Security/Deprecated, plus unreleased `changelog.d/` fragments for untagged channel/nightly targets. It works without a GitHub token, caches per revision pair for an hour, and reports fetch failures as `source: "unavailable"` instead of an error ([#11065](https://github.com/hivecommons/hive/issues/11065), part of [#11064](https://github.com/hivecommons/hive/issues/11064)).
+- Add the `pkg/knowledge/connector` seam for external knowledge systems: `Connector` interface, type registry, interval sync scheduler with incremental cursors and per-connector status, a fact writer with deterministic `<type>-<name>-<source_id>` slugs and `status: deprecated` tombstones, shared SSRF-hardened HTTP helpers, `git`/`document` connector types over the existing git-source and document pipelines, and a validated `knowledge.connectors` config block that only accepts credentials via `auth.env` or `auth.file` (#11069).
+- Add `GET /api/review/pipeline`, which places every review-queue PR in a review pipeline stage (unreviewed through approved) with reviewers, P0–P3 severity counts, loop counter, next action and reasons, derived by the new pure `pkg/review/pipeline` package.
+- review-evidence: evidence bundle schema (pkg/evidence) and docs (#11094)
+- Knowledge facts now have lifecycle states (`draft`, `approved`, `deprecated`, `superseded`) with `supersedes`/`superseded_by` links; kick primers, `/api/knowledge/search` and the public knowledge MCP only return approved facts by default, so stale context stops reaching agents. Existing facts load as `approved`, and operators can opt back in with `include_states` ([#11102](https://github.com/hivecommons/hive/issues/11102)).
+- Add gh-quota-report.sh: fleet GitHub API quota and top-consumer report (#11114)
+- Per-agent GitHub API hourly cap in the proxy + dashboard budget panel (#11116)
+- Sentinel suspicious-activity alerts: a default-on sweep (`sentinel.*`, Settings → Security → Suspicious Activity) labels open PRs from any author `sentinel-alert` and posts one explanatory comment when they touch sensitive files (OWNERS, workflows, policies, deploy, credentials, …) or match behaviors such as owner self-nomination, permission escalation, secret exposure, CI-gate weakening, test removal, or remote code execution; reviewer-queue policy routes labelled PRs to a human and never approves them.
+
+### Changed
+
+- Cache per-PR detail fetches to cut GET /pulls/{number} quota burn (#11098)
+- Cache owner token identity lookups instead of hitting GET /user every heartbeat (#11099)
+- Hub: authenticate GitHub reads as the App and use the shared caching transport (#11112)
+
+### Fixed
+
+- The reviewer lane (`role: reviewer`, the L5/L6 pack `adjudicator`) is no longer kicked when it has nothing to do ([#11046](https://github.com/hivecommons/hive/issues/11046)). The governor used to kick it every 30-minute cadence tick even when the lane was dormant below ACMM 5 or no escalated PR awaited adjudication, costing a full model turn just to reply "stand down" and leaving the dashboard showing the idle lane as **BLOCKED — policy stand-down**. The scheduler now applies the same two Go-side gates the kick already used and skips the kick, logging `nothing to adjudicate` or `dormant below ACMM 5`; the next tick checks again. A stand-down that is still rendered (a forced or manual kick) no longer ends with the `Begin now: pick the authorized repo …` closing line that contradicted it ([#11045](https://github.com/hivecommons/hive/issues/11045)).
+- feedback: author issues as the submitter, never the operator PAT (#11051)
+- Linkify GitHub repo issue and PR references in dashboard alert banners so stalled-plan alerts open in a new tab.
+- Fix dashboard cost-per-PR and cost-per-issue divisors for App-authored multi-repo hives, preserving persisted counts instead of showing false zeroes when GitHub counts are unavailable.
+
 ## 2026-10-08 (v5.145.0)
 
 ### Added

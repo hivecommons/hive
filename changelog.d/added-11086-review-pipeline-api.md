@@ -1,1 +1,0 @@
-- Add `GET /api/review/pipeline`, which places every review-queue PR in a review pipeline stage (unreviewed through approved) with reviewers, P0–P3 severity counts, loop counter, next action and reasons, derived by the new pure `pkg/review/pipeline` package.
