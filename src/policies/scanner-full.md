@@ -146,6 +146,7 @@ For PRs in the PR_LIST that have merge conflicts:
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". CI on a saturated runner pool can take an hour;
+- If `gh` returns 429 'hourly cap reached', stop all GitHub reads for this session and finish with local work.
 a turn spent waiting is a turn the rest of the work list did not get. The hive's
 automerge sweep merges your PR the moment its checks are green — waiting buys
 nothing, and it hides as "Working" on the dashboard while nothing happens.
