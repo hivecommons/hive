@@ -303,19 +303,34 @@ func (s *Server) handleFeedbackReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if token := s.feedbackIssueToken(r.Context(), r, &req); token != "" {
+	tryIssueToken := func(token string) bool {
+		if token == "" {
+			return false
+		}
 		result, warning, err := createFeedbackGitHubIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase())
 		if err == nil {
 			owner, repo := feedbackRepo(req)
 			s.recordFeedbackSubmission(owner, repo, result.Number, req.Title, result.URL)
 			s.auditFromRequest(r, "feedback_submit", auditDetail("target", req.TargetRepo, "type", req.RequestType, "via", "user", "issue", fmt.Sprintf("%d", result.Number)), "")
 			jsonResponse(w, feedbackReportResponse{OK: true, IssueNumber: result.Number, IssueURL: result.URL, Warning: warning})
-			return
+			return true
 		}
 		if s.logger != nil {
-			s.logger.Warn("feedback: user-token issue create failed; returning fallback", "error", err)
+			s.logger.Warn("feedback: issue create failed; trying next feedback credential", "credential_login", req.CredentialLogin, "error", err)
 		}
+		return false
 	}
+	if token := s.feedbackSessionIssueToken(r, &req); tryIssueToken(token) {
+		return
+	}
+	if token := s.feedbackAppIssueToken(r.Context(), &req); tryIssueToken(token) {
+		return
+	}
+	if req.Submitter.GitHubLogin == "" {
+		jsonError(w, "GitHub username is required when opening the prefilled issue on GitHub", http.StatusBadRequest)
+		return
+	}
+	req.CredentialLogin = ""
 	fallback := feedbackFallbackURL(req)
 	s.auditFromRequest(r, "feedback_submit", auditDetail("target", req.TargetRepo, "type", req.RequestType, "via", "fallback"), "")
 	jsonResponse(w, feedbackReportResponse{OK: true, FallbackURL: fallback, Warning: "Open the prefilled GitHub issue and paste screenshots manually."})
@@ -380,6 +395,9 @@ func (s *Server) refreshFeedbackIssueStatuses(ctx context.Context, r *http.Reque
 	}
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.NPSHubLinked() {
 		return s.fetchFeedbackStatusesFromHub(ctx, refs)
+	}
+	if token := s.feedbackAppIssueToken(ctx, nil); token != "" {
+		return fetchFeedbackIssueStatuses(ctx, http.DefaultClient, feedbackGitHubAPIBase(), token, refs)
 	}
 	if token := s.feedbackUserToken(r); token != "" {
 		return fetchFeedbackIssueStatuses(ctx, http.DefaultClient, feedbackGitHubAPIBase(), token, refs)
@@ -745,27 +763,58 @@ func (s *Server) feedbackUserToken(r *http.Request) string {
 	return strings.TrimSpace(string(raw))
 }
 
-func (s *Server) feedbackIssueToken(ctx context.Context, r *http.Request, req *feedbackReportRequest) string {
-	if s != nil && s.deps != nil && s.deps.Config != nil && strings.EqualFold(strings.TrimSpace(s.deps.Config.Hub.HiveType), config.HiveTypeHosted) && s.deps.GHAppAuth != nil {
-		if token, err := s.deps.GHAppAuth.Token(ctx); err == nil && strings.TrimSpace(token) != "" {
-			if req != nil {
-				req.OpenedByHive = true
-				req.CredentialLogin = githubLoginForMention(s.deps.Config.GitHub.BotLogin())
-				if req.CredentialLogin == "" {
-					req.CredentialLogin = config.DefaultGitHubAppSlug + "[bot]"
-				}
-			}
-			return strings.TrimSpace(token)
-		} else if s.logger != nil && err != nil {
-			s.logger.Warn("feedback: could not mint GitHub App token; falling back to dashboard credential", "error", err)
+func feedbackOAuthScopeAllowsIssues(scope string) bool {
+	for _, part := range strings.FieldsFunc(scope, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if part == "repo" || part == "public_repo" {
+			return true
 		}
 	}
-	token := s.feedbackUserToken(r)
-	if token != "" && req != nil {
-		req.OpenedByHive = true
-		req.CredentialLogin = s.feedbackTokenLogin(token)
+	return false
+}
+
+func (s *Server) feedbackSessionIssueToken(r *http.Request, req *feedbackReportRequest) string {
+	if s == nil {
+		return ""
 	}
-	return token
+	sess := s.sessionFromRequest(r)
+	if sess == nil || strings.TrimSpace(sess.AccessToken) == "" || !feedbackOAuthScopeAllowsIssues(sess.TokenScope) {
+		return ""
+	}
+	login := githubLoginForMention(sess.Username)
+	if login == "" {
+		return ""
+	}
+	if req != nil {
+		req.OpenedByHive = true
+		req.CredentialLogin = login
+	}
+	return strings.TrimSpace(sess.AccessToken)
+}
+
+func (s *Server) feedbackAppIssueToken(ctx context.Context, req *feedbackReportRequest) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || s.deps.GHAppAuth == nil {
+		return ""
+	}
+	if token, err := s.deps.GHAppAuth.Token(ctx); err == nil && strings.TrimSpace(token) != "" {
+		if req != nil {
+			req.OpenedByHive = true
+			req.CredentialLogin = githubLoginForMention(s.deps.Config.GitHub.BotLogin())
+			if req.CredentialLogin == "" {
+				req.CredentialLogin = config.DefaultGitHubAppSlug + "[bot]"
+			}
+		}
+		return strings.TrimSpace(token)
+	} else if s.logger != nil && err != nil {
+		s.logger.Warn("feedback: could not mint GitHub App token", "error", err)
+	}
+	return ""
+}
+
+func (s *Server) feedbackIssueToken(ctx context.Context, r *http.Request, req *feedbackReportRequest) string {
+	if token := s.feedbackSessionIssueToken(r, req); token != "" {
+		return token
+	}
+	return s.feedbackAppIssueToken(ctx, req)
 }
 
 func (s *Server) feedbackAttributionContext(r *http.Request, enteredLogin string) feedbackAttributionContext {
@@ -777,24 +826,18 @@ func (s *Server) feedbackAttributionContext(r *http.Request, enteredLogin string
 		if ctx.HubLinked {
 			ctx.HubName = feedbackHubDisplayName(cfg)
 		}
-		if !ctx.HubLinked && strings.EqualFold(strings.TrimSpace(cfg.Hub.HiveType), config.HiveTypeHosted) && s.deps.GHAppAuth != nil {
-			if token, err := s.deps.GHAppAuth.Token(r.Context()); err == nil && strings.TrimSpace(token) != "" {
-				ctx.CredentialLogin = githubLoginForMention(cfg.GitHub.BotLogin())
-				if ctx.CredentialLogin == "" {
-					ctx.CredentialLogin = config.DefaultGitHubAppSlug + "[bot]"
-				}
-			} else if s.logger != nil && err != nil {
-				s.logger.Warn("feedback: could not resolve hosted App credential for status; falling back to dashboard credential", "error", err)
-			}
-		}
-	}
-	if ctx.CredentialLogin == "" && !ctx.HubLinked {
-		ctx.CredentialLogin = s.feedbackCredentialTokenLogin(r)
 	}
 	submitter := s.feedbackSubmitterIdentity(r, enteredLogin)
 	ctx.SubmitterName = submitter.Name
 	ctx.SubmitterLogin = submitter.GitHubLogin
 	ctx.SubmitterSource = submitter.Source
+	if !ctx.HubLinked {
+		if req := (&feedbackReportRequest{}); s.feedbackSessionIssueToken(r, req) != "" {
+			ctx.CredentialLogin = req.CredentialLogin
+		} else if req := (&feedbackReportRequest{}); s.feedbackAppIssueToken(r.Context(), req) != "" {
+			ctx.CredentialLogin = req.CredentialLogin
+		}
+	}
 	ctx.NeedsIdentity = ctx.SubmitterLogin == ""
 	return ctx
 }
@@ -810,11 +853,7 @@ func feedbackHubDisplayName(cfg *config.Config) string {
 }
 
 func (s *Server) feedbackCredentialTokenLogin(r *http.Request) string {
-	token := s.feedbackUserToken(r)
-	if token == "" {
-		return ""
-	}
-	return s.feedbackTokenLogin(token)
+	return ""
 }
 
 func (s *Server) feedbackTokenLogin(token string) string {
@@ -833,9 +872,6 @@ func (s *Server) feedbackSubmitterIdentity(r *http.Request, enteredLogin string)
 		if sess := s.sessionFromRequest(r); sess != nil && strings.TrimSpace(sess.Username) != "" {
 			name := sanitizeFeedbackIdentityValue(sess.Username)
 			login := githubLoginForMention(name)
-			if login == "" {
-				login = s.feedbackCredentialTokenLogin(r)
-			}
 			if login != "" {
 				return feedbackSubmitterIdentity{Name: login, GitHubLogin: login, Source: "GitHub dashboard identity"}
 			}

@@ -63,12 +63,12 @@ func TestHubFeedbackIssueBodyAttributionShapes(t *testing.T) {
 			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-linked (https://hub.example)",
 		},
 		{
-			name:            "hub-less operator pat",
-			credentialLogin: "clubanderson",
+			name:            "hub-less app credential",
+			credentialLogin: "hivecommons-hive[bot]",
 			hubName:         "hub-less",
 			hiveID:          "hive-solo",
 			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
-			wantLine:        "Opened by @clubanderson on behalf of @alice from hive hive-solo (hub-less)",
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-solo (hub-less)",
 		},
 		{
 			name:            "hosted app bot",
@@ -89,11 +89,11 @@ func TestHubFeedbackIssueBodyAttributionShapes(t *testing.T) {
 		},
 		{
 			name:            "missing identity",
-			credentialLogin: "clubanderson",
+			credentialLogin: "hivecommons-hive[bot]",
 			hubName:         "hub-less",
 			hiveID:          "hive-solo",
 			submitter:       feedbackSubmitterIdentity{Name: "an unidentified dashboard user", Source: "unidentified dashboard user"},
-			wantLine:        "Opened by @clubanderson on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
+			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
 			notWant:         []string{"/cc @"},
 		},
 		{
