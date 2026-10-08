@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/outputschema"
@@ -131,6 +132,26 @@ type Inputs struct {
 	// FixCycleCap overrides the loop cap when the verdict does not carry one.
 	// Zero means review.DefaultFixCycleCap.
 	FixCycleCap int
+	// BotThreads are the review-bot threads the hive has replied in, with how
+	// many replies each has. Empty when the caller does not load them.
+	BotThreads []BotThread
+	// BotMaxAttempts is review_bots.max_attempts_per_thread. Zero means
+	// config.DefaultReviewBotMaxAttempts.
+	BotMaxAttempts int
+}
+
+// BotThread is one review-bot thread and the hive's reply count in it.
+type BotThread struct {
+	Reviewer string `json:"reviewer"`
+	Thread   string `json:"thread"`
+	Attempts int    `json:"attempts"`
+}
+
+// LoopWarning says why a PR is about to leave the automatic review/fix loop.
+type LoopWarning struct {
+	Reason   string `json:"reason"`
+	Reviewer string `json:"reviewer,omitempty"`
+	Thread   string `json:"thread,omitempty"`
 }
 
 // Reviewer is one perspective that reviewed (or is reviewing) the PR.
@@ -187,6 +208,10 @@ type Card struct {
 	LoopCap      int            `json:"loop_cap"`
 	NextAction   NextAction     `json:"next_action"`
 	Reasons      []string       `json:"reasons"`
+	// LoopWarning is set while the PR is one cycle from the loop cap, or a
+	// review-bot thread is at its attempt cap, and no human has the PR yet.
+	// The dashboard offers "Send to human" while it is set.
+	LoopWarning *LoopWarning `json:"loop_warning,omitempty"`
 }
 
 // Review-link states, as recorded by the review relay.
@@ -320,7 +345,45 @@ func Derive(in Inputs) Card {
 		card.Stage = StageHumanHold
 		card.NextAction = NextAction{Kind: ActionHuman, Label: "Human decision needed", URL: pr.URL}
 	}
+	card.LoopWarning = loopWarning(in, card)
 	return card
+}
+
+// loopWarning reports the loop-safety state of an open PR that no human has
+// taken yet: the fix-cycle counter at cap-1 or over, or a review-bot thread at
+// review_bots.max_attempts_per_thread.
+func loopWarning(in Inputs, card Card) *LoopWarning {
+	if card.Stage == StageMerged || card.Stage == StageAbandoned {
+		return nil
+	}
+	for _, l := range in.PR.Labels {
+		if strings.EqualFold(l, escalation.NeedsHumanLabel) {
+			return nil
+		}
+	}
+	maxAttempts := in.BotMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = config.DefaultReviewBotMaxAttempts
+	}
+	for _, t := range in.BotThreads {
+		if t.Attempts >= maxAttempts {
+			return &LoopWarning{
+				Reason:   fmt.Sprintf("review-bot thread reached its attempt cap (%d/%d)", t.Attempts, maxAttempts),
+				Reviewer: t.Reviewer,
+				Thread:   t.Thread,
+			}
+		}
+	}
+	if card.LoopCap > 0 && card.LoopCount >= card.LoopCap-1 {
+		w := &LoopWarning{Reason: fmt.Sprintf("fix cycles at %d of %d", card.LoopCount, card.LoopCap)}
+		names := make([]string, 0, len(card.Reviewers))
+		for _, r := range card.Reviewers {
+			names = append(names, string(r.Perspective))
+		}
+		w.Reviewer = strings.Join(names, ", ")
+		return w
+	}
+	return nil
 }
 
 func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewHold) ([]string, time.Time) {

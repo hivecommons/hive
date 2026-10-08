@@ -110,6 +110,17 @@ The PR receives one summary comment listing the backlog issues filed from that r
 
 Each card also carries the reviewers (perspective and model), in-scope finding counts on the P0–P3 scale `review_bots.min_priority` uses (critical → P0, high → P1, medium → P2, low/info → P3), the loop counter against its cap, one next action and the reasons for the stage. The review queue lists open PRs only, so the endpoint does not return `merged` or `abandoned` cards yet.
 
+### Loop safety
+
+A card carries `loop_warning` (reason, plus the reviewer and thread behind it) while the fix-cycle counter is at `loop_cap − 1` or over, or a review-bot thread has reached `review_bots.max_attempts_per_thread`, and no human has the PR yet. `POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human` (merger or owner role) applies `needs-human` and posts one `<!-- hive-review-loop -->` comment saying why; repeating it posts no second comment, and each use is audit-logged. The endpoint does not load bot-thread counts yet, so cards warn on the fix-cycle counter only.
+
+Review-loop safety checklist:
+
+- [ ] The fix-cycle counter is below `loop_cap`, or the PR is already with a human.
+- [ ] No review-bot thread is at its attempt cap without a human reply.
+- [ ] A PR sent to a human carries `needs-human` and exactly one loop-safety comment.
+- [ ] Nobody re-dispatches a fix on a PR that carries `needs-human`.
+
 ### Confidence score
 
 Every aggregate also carries a derived 0–5 **mergeability confidence** (`confidence.score`, with `confidence.reasons`) so a maintainer working a queue can sort or glance without reading each finding (hivecommons/hive#8182). It is computed from the same reports as the verdict — never asked of the model — so it means the same thing on every PR:
