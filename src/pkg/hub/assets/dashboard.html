@@ -677,7 +677,7 @@
           </div>
           <div id="hub-admins-list" class="fs-sm text-muted">Loading hub admins...</div>
         </div>
-        <div id="hub-gh-rate-limits-panel" class="card hub-admins-panel" style="display:none;margin-top:var(--sp-5)">
+        <div id="hub-gh-rate-limits-panel" class="card hub-admins-panel mt-5" hidden>
           <div class="hub-admins-head">
             <div>
               <div class="hub-admins-title">Hub GitHub API quota</div>
@@ -10067,7 +10067,7 @@
         summary.innerHTML = 'core ' + esc(String(core.remaining ?? '?')) + '/' + esc(String(core.limit ?? '?')) +
           ' · search ' + esc(String(search.remaining ?? '?')) + '/' + esc(String(search.limit ?? '?')) +
           ' · graphql ' + esc(String(gql.remaining ?? '?')) + '/' + esc(String(gql.limit ?? '?')) + top;
-        panel.style.display = '';
+        panel.hidden = false;
       } catch(e) {}
     }
 
