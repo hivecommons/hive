@@ -265,6 +265,7 @@ validation with an error naming the field.
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
 | `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
+| `repo-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `main`), `dir` (default `.hive/wiki`) | Ingests the knowledge a repository carries in its own PR-reviewed history. See [Repository-carried knowledge](#repository-carried-knowledge). Cursor: per-repo commit SHAs. |
 
 ```yaml
 knowledge:
@@ -278,6 +279,54 @@ knowledge:
 
 Notion, Confluence, SharePoint/OneDrive and Google Drive connectors land in
 #11070–#11073.
+
+### Repository-carried knowledge
+
+A repository can carry its own Hive knowledge as markdown under `.hive/wiki/`.
+Because the files live in the repo, they change only through normal reviewed
+pull requests, and the `repo-wiki` connector ingests them from the configured
+branch (clone/pull, SSRF validation and credentials are the same as the `git`
+connector).
+
+```yaml
+knowledge:
+  connectors:
+    - name: repo-knowledge
+      type: repo-wiki
+      layer: project
+      scope:
+        repos: acme/app, acme/docs
+        branch: main          # default
+        dir: .hive/wiki       # default
+```
+
+Contributor layout (every `*.md` under the directory, nested folders allowed):
+
+```
+.hive/wiki/
+  architecture.md
+  runbooks/deploy.md
+```
+
+```markdown
+---
+title: Deploy runbook   # optional; defaults to the file name
+status: approved        # optional: draft | approved (default) | deprecated
+tags: ops, deploy       # optional
+---
+
+Body...
+```
+
+- **Facts:** one per file, slug `repo-wiki-<connector>-<owner>-<repo>-<path>`,
+  written to the connector's `layer` with `attr_repo`, `attr_path`,
+  `attr_branch` and `attr_commit` provenance. `attr_state` is `approved` unless
+  the file says `draft` or `deprecated`.
+- **Removal:** a file deleted from the repo is tombstoned (`status: deprecated`).
+- **Validation:** front matter must be flat `key: value` lines closed by `---`
+  and `status` must be a known value. Invalid files are skipped, the other
+  files still sync, and the connector's status `last_error` lists each
+  offending `repo/path`.
 
 ### Facts written by connectors
 
