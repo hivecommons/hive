@@ -3988,6 +3988,10 @@ type GitHubConfig struct {
 	// core bucket below the daemon's merge/scan reserve.
 	AgentReserveFloor int    `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`
 	OAuthClientID     string `yaml:"oauth_client_id"`
+	// PRDetailTTLS bounds reuse of per-PR detail GETs whose head SHA and
+	// updated_at still match the cheap /pulls list payload. Zero uses the
+	// 30-minute default; HIVE_GITHUB_PR_DETAIL_TTL overrides it for tests.
+	PRDetailTTLS int `yaml:"pr_detail_ttl_s,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -4089,6 +4093,28 @@ type GitHubConfig struct {
 // spoke committed to App auth, failed to read a PEM that was never provisioned,
 // and exited before the HTTP listener bound — invisible from the dashboard.
 const PlaceholderAppID int64 = 999999999
+
+const (
+	// DefaultGitHubPRDetailTTL is the default freshness window for cached
+	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.
+	DefaultGitHubPRDetailTTL = 30 * time.Minute
+	GitHubPRDetailTTLEnv     = "HIVE_GITHUB_PR_DETAIL_TTL"
+)
+
+func (g GitHubConfig) PRDetailTTL() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(GitHubPRDetailTTLEnv)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
+			return d
+		}
+		if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	if g.PRDetailTTLS > 0 {
+		return time.Duration(g.PRDetailTTLS) * time.Second
+	}
+	return DefaultGitHubPRDetailTTL
+}
 
 const (
 	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).

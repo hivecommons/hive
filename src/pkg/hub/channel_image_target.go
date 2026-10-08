@@ -25,8 +25,7 @@ var (
 )
 
 var listChannelBranchCommits = func(branch string, logger *slog.Logger) []branchSHAInfo {
-	client := &http.Client{Timeout: commitBehindCompareTimeout}
-	return listRecentBranchCommits(client, branch, channelImageWalkbackDepth, logger)
+	return listRecentBranchCommits(hubGitHubHTTPClient(), branch, channelImageWalkbackDepth, logger)
 }
 
 var channelSpokeImageTagExists = cachedSpokeImageTagExists

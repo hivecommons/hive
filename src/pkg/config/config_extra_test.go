@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -1018,5 +1019,22 @@ func TestBotLogin_RequiresUsableApp(t *testing.T) {
 	c := &Config{GitHub: GitHubConfig{AppID: PlaceholderAppID}}
 	if got := c.EffectiveAIAuthor(); got != "" {
 		t.Errorf("App-less EffectiveAIAuthor() = %q, want empty (UI shows —)", got)
+	}
+}
+
+func TestGitHubPRDetailTTLDefaultConfigAndEnv(t *testing.T) {
+	if got := (GitHubConfig{}).PRDetailTTL(); got != DefaultGitHubPRDetailTTL {
+		t.Fatalf("default PRDetailTTL = %v, want %v", got, DefaultGitHubPRDetailTTL)
+	}
+	if got := (GitHubConfig{PRDetailTTLS: 42}).PRDetailTTL(); got != 42*time.Second {
+		t.Fatalf("configured PRDetailTTL = %v, want 42s", got)
+	}
+	t.Setenv(GitHubPRDetailTTLEnv, "250ms")
+	if got := (GitHubConfig{PRDetailTTLS: 42}).PRDetailTTL(); got != 250*time.Millisecond {
+		t.Fatalf("env duration PRDetailTTL = %v, want 250ms", got)
+	}
+	t.Setenv(GitHubPRDetailTTLEnv, "7")
+	if got := (GitHubConfig{}).PRDetailTTL(); got != 7*time.Second {
+		t.Fatalf("env seconds PRDetailTTL = %v, want 7s", got)
 	}
 }

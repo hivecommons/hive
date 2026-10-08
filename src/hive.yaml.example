@@ -689,6 +689,8 @@ governor:
 github:
   # Option 1: Personal access token (simplest)
   token: ${HIVE_GITHUB_TOKEN}
+  # Reuse per-PR detail GETs while list head.sha/updated_at still match.
+  pr_detail_ttl_s: 1800
 
   # Option 2: GitHub App (recommended for production)
   # app_id: 12345

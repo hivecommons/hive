@@ -911,13 +911,20 @@ func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr 
 	if c == nil || c.client == nil || pr.GetNumber() <= 0 {
 		return ""
 	}
-	full, _, err := c.client.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
+	fullRepo := owner + "/" + repo
+	// Claim history only annotates who merged an already-terminal PR; bounded
+	// staleness is fine and avoids repeating the detail lookup across scans.
+	if full, ok := c.cachedPRDetailAny(fullRepo, pr.GetNumber()); ok {
+		return safeGetLogin(full.GetMergedBy())
+	}
+	full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_terminal_merged_by"), owner, repo, pr.GetNumber())
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Debug("merged PR actor lookup failed", "repo", owner+"/"+repo, "number", pr.GetNumber(), "error", err)
 		}
 		return ""
 	}
+	c.storePRDetail(fullRepo, pr.GetNumber(), full)
 	return safeGetLogin(full.GetMergedBy())
 }
 

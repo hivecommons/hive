@@ -677,6 +677,14 @@
           </div>
           <div id="hub-admins-list" class="fs-sm text-muted">Loading hub admins...</div>
         </div>
+        <div id="hub-gh-rate-limits-panel" class="card hub-admins-panel mt-5" hidden>
+          <div class="hub-admins-head">
+            <div>
+              <div class="hub-admins-title">Hub GitHub API quota</div>
+              <div class="fs-sm text-muted" id="hub-gh-rate-limits-summary">Loading GitHub rate limits...</div>
+            </div>
+          </div>
+        </div>
         <div id="users-container"><div class="loading">Loading users...</div></div>
         <!-- Fleet-wide geographic rollup of the user base. Lives directly under
              the Users table because it is the same data aggregated: the table
@@ -10025,6 +10033,7 @@
         loadActiveBanner();
         loadHubNotifications();
         loadHubAdmins();
+        loadHubGHRateLimits();
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
@@ -10039,6 +10048,27 @@
       } finally {
         _adminLoading = false;
       }
+    }
+
+    async function loadHubGHRateLimits() {
+      if (!_isAdmin) return;
+      var panel = document.getElementById('hub-gh-rate-limits-panel');
+      var summary = document.getElementById('hub-gh-rate-limits-summary');
+      if (!panel || !summary) return;
+      try {
+        var resp = await fetch('/api/gh-rate-limits');
+        if (!resp.ok) return;
+        var data = await resp.json();
+        var core = data.core || {};
+        var search = data.search || {};
+        var gql = data.graphql || {};
+        var consumers = data.top_consumers || [];
+        var top = consumers.length ? (' · top: ' + esc(consumers[0].caller || consumers[0].endpoint || 'unknown')) : '';
+        summary.innerHTML = 'core ' + esc(String(core.remaining ?? '?')) + '/' + esc(String(core.limit ?? '?')) +
+          ' · search ' + esc(String(search.remaining ?? '?')) + '/' + esc(String(search.limit ?? '?')) +
+          ' · graphql ' + esc(String(gql.remaining ?? '?')) + '/' + esc(String(gql.limit ?? '?')) + top;
+        panel.hidden = false;
+      } catch(e) {}
     }
 
 

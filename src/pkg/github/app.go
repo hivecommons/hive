@@ -15,6 +15,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const (
@@ -710,5 +711,6 @@ func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, log
 		logger:      logger,
 		appAuth:     auth,
 		appBotLogin: appBotLogin,
+		prDetailTTL: func() time.Duration { return (config.GitHubConfig{}).PRDetailTTL() },
 	}
 }
