@@ -4790,8 +4790,11 @@ type SlackConfig struct {
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
-	BotToken       string `yaml:"bot_token"`
-	ChannelID      string `yaml:"channel_id"`
+	// RequestsWebhookURL posts new hosted-hive provision requests to the
+	// community request channel. Secret; do not expose over JSON/status APIs.
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
+	BotToken           string `yaml:"bot_token"`
+	ChannelID          string `yaml:"channel_id"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel
@@ -4901,6 +4904,9 @@ type HubConfig struct {
 	// entries (issue #9619). Hub-only and a secret: never logged, and excluded
 	// from JSON. HIVE_NPS_RELAY_PULL_SECRET overrides it.
 	NPSRelayPullSecret string `yaml:"nps_relay_pull_secret,omitempty" json:"-"`
+	// Notifications contains hub-only notification sinks. Secrets below this
+	// node are intentionally excluded from JSON/status output.
+	Notifications HubNotificationsConfig `yaml:"notifications,omitempty" json:"-"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;
@@ -5061,6 +5067,14 @@ type HubConfig struct {
 	DisabledTiers              []string               `yaml:"disabled_tiers"`
 	TierLimits                 map[string]TierRate    `yaml:"tier_limits"`
 	SnapshotIntervalMin        int                    `yaml:"snapshot_interval_min"`
+}
+
+type HubNotificationsConfig struct {
+	Discord HubDiscordNotificationsConfig `yaml:"discord,omitempty" json:"-"`
+}
+
+type HubDiscordNotificationsConfig struct {
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
