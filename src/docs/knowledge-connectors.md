@@ -279,7 +279,11 @@ Connector types that can publish: `sharepoint`, which uploads each fact as `<roo
 
 ### When it runs
 
-The mirror publishes once at startup and then on a daily sweep. It also exposes a trigger that the curator promotion scheduler can call after each sweep that promotes at least one fact (`PromotionScheduler.OnPromoted`). Each batch produces one audit record (`PublishReport`: created, updated, deprecated, unchanged, collisions, error) that is logged as `knowledge publish batch`. The mirror's status (last run, last success, page count, last error and last report) is available from `Mirror.Status()`.
+`hive` starts the mirror at boot when `knowledge.publish.connector` is set. It looks up that `knowledge.connectors` entry and checks that its type can publish. If the entry is missing or its type cannot publish, the hive logs `knowledge publish mirror disabled` with the reason and boots without publishing. Facts are read from the local `path` of each published layer's `knowledge.layers` entry; a layer without a `path` has nothing to publish. Page hashes and the last status persist in `/data/knowledge/connector-state/_publish`, so a restart does not resend unchanged pages.
+
+The mirror publishes once at startup and then on a daily sweep. When scheduled promotion is on (`knowledge.curator.enabled: true`), every promotion sweep that promotes at least one fact also triggers a publish. Each batch produces one audit record (`PublishReport`: created, updated, deprecated, unchanged, collisions, error) that is logged as `knowledge publish batch`.
+
+**Status and Publish now.** **Settings → Knowledge → Connectors** shows a **Publish mirror** block under the connectors table: status, connector, layers, root, last run, published page count, the last batch's created/updated/deprecated/unchanged counts, collisions and last error. Owners get a **Publish now** button. The same data is the `publish` object of `GET /api/knowledge/connectors` and `GET /api/config/knowledge/connectors/status` (`null` when `knowledge.publish` is unset; `active: false` when it is set but the mirror is not running). `POST /api/knowledge/publish/sync` (owner only) runs a batch now: `202` with the publish status, `409` while a batch is running, `503` when the mirror is not running.
 
 ### Stopping publishing
 

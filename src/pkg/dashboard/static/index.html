@@ -3265,6 +3265,12 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
+    .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+    .kc-publish-head h4 { margin: 0; }
+    .kc-publish-grid { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-3); margin: var(--sp-3) 0 0; font-size: var(--fs-sm); }
+    .kc-publish-grid dt { color: var(--muted); font-weight: 700; }
+    .kc-publish-grid dd { margin: 0; overflow-wrap: anywhere; }
     .hive-dialog-error[data-ok="true"] { color: var(--green); }
     .public-knowledge-switch-knob { display: inline-block; inline-size: 1.1em; block-size: 1.1em; border-radius: var(--r-pill); background: currentColor; }
     .public-knowledge-url { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
@@ -30113,7 +30119,7 @@ function burnAreaChart() {
       'document': [['url', 'Document URL', 'https://example.org/guide.html'], ['file_path', 'File path', '/data/knowledge/guide.pdf'], ['context7_id', 'Context7 ID', '/org/project']],
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']]
     };
-    let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false };
+    let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false, publish: null };
 
     async function loadKnowledgeConnectors() {
       try {
@@ -30121,7 +30127,7 @@ function burnAreaChart() {
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
       } catch (e) {
         _kcState.loaded = true;
         _kcState.error = e.message;
@@ -30154,7 +30160,7 @@ function burnAreaChart() {
       let html = '';
       if (owner) html += '<div class="kc-toolbar"><button type="button" class="hv-btn btn-primary btn-sm" data-action="kcOpenEditor" data-arg0="">Add connector</button></div>';
       if (!_kcState.connectors.length) {
-        return html + '<p class="text-muted fs-base">No connectors configured.' + (owner ? '' : ' Only the hive owner can add connectors.') + '</p>';
+        return html + '<p class="text-muted fs-base">No connectors configured.' + (owner ? '' : ' Only the hive owner can add connectors.') + '</p>' + renderKnowledgePublishBlock(owner);
       }
       html += '<table class="kc-table"><thead><tr><th>Name</th><th>Type</th><th>Layer</th><th>Status</th><th>Last sync</th><th>Pages / facts</th><th>Last error</th>' + (owner ? '<th>Actions</th>' : '') + '</tr></thead><tbody>';
       _kcState.connectors.forEach(c => {
@@ -30178,7 +30184,31 @@ function burnAreaChart() {
       });
       html += '</tbody></table>';
       if (!_kcState.runtime) html += '<p class="text-muted fs-base">The connector syncer is not running, so status and Sync now are unavailable until the hive restarts with these connectors.</p>';
-      return html;
+      return html + renderKnowledgePublishBlock(owner);
+    }
+
+    // Publish mirror (knowledge.publish, #11076): read-only status plus an
+    // owner-only "Publish now". Hidden when publishing is not configured.
+    function renderKnowledgePublishBlock(owner) {
+      const p = _kcState.publish;
+      if (!p) return '';
+      const status = !p.active ? 'disabled' : p.running ? 'syncing' : p.last_error ? 'error' : p.last_success ? 'ok' : 'pending';
+      const err = p.last_error || '';
+      const row = (k, v) => '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>';
+      let html = '<div class="kc-publish" data-section="knowledge-publish"><div class="kc-publish-head"><h4>Publish mirror</h4>';
+      if (owner) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kcPublishNow"' + (!p.active || p.running ? ' disabled' : '') + '>Publish now</button>';
+      html += '</div><dl class="kc-publish-grid">'
+        + row('Status', '<span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span>' + (p.dry_run ? ' <span class="text-muted">dry run</span>' : ''))
+        + row('Connector', '<code>' + esc(p.connector || '') + '</code>')
+        + row('Layers', esc((p.layers || []).join(', ') || '—'))
+        + row('Root', esc(p.root || '—'))
+        + row('Last run', '<span title="' + esc(p.last_run || '') + '">' + esc(kcAgo(p.last_run)) + '</span>')
+        + row('Pages', (p.pages || 0) + ' published · last batch: ' + (p.pages_created || 0) + ' created, ' + (p.pages_updated || 0) + ' updated, ' + (p.pages_deprecated || 0) + ' deprecated, ' + (p.pages_unchanged || 0) + ' unchanged')
+        + row('Collisions', (p.collisions || []).length ? esc(p.collisions.join('; ')) : '—')
+        + row('Last error', err ? '<span class="kc-error" title="' + esc(err) + '">' + esc(err.length > 120 ? err.slice(0, 120) + '…' : err) + '</span>' : '—')
+        + '</dl>';
+      if (!p.active) html += '<p class="text-muted fs-base">The publish mirror is not running. Check the hive log for "knowledge publish mirror disabled", or restart the hive after configuring knowledge.publish.</p>';
+      return html + '</div>';
     }
 
     function renderKnowledgeConnectorsSection() {
@@ -30222,6 +30252,18 @@ function burnAreaChart() {
         setTimeout(loadKnowledgeConnectors, 1500);
       } catch (e) {
         showToast('Sync failed to start: ' + e.message, 'error');
+      }
+    }
+
+    async function kcPublishNow() {
+      try {
+        const r = await fetch('/api/knowledge/publish/sync', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast('Publish started', 'success');
+        setTimeout(loadKnowledgeConnectors, 1500);
+      } catch (e) {
+        showToast('Publish failed to start: ' + e.message, 'error');
       }
     }
 

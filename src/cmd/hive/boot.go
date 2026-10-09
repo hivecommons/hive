@@ -168,6 +168,7 @@ type boot struct {
 	// bootKnowledge
 	gitSyncer            *knowledge.GitSyncer
 	knowledgeConnectors  *connector.Syncer
+	knowledgePublish     *connector.Mirror
 	promotionScheduler   *knowledge.PromotionScheduler
 	quotaAccount         string
 	quotaPoolDir         string

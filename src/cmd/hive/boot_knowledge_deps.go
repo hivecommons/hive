@@ -44,6 +44,9 @@ type bootKnowledgeDeps struct {
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
 	// nil leaves it built but not started.
 	startConnectorSyncer func(ctx context.Context, s *connector.Syncer)
+	// startPublishMirror runs the knowledge.publish mirror (#11076); nil
+	// leaves it built but not started.
+	startPublishMirror func(ctx context.Context, m *connector.Mirror)
 }
 
 func defaultBootKnowledgeDeps() bootKnowledgeDeps {
@@ -77,5 +80,6 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 			return mgr.RestartWithBootstrap(ctx, "brainstorm", msg)
 		},
 		startConnectorSyncer: func(ctx context.Context, s *connector.Syncer) { go s.Run(ctx) },
+		startPublishMirror:   func(ctx context.Context, m *connector.Mirror) { go m.Start(ctx) },
 	}
 }

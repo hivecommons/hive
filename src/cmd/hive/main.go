@@ -1470,6 +1470,7 @@ func (b *boot) wireBootClosures() {
 			RepoCost:              b.repoCostCollector,
 			BeadSynthesizer:       b.beadSynth,
 			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
+			KnowledgePublish:      b.knowledgePublishRuntime(),
 			BeadStores:            b.beadStores,
 			BeadStoreLoadFailures: b.beadStoreLoadFailures,
 			AuditLedger:           auditLedger,
@@ -3215,6 +3216,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			"hint", "set knowledge.curator.enabled: true to opt in",
 		)
 	}
+	// After the promotion scheduler so a promotion sweep can trigger a publish.
+	b.bootKnowledgePublish(deps, nil)
 
 	// Open the graph store in a background goroutine. NewGraphStore acquires
 	// a SQLite file lock that blocks if the old pod still holds it. Deferring
