@@ -47,6 +47,7 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - **Held** counts issues and pull requests with a hold label. A hold label, such as `hold` or `on-hold`, parks an item on purpose.
 - **Blocked / needs-human** counts work that waits on a person or on something else. For issues, that is the "Needs human" and "Confirm & close" bands. It also counts issues with a `needs-human` label and issues waiting for their reporter. For pull requests, it is the "Needs human" and "Blocked" bands.
 - **Outside** counts open items that Hive's filters kept off its work list. Hover its ⓘ mark to see why each item was kept out. The reasons are labels such as `needs-direction`, `needs-decision` or `needs-spec`, and exempt labels. Others are reporter triage, your project issue filter, standing advisory issues and bot dependency dashboards. Draft pull requests count here too.
+- **Test coverage** appears at the end of the row when `HIVE_COVERAGE_BADGE_URL` is configured and readable. It shows the primary repository's current coverage and goal, using the same reading as the quality agent.
 - The last part of Outside is **hold-adjacent/other**. It is whatever is left after every named reason is counted. Hive cannot say more about these items.
 - The Outside tile exists on the v5 line only. On v6 the same items are part of the totals but have no tile of their own.
 - **Issues by band** groups tracked and held issues. The bands are Unclaimed, Claimed, Needs triage, Needs human and Confirm & close.
@@ -75,6 +76,7 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - `dashboard.issue_bands.stale_days` decides when an item counts as having had no activity for too long.
 - `project.issue_filter.require_labels`, `project.issue_filter.hard_suppress_labels`, `project.issue_filter.reporter_trust` and `governor.labels.exempt` decide what counts as Outside. Change them in **Settings → Labels**.
 - The chart type and trend window are saved in your browser only.
+- `HIVE_COVERAGE_BADGE_URL` turns on the Test coverage tile by giving Hive the coverage badge that the quality agent already reads.
 
 ## Governor
 
