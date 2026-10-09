@@ -94,7 +94,7 @@ Set the model parameter explicitly on every agent call. When in doubt, use a mid
 
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
-`--needs-decision` to the create command (`gh issue create` hands it to
+`--needs-decision` to the issue-create command below (it is relayed to
 `hive-open-issue`). Hive then applies its configured needs-decision label
 itself, posts the "What to reply" notice offering `/hive approve` and
 `/hive decision`, and keeps the issue out of the work queue until the
