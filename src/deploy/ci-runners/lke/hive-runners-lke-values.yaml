@@ -78,10 +78,11 @@ template:
       # directory, clobbering each other (hivecommons/hive#10234) — one node
       # ended up with a `.complete` marker but no `bin/go`, failing every job
       # scheduled onto it. Populate it once here under a node-wide flock before
-      # any job starts; later pods find a marker plus binary and skip. Keep GO_VERSION in step with the
-      # `go` line in src/go.mod and NODE_VERSION with what setup-node resolves
-      # for `node-version: '22'`; a mismatch is harmless (setup-* just
-      # downloads), it only forfeits the protection.
+      # any job starts; later pods find a marker plus binary and skip.
+      # GO_VERSION is the fallback pin; the script also warms whatever `go`
+      # line src/go.mod carries on v5 right now. Keep NODE_VERSION in step with
+      # what setup-node resolves for `node-version: '22'`; a mismatch is
+      # harmless (setup-* just downloads), it only forfeits the protection.
       - name: warm-toolcache
         image: ghcr.io/hivecommons/hive-ci-runner:v2.337.0-ubuntu-24.04-toolchain-gh-1
         command:
@@ -107,11 +108,18 @@ template:
             mkdir -p "$tc"
             exec 9>"$tc/.warm.lock"
             flock -w 600 9 || { echo "warm-toolcache: lock timeout, continuing" >&2; exit 0; }
-            warm go "$GO_VERSION" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" || echo "warm-toolcache: go failed (non-fatal)" >&2
+            # Also warm whatever `go` line the default branch currently pins, so a
+            # toolchain bump in src/go.mod does not reopen the cold-cache race on
+            # every node until an operator re-applies this file with a new
+            # GO_VERSION (hivecommons/hive#11164). GO_VERSION stays the fallback.
+            live=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/hivecommons/hive/v5/src/go.mod" 2>/dev/null | sed -n 's/^go \([0-9][0-9.]*\)$/\1/p' | head -n1 || true)
+            for v in $GO_VERSION $live; do
+              warm go "$v" "https://go.dev/dl/go${v}.linux-amd64.tar.gz" || echo "warm-toolcache: go $v failed (non-fatal)" >&2
+            done
             warm node "$NODE_VERSION" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" || echo "warm-toolcache: node failed (non-fatal)" >&2
         env:
           - name: GO_VERSION
-            value: "1.26.6"
+            value: "1.26.9"
           - name: NODE_VERSION
             value: "22.23.3"
         securityContext:
