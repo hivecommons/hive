@@ -3,9 +3,14 @@ package connector
 import (
 	"context"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -241,5 +246,139 @@ func TestCSVToMarkdown(t *testing.T) {
 	got := csvToMarkdown("a,b\n1\n2,3\n4,5\n", 2)
 	if !strings.Contains(got, "| 1 |  |") || !strings.Contains(got, "Truncated at 2 rows") || strings.Contains(got, "| 4 |") {
 		t.Fatalf("got = %q", got)
+	}
+}
+
+func TestGoogleDrivePublish(t *testing.T) {
+	type write struct{ method, path, query, ctype, auth, meta, body string }
+	var mu sync.Mutex
+	var writes []write
+	var failLookup, failWrite atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/drive/v3/files" && !failLookup.Load():
+			switch {
+			case strings.Contains(q, "'folder123456' in parents and name = 'Hive' ") && strings.Contains(q, "mimeType = '"+driveFolderMIME+"'"):
+				fmt.Fprint(w, `{"files":[{"id":"hivefolder"}]}`)
+			case strings.Contains(q, "'newfolder' in parents and name = 'hive-org-a.md' ") && strings.Contains(q, "mimeType != '"+driveFolderMIME+"'"):
+				fmt.Fprint(w, `{"files":[{"id":"fileA"}]}`)
+			default:
+				fmt.Fprint(w, `{"files":[]}`)
+			}
+		case r.Method != http.MethodGet && !failWrite.Load():
+			wr := write{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, ctype: r.Header.Get("Content-Type"), auth: r.Header.Get("Authorization")}
+			if mt, params, err := mime.ParseMediaType(wr.ctype); err == nil && mt == "multipart/related" {
+				mr := multipart.NewReader(r.Body, params["boundary"])
+				for i := 0; ; i++ {
+					part, err := mr.NextPart()
+					if err != nil {
+						break
+					}
+					b, _ := io.ReadAll(part)
+					if i == 0 {
+						wr.meta = string(b)
+					} else {
+						wr.body = part.Header.Get("Content-Type") + "|" + string(b)
+					}
+				}
+			} else {
+				b, _ := io.ReadAll(r.Body)
+				wr.body = string(b)
+			}
+			mu.Lock()
+			writes = append(writes, wr)
+			mu.Unlock()
+			fmt.Fprint(w, `{"id":"newfolder"}`)
+		default:
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	origAPI, origUpload := driveAPIBase, driveUploadBase
+	driveAPIBase, driveUploadBase = srv.URL+"/drive/v3", srv.URL+"/upload/drive/v3"
+	t.Cleanup(func() { driveAPIBase, driveUploadBase = origAPI, origUpload })
+	t.Setenv("GD_TOKEN", "tok")
+	deps := Deps{HTTP: NewHTTPClient(HTTPOptions{AllowPrivate: true, MaxRetries: -1})}
+	p, err := NewPublisher(nil, driveCfg(map[string]string{"folder_ids": "folder123456,folder999999"}, "GD_TOKEN"), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := []Page{
+		{ID: "org/a", Markdown: "# A", Attrs: map[string]string{PublishKeyAttr: "hive-org-a"}},
+		{ID: "org/b", Markdown: "# B"},
+	}
+	if err := p.Publish(context.Background(), "/Hive/Know ledge/", pages); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := append([]write(nil), writes...)
+	writes = nil
+	mu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("writes %+v", got)
+	}
+	folder, upd, cre := got[0], got[1], got[2]
+	if folder.method != http.MethodPost || folder.path != "/drive/v3/files" || folder.auth != "Bearer tok" ||
+		!strings.Contains(folder.body, `"name":"Know ledge"`) || !strings.Contains(folder.body, `"parents":["hivefolder"]`) ||
+		!strings.Contains(folder.body, driveFolderMIME) {
+		t.Fatalf("folder create %+v", folder)
+	}
+	if upd.method != http.MethodPatch || upd.path != "/upload/drive/v3/files/fileA" || !strings.Contains(upd.query, "uploadType=media") ||
+		upd.body != "# A" || !strings.HasPrefix(upd.ctype, "text/markdown") {
+		t.Fatalf("update %+v", upd)
+	}
+	if cre.method != http.MethodPost || cre.path != "/upload/drive/v3/files" || !strings.Contains(cre.query, "uploadType=multipart") ||
+		!strings.Contains(cre.meta, `"name":"`+PublishKey("org/b")+`.md"`) || !strings.Contains(cre.meta, `"parents":["newfolder"]`) ||
+		!strings.HasPrefix(cre.body, "text/markdown") || !strings.HasSuffix(cre.body, "|# B") {
+		t.Fatalf("create %+v", cre)
+	}
+
+	conn := p.(*googleDriveConnector)
+	tests := []struct {
+		name       string
+		conn       *googleDriveConnector
+		root       string
+		pages      []Page
+		failLookup bool
+		failWrite  bool
+		wantErr    string
+	}{
+		{"no pages is a no-op", conn, "", nil, false, false, ""},
+		{"bad root", conn, "a/../b", pages, false, false, "must be a plain folder path"},
+		{"empty root", conn, "/", pages, false, false, "must be a plain folder path"},
+		{"missing secret", &googleDriveConnector{cfg: driveCfg(map[string]string{"folder_ids": "folder123456"}, "GD_UNSET_X"), http: deps.HTTP}, "R", pages, false, false, "GD_UNSET_X"},
+		{"nothing to publish to", &googleDriveConnector{cfg: driveCfg(nil, "GD_TOKEN"), http: deps.HTTP}, "R", pages, false, false, "no folder or shared drive configured"},
+		{"shared drive root", &googleDriveConnector{cfg: driveCfg(map[string]string{"shared_drive_ids": "shared0001"}, "GD_TOKEN"), http: deps.HTTP}, "R", pages[1:], false, false, ""},
+		{"folder lookup fails", conn, "R", pages, true, false, `google drive publish root "R"`},
+		{"upload fails", conn, "Hive", pages, false, true, "publishing org/a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failLookup.Store(tt.failLookup)
+			failWrite.Store(tt.failWrite)
+			defer func() { failLookup.Store(false); failWrite.Store(false) }()
+			err := tt.conn.Publish(context.Background(), tt.root, tt.pages)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(writes) < 2 || !strings.Contains(writes[0].body, `"parents":["shared0001"]`) {
+		t.Fatalf("shared drive writes %+v", writes)
+	}
+}
+
+func TestDriveQuote(t *testing.T) {
+	if got := driveQuote(`it's a\b`); got != `'it\'s a\\b'` {
+		t.Fatalf("driveQuote = %s", got)
 	}
 }
