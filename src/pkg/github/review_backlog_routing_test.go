@@ -247,7 +247,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 	pr5 := routingReport(t, 5, "abc",
 		nit("unused variable", "medium", "pkg/a.go", 7, "x is assigned and never read"),
 		nit("blocking bug", "high", "pkg/a.go", 9, "this blocks and must not be filed"),
-		nit("typo in comment", "low", "pkg/b.go", 3, "recieve should be receive"),
+		nit("typo in comment", "low", "pkg/b.go", 3, "receive should be receive"),
 		nit("naming", "info", "pkg/c.go", 4, "prefer camelCase"),
 		map[string]any{"title": "no evidence", "severity": "low", "summary": "uncited", "review_scope": "in-scope"},
 	)
