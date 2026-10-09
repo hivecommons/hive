@@ -128,6 +128,18 @@ assert.equal(
   renderedValues['Actionable now'] + renderedValues.Held + renderedValues['Blocked / needs-human'] + renderedValues.Outside
 );
 assert.match(out, /aria-label="100 total open issues \+ 7 total open PRs = 103 actionable now \+ 1 held \+ 3 blocked or needs-human \+ 0 outside"/);
+let stored = JSON.parse(localStorage.getItem(overviewKPILocalKey()) || '[]');
+assert.equal(stored.length, 1);
+assert.equal(stored[0].overviewOpenIssues, 100);
+
+repos[0].countsIncomplete = true;
+repos[0].issues = 1;
+repos[0].prs = 1;
+renderOverviewKPIs(repos, issueSlices, prSlices, state);
+stored = JSON.parse(localStorage.getItem(overviewKPILocalKey()) || '[]');
+assert.equal(stored.length, 1);
+assert.equal(stored[0].overviewOpenIssues, 100);
+delete repos[0].countsIncomplete;
 
 repos[0].issues = 123;
 repos[0].prs = 45;

@@ -92,6 +92,37 @@ func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
 	}
 }
 
+func TestOverviewKPIHistorySkipsIncompleteSamples(t *testing.T) {
+	s := &Server{}
+	start := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	complete := &StatusPayload{Repos: []FrontendRepo{{Name: "hive", Issues: 33, PRs: 14}}}
+	incomplete := &StatusPayload{
+		OverviewKPIIncomplete: true,
+		Repos:                 []FrontendRepo{{Name: "hive", Issues: 2, PRs: 1, CountsIncomplete: true}},
+	}
+
+	s.appendTrendHistoryAt(complete, start)
+	s.appendTrendHistoryAt(incomplete, start.Add(timeHistoryStep()))
+	s.appendTrendHistoryAt(complete, start.Add(2*timeHistoryStep()))
+
+	history := s.OverviewKPIHistory(0)
+	if len(history) != 3 {
+		t.Fatalf("history len = %d, want 3 trend rows", len(history))
+	}
+	if history[1].OverviewOpenIssues != nil || history[1].OverviewOpenPRs != nil {
+		t.Fatalf("incomplete sample should omit KPI values, got %+v", history[1])
+	}
+	values := make([]int, 0, 2)
+	for _, row := range history {
+		if row.OverviewOpenIssues != nil {
+			values = append(values, *row.OverviewOpenIssues)
+		}
+	}
+	if len(values) != 2 || values[0] != 33 || values[1] != 33 {
+		t.Fatalf("persisted overview issue values = %v, want flat last-good samples", values)
+	}
+}
+
 func timeHistoryStep() time.Duration {
 	return time.Duration(trendHistoryMinIntervalMs) * time.Millisecond
 }

@@ -1,0 +1,1 @@
+- Skip incomplete Overview KPI snapshots when recording sparkline history so transient GitHub fetch failures no longer draw false dips.
