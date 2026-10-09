@@ -45,6 +45,8 @@ func splitCSV(s string) []string {
 // of contents of the knowledge visible under the requested scope. With
 // format=prompt it also returns the markdown rendering kicks inject, bounded
 // by max_chars.
+// A request naming an agent with ?agent= is further restricted to that
+// agent's knowledge.agent_scopes entry; the request scope cannot widen it.
 func (s *Server) handleKnowledgeTOC(w http.ResponseWriter, r *http.Request) {
 	scope, err := knowledgeTOCScope(r)
 	if err != nil {
@@ -59,6 +61,9 @@ func (s *Server) handleKnowledgeTOC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0)
+	if agentScope, ok := s.knowledgeAgentScope(r); ok {
+		facts = agentScope.Filter(facts)
+	}
 	toc := knowledge.BuildTOC(facts, scope, limit)
 	resp := map[string]interface{}{
 		"enabled":   true,
@@ -75,8 +80,8 @@ func (s *Server) handleKnowledgeTOC(w http.ResponseWriter, r *http.Request) {
 
 // handleKnowledgeEntry serves GET /api/knowledge/entry/{id}: one entry's
 // complete markdown and front-matter. The same scope and lifecycle filter as
-// the TOC applies, so an entry the TOC would hide cannot be read by guessing
-// its id.
+// the TOC applies, including the ?agent= scope, so an entry the TOC would hide
+// cannot be read by guessing its id.
 func (s *Server) handleKnowledgeEntry(w http.ResponseWriter, r *http.Request) {
 	scope, err := knowledgeTOCScope(r)
 	if err != nil {
@@ -89,6 +94,10 @@ func (s *Server) handleKnowledgeEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	fact, err := s.deps.Knowledge.ReadEntry(s.deps.Ctx, r.PathValue("id"))
 	if err != nil || fact == nil || !scope.InScope(*fact) {
+		jsonError(w, "knowledge entry not found", http.StatusNotFound)
+		return
+	}
+	if agentScope, ok := s.knowledgeAgentScope(r); ok && !agentScope.InScope(*fact) {
 		jsonError(w, "knowledge entry not found", http.StatusNotFound)
 		return
 	}

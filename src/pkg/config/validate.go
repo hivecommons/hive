@@ -141,6 +141,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateKnowledgePublish(c.Knowledge.Publish); err != nil {
 		return err
 	}
+	if err := ValidateKnowledgeAgentScopes(c.Knowledge.AgentScopes); err != nil {
+		return err
+	}
 	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
 		return err
 	}

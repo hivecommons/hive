@@ -38,8 +38,51 @@ All parameters are optional, comma-separated allow-lists:
 - `include_states` — operator opt-in for `draft`, `deprecated`, `superseded` or
   `all`.
 
-There is no per-agent scope store yet, so the caller passes the agent's
-effective layers and repos.
+An agent-identified request adds `agent=<name>`, which applies that agent's
+[per-agent scope](#per-agent-scopes) on top of the parameters above.
+
+### Per-agent scopes
+
+`knowledge.agent_scopes` in `hive.yaml` binds an agent to the knowledge it may
+see:
+
+```yaml
+knowledge:
+  agent_scopes:
+    scanner:
+      layers: [project, org]
+      repos: [hivecommons/hive]
+      types: [pattern, decision]
+      tags: [ci]
+    architect:
+      include_states: [deprecated]
+```
+
+Each field is an allow-list with the same meaning as the matching query
+parameter. An agent with no entry, or an empty field, is unrestricted, so
+nothing changes until an operator adds a scope. A replica without its own
+entry uses its base agent's scope.
+
+The scope applies to the agent's kick primer (including related facts pulled
+in through the knowledge graph) and to `GET /api/knowledge/toc` and
+`GET /api/knowledge/entry/{id}` requests that pass `agent=<name>`. It is
+intersected with the request scope: an entry is returned only when both admit
+it, so a request can narrow an agent's scope but never widen it, and the entry
+endpoint answers `404` for anything outside it.
+
+`include_states` on an agent scope works the same way. Approved entries are
+always admitted; a draft, deprecated or superseded entry reaches the agent
+only when the agent scope lists that state (or leaves `include_states` empty)
+**and** the request's `include_states` (or, for kicks, the primer's) lists it
+too. An agent scope therefore never admits a state the operator did not ask
+for.
+
+Config load rejects unknown layer names (`personal`, `project`, `org`,
+`community`) and unknown state names (`draft`, `approved`, `deprecated`,
+`superseded`, `all`). The scopes can also be read and replaced with
+`GET`/`PUT /api/config/knowledge/agent-scopes` (owner only for `PUT`); a `PUT`
+is validated as a whole, saved to `hive.yaml` and audited as
+`config_knowledge_agent_scopes`.
 
 ### Prompt-size caps
 
