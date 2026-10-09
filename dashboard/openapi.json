@@ -18640,6 +18640,51 @@
         }
       }
     },
+    "/api/webhook/github": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GitHub repository webhook receiver (PR cache invalidation)",
+        "description": "Receives GitHub App repository webhooks (directly or relayed by the hub) and invalidates the cached PR detail / check-run entries for the affected pull requests so the next governor cycle re-enriches only changed PRs. Fails closed when GITHUB_WEBHOOK_SECRET is not configured; verifies the X-Hub-Signature-256 HMAC over the raw body.",
+        "responses": {
+          "200": {
+            "description": "Event processed or ignored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["ok", "ignored"]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "invalidations": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing X-GitHub-Event header or invalid payload"
+          },
+          "401": {
+            "description": "Invalid signature"
+          },
+          "503": {
+            "description": "Webhooks disabled: no secret configured"
+          }
+        }
+      }
+    },
     "/api/linear/webhook": {
       "post": {
         "tags": [
