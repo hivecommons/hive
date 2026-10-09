@@ -797,6 +797,74 @@ func TestProducingRequiresQueuedWork(t *testing.T) {
 	})
 }
 
+// listingFleet adds the optional QueuedWorkLister capability to fakeFleet.
+type listingFleet struct {
+	*fakeFleet
+	refs     []QueuedRef
+	hiveWide bool
+}
+
+func (f *listingFleet) QueuedWorkRefs(string) ([]QueuedRef, bool) { return f.refs, f.hiveWide }
+
+// TestNotProducingNamesQueuedRefs asserts the not-producing message keeps its
+// count-only prefix, says when the queue is hive-wide, and names up to
+// MaxQueuedRefs items as owner/repo#N (the form the dashboard banner links)
+// with the rest summarised as "+N more" (hivecommons/hive#11223).
+func TestNotProducingNamesQueuedRefs(t *testing.T) {
+	clock := newFakeClock()
+	base := newFakeFleet("a1")
+	base.setObs("a1", readyObs())
+	base.setQueued(5)
+	base.mu.Lock()
+	base.production["a1"] = clock.Now().Add(-7 * time.Hour)
+	base.mu.Unlock()
+	fleet := &listingFleet{fakeFleet: base, hiveWide: true, refs: []QueuedRef{
+		{Ref: "acme/widgets#7", Kind: "issue"},
+		{Ref: "acme/widgets#12", Kind: "pr"},
+		{Ref: "acme/gadgets#3", Kind: "issue"},
+		{Ref: "acme/gadgets#4", Kind: "issue"},
+	}}
+	alerter := newFakeAlerter()
+	r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+	r.Tick(context.Background())
+
+	p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+	if p.Status != ConditionFalse || p.Reason != "NoRecentProduction" {
+		t.Fatalf("Producing = %+v, want False/NoRecentProduction", p)
+	}
+	wantTail := "while 5 item(s) are queued hive-wide: issue acme/widgets#7, PR acme/widgets#12, issue acme/gadgets#3, +2 more"
+	if !strings.HasSuffix(p.Message, wantTail) {
+		t.Fatalf("message = %q, want suffix %q", p.Message, wantTail)
+	}
+	alerter.mu.Lock()
+	alert := alerter.alerts[producingAlertID("a1")]
+	alerter.mu.Unlock()
+	if !strings.Contains(alert, "alive but not producing: no production evidence") || !strings.HasSuffix(alert, wantTail) {
+		t.Fatalf("alert = %q, want the refs appended to the existing text", alert)
+	}
+}
+
+func TestQueuedRefsSuffix(t *testing.T) {
+	cases := []struct {
+		name     string
+		queued   int
+		refs     []QueuedRef
+		hiveWide bool
+		want     string
+	}{
+		{"no refs, per-agent", 2, nil, false, ""},
+		{"no refs, hive-wide", 2, nil, true, " hive-wide"},
+		{"all shown", 1, []QueuedRef{{Ref: "o/r#1", Kind: "issue"}}, true, " hive-wide: issue o/r#1"},
+		{"count exceeds refs", 4, []QueuedRef{{Ref: "o/r#1", Kind: "pr"}}, false, ": PR o/r#1, +3 more"},
+		{"empty ref skipped", 1, []QueuedRef{{}, {Ref: "o/r#2"}}, false, ": o/r#2"},
+	}
+	for _, tc := range cases {
+		if got := queuedRefsSuffix(tc.queued, tc.refs, tc.hiveWide); got != tc.want {
+			t.Errorf("%s: queuedRefsSuffix = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestReadinessProviderErrorSurfacesBlockedInferenceLine(t *testing.T) {
 	clock := newFakeClock()
 	fleet := newFakeFleet("a1")
