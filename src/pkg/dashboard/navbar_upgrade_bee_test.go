@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestNavbarUpgradeBeeMarkupAndSharedRenderPath(t *testing.T) {
@@ -71,7 +74,7 @@ func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
 	if !strings.Contains(hiveRule, "z-index: 2") {
 		t.Fatalf("bee hive host must stay above tile backgrounds: %s", hiveRule)
 	}
-	beeRule := cssRule(t, html, ".oc-version-orbit")
+	beeRule := cssRule(t, html, ".oc-version-bee-orbit")
 	if !strings.Contains(beeRule, "z-index: 3") {
 		t.Fatalf("orbiting bees must stack above their host: %s", beeRule)
 	}
@@ -97,7 +100,7 @@ func TestNavbarUpgradePillCannotCoverCenterAgents(t *testing.T) {
 		`.oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch;`,
 		`.oc-topbar-right { position: relative; z-index: 2;`,
 		`flex-wrap: nowrap;`,
-		`.oc-navbar-upgrade { --oc-version-bee-lane: 44px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw);`,
+		`.oc-navbar-upgrade { --oc-version-bee-lane: 56px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw);`,
 		`.agent-navbar-upnext::after { content: attr(data-agent-summary);`,
 		`@container navbar-center (max-width: 560px)`,
 		`.agent-navbar-tile .agent-tile-next { display: none; }`,
@@ -123,10 +126,10 @@ func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 		`.oc-version-bee-body`,
 		`.oc-version-bee-stripe`,
 		`.oc-version-bee-head`,
-		`.oc-version-bee-stinger`,
-		`fill: var(--amber)`,
+		`fill: var(--accent)`,
 		`stroke: var(--terminal-bg)`,
-		`color-mix(in srgb, var(--panel) 80%, transparent)`,
+		`fill: var(--terminal-bg)`,
+		`color-mix(in srgb, var(--panel) 70%, transparent)`,
 		`function versionBeeGlyphHTML()`,
 	} {
 		if !strings.Contains(html, want) {
@@ -139,7 +142,7 @@ func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 		`class="oc-version-bee-body"`,
 		`class="oc-version-bee-stripe"`,
 		`class="oc-version-bee-head"`,
-		`class="oc-version-bee-stinger"`,
+		`<circle class="oc-version-bee-head"`,
 	} {
 		if !strings.Contains(glyph, want) {
 			t.Fatalf("upgrade bee SVG no longer exposes %q for token styling:\n%s", want, glyph)
@@ -150,11 +153,77 @@ func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 	}
 }
 
+func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
+	html := indexHTML(t)
+	orbitRule := cssRule(t, html, ".oc-version-bee-orbit")
+	for _, want := range []string{
+		"--oc-version-bee-duration: var(--bee-orbit-duration, 11s)",
+		"animation-duration: var(--oc-version-bee-duration)",
+		"animation-timing-function: linear",
+		"animation-iteration-count: infinite",
+		"animation-fill-mode: both",
+		"will-change: transform",
+		"transform-box: border-box",
+		"overflow: visible",
+		"contain: layout style",
+	} {
+		if !strings.Contains(orbitRule, want) {
+			t.Fatalf("orbiting bee wrapper rule missing seamless animation hint %q in %s", want, orbitRule)
+		}
+	}
+	for _, selector := range []string{".oc-version-bee--phase-a", ".oc-version-bee--phase-b", ".oc-version-bee--phase-c"} {
+		rule := cssRule(t, html, selector)
+		for _, want := range []string{"animation-delay:"} {
+			if !strings.Contains(rule, want) {
+				t.Fatalf("%s should phase the shared circular orbit with %q in %s", selector, want, rule)
+			}
+		}
+	}
+	hiveRule := cssRule(t, html, ".oc-version-hive")
+	for _, want := range []string{
+		"--oc-version-hive-size: 28px",
+		"--oc-version-bee-size: 16px",
+		"--oc-version-bee-radius: 9px",
+		"--oc-version-bee-orbit-offset-x: 8px",
+		"--oc-version-bee-orbit-offset-y: -7px",
+	} {
+		if !strings.Contains(hiveRule, want) {
+			t.Fatalf("shared hive-orbit rule should size bees around the hive with %q in %s", want, hiveRule)
+		}
+	}
+	for _, forbidden := range []string{".oc-version-navbar-upgrade .oc-version-bee {", ".oc-version-navbar-upgrade .oc-version-bee--phase"} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("navbar upgrade bee must use the shared orbit implementation, found competing rule %q", forbidden)
+		}
+	}
+	glyphRule := cssRule(t, html, ".oc-version-bee-glyph")
+	for _, want := range []string{"transform-box: fill-box", "transform-origin: 50% 50%"} {
+		if !strings.Contains(glyphRule, want) {
+			t.Fatalf("bee SVG glyph should anchor transforms around its own box with %q in %s", want, glyphRule)
+		}
+	}
+
+	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
+	for _, want := range []string{
+		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn);",
+		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn);",
+	} {
+		if !strings.Contains(orbit, want) {
+			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)
+		}
+	}
+	for _, forbidden := range []string{"\n      50%", "rotate(-"} {
+		if strings.Contains(orbit, forbidden) {
+			t.Fatalf("upgrade bee orbit should avoid loop-boundary decomposition hitches from %q in %s", forbidden, orbit)
+		}
+	}
+}
+
 func TestUpgradeBeeTopbarRenderPatchesTextInPlace(t *testing.T) {
 	html := indexHTML(t)
 	helper := jsFunc(t, html, "versionSetHTMLPreservingUpgradeBee")
 	for _, want := range []string{
-		"currentProgress.parentNode === el",
+		"currentProgress.parentNode === el || currentProgress.parentNode",
 		"currentTitle.innerHTML = nextTitle.innerHTML",
 		"currentStatus.innerHTML = nextStatus.innerHTML",
 	} {
@@ -185,6 +254,103 @@ func TestUpgradeBeeTopbarRenderPatchesTextInPlace(t *testing.T) {
 		}
 		if strings.Contains(layout, forbidden) {
 			t.Fatalf("applyLayout must not rebuild topbar/upgrade ancestors via %s:\n%s", forbidden, layout)
+		}
+	}
+}
+
+func TestUpgradeBeeThemeGuardPreservesVisibleSize(t *testing.T) {
+	html := indexHTML(t)
+	beeRule := cssRule(t, html, ".oc-version-bee")
+	for _, want := range []string{
+		"width: var(--oc-version-bee-size)",
+		"height: calc(var(--oc-version-bee-size) * 0.667)",
+	} {
+		if !strings.Contains(beeRule, want) {
+			t.Fatalf("base upgrade bee rule must pin visible dimensions with %q in %s", want, beeRule)
+		}
+	}
+	orbitRule := cssRule(t, html, ".oc-version-bee-orbit")
+	for _, want := range []string{
+		"width: var(--oc-version-hive-size)",
+		"height: var(--oc-version-hive-size)",
+	} {
+		if !strings.Contains(orbitRule, want) {
+			t.Fatalf("base upgrade bee orbit wrapper must match the hive box with %q in %s", want, orbitRule)
+		}
+	}
+
+	beeSizeOverrideRE := regexp.MustCompile(`(?s)([^{}]*\.oc-version-bee[^{}]*)\{([^{}]*(?:--oc-version-bee-size|width\s*:|height\s*:)[^{}]*)\}`)
+	for _, th := range config.DashboardThemeCatalog() {
+		css, err := config.DashboardThemeCSS(th)
+		if err != nil {
+			t.Fatalf("theme %s CSS: %v", th.ID, err)
+		}
+		for _, want := range []string{
+			"body .oc-version-hive{--oc-version-hive-size:28px!important;--oc-version-bee-size:16px!important;--oc-version-bee-radius:9px!important;}",
+			"body .oc-version-hive>svg{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;}",
+			"body .oc-version-hive .oc-version-bee-orbit{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;overflow:visible!important;}",
+			"body .oc-version-hive .oc-version-bee{width:var(--oc-version-bee-size)!important;height:calc(var(--oc-version-bee-size) * 0.667)!important;transform:translate3d(-50%,-50%,0) translate3d(var(--oc-version-bee-radius),0,0) rotate(90deg)!important;}",
+		} {
+			if !strings.Contains(css, want) {
+				t.Fatalf("theme %s CSS is missing upgrade bee layout guard %q", th.ID, want)
+			}
+		}
+		for _, match := range beeSizeOverrideRE.FindAllStringSubmatch(css, -1) {
+			selector := strings.TrimSpace(match[1])
+			body := strings.TrimSpace(match[2])
+			if strings.Contains(selector, "body .oc-version-hive") {
+				continue
+			}
+			t.Fatalf("built-in theme %s overrides upgrade bee dimensions in selector %q: %s", th.ID, selector, body)
+		}
+	}
+}
+
+func TestUpgradeBeeOrbitUsesOneSharedImplementation(t *testing.T) {
+	html := indexHTML(t)
+	keyframeRE := regexp.MustCompile(`(?i)@keyframes\s+[^{]*(bee|orbit)[^{]*\{`)
+	keyframes := keyframeRE.FindAllString(html, -1)
+	if len(keyframes) != 1 {
+		t.Fatalf("upgrade hive swarm should have exactly one shared bee/orbit keyframes block, got %#v", keyframes)
+	}
+	if !strings.Contains(html, "@keyframes ocBeeOrbit") {
+		t.Fatal("upgrade hive swarm missing shared circular orbit keyframes")
+	}
+	for _, forbidden := range []string{
+		".oc-version-hive svg {",
+		".oc-version-navbar-upgrade .oc-version-bee {",
+		".oc-version-navbar-upgrade .oc-version-bee--phase",
+		".oc-version-upgrade-progress .oc-version-bee {",
+		"ocBeeFigureEight",
+		"ocBeeBob",
+		"ocBeeWaggle",
+	} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("upgrade bee sites must not define competing per-site orbit implementation %q", forbidden)
+		}
+	}
+
+	hiveHelper := jsFunc(t, html, "versionUpgradeHiveHTML")
+	for _, want := range []string{
+		`class="oc-version-hive"`,
+		`class="oc-version-bee-orbit oc-version-bee--phase-a"`,
+		`class="oc-version-bee-orbit oc-version-bee--phase-b"`,
+		`class="oc-version-bee-orbit oc-version-bee--phase-c"`,
+		`class="oc-version-bee"`,
+	} {
+		if !strings.Contains(hiveHelper, want) {
+			t.Fatalf("shared upgrade hive helper missing %q in:\n%s", want, hiveHelper)
+		}
+	}
+	for _, fn := range []struct {
+		name string
+		body string
+	}{
+		{"versionBeeProgressHTML", jsFunc(t, html, "versionBeeProgressHTML")},
+		{"versionNavbarUpgradeHTML", jsFunc(t, html, "versionNavbarUpgradeHTML")},
+	} {
+		if !strings.Contains(fn.body, "versionUpgradeHiveHTML(key)") {
+			t.Fatalf("%s must render the shared bee-orbit hive helper:\n%s", fn.name, fn.body)
 		}
 	}
 }

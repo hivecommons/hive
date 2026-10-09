@@ -35,7 +35,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 func TestUpgradeBeeKeyframesCompositeOnly(t *testing.T) {
 	html := indexHTML(t)
 	declarationRE := regexp.MustCompile(`(?m)([a-zA-Z-]+)\s*:`)
-	for _, name := range []string{"ocBeeOrbit", "ocBeeWaggle", "ocHoneyPulse"} {
+	for _, name := range []string{"ocBeeOrbit", "ocHoneyPulse"} {
 		body := cssKeyframesBody(t, html, name)
 		for _, match := range declarationRE.FindAllStringSubmatch(body, -1) {
 			prop := strings.ToLower(match[1])
