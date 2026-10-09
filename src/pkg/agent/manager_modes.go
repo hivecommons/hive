@@ -41,7 +41,7 @@ func (m *Manager) SyncModeFiles(level int) {
 		if agent.Paused {
 			continue
 		}
-		mode := DefaultAgentMode(name, level)
+		mode := effectiveAgentMode(name, "", level)
 		// converseConfigured is logged on both branches below so one grep by
 		// agent name shows whether the capability came from config or fell
 		// back to the default alongside the mode decision (#7503).
@@ -112,12 +112,21 @@ func (m *Manager) writeAgentCapsFile(name string, caps AgentCapabilities) {
 // If the agent has an explicit Mode in its config (hive.yaml or pack YAML), that takes precedence.
 // Otherwise, the default table by ACMM level is used.
 func (m *Manager) agentMode(agent *AgentProcess) AgentMode {
-	if modeStr := agent.Config.Mode; modeStr != "" {
+	return effectiveAgentMode(agent.Name, agent.Config.Mode, m.project.ACMMLevel)
+}
+
+// effectiveAgentMode resolves the mode an agent runs in: a parseable explicit
+// mode wins, otherwise the ACMM level default applies. Pack agents have
+// Config.Mode cleared on purpose (ClearModeOverrides), so callers that only
+// read the raw field miss their real mode. SyncModeFiles and the watchdog's
+// advisory exemption share this so they cannot diverge.
+func effectiveAgentMode(name, modeStr string, level int) AgentMode {
+	if modeStr != "" {
 		if parsed, ok := ParseAgentMode(modeStr); ok {
 			return parsed
 		}
 	}
-	return DefaultAgentMode(agent.Name, m.project.ACMMLevel)
+	return DefaultAgentMode(name, level)
 }
 
 // DefaultAgentMode returns the default mode for a given agent name and ACMM level,

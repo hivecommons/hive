@@ -287,6 +287,11 @@ func TestWatchdogQueuedWork(t *testing.T) {
 
 	t.Run("queue source is consulted", func(t *testing.T) {
 		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+		// The test manager's zero ProjectContext is ACMM level 0, whose
+		// level-default mode is ADVISORY for every agent — which the
+		// exemption below must honour. Run this agent at a producing level
+		// so the queue source, not the exemption, decides the answer.
+		m.project.ACMMLevel = 5
 		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}
 		n, known := fleet.QueuedWork("a1")
 		if !known || n != 7 {
@@ -304,6 +309,20 @@ func TestWatchdogQueuedWork(t *testing.T) {
 		n, known := fleet.QueuedWork("advisor")
 		if !known || n != 0 {
 			t.Fatalf("QueuedWork = (%d, %v), want (0, true): a backlog an advisory agent cannot touch is not its fault", n, known)
+		}
+	})
+
+	t.Run("level-default advisory agent with cleared Config.Mode", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"supervisor": "claude"})
+		cfg := m.agents["supervisor"].Config
+		cfg.Mode = ""
+		m.agents["supervisor"].Config = cfg
+		m.project.ACMMLevel = 6
+
+		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}
+		n, known := fleet.QueuedWork("supervisor")
+		if !known || n != 0 {
+			t.Fatalf("QueuedWork = (%d, %v), want (0, true): the supervisor's level-default mode is ADVISORY", n, known)
 		}
 	})
 
