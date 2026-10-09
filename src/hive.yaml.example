@@ -694,6 +694,9 @@ github:
   token: ${HIVE_GITHUB_TOKEN}
   # Reuse per-PR detail GETs while list head.sha/updated_at still match.
   pr_detail_ttl_s: 1800
+  # Batch open PR detail and CI rollups with GraphQL during scans (default true).
+  graphql_pr_batch: true
+  graphql_pr_batch_page_size: 50
 
   # Option 2: GitHub App (recommended for production)
   # app_id: 12345
