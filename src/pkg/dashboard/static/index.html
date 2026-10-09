@@ -25492,6 +25492,11 @@ function burnAreaChart() {
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'loadUpstreamWatch': loadUpstreamWatch(); break;
+        case 'upstreamWatchToggle': upstreamWatchToggle(el); break;
+        case 'upstreamWatchSaveInterval': upstreamWatchSaveInterval(); break;
+        case 'upstreamWatchAddFork': upstreamWatchAddFork(); break;
+        case 'upstreamWatchSaveRepo': upstreamWatchSaveRepo(el); break;
+        case 'upstreamWatchRemoveRepo': upstreamWatchRemoveRepo(el); break;
         case 'linearAgentConnect': linearAgentConnect(); break;
         case 'linearAgentDisconnect': linearAgentDisconnect(); break;
         case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
@@ -29894,9 +29899,8 @@ function burnAreaChart() {
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
-        // The same tab carries the read-only upstream-watch divergence view
-        // (#9969); it loads from its own endpoint and renders "not
-        // configured" when upstream_watch is off.
+        // The same tab carries the upstream-watch editor and divergence view
+        // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); }
@@ -36911,7 +36915,7 @@ function burnAreaChart() {
         </div>
 
         <div class="hv-upstream-watch">
-          <div class="hv-upstream-watch-title">Upstream Watch <span class="config-info">i<span class="config-tooltip">Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Read-only — configure the watch under upstream_watch in hive.yaml.</span></span></div>
+          <div class="hv-upstream-watch-title">Upstream Watch <span class="config-info">i<span class="config-tooltip">Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Switch the watch on, set the poll interval, and add, edit or remove the forks it follows here — changes are saved to upstream_watch in hive.yaml and take effect on the next poll.</span></span></div>
           <div id="upstream-watch-panel" class="hv-upstream-watch-panel">Loading…</div>
           <div class="config-field mt-5">
             <button class="hv-btn btn-secondary btn" data-action="loadUpstreamWatch">Refresh</button>
@@ -38443,12 +38447,14 @@ function burnAreaChart() {
       }
     }
 
-    // ── Upstream watch divergence view (#9969) ──────────────────────────────
-    // loadUpstreamWatch paints the per-repo divergence table from the
-    // read-only /api/upstream-watch endpoint: upstream followed, watermark and
-    // last run, surfaced/ported/dismissed counts, and the recent upstream refs
-    // with their fork issue. Each recent PR row offers "port this" — the
-    // upstream patch the fixer agent is handed when it picks the issue up.
+    // ── Upstream watch editor + divergence view (#9969, #11211) ─────────────
+    // loadUpstreamWatch paints the editor (on/off, poll interval, add fork,
+    // per-fork settings) and the per-repo divergence table from
+    // /api/upstream-watch: upstream followed, watermark and last run,
+    // surfaced/ported/dismissed counts, and the recent upstream refs with their
+    // fork issue. Each recent PR row offers "port this" — the upstream patch
+    // the fixer agent is handed when it picks the issue up. Edits go to the
+    // owner-only PUT /api/config/upstream-watch.
     async function loadUpstreamWatch() {
       const out = document.getElementById('upstream-watch-panel');
       if (!out) return;
@@ -38458,15 +38464,19 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const rows = [];
+        const repos = Array.isArray(data.repos) ? data.repos : [];
+        rows.push(upstreamWatchControls(data, repos));
         if (!data.configured) {
-          out.innerHTML = '<div>Not configured — declare the forks to follow under <code>upstream_watch.repos</code> in hive.yaml (see docs/upstream-watch.md).</div>';
+          rows.push('<div class="mt-2">No forks watched yet — pick a repo under <strong>Add fork</strong> to start following its upstream (see docs/upstream-watch.md).</div>');
+          out.innerHTML = rows.join('');
           return;
         }
-        if (!data.enabled) rows.push('<div class="text-warn">Configured but switched off — set <code>upstream_watch.enabled: true</code> to resume polling. The figures below are the last recorded state.</div>');
+        if (!data.enabled) rows.push('<div class="text-warn">Configured but switched off — turn the watch on above to resume polling. The figures below are the last recorded state.</div>');
         if (data.state_error) rows.push(`<div class="text-danger">State unreadable: ${esc(data.state_error)}</div>`);
         const when = t => t ? new Date(t).toLocaleString() : '—';
-        for (const repo of (Array.isArray(data.repos) ? data.repos : [])) {
+        for (const repo of repos) {
           rows.push(`<div class="mt-2"><strong>${esc(repo.repo)}</strong> follows ${repo.upstream ? `<code>${esc(repo.upstream)}</code>` : '<span class="text-warn">an unresolved upstream</span>'}</div>`);
+          rows.push(upstreamWatchRepoEditor(repo));
           rows.push(`<div>Watermark ${esc(when(repo.watermark))} · last run ${esc(when(repo.last_run_at))} · surfaced ${repo.surfaced || 0} · ported ${repo.ported || 0} · dismissed ${repo.dismissed || 0} · skipped ${repo.skipped || 0}</div>`);
           const recent = Array.isArray(repo.recent) ? repo.recent : [];
           if (!recent.length) {
@@ -38485,6 +38495,120 @@ function burnAreaChart() {
       } catch (err) {
         out.textContent = `Failed to load upstream watch: ${err.message}`;
       }
+    }
+
+    // upstreamWatchBare drops an org prefix so a YAML key spelled "org/repo"
+    // and the bare project.repos entry compare equal.
+    function upstreamWatchBare(name) {
+      const s = String(name || '');
+      return s.includes('/') ? s.slice(s.lastIndexOf('/') + 1).toLowerCase() : s.toLowerCase();
+    }
+
+    // upstreamWatchControls renders the global switch, the poll interval and
+    // the "Add fork" picker. The picker lists only project.repos entries not
+    // already watched, because the server rejects any other key.
+    function upstreamWatchControls(data, repos) {
+      const interval = String(data.interval || '').replace(/(\D)0s$/, '$1').replace(/(\D)0m$/, '$1');
+      const watched = new Set(repos.map(r => upstreamWatchBare(r.repo)));
+      const addable = (Array.isArray(data.project_repos) ? data.project_repos : []).filter(r => !watched.has(upstreamWatchBare(r)));
+      const options = addable.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+      return `<div class="config-toggle mt-2">
+          <div class="config-toggle-switch ${data.enabled ? 'on' : ''}" data-action="upstreamWatchToggle"></div>
+          <span class="config-toggle-label">Watch enabled</span>
+        </div>
+        <div class="config-field mt-2">
+          <label for="upstream-watch-interval">Poll interval</label>
+          <input id="upstream-watch-interval" type="text" value="${esc(interval)}" placeholder="6h" title="How often the watch polls, e.g. 6h or 30m. Blank = 6h.">
+          <button class="hv-btn btn-secondary btn" data-action="upstreamWatchSaveInterval">Save interval</button>
+        </div>
+        <div class="config-field mt-2">
+          <label for="upstream-watch-add">Add fork</label>
+          ${addable.length
+            ? `<select id="upstream-watch-add" class="hv-btn btn-secondary btn">${options}</select>
+          <button class="hv-btn btn-secondary btn" data-action="upstreamWatchAddFork">Add fork</button>`
+            : '<span class="text-muted">Every repo in this hive is already watched — add repos in the Repos tab first.</span>'}
+        </div>`;
+    }
+
+    // upstreamWatchRepoEditor renders one fork's settings. A blank upstream
+    // means "resolve from the GitHub fork parent", which the watch already does.
+    function upstreamWatchRepoEditor(repo) {
+      const c = repo.config || {};
+      const sources = Array.isArray(c.sources) && c.sources.length ? c.sources : ['releases', 'prs'];
+      const labels = Array.isArray(c.pr_labels) ? c.pr_labels.join(', ') : '';
+      const box = (v, label) => `<label><input type="checkbox" data-uw-field="source" value="${v}" ${sources.includes(v) ? 'checked' : ''}> ${label}</label>`;
+      return `<div class="hv-upstream-watch-edit config-field" data-repo="${esc(repo.repo)}">
+          <label>Upstream <input type="text" data-uw-field="upstream" value="${esc(c.upstream || '')}" placeholder="fork parent" title="owner/repo this fork follows. Blank = the GitHub fork parent."></label>
+          ${box('releases', 'Releases')} ${box('prs', 'Merged PRs')}
+          <label>PR labels <input type="text" data-uw-field="pr_labels" value="${esc(labels)}" placeholder="all merged PRs" title="Comma-separated. Only merged PRs carrying one of these labels are surfaced. Blank = all."></label>
+          <label>Max issues per run <input type="number" min="0" data-uw-field="max_issues_per_run" value="${c.max_issues_per_run || 0}" title="0 = no cap"></label>
+          <label>Issue label <input type="text" data-uw-field="label" value="${esc(c.label || '')}" placeholder="upstream/port"></label>
+          <button class="hv-btn btn-secondary btn" data-action="upstreamWatchSaveRepo" data-repo="${esc(repo.repo)}">Save</button>
+          <button class="hv-btn btn-secondary btn" data-action="upstreamWatchRemoveRepo" data-repo="${esc(repo.repo)}">Remove</button>
+        </div>`;
+    }
+
+    // putUpstreamWatch sends one partial edit; absent keys stay unchanged
+    // server-side. The panel reloads on success so it always shows what was
+    // persisted, and on failure so a half-typed edit is not mistaken for saved.
+    async function putUpstreamWatch(body, okMsg) {
+      try {
+        const res = await fetch('/api/config/upstream-watch', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast(okMsg, 'success');
+      } catch (err) {
+        showToast(`Upstream watch not saved: ${err.message}`, 'error');
+      }
+      loadUpstreamWatch();
+    }
+
+    function upstreamWatchToggle(el) {
+      if (!el) return;
+      const on = !el.classList.contains('on');
+      putUpstreamWatch({ enabled: on }, on ? 'Upstream watch enabled' : 'Upstream watch disabled');
+    }
+
+    function upstreamWatchSaveInterval() {
+      const input = document.getElementById('upstream-watch-interval');
+      putUpstreamWatch({ interval: input ? input.value.trim() : '' }, 'Upstream watch interval saved');
+    }
+
+    function upstreamWatchAddFork() {
+      const sel = document.getElementById('upstream-watch-add');
+      if (!sel || !sel.value) return;
+      putUpstreamWatch({ repos: { [sel.value]: {} } }, `Now watching ${sel.value}`);
+    }
+
+    function upstreamWatchSaveRepo(el) {
+      const row = el && el.closest('.hv-upstream-watch-edit');
+      const repo = el && el.dataset.repo;
+      if (!row || !repo) return;
+      const field = name => row.querySelector(`[data-uw-field="${name}"]`);
+      const sources = Array.from(row.querySelectorAll('[data-uw-field="source"]')).filter(b => b.checked).map(b => b.value);
+      if (!sources.length) {
+        showToast('Pick at least one source (releases or merged PRs)', 'error');
+        return;
+      }
+      const cap = parseInt(field('max_issues_per_run').value, 10);
+      putUpstreamWatch({ repos: { [repo]: {
+        upstream: field('upstream').value.trim(),
+        sources,
+        pr_labels: field('pr_labels').value.split(',').map(v => v.trim()).filter(Boolean),
+        max_issues_per_run: Number.isFinite(cap) ? cap : 0,
+        label: field('label').value.trim(),
+      } } }, `Saved upstream watch for ${repo}`);
+    }
+
+    async function upstreamWatchRemoveRepo(el) {
+      const repo = el && el.dataset.repo;
+      if (!repo) return;
+      if (!await hiveConfirm({ title: `Stop watching ${repo}?`, message: 'The watch stops polling its upstream. Recorded state and issues already filed are kept.', confirmLabel: 'Stop watching', danger: true })) return;
+      putUpstreamWatch({ repos: { [repo]: null } }, `Stopped watching ${repo}`);
     }
 
     // ── Linear agent (RFC #4492 Part 2) ─────────────────────────────────────
