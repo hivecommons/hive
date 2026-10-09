@@ -406,7 +406,7 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 - Manual dashboard/API kicks that rely on Hive's generated work list wait for the first governor scan after boot. Until that scan populates the scheduler snapshot, `POST /api/kick/{agent}` returns `202` with `status: "deferred"` and Hive delivers one deduplicated kick for that agent as soon as the first scan completes.
 - Kick-visibility conditions surfaced on the dashboard include `copilot-question-form`, which means the Copilot CLI asked an unattached human for clarification; Hive dismisses that form with Escape and retries delivery instead of dropping the kick.
 - The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
-- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are example placeholders that match Hive's built-in defaults, not public Bob pricing guidance:
+- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are illustrative only (they are not Hive's built-in defaults and not public Bob pricing guidance) — always set them to the conversion your Bob team gives you:
 
 ```yaml
 governor:
@@ -414,13 +414,13 @@ governor:
     usd: 25.00                    # optional period cap in Bob-equivalent USD
     coins:
       bob:
-        tokens_per_coin: 500000   # example placeholder; confirm with your Bob team
-        usd_per_coin: 0.50        # example placeholder; confirm with your Bob team
+        tokens_per_coin: 1000000  # illustrative only; use the conversion your Bob team gives you
+        usd_per_coin: 1.00        # illustrative only; use the conversion your Bob team gives you
         label: "BC"
         budget: 50                # optional period cap in Bob coins
 ```
 
-  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; confirm them with your Bob team before relying on the defaults.
+  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; always confirm the conversion with your Bob team rather than relying on Hive's built-in fallback values.
 
 ### What consumes tokens while agents are paused
 
