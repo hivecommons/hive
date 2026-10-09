@@ -400,8 +400,12 @@ type StatusPayload struct {
 	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
 	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
 	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
-	Timestamp      string                 `json:"timestamp"`
-	TimeZone       string                 `json:"timeZone,omitempty"`
+	// OverviewKPIIncomplete means at least one configured repo did not produce
+	// forge totals for this status snapshot, so Overview KPI history must not
+	// record it as a real point.
+	OverviewKPIIncomplete bool   `json:"overviewKPIIncomplete"`
+	Timestamp             string `json:"timestamp"`
+	TimeZone              string `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -886,12 +890,13 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name          string                    `json:"name"`
-	Full          string                    `json:"full"`
-	Issues        int                       `json:"issues"`
-	PRs           int                       `json:"prs"`
-	Mode          string                    `json:"mode,omitempty"`
-	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	Name             string                    `json:"name"`
+	Full             string                    `json:"full"`
+	Issues           int                       `json:"issues"`
+	PRs              int                       `json:"prs"`
+	Mode             string                    `json:"mode,omitempty"`
+	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
+	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the
@@ -3557,7 +3562,9 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
 	}
-	s.attachOverviewKPI(&entry, status, at)
+	if overviewKPISnapshotComplete(status) {
+		s.attachOverviewKPI(&entry, status, at)
+	}
 	if len(status.Repos) > 0 {
 		repos := make(map[string]TrendRepoSnap, len(status.Repos))
 		for _, r := range status.Repos {
@@ -3577,6 +3584,18 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 	if len(s.trendHistory) > trendHistoryMaxEntries {
 		s.trendHistory = s.trendHistory[len(s.trendHistory)-trendHistoryMaxEntries:]
 	}
+}
+
+func overviewKPISnapshotComplete(status *StatusPayload) bool {
+	if status == nil || status.OverviewKPIIncomplete {
+		return false
+	}
+	for _, repo := range status.Repos {
+		if repo.CountsIncomplete {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {

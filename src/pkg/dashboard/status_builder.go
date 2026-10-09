@@ -285,39 +285,63 @@ func BuildFrontendStatus(
 
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
+	repos := buildRepos(cfg, actionable, govState)
 	payload := &StatusPayload{
-		Timestamp:           time.Now().UTC().Format(time.RFC3339),
-		TimeZone:            dashboardTimeZoneName(),
-		HiveID:              cfg.HiveID,
-		HiveIDEditable:      !hiveIDLocked,
-		HiveIDLockReason:    hiveIDLockReason,
-		Features:            buildFeatures(cfg),
-		Agents:              agents,
-		HiddenAgents:        hiddenAgents,
-		ConfiguredAgents:    buildConfiguredAgents(cfg),
-		Governor:            buildGovernor(govState, cfg),
-		Tokens:              buildTokens(tokenCollector),
-		Repos:               buildRepos(cfg, actionable, govState),
-		Beads:               BuildBeadsFromConfig(beadStores, cfg),
-		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
-		Health:              health,
-		Budget:              buildBudget(gov, tokenCollector),
-		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
-		GHRateLimits:        ghRateLimits,
-		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
-		AgentMetrics:        agentMetrics,
-		Hold:                buildHold(actionable),
-		IssueToMerge:        issueToMerge,
-		IssuesDisabledRepos: metricsCollector.GetIssuesDisabledRepos(),
-		ACMMLevel:           detectACMMLevel(cfg),
-		ACMMLevelConfigured: cfg.ACMMLevel != nil,
-		ACMMPackAgents:      buildACMMPackAgents(cfg),
-		SystemResources:     collectSystemResources(),
-		Platform:            buildPlatform(cfg),
-		Security:            buildSecurity(cfg),
-		ReleaseLineLag:      buildReleaseLineLag(),
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		TimeZone:              dashboardTimeZoneName(),
+		HiveID:                cfg.HiveID,
+		HiveIDEditable:        !hiveIDLocked,
+		HiveIDLockReason:      hiveIDLockReason,
+		Features:              buildFeatures(cfg),
+		Agents:                agents,
+		HiddenAgents:          hiddenAgents,
+		ConfiguredAgents:      buildConfiguredAgents(cfg),
+		Governor:              buildGovernor(govState, cfg),
+		Tokens:                buildTokens(tokenCollector),
+		Repos:                 repos,
+		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
+		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
+		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
+		Health:                health,
+		Budget:                buildBudget(gov, tokenCollector),
+		CadenceMatrix:         buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
+		GHRateLimits:          ghRateLimits,
+		APIBudget:             apiBudgetFromRateLimits(ghRateLimits),
+		AgentMetrics:          agentMetrics,
+		Hold:                  buildHold(actionable),
+		IssueToMerge:          issueToMerge,
+		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
+		ACMMLevel:             detectACMMLevel(cfg),
+		ACMMLevelConfigured:   cfg.ACMMLevel != nil,
+		ACMMPackAgents:        buildACMMPackAgents(cfg),
+		SystemResources:       collectSystemResources(),
+		Platform:              buildPlatform(cfg),
+		Security:              buildSecurity(cfg),
+		ReleaseLineLag:        buildReleaseLineLag(),
 	}
+
 	return payload
+}
+
+func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResult) bool {
+	if cfg == nil || len(cfg.Project.Repos) == 0 {
+		return false
+	}
+	if actionable == nil {
+		return true
+	}
+	for _, repoName := range cfg.Project.Repos {
+		if _, paused := cfg.RepoPauseFor(repoName); paused {
+			continue
+		}
+		if actionable.TotalByRepo == nil {
+			return true
+		}
+		if _, ok := actionable.TotalByRepo[repoName]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func buildFeatures(cfg *config.Config) FrontendFeatures {
@@ -1956,8 +1980,10 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		issueCount := 0
 		prCount := 0
 		var workBreakdown *github.RepoWorkBreakdown
+		countsPresent := false
 		if actionable != nil && actionable.TotalByRepo != nil {
 			if counts, ok := actionable.TotalByRepo[repoName]; ok {
+				countsPresent = true
 				issueCount = counts.Issues
 				prCount = counts.PRs
 			}
@@ -1993,6 +2019,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			if rp.At != nil && !rp.At.IsZero() {
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
 			}
+		}
+		if actionable != nil && !r.Paused && !countsPresent {
+			r.CountsIncomplete = true
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
