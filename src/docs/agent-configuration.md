@@ -77,22 +77,28 @@ agents:
     role: scanner                # behavioral role; defaults to the agent name
     sort_order: 20               # dashboard ordering (supervisors default to 0, others 100)
     aliases: [sc]                # short names accepted in dispatch/commands
-    bob_display_name: hive-scanner # bob backend only: reporting label (defaults to the YAML key)
+    bob:
+      session_label: hive-scanner # bob backend only: overrides governor.bob.session_prefix + name
 ```
 
-`bob_display_name` gives a bob-backed agent a reporting/session label, for
-example a `hive-` prefix, without renaming the agent. Renaming the agent would
-also change its tmux session, `/data/agents/<name>` workdir, beads directory,
-claims, token buckets, and attribution. The label may contain up to 64 ASCII
-letters, digits, `-`, `_`, or `.` characters. Hive exports it to the bob pane as
-`HIVE_BOB_DISPLAY_NAME`, alongside `HIVE_AGENT` and `HIVE_AGENT_DISPLAY_NAME`.
+`agents.<name>.bob.session_label` gives a bob-backed agent a Bob session label
+without renaming the agent. If it is unset, `governor.bob.session_prefix` can
+prefix every bob agent (for example `hive-` makes `scanner` report as
+`hive-scanner`). Hive passes the label to Bob as `--instance-id` and exports it
+to the bob pane as `HIVE_BOB_SESSION_LABEL`; `HIVE_AGENT`,
+`HIVE_AGENT_DISPLAY_NAME`, tmux session, workdir, beads directory, claims, token
+buckets, and Hive token attribution stay keyed to the real agent name. Labels
+may contain up to 64 ASCII letters, digits, `-`, `_`, or `.` characters.
 
-Fallback: bobshell has no CLI flag, environment variable, or session-metadata
-file for a session label. Bob and Bobalytics reports therefore still key
-sessions by the project folder, which is the agent workdir basename. Hive's own
-token attribution also stays keyed by the agent name. The label is available
-to scripts and skills in the bob pane now. Hive can pass it to Bob once
-bobshell supports a session label.
+Renaming agents is a migration, not a display-only change. The YAML key is the
+agent identity: changing it splits tmux session/socket names,
+`/data/agents/<name>`, `/data/logs/kicks/<name>`, default `/data/beads/<name>`,
+claim holders, dashboard/token buckets, hub heartbeat names, and defaults that
+literally use the agent name. Prefer `display_name` for dashboard presentation
+and Bob `session_label` / `session_prefix` for Bobalytics tagging.
+
+The legacy flat `bob_display_name` spelling is still accepted as an alias for
+older overlays, but new configs should use `bob.session_label`.
 
 ### Engine — what powers it
 

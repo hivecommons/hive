@@ -2091,6 +2091,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PRsAllowed:       b.cfg.Project.PRsAllowed(),
 		PolicyDir:        b.policyDirPath,
 		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		BobSessionPrefix: b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
 }

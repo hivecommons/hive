@@ -360,6 +360,29 @@ func TestBobLaunchCmdVersionBranches(t *testing.T) {
 	}
 }
 
+func TestBobLaunchCmdSessionLabelDefaultOff(t *testing.T) {
+	if got, want := bobLaunchCmd("bob", ""), bobLaunchCmd("bob"); got != want {
+		t.Fatalf("empty bob session label changed launch command: got %q want %q", got, want)
+	}
+	if got, want := bobLaunchCmdV1("bob", ""), bobLaunchCmdV1("bob"); got != want {
+		t.Fatalf("empty label changed v1 command: got %q want %q", got, want)
+	}
+	if got, want := bobLaunchCmdV2("bob", ""), bobLaunchCmdV2("bob"); got != want {
+		t.Fatalf("empty label changed v2 command: got %q want %q", got, want)
+	}
+}
+
+func TestBobLaunchCmdSessionLabelUsesInstanceID(t *testing.T) {
+	for name, got := range map[string]string{
+		"v1": bobLaunchCmdV1("bob", "hive-scanner"),
+		"v2": bobLaunchCmdV2("bob", "hive-scanner"),
+	} {
+		if !strings.Contains(got, "--instance-id hive-scanner") {
+			t.Fatalf("%s command = %q, want --instance-id hive-scanner", name, got)
+		}
+	}
+}
+
 // TestBobLaunchCmdApprovalIsFlat documents the deliberate design decision that
 // bob's approval mode does NOT vary with the agent's ACMM mode.
 //
