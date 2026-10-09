@@ -109,6 +109,13 @@ type IssueRequest struct {
 	// read it instead of only in prose. A failed link does not fail the
 	// create; linked and failed blockers are both reported in the result.
 	BlockedBy []int `json:"blocked_by,omitempty"` // issue only
+	// NeedsDecision parks the new issue on a maintainer decision
+	// (hivecommons/hive#11215). On an "issue" request the watcher adds the
+	// hive's configured needs-decision label (hard_suppress_labels.
+	// needs_decision) to the create itself, so an issue that asks the
+	// maintainer to choose gets the "What to reply" notice and stays out of
+	// the actionable queue whatever labels the agent named.
+	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -501,7 +508,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		res, err = c.createIssue(ctx, req.Repo, req.Title, body, req.Labels, true)
+		createLabels := req.Labels
+		if req.NeedsDecision {
+			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
+		}
+		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict

@@ -42,7 +42,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -61,6 +61,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
+| `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -119,6 +120,24 @@ be resolved is reported on the result file (`blocked_by_errors`, alongside
 block (A blocked by B, B blocked by A) would hide both forever, so the hive
 drops that pair with a warning and offers both.
 
+#### Parking an issue that needs a decision
+
+`--needs-decision` is the way an agent parks an issue it files. Use it when
+the body asks the maintainer to choose between options, or to approve before
+work can start. The script sends `"needs_decision": true` on the request, and
+the watcher adds the hive's configured needs-decision label
+(`project.issue_filter.hard_suppress_labels.needs_decision`, first entry;
+`needs-decision` by default) to the create itself, whatever labels the agent
+named ([#11215](https://github.com/hivecommons/hive/issues/11215)). The issue
+is then parked like any other `needs-decision` issue: it stays out of the
+actionable queue, the un-park sweep posts the "What to reply" notice, and the
+maintainer answers with `/hive approve` or `/hive decision` (see
+[maintainer-commands.md](maintainer-commands.md)). Every lane policy that files
+issues tells the agent to pass the flag rather than name the label, so parking
+no longer depends on which lane filed the issue or on the label's name in this
+hive. The flag only applies to a create; on any other kind the script exits
+`2` and writes nothing.
+
 ### `comment`
 
 `--repo`, a number or URL, and `--body` are all required, or the script exits
@@ -144,9 +163,12 @@ Hive-controlled labels are refused in both directions: the merge-queue label
 `hive/` namespace, and the labels that record a human decision
 (`approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
 `blocked`). They are inputs to hive automation or records of someone's
-verdict, so an agent may not set them; one reserved label refuses the whole
-request. Use `hive-open-issue claim` to record ownership. See
-[github-write-surface.md](github-write-surface.md).
+verdict, so an agent may not set them through this operation; one reserved
+label refuses the whole request. Use `hive-open-issue claim` to record
+ownership. This refusal applies only to the `label` operation on an existing
+item: to park an issue you are filing, pass `--needs-decision` to the create
+(see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)).
+See [github-write-surface.md](github-write-surface.md).
 
 ### `request-review`
 

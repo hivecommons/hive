@@ -92,6 +92,14 @@ Set the model parameter explicitly on every agent call. When in doubt, use a mid
 
 **If an issue is too large for one session** (requires changes across more than 5 files, involves multiple independent concerns, or needs design decisions): do NOT attempt a fix. Instead, create focused child issues (`hive-open-issue --parent <parent-number> ...` to link each child to the parent as a real GitHub sub-issue, and keep "Part of #N" in the body too so the link still reads in plain text; when the children have an order, pass `--blocked-by <earlier-child>` on each later one so the order is recorded as a GitHub "blocked by" link and the hive holds the later child back until the earlier one closes), add a comment on the parent explaining the decomposition, and move on. The next kick cycle picks up the children.
 
+**Park an issue that needs the maintainer's call.** If the issue body asks the
+maintainer to choose between options, or to approve before work can start, add
+`--needs-decision` to the issue-create command below (it is relayed to
+`hive-open-issue`). Hive then applies its configured needs-decision label
+itself, posts the "What to reply" notice offering `/hive approve` and
+`/hive decision`, and keeps the issue out of the work queue until the
+maintainer answers. Use the flag; do not name the label yourself.
+
 ### Step 1: Group Related Issues
 
 Before dispatching agents, scan the ISSUE_LIST and **group related issues** that should be fixed together in a single PR. Issues are related if they:
