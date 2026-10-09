@@ -66,6 +66,11 @@ func resetReleaseNotesCache() {
 	releaseNotesCache.Lock()
 	releaseNotesCache.entries = map[string]releaseNotesCacheEntry{}
 	releaseNotesCache.Unlock()
+	releaseNotesBuilds.Lock()
+	releaseNotesBuilds.inFlight = 0
+	releaseNotesBuilds.windowStart = time.Time{}
+	releaseNotesBuilds.windowCount = 0
+	releaseNotesBuilds.Unlock()
 }
 
 func rnDecode(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -263,6 +268,104 @@ func TestReleaseNotesTruncated(t *testing.T) {
 	out := rnDecode(t, doGet(s, "/api/version/release-notes?from="+rnFromSHA+"&to="+rnToSHA))
 	if out["truncated"] != true {
 		t.Errorf("expected truncated, got %v", out["truncated"])
+	}
+}
+
+func TestReleaseNotesCacheIsBounded(t *testing.T) {
+	resetReleaseNotesCache()
+	t.Cleanup(resetReleaseNotesCache)
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < releaseNotesMaxCacheEntries+10; i++ {
+		storeReleaseNotes(fmt.Sprintf("k%03d", i), releaseNotesResponse{Source: "changelog"}, base.Add(time.Duration(i)*time.Second))
+	}
+	releaseNotesCache.Lock()
+	n := len(releaseNotesCache.entries)
+	_, oldestKept := releaseNotesCache.entries["k010"]
+	_, evicted := releaseNotesCache.entries["k000"]
+	releaseNotesCache.Unlock()
+	if n != releaseNotesMaxCacheEntries {
+		t.Errorf("cache holds %d entries, want %d", n, releaseNotesMaxCacheEntries)
+	}
+	if evicted || !oldestKept {
+		t.Errorf("eviction order wrong: k000 present=%v k010 present=%v", evicted, oldestKept)
+	}
+
+	// Expired entries go first, even when the cache is not full.
+	resetReleaseNotesCache()
+	storeReleaseNotes("stale", releaseNotesResponse{}, base.Add(-2*releaseNotesCacheTTL))
+	storeReleaseNotes("fresh", releaseNotesResponse{}, base)
+	releaseNotesCache.Lock()
+	_, staleKept := releaseNotesCache.entries["stale"]
+	releaseNotesCache.Unlock()
+	if staleKept {
+		t.Error("expired entry survived a store")
+	}
+}
+
+func TestReleaseNotesUncachedBuildsAreThrottled(t *testing.T) {
+	f := &rnStubFetcher{files: map[string]string{
+		rnFromSHA + ":CHANGELOG.md": rnOldLog,
+		rnToSHA + ":CHANGELOG.md":   rnNewLog,
+	}}
+	s := rnSetup(t, f)
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	prevNow := releaseNotesNow
+	releaseNotesNow = func() time.Time { return now }
+	t.Cleanup(func() { releaseNotesNow = prevNow })
+
+	// Each distinct `from` is a cache miss; the stub serves CHANGELOG.md for
+	// any ref that has a fixture, so vary a SHA that is never fetched: `to`
+	// resolves straight to the changelog, so vary `from` and add fixtures.
+	for i := 0; i < releaseNotesBuildBurst; i++ {
+		from := fmt.Sprintf("%07d%07d", i, i)
+		f.files[from+":CHANGELOG.md"] = rnOldLog
+		out := rnDecode(t, doGet(s, "/api/version/release-notes?from="+from+"&to="+rnToSHA))
+		if out["source"] != "changelog" {
+			t.Fatalf("build %d refused: %v", i, out)
+		}
+	}
+	calls := f.calls
+	extra := "cccccccc3333333"
+	f.files[extra+":CHANGELOG.md"] = rnOldLog
+	out := rnDecode(t, doGet(s, "/api/version/release-notes?from="+extra+"&to="+rnToSHA))
+	if out["source"] != "unavailable" || !strings.Contains(out["error"].(string), "limit") {
+		t.Errorf("over-burst build was not throttled: %v", out)
+	}
+	if f.calls != calls {
+		t.Errorf("throttled request still fetched: %d -> %d", calls, f.calls)
+	}
+
+	// Cached pairs are still served while throttled.
+	out = rnDecode(t, doGet(s, "/api/version/release-notes?from=00000000000000&to="+rnToSHA))
+	if out["source"] != "changelog" {
+		t.Errorf("cached pair refused under throttle: %v", out)
+	}
+
+	// The window rolls over.
+	now = now.Add(releaseNotesBuildWindow)
+	out = rnDecode(t, doGet(s, "/api/version/release-notes?from="+extra+"&to="+rnToSHA))
+	if out["source"] != "changelog" {
+		t.Errorf("build after window reset refused: %v", out)
+	}
+}
+
+func TestReleaseNotesConcurrentBuildsAreCapped(t *testing.T) {
+	resetReleaseNotesCache()
+	t.Cleanup(resetReleaseNotesCache)
+	var releases []func()
+	for i := 0; i < releaseNotesMaxConcurrentBuilds; i++ {
+		rel, _, ok := acquireReleaseNotesBuild()
+		if !ok {
+			t.Fatalf("build %d refused below the cap", i)
+		}
+		releases = append(releases, rel)
+	}
+	if _, reason, ok := acquireReleaseNotesBuild(); ok || !strings.Contains(reason, "already being fetched") {
+		t.Errorf("build above the cap admitted: ok=%v reason=%q", ok, reason)
+	}
+	releases[0]()
+	if _, _, ok := acquireReleaseNotesBuild(); !ok {
+		t.Error("slot freed by release was not reusable")
 	}
 }
 

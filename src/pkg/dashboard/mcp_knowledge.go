@@ -426,6 +426,19 @@ func publicKnowledgeToolDefs() []mcpToolDef {
 			Annotations: mcpReadOnlyAnnotations,
 		},
 		{
+			Name:        "knowledge_toc",
+			Description: fmt.Sprintf("List a compact, capped table of contents of this hive's public knowledge (id, title, type, layer, repo, tags, status, updated, size) without bodies. Pick an id and read it in full with knowledge_get. Default %d entries, max %d.", knowledge.DefaultTOCLimit, knowledge.MaxTOCLimit),
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"type":  map[string]interface{}{"type": "string", "description": "Optional fact type filter."},
+					"repo":  map[string]interface{}{"type": "string", "description": "Optional repository (owner/name); org-wide entries are always included."},
+					"limit": map[string]interface{}{"type": "integer", "description": fmt.Sprintf("Max entries (default %d, max %d).", knowledge.DefaultTOCLimit, knowledge.MaxTOCLimit)},
+				},
+			},
+			Annotations: mcpReadOnlyAnnotations,
+		},
+		{
 			Name:        "knowledge_get",
 			Description: "Fetch a single public knowledge fact by slug (as returned by knowledge_search).",
 			InputSchema: map[string]interface{}{
@@ -590,6 +603,32 @@ func (s *Server) callPublicKnowledgeTool(r *http.Request, raw json.RawMessage) (
 			out = append(out, toPublicFact(s.withFullBody(f), publicSlugs))
 		}
 		return toolJSON(map[string]interface{}{"query": args.Query, "count": len(out), "results": out})
+
+	case "knowledge_toc":
+		var args struct {
+			Type  string `json:"type"`
+			Repo  string `json:"repo"`
+			Limit int    `json:"limit"`
+		}
+		if len(params.Arguments) > 0 {
+			if err := json.Unmarshal(params.Arguments, &args); err != nil {
+				return nil, &jsonRPCError{Code: jsonRPCInvalidParams, Message: "invalid knowledge_toc arguments"}
+			}
+		}
+		if _, ok := publicKnowledgeTypes[args.Type]; !ok {
+			return toolError(fmt.Sprintf("type %q is not a public fact type", args.Type)), nil
+		}
+		scope := knowledge.TOCScope{Repos: splitCSV(args.Repo)}
+		if args.Type != "" {
+			scope.Types = []string{args.Type}
+		}
+		all, _ := s.publicListing(tags)
+		toc := knowledge.BuildTOC(all, scope, args.Limit)
+		// Source URLs are not part of the public projection.
+		for i := range toc.Entries {
+			toc.Entries[i].Source = ""
+		}
+		return toolJSON(toc)
 
 	case "knowledge_get":
 		var args struct {

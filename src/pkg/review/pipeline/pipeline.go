@@ -212,6 +212,10 @@ type Card struct {
 	// review-bot thread is at its attempt cap, and no human has the PR yet.
 	// The dashboard offers "Send to human" while it is set.
 	LoopWarning *LoopWarning `json:"loop_warning,omitempty"`
+	// Trigger is how the current head reached review: event (webhook
+	// dispatch, hivecommons/hive#11091), event_pending, or cadence. Derive
+	// leaves it empty; the API handler fills it from the event dispatcher.
+	Trigger string `json:"trigger,omitempty"`
 }
 
 // Review-link states, as recorded by the review relay.

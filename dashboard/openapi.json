@@ -11119,6 +11119,418 @@
         }
       }
     },
+    "/api/config/knowledge/connectors": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List configured knowledge connectors",
+        "description": "Returns knowledge.connectors plus the registered connector types. Credentials are never stored here, only an env var name or secret file path.",
+        "responses": {
+          "200": {
+            "description": "Configured connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Replace knowledge connectors",
+        "description": "Replaces knowledge.connectors with the posted list after validating every entry (names, layer, interval, scope keys, auth). Inline secrets are rejected. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "interval": {
+                          "type": "string"
+                        },
+                        "layer": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "auth": {
+                          "type": "object",
+                          "description": "Env var name or secret file path only; inline secrets are rejected.",
+                          "properties": {
+                            "env": {
+                              "type": "string"
+                            },
+                            "file": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "type",
+                        "layer"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "connectors"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/status": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Knowledge connector status",
+        "description": "Per-connector status pill (ok, syncing, error, disabled, pending), last sync, pages, facts and last error. Configuration only when the connector syncer is not running.",
+        "responses": {
+          "200": {
+            "description": "Connector status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runtime": {
+                      "type": "boolean"
+                    },
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "last_sync": {
+                            "type": "string"
+                          },
+                          "pages": {
+                            "type": "integer"
+                          },
+                          "facts": {
+                            "type": "integer"
+                          },
+                          "last_error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/validate": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Validate a knowledge connector entry",
+        "description": "Dry-run validation: config rules, the connector's own scope/auth checks, and that the named credential source resolves locally. No network access; the credential is never echoed. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "interval": {
+                    "type": "string"
+                  },
+                  "layer": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "auth": {
+                    "type": "object",
+                    "description": "Env var name or secret file path only; inline secrets are rejected.",
+                    "properties": {
+                      "env": {
+                        "type": "string"
+                      },
+                      "file": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "layer"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/{name}/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sync a knowledge connector now",
+        "description": "Starts an immediate background sync of the named connector. Poll the status endpoint for progress. Requires owner role.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync started"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown connector"
+          },
+          "409": {
+            "description": "Sync already in progress"
+          },
+          "503": {
+            "description": "Connector syncer is not running"
+          }
+        }
+      }
+    },
     "/api/knowledge/git-sources": {
       "get": {
         "tags": [
@@ -11576,6 +11988,278 @@
           },
           "400": {
             "description": "Neither q nor tag provided"
+          }
+        }
+      }
+    },
+    "/api/knowledge/toc": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Scoped knowledge table of contents",
+        "description": "Capped, body-free table of contents of the knowledge visible under the requested scope. Approved entries only unless `include_states` is set. Read an entry in full with `/api/knowledge/entry/{id}`. Returns `{\"enabled\": false, \"entries\": []}` if knowledge is not enabled.",
+        "parameters": [
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum entries (default 50, max 200)"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Set to `prompt` to also return a size-bounded markdown rendering in `prompt`"
+          },
+          {
+            "name": "max_chars",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Character budget for `format=prompt` (default 4000)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table of contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          },
+                          "confidence": {
+                            "type": "number"
+                          },
+                          "updated": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "size_bytes": {
+                            "type": "integer"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "superseded_by": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "In-scope entries before the cap"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          }
+        }
+      }
+    },
+    "/api/knowledge/entry/{id}": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read one knowledge entry in full",
+        "description": "Returns the complete markdown (YAML front-matter plus body) of one entry. The same scope and lifecycle filter as the table of contents applies; an entry outside it returns 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Entry id (slug) from the table of contents"
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "markdown": {
+                      "type": "string"
+                    },
+                    "fact": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          },
+          "404": {
+            "description": "Entry not found or outside the requested scope"
           }
         }
       }
@@ -18368,6 +19052,56 @@
         }
       }
     },
+    "/api/webhook/github": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GitHub App webhook receiver",
+        "description": "Public webhook endpoint for GitHub App deliveries, sent directly by GitHub or relayed by the hub. Fails closed without GITHUB_WEBHOOK_SECRET and verifies X-Hub-Signature-256 over the raw body. pull_request, pull_request_review, check_suite, check_run, status, issue_comment (on PRs) and push events invalidate the matching cached PR state and mark it dirty for the next eval cycle; every delivery for a managed repository refreshes webhook health. Deliveries for unmanaged repositories are ignored.",
+        "responses": {
+          "200": {
+            "description": "Processed or ignored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "invalidated": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing X-GitHub-Event header or malformed payload"
+          },
+          "401": {
+            "description": "Invalid signature"
+          },
+          "503": {
+            "description": "No webhook secret configured"
+          }
+        }
+      }
+    },
     "/api/linear/webhook": {
       "post": {
         "tags": [
@@ -18560,7 +19294,7 @@
           "System"
         ],
         "summary": "Get compliance control status",
-        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Read-only; requires merger or owner role. Not a certification.",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles: soc2-type2, fedramp-moderate, iso27001-annex-a) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
         "responses": {
           "200": {
             "description": "compliance.Report",
@@ -18598,6 +19332,9 @@
                           "version": {
                             "type": "string"
                           },
+                          "description": {
+                            "type": "string"
+                          },
                           "controls": {
                             "type": "integer"
                           }
@@ -18628,7 +19365,7 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "compliance.ControlStatus: framework, control_id, title, citation, domain, status, not_covered, rationale, settings[] (setting_path, evaluator, current, recommended, status, builtin)"
+                        "description": "compliance.ControlStatus: framework, control_id, title, text, citation, domain, status, not_covered, rationale, settings[] (setting_path, kind, description, evaluator, current, recommended, status, builtin)"
                       }
                     },
                     "profile_load_error": {
@@ -18647,6 +19384,503 @@
           },
           "403": {
             "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture-check results",
+        "description": "Returns the posture-check catalogue (pkg/compliance: non-author review, owner not auto-merge author, audit retention, agent confinement, sentinel enabled, no secrets in config, dashboard auth, hold labels exist) and the latest pass, persisted under /data. With ?since= (RFC 3339 time, YYYY-MM-DD date or a look-back duration such as 168h) also returns every pass since then, oldest first, capped at 1000. Requires merger or owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Return the history since this RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "history_days": {
+                      "type": "integer"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureCheckInfo: id, title, control_ids[]"
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "nullable": true,
+                      "description": "compliance.PostureRun: at, trigger (schedule|manual), summary {pass, fail, skip, error}, results[] (check_id, title, control_ids, at, pass, status pass|fail|skip|error, detail, evidence_refs)"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureRun"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since parameter"
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/history": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture history as per-check time series",
+        "description": "Settings \u2192 Compliance posture panel (#11081). Returns the posture-check history in [since, until) grouped into one series per check: points (at, status), status counts, the last failure time and the latest result with its detail and evidence refs. At most the 1000 most recent runs are included (truncated: true when more matched). Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureHistoryResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "until": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "runs": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureSeries: check_id, title, control_ids[], points[] (at, status pass|fail|skip|error), summary {pass, fail, skip, error}, last_fail_at, last (compliance.Result)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Download compliance evidence",
+        "description": "Settings \u2192 Compliance evidence exports (#11081). Downloads (Content-Disposition: attachment) one evidence kind for [since, until): controls = control-mapping report (json|md); posture = posture history (json|csv); audit = audit log slice with covered_from, the oldest entry found, because the log rotates by size (json); config = redacted effective config with the sha256 of its exact embedded bytes (json); attestations = owner attestations (json|csv); bundle = all of the above (json). JSON exports carry meta {kind, disclaimer, hive_id, generated_at, since, until}. Every export is audited as compliance_export. Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "controls",
+                "posture",
+                "audit",
+                "config",
+                "attestations",
+                "bundle"
+              ]
+            },
+            "description": "Evidence kind"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "md",
+                "csv"
+              ]
+            },
+            "description": "Output format; defaults to json. md is valid for controls, csv for posture and attestations"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown kind, unsupported format, or invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "500": {
+            "description": "Export could not be built"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/attestations": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List compliance owner attestations",
+        "description": "Settings \u2192 Compliance attestations (#11081). Every recorded attestation (\"reviewed <framework> on <date> by <login>\"), newest first, persisted under /data. ?framework= filters to one profile id. Requires owner role. An attestation records that a person reviewed the controls; it is not a pass/fail verdict.",
+        "parameters": [
+          {
+            "name": "framework",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Profile id to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.complianceAttestationsResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "attestations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "framework": {
+                            "type": "string"
+                          },
+                          "reviewed_on": {
+                            "type": "string",
+                            "description": "YYYY-MM-DD"
+                          },
+                          "by": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record a compliance owner attestation",
+        "description": "Settings \u2192 Compliance attestations (#11081). The signed-in owner records that they reviewed a framework's controls on reviewed_on (YYYY-MM-DD, not in the future) with an optional note (at most 2000 characters). The attesting login comes from the session, not the body. Written to the audit log as compliance_attestation and to the attestation store. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "framework",
+                  "reviewed_on"
+                ],
+                "properties": {
+                  "framework": {
+                    "type": "string",
+                    "description": "Shipped profile id, e.g. soc2-type2"
+                  },
+                  "reviewed_on": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "compliance.Attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "framework": {
+                      "type": "string"
+                    },
+                    "reviewed_on": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD"
+                    },
+                    "by": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown framework, bad or future date, or note too long"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
+    "/api/config/governor/compliance": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Select compliance framework profiles",
+        "description": "Settings \u2192 Compliance framework picker (#11080). Sets compliance.frameworks to the given profile ids (case-insensitive; an empty list deselects every framework; an absent key leaves the selection unchanged). Unknown, malformed, blank or duplicate ids are rejected with 400 before anything changes. Persists the config, is audited as config_compliance, and returns the re-evaluated compliance.Report. Requires owner role. Selecting a framework is not a certification claim.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "frameworks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "compliance.Report (same shape as GET /api/compliance/status)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or framework id"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/run": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Run the compliance posture checks now",
+        "description": "Runs one posture-check pass immediately and records it in the history like a scheduled pass; the run is written to the audit log (compliance_posture_run). Requires merger or owner role.",
+        "responses": {
+          "200": {
+            "description": "compliance.PostureRun",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "pass": {
+                          "type": "integer"
+                        },
+                        "fail": {
+                          "type": "integer"
+                        },
+                        "skip": {
+                          "type": "integer"
+                        },
+                        "error": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.Result: check_id, title, control_ids, at, pass, status, detail, evidence_refs"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "409": {
+            "description": "No compliance framework selected, or a posture run is already in progress"
           },
           "503": {
             "description": "Config unavailable"
@@ -20394,6 +21628,62 @@
                     "type": "integer",
                     "nullable": true,
                     "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
+                  },
+                  "severity": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.severity blocking line (hivecommons/hive#11088). block_at also drives classification.review_bots.min_priority when that is not set explicitly.",
+                    "properties": {
+                      "block_at": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["", "P1", "P2", "P3"]
+                      },
+                      "comment_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      },
+                      "backlog_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "backlog": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.backlog destination for findings below the blocking line (hivecommons/hive#11088). github_project, linear and jira require the matching governor.work_source.type.",
+                    "properties": {
+                      "destination": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["github_issue", "github_project", "linear", "jira"]
+                      },
+                      "project_column_id": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "linear_state": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "jira_status": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "labels": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "max_per_pr_per_day": {
+                        "type": "integer",
+                        "nullable": true,
+                        "minimum": 0
+                      }
+                    }
                   }
                 }
               }
@@ -20693,6 +21983,15 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "enum": [
+                              "event",
+                              "event_pending",
+                              "cadence"
+                            ],
+                            "description": "How the current head reached review: event (webhook dispatch fired), event_pending (queued), or cadence. Omitted when neither applies."
                           }
                         }
                       }
@@ -20707,6 +22006,155 @@
           },
           "500": {
             "description": "Review verdicts, dispatch state or review links unreadable"
+          }
+        }
+      }
+    },
+    "/api/review/dispatch/events": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Webhook review dispatch queue",
+        "description": "The in-memory queue of webhook-triggered review dispatches (pull_request opened, reopened, synchronize, ready_for_review, review_requested). A delivery is debounced per PR (review.event_debounce_s, default 90 s) so a push burst fires once for its final head; a head that already fired is not dispatched again; the queue is bounded. Firing wakes the governor for an early eval cycle with the PR first in line, so every cadence gate still applies. Read-only; never calls GitHub.",
+        "responses": {
+          "200": {
+            "description": "Queue status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "webhooks_configured": {
+                      "type": "boolean"
+                    },
+                    "debounce_s": {
+                      "type": "integer"
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "recent": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "received": {
+                          "type": "integer"
+                        },
+                        "queued": {
+                          "type": "integer"
+                        },
+                        "coalesced": {
+                          "type": "integer"
+                        },
+                        "duplicates": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        },
+                        "fired": {
+                          "type": "integer"
+                        },
+                        "wakes": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "max_pending": {
+                      "type": "integer"
+                    },
+                    "last_wake": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

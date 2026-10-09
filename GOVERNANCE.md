@@ -41,6 +41,14 @@ Issues from anyone else wait until a maintainer adds the `triage/accepted` label
 
 If your issue is being ignored, mention a maintainer from the table above in the issue. If there is no response after about 7 days, raise it on the [hivecommons-dev Google Group](https://hivecommons.dev/join), on [Discord](https://hivecommons.dev/discord), or at the [community meeting](https://hivecommons.dev/agenda).
 
+### How to become a trusted reporter
+
+"Contributor" and "trusted reporter" are different things. Everyone who files an issue or PR is already a *Contributor* (ladder level 1 in the [org MAINTAINERS.md](https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md)); the hive's "only works issues from OWNER, MEMBER, COLLABORATOR" message is about GitHub's `author_association`, not the ladder.
+
+- **You do not need to become a member for a single issue to be worked.** A maintainer adds `triage/accepted` to that issue.
+- **MEMBER** is Organization Member (ladder level 2): 5+ merged or accepted contributions (PRs, substantive issue triage, or doc changes) over at least 2 months, sponsored by 1 Maintainer, 2FA enabled, and a clean DCO history. Open an issue titled `Org membership request: @handle` listing the qualifying contributions; the sponsor approves, and any Maintainer adds you within 7 days absent objections.
+- **COLLABORATOR** is repository access granted directly by a maintainer. There is no self-service path; ask a maintainer in an issue.
+
 ## Conduct and security
 
 All participants must follow the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues are reported privately through [SECURITY.md](SECURITY.md), not public GitHub issues.

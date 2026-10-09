@@ -43,6 +43,7 @@ func newKnowledgeCommand(env *commandEnv) *cobra.Command {
 	knowledge.AddCommand(knowledgeImportCommand(env))
 	knowledge.AddCommand(knowledgeExportCommand(env))
 	knowledge.AddCommand(knowledgeGraphCommand(env))
+	knowledge.AddCommand(knowledgeSuggestCommand(env))
 	return knowledge
 }
 

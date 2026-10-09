@@ -181,17 +181,39 @@ func LoadProjectReviewBots(path string) (ReviewBotsConfig, error) {
 // there (hivecommons/hive#10481) without copying the project file's logins —
 // the trust grant — into hive.yaml. "all" is stored for an explicit
 // route-everything choice, since empty means "no override".
+//
+// min_priority precedence (hivecommons/hive#11088), first non-empty wins:
+//  1. hive.yaml classification.review_bots.min_priority
+//  2. hive-project.yaml classification.review_bots.min_priority
+//  3. hive.yaml review.severity.block_at
+//  4. unset: every finding is routed
 func (c *Config) EffectiveReviewBots(projectPath string) (ReviewBotsConfig, error) {
 	if c != nil && c.Classification.ReviewBots.Enabled() {
-		return c.Classification.ReviewBots, nil
+		rb := c.Classification.ReviewBots
+		rb.MinPriority = c.reviewBotsMinPriorityOrBlockAt(rb.MinPriority)
+		return rb, nil
 	}
 	rb, err := LoadProjectReviewBots(projectPath)
 	if err == nil && c != nil {
 		if p := strings.TrimSpace(c.Classification.ReviewBots.MinPriority); p != "" {
 			rb.MinPriority = p
 		}
+		rb.MinPriority = c.reviewBotsMinPriorityOrBlockAt(rb.MinPriority)
 	}
 	return rb, err
+}
+
+// reviewBotsMinPriorityOrBlockAt returns explicit when it is set, otherwise
+// review.severity.block_at (normalised), so one blocking line governs both
+// the hive reviewer and external review bots.
+func (c *Config) reviewBotsMinPriorityOrBlockAt(explicit string) string {
+	if strings.TrimSpace(explicit) != "" || c == nil {
+		return explicit
+	}
+	if b, ok := NormalizeReviewSeverityBlockAt(c.Review.Severity.BlockAt); ok {
+		return b
+	}
+	return explicit
 }
 
 // ReviewBotsMinPriorityAll is the explicit "route every finding" value for

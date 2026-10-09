@@ -36,9 +36,19 @@ type PromotionScheduler struct {
 	from LayerType
 	to   LayerType
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	running bool
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	running    bool
+	onPromoted func(promoted int)
+}
+
+// OnPromoted registers fn to run after every sweep that promoted at least one
+// fact (for example to trigger the knowledge publish mirror). A nil fn clears
+// the hook.
+func (s *PromotionScheduler) OnPromoted(fn func(promoted int)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPromoted = fn
 }
 
 // NewPromotionScheduler builds a scheduler over an existing promoter. It never
@@ -160,6 +170,14 @@ func (s *PromotionScheduler) RunOnce(ctx context.Context) {
 		"candidates", len(candidates), "promoted", promoted, "failed", failed,
 		"threshold", s.config.AutoPromoteThreshold,
 	)
+	if promoted > 0 {
+		s.mu.Lock()
+		hook := s.onPromoted
+		s.mu.Unlock()
+		if hook != nil {
+			hook(promoted)
+		}
+	}
 }
 
 // StartBackground launches the loop in a goroutine, tracking it so it can be

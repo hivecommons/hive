@@ -108,6 +108,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		(strings.TrimSpace(c.GitHub.Forge_) == "" || c.GitHub.ResolvedAppID() == 0) {
 		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
+	if c.GitHub.GraphQLPRBatchPageSize < 0 || c.GitHub.GraphQLPRBatchPageSize > 100 {
+		return fmt.Errorf("github.graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err
 	}
@@ -118,6 +121,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Jev.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
 		return err
 	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
@@ -132,6 +138,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
 	}
+	if err := ValidateKnowledgePublish(c.Knowledge.Publish); err != nil {
+		return err
+	}
 	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
 		return err
 	}
@@ -139,6 +148,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Compliance.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Severity.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
@@ -179,6 +194,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
 		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
+	}
+	if c.Governor.EvalIntervalWebhookS < 0 {
+		return fmt.Errorf("governor.eval_interval_webhook_s must be at least 0")
 	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
