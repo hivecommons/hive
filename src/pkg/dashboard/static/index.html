@@ -385,6 +385,8 @@
     .oc-version-chip:hover, .oc-version-chip[aria-expanded="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
     .oc-version-sha { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .oc-version-channel { flex: 0 1 auto; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent); font-weight: 700; }
+    .oc-version-manual-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
+    .oc-version-upgrade-note { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
@@ -28635,7 +28637,12 @@ function burnAreaChart() {
       if (!v) return 'Checking…';
       if (au.state === 'paused') return 'paused by hub';
       if ((v.target && v.target.resolved === false) || au.state === 'unknown') return 'Checking…';
-      if (v.stableV4ImageReady === false) return 'queued (' + ((v.target && (v.target.channel || v.target.branch)) || v.branch || 'target') + ' building)';
+      if (v.stableV4ImageReady === false) {
+        const building = ((v.target && (v.target.channel || v.target.branch)) || v.branch || 'target') + ' building';
+        const dep = v.deployment || {};
+        if (dep.upgradeSupported === false) return 'manual update required (' + (dep.runtime ? String(dep.runtime) : 'unknown runtime') + '); ' + building;
+        return 'queued (' + building + ')';
+      }
       if (au.state === 'up_to_date' || (!v.behind && targetShort && versionSameCommit(v.hash || v.short, (v.target && v.target.sha) || v.stableV4Hash || v.latestHash))) return 'up to date';
       if (au.state === 'failed') return 'upgrade failed';
       if (au.state === 'retrying') return 'upgrade retrying';
@@ -28800,7 +28807,9 @@ function burnAreaChart() {
       }
       if (dep.upgradeSupported !== true) {
         const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-        return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false);
+        const pill = ctx.manualUpdateHTML || '<span class="oc-version-manual-pill" title="' + escapeHtml(why) + '">manual update required (' + escapeHtml(runtimeLabel) + ')</span>';
+        return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false) +
+          '<div class="oc-version-upgrade-note" role="note">' + pill + ' ' + escapeHtml(why) + '</div>';
       }
       return versionButtonHTML('Upgrade to ' + targetShort, 'Upgrade this Hive' + runtimeDeploymentSuffix + ' to ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort + ' now', target.ref || targetHash, true);
     }
@@ -28988,6 +28997,10 @@ function burnAreaChart() {
         const upgradeSupported = dep.upgradeSupported === true;
         const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
         const runtimeDeploymentSuffix = runtimeLabel === 'unknown runtime' ? '' : ' (' + runtimeLabel + ' deployment)';
+        if (!upgradeSupported) {
+          const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
+          manualUpdateHTML = `<span class="oc-version-manual-pill" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
+        }
         if (um && um.failed) {
           statusText = 'Auto-update failed' + (um.target ? ' → ' + um.target : '');
           compactStatusHTML = '<span class="git-behind text-danger" title="Auto-update failed">⚠ auto-update failed</span>';
@@ -29009,8 +29022,7 @@ function burnAreaChart() {
           statusText = versionStatusText(v, offeredUpgradeShort);
           compactStatusHTML = commitsBehindText || `<span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           if (!upgradeSupported) {
-            const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-            manualUpdateHTML = `<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
+            // manualUpdateHTML (reason pill) is rendered above for every disabled-upgrade state.
           } else if (v.autoUpgrade && !um) {
             compactStatusHTML += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
             upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade this Hive${escapeHtml(runtimeDeploymentSuffix)} to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
