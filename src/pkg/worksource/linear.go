@@ -642,3 +642,133 @@ func (s *LinearSource) CreateIssue(ctx context.Context, teamKey, title, descript
 	issue := resp.Data.IssueCreate.Issue
 	return &issue, nil
 }
+
+// linearBacklogTeamQuery resolves a team key to the ids issueCreate needs
+// for a review backlog item: the team, its workflow states and its labels.
+const linearBacklogTeamQuery = `query($key: String!) {
+  teams(filter: { key: { eq: $key } }, first: 1) {
+    nodes {
+      id
+      key
+      states(first: 100) { nodes { id name } }
+      labels(first: 250) { nodes { id name } }
+    }
+  }
+}`
+
+type linearNamedNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type linearBacklogTeamResponse struct {
+	Data struct {
+		Teams struct {
+			Nodes []struct {
+				ID     string `json:"id"`
+				Key    string `json:"key"`
+				States struct {
+					Nodes []linearNamedNode `json:"nodes"`
+				} `json:"states"`
+				Labels struct {
+					Nodes []linearNamedNode `json:"nodes"`
+				} `json:"labels"`
+			} `json:"nodes"`
+		} `json:"teams"`
+	} `json:"data"`
+}
+
+// CreateIssueInState files a new issue on team teamKey like CreateIssue, in
+// the workflow state named state (empty = the team's default state) and with
+// the team labels named in labels. A state the team does not have is an
+// error naming it; label names the team does not have are skipped, because
+// Linear labels must exist before they can be applied.
+func (s *LinearSource) CreateIssueInState(ctx context.Context, teamKey, title, description, state string, labels []string) (*LinearCreatedIssue, error) {
+	teamKey = strings.TrimSpace(teamKey)
+	if teamKey == "" {
+		return nil, fmt.Errorf("linear: team key is required")
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearBacklogTeamQuery, map[string]interface{}{"key": teamKey})
+	if err != nil {
+		return nil, fmt.Errorf("linear: resolve team %s: %w", teamKey, err)
+	}
+	var teamResp linearBacklogTeamResponse
+	if err := json.Unmarshal(raw, &teamResp); err != nil {
+		return nil, fmt.Errorf("linear: resolve team %s: decode response: %w", teamKey, err)
+	}
+	if len(teamResp.Data.Teams.Nodes) == 0 {
+		return nil, fmt.Errorf("linear: team %q not found", teamKey)
+	}
+	team := teamResp.Data.Teams.Nodes[0]
+	input := map[string]interface{}{
+		"teamId":      team.ID,
+		"title":       title,
+		"description": description,
+	}
+	if state = strings.TrimSpace(state); state != "" {
+		stateID := ""
+		for _, n := range team.States.Nodes {
+			if strings.EqualFold(n.Name, state) {
+				stateID = n.ID
+				break
+			}
+		}
+		if stateID == "" {
+			return nil, fmt.Errorf("linear: team %s has no workflow state %q", teamKey, state)
+		}
+		input["stateId"] = stateID
+	}
+	var labelIDs []string
+	for _, want := range labels {
+		for _, n := range team.Labels.Nodes {
+			if strings.EqualFold(n.Name, strings.TrimSpace(want)) {
+				labelIDs = append(labelIDs, n.ID)
+				break
+			}
+		}
+	}
+	if len(labelIDs) > 0 {
+		input["labelIds"] = labelIDs
+	}
+	raw, err = linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearIssueCreateMutation, map[string]interface{}{"input": input})
+	if err != nil {
+		return nil, fmt.Errorf("linear: issueCreate: %w", err)
+	}
+	var resp linearIssueCreateResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("linear: issueCreate: decode response: %w", err)
+	}
+	if !resp.Data.IssueCreate.Success || resp.Data.IssueCreate.Issue.Identifier == "" {
+		return nil, fmt.Errorf("linear: issueCreate did not return an issue")
+	}
+	issue := resp.Data.IssueCreate.Issue
+	return &issue, nil
+}
+
+// CommentOnIssue adds a comment to the Linear issue issueID (id or
+// identifier) through the same commentCreate mutation the advisory digest
+// poster uses.
+func (s *LinearSource) CommentOnIssue(ctx context.Context, issueID, body string) error {
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return fmt.Errorf("linear: issue id is required")
+	}
+	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearAdvisoryCommentCreate, map[string]interface{}{"issueId": issueID, "body": body})
+	if err != nil {
+		return fmt.Errorf("linear: commentCreate on %s: %w", issueID, err)
+	}
+	var resp struct {
+		Data struct {
+			CommentCreate struct {
+				Success bool `json:"success"`
+			} `json:"commentCreate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("linear: commentCreate on %s: decode response: %w", issueID, err)
+	}
+	if !resp.Data.CommentCreate.Success {
+		return fmt.Errorf("linear: commentCreate on %s reported success=false", issueID)
+	}
+	return nil
+}

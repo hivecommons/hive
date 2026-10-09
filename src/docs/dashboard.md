@@ -143,6 +143,10 @@ for **Closed**, it covers PRs closed without merging plus issue closes. The
 previous percent compares against the immediately preceding window of the same
 length (for example, previous 24 hours for the 24h window).
 
+## Settings → Knowledge → Connectors
+
+The **Knowledge** tab of the governor config dialog has a **Connectors** section listing every `knowledge.connectors` entry: name, type, layer, a status pill (`ok`, `syncing`, `error`, `disabled`, or `pending` before the first sync), last sync, pages/facts, and the last error (truncated, full text on hover). Owners also get **Sync now**, **Edit**, **Disable/Enable** and **Remove** per row plus **Add connector**; everyone else sees a read-only table. Add/Edit uses the styled hive dialog with type-specific scope fields and a **Validate** button; credentials are referenced by environment variable name or secret file path only. Saves go through the owner-only `PUT /api/config/knowledge/connectors`. See [Knowledge connectors](knowledge-connectors.md).
+
 ## Project Inception and Knowledge
 
 Project Inception is branded as powered by Spektacular with a linked header pill and body note. Knowledge Base collapsed summaries show the total fact count (the same source as the sidebar badge); layer health stays inside the body with a short explanation that layers are knowledge-source scopes for facts.
@@ -383,7 +387,7 @@ Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull 
 
 ## Review pipeline board
 
-The **Review Pipeline** section (next to Review Queue) shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. The board refreshes every 30 seconds and keeps its scroll position.
+The **Review Pipeline** section (next to Review Queue) shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position.
 
 ## PR review and link signals
 
@@ -502,3 +506,23 @@ quotes, or bundled proprietary fonts.
 ## UI conventions: no native browser dialogs
 
 Hive hub and spoke UI code must not call browser-native dialog APIs such as `prompt()`, `alert()`, `confirm()`, `showModalDialog()`, or native-styled `<dialog>.showModal()`. Use the themed in-app helpers instead (`hivePrompt`, `hiveConfirm`, `hiveAlert`/toast, or the contribute admin modal) so dialogs match the dashboard, are accessible, and do not block the whole tab. The ratchet tests `TestNoNativeBrowserDialogsRatchet` in `pkg/dashboard` and `pkg/hub` scan shipped UI sources and should be updated only to make the rule stricter.
+
+## Settings → Compliance
+
+The **Compliance** tab in Settings (merger or owner) shows how this hive's
+configuration lines up with the selected compliance framework profiles. It
+opens with a banner: Hive is not certified; the tab maps your configuration
+to control requirements.
+
+- **Framework profile** — tick the frameworks to evaluate
+  (`compliance.frameworks`); saved by the footer **Save & close** through the
+  owner-only `PUT /api/config/governor/compliance`.
+- **Controls** — every control grouped by domain with its implementing
+  setting(s), current → recommended value and a status pill. Owners get an
+  inline toggle for boolean settings and **Apply recommended** per domain
+  (a themed confirmation lists each change); other settings link to their
+  owning tab with **Open setting**. Changes are staged in the owning section
+  and written only on Save. Mergers see the tab read-only.
+
+Details, including which settings can be toggled inline, are in
+[Compliance controls](compliance.md#using-the-compliance-tab).

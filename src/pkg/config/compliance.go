@@ -18,13 +18,28 @@ const (
 	// MaxCompliancePostureInterval keeps the posture history meaningful: a
 	// check that runs less than weekly is not "continuous".
 	MaxCompliancePostureInterval = 7 * 24 * time.Hour
+
+	// DefaultCompliancePostureWindowDays is how far back the history-based
+	// posture checks (non-author review, owner auto-merge) look when
+	// compliance.posture_checks.window_days is unset (hivecommons/hive#11079).
+	DefaultCompliancePostureWindowDays = 30
+	// MaxCompliancePostureWindowDays bounds the GitHub search each pass runs.
+	MaxCompliancePostureWindowDays = 90
+	// DefaultCompliancePostureHistoryDays is how long posture-check results
+	// are kept when compliance.posture_checks.history_days is unset: a year,
+	// the usual SOC 2 Type II observation period.
+	DefaultCompliancePostureHistoryDays = 365
+	// MinCompliancePostureHistoryDays / MaxCompliancePostureHistoryDays bound
+	// the history retention.
+	MinCompliancePostureHistoryDays = 30
+	MaxCompliancePostureHistoryDays = 3 * 365
 )
 
 // KnownComplianceFrameworks lists the framework profile IDs shipped in
 // pkg/compliance/profiles. pkg/compliance imports this package, so the list
 // lives here and pkg/compliance's tests assert it matches the embedded
 // profiles exactly.
-var KnownComplianceFrameworks = []string{"soc2-type2"}
+var KnownComplianceFrameworks = []string{"soc2-type2", "fedramp-moderate", "iso27001-annex-a"}
 
 var complianceFrameworkIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
 
@@ -48,6 +63,12 @@ type CompliancePostureChecksConfig struct {
 	// Interval between posture-check passes. Zero means
 	// DefaultCompliancePostureInterval.
 	Interval time.Duration `yaml:"interval,omitempty" json:"interval,omitempty"`
+	// WindowDays is the look-back of the checks that inspect merged PRs.
+	// Zero means DefaultCompliancePostureWindowDays.
+	WindowDays int `yaml:"window_days,omitempty" json:"window_days,omitempty"`
+	// HistoryDays is how long posture-check results are retained. Zero
+	// means DefaultCompliancePostureHistoryDays.
+	HistoryDays int `yaml:"history_days,omitempty" json:"history_days,omitempty"`
 }
 
 // IsEnabled reports whether at least one framework is selected.
@@ -79,6 +100,24 @@ func (c ComplianceConfig) PostureIntervalOrDefault() time.Duration {
 	return DefaultCompliancePostureInterval
 }
 
+// PostureWindowOrDefault resolves the merged-PR look-back window.
+func (c ComplianceConfig) PostureWindowOrDefault() time.Duration {
+	days := c.PostureChecks.WindowDays
+	if days <= 0 {
+		days = DefaultCompliancePostureWindowDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// PostureHistoryRetentionOrDefault resolves how long posture results are kept.
+func (c ComplianceConfig) PostureHistoryRetentionOrDefault() time.Duration {
+	days := c.PostureChecks.HistoryDays
+	if days <= 0 {
+		days = DefaultCompliancePostureHistoryDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
 // IsKnownComplianceFramework reports whether id names a shipped profile.
 func IsKnownComplianceFramework(id string) bool {
 	id = strings.ToLower(strings.TrimSpace(id))
@@ -91,7 +130,7 @@ func IsKnownComplianceFramework(id string) bool {
 }
 
 // Validate rejects malformed, unknown or duplicate framework IDs and an
-// out-of-range posture interval, so an operator never believes a profile is
+// out-of-range posture interval, window or history retention, so an operator never believes a profile is
 // being evaluated when a typo means nothing is.
 func (c ComplianceConfig) Validate() error {
 	seen := map[string]bool{}
@@ -120,6 +159,12 @@ func (c ComplianceConfig) Validate() error {
 	}
 	if iv > MaxCompliancePostureInterval {
 		return fmt.Errorf("compliance.posture_checks.interval must be at most %s, got %s", MaxCompliancePostureInterval, iv)
+	}
+	if w := c.PostureChecks.WindowDays; w < 0 || w > MaxCompliancePostureWindowDays {
+		return fmt.Errorf("compliance.posture_checks.window_days must be between 0 and %d, got %d", MaxCompliancePostureWindowDays, w)
+	}
+	if h := c.PostureChecks.HistoryDays; h != 0 && (h < MinCompliancePostureHistoryDays || h > MaxCompliancePostureHistoryDays) {
+		return fmt.Errorf("compliance.posture_checks.history_days must be between %d and %d, got %d", MinCompliancePostureHistoryDays, MaxCompliancePostureHistoryDays, h)
 	}
 	return nil
 }

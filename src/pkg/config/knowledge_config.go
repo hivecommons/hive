@@ -16,10 +16,12 @@ type KnowledgeConfig struct {
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
 	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
+	Publish         KnowledgePublish      `yaml:"publish,omitempty"`
 	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`
 	Primer          KnowledgePrimer       `yaml:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
+	CodeMaps        KnowledgeCodeMaps     `yaml:"code_maps,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the

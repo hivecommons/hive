@@ -154,6 +154,32 @@ from `--file` or `--stdin` (`--format` defaults to `markdown`, `--layer` to
 `project`) and, like the other knowledge writes, needs the layer's wiki `url`
 configured — see [Running against a local Hive](#running-against-a-local-hive).
 
+`suggest` lets an agent propose a knowledge change without changing what other
+agents see. It runs locally against a repository checkout (no dashboard call):
+it writes the change under `.hive/wiki/` (`--dir`, `--repo-root`) and prints
+the branch, PR title and PR body to open a pull request with. The suggestion
+becomes approved knowledge only when a human merges that PR; closing the PR
+rejects it.
+
+```bash
+hivectl knowledge suggest --title "Retry relay uploads" --body-file note.md \
+  --source https://github.com/acme/app/pull/12 --reason "learned while fixing #12" \
+  --type gotcha --repo acme/app --layer project --tags relay,ops --pr-body-file pr.md
+hivectl knowledge suggest --action replace --target old-relay --title "Relay v2" --stdin \
+  --source acme/app#40 --reason "relay rewritten"
+hivectl knowledge suggest --action deprecate --target old-relay --source acme/app#41 --reason "relay removed"
+```
+
+`--action` is `add` (default), `update` (rewrite `--target` in place),
+`replace` (new entry; `--target` is marked `status: superseded` with
+`superseded_by`, and the new entry records `supersedes`) or `deprecate`
+(`--target` is marked `status: deprecated`). `--source` (PR/issue URL or
+`owner/repo#N`) and `--reason` are always required. `--status` is the proposed
+lifecycle status once merged (`draft`, `approved` — the default — or
+`deprecated`). Existing entries with a similar title are written to the
+entry's `related` front matter and listed in the PR body as possible
+duplicates, and every entry carries a `dedupe_key`.
+
 ### bead — work items
 
 ```bash

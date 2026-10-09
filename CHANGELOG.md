@@ -11,6 +11,60 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.150.1)
+
+### Changed
+
+- The reporter-trust "waiting for a maintainer" issue comment now ends with a link to the repository's own `GOVERNANCE.md#reporter-trust-and-escalation` (built from the repo slug), explaining what OWNER / MEMBER / COLLABORATOR mean and how to escalate; `GOVERNANCE.md` gains a "How to become a trusted reporter" subsection ([#11018](https://github.com/hivecommons/hive/issues/11018)).
+
+## 2026-10-09 (v5.150.0)
+
+### Added
+
+- Review findings below `review.severity.block_at` are now filed to the `review.backlog` destination: a GitHub issue (optionally placed in a Projects column), a Linear issue in `linear_state`, or a Jira ticket in `jira_status`. Items are de-duplicated by finding fingerprint, so a finding raised again on another PR updates the existing item. Filing is capped per PR per day, and each batch is audit-logged.
+
+## 2026-10-09 (v5.149.0)
+
+### Added
+
+- knowledge-connectors: a one-way publish mirror (`knowledge.publish`) now renders curator-promoted facts as pages in an external system, starting with SharePoint folders ([#11076](https://github.com/hivecommons/hive/issues/11076)). Each page carries a `hive_fact_id` marker and a "Maintained by Hive" footer. Upserts are keyed by fact id, unchanged pages are skipped, and deprecated facts get a banner instead of being deleted. The mirror supports `dry_run` and writes one audit report per batch. The personal layer is never published.
+- Compliance posture history, evidence exports and owner attestations ([#11081](https://github.com/hivecommons/hive/issues/11081)): Settings → Compliance now shows a posture-checks panel with per-check sparklines, last result, failing detail and evidence links (`GET /api/compliance/posture/history`), downloads the control-mapping report (JSON/Markdown), posture history (JSON/CSV), audit log slice, redacted config snapshot with sha256, attestations and a combined bundle for a date range (`GET /api/compliance/export`, audited as `compliance_export`), and lets owners record "reviewed <framework> on <date>" attestations with a note (`GET`/`POST /api/compliance/attestations`, audited as `compliance_attestation`). All owner only. See [Compliance controls](src/docs/compliance.md#evidence-exports-and-attestations).
+- Settings → Review Gate gains 'Severity & backlog': `review.severity` (blocking line presets that also drive `classification.review_bots.min_priority` when unset) and `review.backlog` destination settings for the active work source.
+- review-pipeline: event-driven review dispatch ([#11091](https://github.com/hivecommons/hive/issues/11091)). The signed `POST /api/webhook/github` receiver now queues a review for `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `review_requested` deliveries, debounced per PR (`review.event_debounce_s`, default 90 s) so a push burst is reviewed once at its final head; a head that already fired is not dispatched again and the queue is bounded. Firing wakes the governor for an early eval cycle with those PRs first, so every cadence gate still applies and the cadence remains the fallback. `review.event_driven` defaults on when `GITHUB_WEBHOOK_SECRET` is set. `GET /api/review/dispatch/events` lists pending and recent dispatches, and review pipeline cards show an `event` or `cadence` trigger. See [Event-driven dispatch](src/docs/review-swarm.md#event-driven-dispatch).
+- Agents can now suggest knowledge changes that people review before they take effect ([#11105](https://github.com/hivecommons/hive/issues/11105)). `hivectl knowledge suggest` writes an add, update, replace or deprecate suggestion into a repository's `.hive/wiki/` directory and prints the branch, title and body for a pull request. Each suggestion records its source (a PR or issue link), a reason, the proposed lifecycle status, the affected repo, layer and tags, a `supersedes`/`superseded_by` link, and existing entries that may be duplicates. Nothing changes what agents see until a human merges the PR. A dashboard review queue is a planned follow-up.
+
+### Security
+
+- `GET /api/version/release-notes` now bounds its per-(from, to) response cache to 64 pairs (expired-then-oldest eviction) and admits uncached builds through a process-wide cap of 2 in flight and 8 per 10 minutes; past the limit the endpoint keeps its 200 `source: "unavailable"` contract with a retry hint while cached pairs continue to be served, so a viewer session can no longer grow hub memory without bound or burn the hive's GitHub API quota by requesting arbitrary revision pairs ([#11158](https://github.com/hivecommons/hive/issues/11158)).
+
+## 2026-10-09 (v5.148.0)
+
+### Added
+
+- release-notes: the spoke's manual Upgrade button now opens an in-app "What's new" modal ([#11066](https://github.com/hivecommons/hive/issues/11066)). The header reads `Upgrade <runtime>: <current> → <target>` (with the channel caveat for channel targets) and the body lists the releases between the two revisions from `/api/version/release-notes`, newest first with the first expanded, grouped Added / Changed / Fixed / Security / Deprecated, `#NNNN` references linked to the repo, and unreleased fragments under "Also in this build". When notes are unavailable a muted line says why and Upgrade stays enabled. Esc cancels, focus is trapped and returns to the Upgrade button.
+- release-notes: after the dashboard detects that the running build changed (a hub-triggered upgrade or any upgrade the operator did not click), owners and mergers see a dismissible overview banner "Upgraded <old> → <new>: N releases. What changed ▸" that opens the release notes in a read-only modal ([#11067](https://github.com/hivecommons/hive/issues/11067)). The last-seen SHA is kept in per-browser storage, so the banner appears once per upgrade and never on a first visit.
+- Added a SharePoint / OneDrive knowledge connector that syncs document libraries through Microsoft Graph delta queries, with deleted files marked deprecated (#11072).
+- Added a `google-drive` knowledge connector that syncs Google Docs (exported as markdown with an HTML fallback), Sheets (as capped markdown tables) and markdown/text files from configured Drive folders and shared drives, incrementally by modified time, with trashed files marked archived.
+- Settings → Knowledge gains a Connectors pane (status table, Sync now, Validate, Add/Edit/Disable/Remove) backed by owner-only `/api/config/knowledge/connectors` endpoints (#11075)
+- Compliance posture checks ([#11079](https://github.com/hivecommons/hive/issues/11079)): while a framework is selected the dashboard runs eight continuous checks (non-author review, owner not auto-merge author, audit retention, agent confinement, sentinel, no secrets in config, dashboard auth, hold labels) every `compliance.posture_checks.interval`, keeps a pass/fail history under `/data` (`posture_checks.window_days` / `history_days`), audits pass→fail as `compliance_posture_failed`, and serves it at `GET /api/compliance/posture?since=` and `POST /api/compliance/posture/run` (merger or owner). See [Compliance controls](src/docs/compliance.md#posture-checks-catalogue).
+- Settings → Compliance tab ([#11080](https://github.com/hivecommons/hive/issues/11080)): a framework picker with descriptions and a "Hive is not certified" banner (saved through the new owner-only `PUT /api/config/governor/compliance`), and a controls panel grouped by domain showing each control's implementing settings, current → recommended value and status, with inline toggles for writable booleans, "Open setting" links and a per-domain "Apply recommended" confirmation that stages changes in the owning sections for Save. `GET /api/compliance/status` now also returns each control's `text`, each setting's `kind`/`description` and each framework's `description`. See [Compliance controls](src/docs/compliance.md#using-the-compliance-tab).
+- Compliance profiles for FedRAMP Moderate (AC/AU/CM/IA/RA/SA/SI subset, `fedramp-moderate`) and ISO/IEC 27001:2022 Annex A (`iso27001-annex-a`) ([#11082](https://github.com/hivecommons/hive/issues/11082)): select them in `compliance.frameworks`; each control maps to existing Hive settings or is marked not covered (eligibility by location/citizenship, HR, physical). Not a certification.
+- Hub compliance rollup ([#11083](https://github.com/hivecommons/hive/issues/11083)): spokes report their framework profiles and latest posture pass/fail in the hub heartbeat; the hub Fleet view gains a Compliance column with a pass-rate pill linking to the spoke's Compliance tab, and admins can export the fleet-wide aggregate at `GET /api/hub/compliance`. See [Fleet health](src/docs/fleet-health.md#compliance-rollup-11083).
+- Generated repository code maps (`knowledge.code_maps`): opt-in, size-capped summaries of packages, entry points, ownership hotspots, public APIs, test layout and extension points, stored as repo-scoped knowledge with freshness metadata and regenerated when HEAD changes (#11106)
+- GraphQL per-repo PR batch replaces REST pulls/{number} + check-runs fan-out (#11149)
+- Webhook-driven PR cache invalidation ([#11177](https://github.com/hivecommons/hive/issues/11177)): spokes accept HMAC-verified GitHub App webhooks on `POST /api/webhook/github` (direct or relayed by the hub); `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`, PR `issue_comment` and `push` (base/head ref fan-out) events invalidate the cached PR detail and GraphQL batch entries and mark the PR dirty, clean PRs are served from cache while webhooks are healthy, and the eval interval rises to `governor.eval_interval_webhook_s` (default `900`, composed with the API budget stretch by taking the max). `/api/status` and `/api/gh-rate-limits` expose `webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`. See [Webhook-driven PR cache invalidation](src/docs/operator-reference.md#webhook-driven-pr-cache-invalidation).
+
+### Fixed
+
+- The vibe-kanban stdio MCP client no longer races its own stderr reader: an RPC error is now returned only after the child's stderr has been fully captured, so error messages carry the real diagnostic instead of a truncated or empty stderr tail ([#11147](https://github.com/hivecommons/hive/issues/11147), [#11160](https://github.com/hivecommons/hive/pull/11160)).
+- CI on the self-hosted runner pool no longer fails in `actions/setup-go` after a `src/go.mod` Go bump ([#11175](https://github.com/hivecommons/hive/issues/11175)). Parallel jobs used to race to populate the cold node-local tool cache (`ENOTEMPTY … rmdir`, `ENOENT … copyfile`, `Command failed:  version`); every setup-go step is now preceded by `.github/scripts/go-toolcache-guard.sh`, which warms that Go version once per node under the same lock as the runners' `warm-toolcache` init container, without waiting for a `helm upgrade`.
+
+## 2026-10-09 (v5.147.1)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.9 and `golang.org/x/net` to v0.60.0 so the `govulncheck` gate stops flagging GO-2026-6599 through GO-2026-6611 (HTTP/2 framer, `crypto/tls`, `net/http`, `mime/multipart`, `html/template`). The vulnerable versions were reachable from the dashboard's HTTP server and the GitHub client, and the gate was red on the default branch itself, blocking every open PR.
+
 ## 2026-10-08 (v5.147.0)
 
 ### Added

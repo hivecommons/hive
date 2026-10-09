@@ -14,11 +14,21 @@ func (s *Server) registerKnowledgeConnectorRoutes() {
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/sync", s.handleKnowledgeConnectorSync)
 }
 
-func (s *Server) knowledgeConnectors() *connector.Syncer {
+func (s *Server) knowledgeConnectors() KnowledgeConnectorRuntime {
 	if s == nil || s.deps == nil {
 		return nil
 	}
 	return s.deps.KnowledgeConnectors
+}
+
+// knowledgeConnectorStatus finds one connector's status by name.
+func knowledgeConnectorStatus(rt KnowledgeConnectorRuntime, name string) (connector.Status, bool) {
+	for _, st := range rt.Statuses() {
+		if st.Name == name {
+			return st, true
+		}
+	}
+	return connector.Status{}, false
 }
 
 // handleKnowledgeConnectorsList returns {"connectors": [...]} with one status
@@ -44,7 +54,7 @@ func (s *Server) handleKnowledgeConnectorSync(w http.ResponseWriter, r *http.Req
 		jsonError(w, "no knowledge connectors are configured", http.StatusNotFound)
 		return
 	}
-	st, ok := syncer.Status(name)
+	st, ok := knowledgeConnectorStatus(syncer, name)
 	if !ok {
 		jsonError(w, "unknown knowledge connector", http.StatusNotFound)
 		return

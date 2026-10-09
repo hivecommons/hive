@@ -29,6 +29,7 @@ import (
 	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
+	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
@@ -206,6 +207,11 @@ type boot struct {
 	lastSupersessionSweep time.Time
 	lastIssueUnparkSweep  time.Time
 	lastSentinelSweep     time.Time
+
+	// reviewEvents queues webhook-triggered review dispatch and reviewWake
+	// carries its wakes to the governor loop (hivecommons/hive#11091).
+	reviewEvents *eventdispatch.Dispatcher
+	reviewWake   chan struct{}
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

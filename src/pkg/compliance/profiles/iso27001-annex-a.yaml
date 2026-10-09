@@ -1,0 +1,323 @@
+# ISO/IEC 27001 Annex A — Hive control mapping (hivecommons/hive#11082).
+#
+# Control text below is a short paraphrase for orientation, NOT the standard's
+# wording; the authoritative text is the publication cited on each control.
+# Selecting this profile is not a certification and does not make a hive
+# compliant with anything: it shows which Hive settings an operator's own
+# control owners can point to as part of THEIR controls, and whether those
+# settings are currently in the recommended posture. See src/docs/compliance.md.
+#
+# Every mapping's setting_path must be a key pkg/compliance knows how to read
+# (TestProfileSchema enforces it); evaluator must be one of the closed set in
+# pkg/compliance/evaluators.go. The mapping tables in docs/compliance.md are
+# rendered from this file by src/scripts/render-compliance-tables.py.
+id: iso27001-annex-a
+name: ISO/IEC 27001:2022 Annex A
+version: ISO/IEC 27001:2022
+controls:
+  - id: A.5.1
+    title: Policies for information security
+    text: >-
+      Information security policy and topic policies are defined, approved and communicated.
+    citation: ISO/IEC 27001:2022 Annex A 5.1
+    domain: Risk management
+    rationale: >-
+      Policies are organisational documents; Hive cannot evidence that they exist
+      or were approved.
+    not_covered: true
+  - id: A.5.2
+    title: Information security roles and responsibilities
+    text: >-
+      Roles and responsibilities for information security are defined and allocated.
+    citation: ISO/IEC 27001:2022 Annex A 5.2
+    domain: Segregation of duties
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: dashboard.authorized_users
+        recommended: '1'
+        evaluator: min_mergers
+  - id: A.5.3
+    title: Segregation of duties
+    text: Conflicting duties and areas of responsibility are separated.
+    citation: ISO/IEC 27001:2022 Annex A 5.3
+    domain: Segregation of duties
+    mappings:
+      - setting_path: auto_merge.self_authored
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.trusted_authors.enabled
+        recommended: 'false'
+        evaluator: equals
+  - id: A.5.15
+    title: Access control
+    text: >-
+      Rules to control physical and logical access are established and applied.
+    citation: ISO/IEC 27001:2022 Annex A 5.15
+    domain: Access control
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: dashboard.authorized_users
+        recommended: '2'
+        evaluator: max_owners
+  - id: A.5.16
+    title: Identity management
+    text: The full life cycle of identities is managed.
+    citation: ISO/IEC 27001:2022 Annex A 5.16
+    domain: Access control
+    rationale: >-
+      Hive holds the allowlist of named users; identity lifecycle is run at the
+      identity provider.
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A.5.18
+    title: Access rights
+    text: >-
+      Access rights are provisioned, reviewed, modified and removed per policy.
+    citation: ISO/IEC 27001:2022 Annex A 5.18
+    domain: Access control
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.trusted_authors.require_github_permission
+        recommended: 'true'
+        evaluator: equals
+  - id: A.5.19
+    title: Information security in supplier relationships
+    text: Risks tied to suppliers and their products or services are managed.
+    citation: ISO/IEC 27001:2022 Annex A 5.19
+    domain: Risk management
+    rationale: >-
+      Model providers, GitHub and hosting are the operator's suppliers; supplier
+      assessment is the operator's process.
+    not_covered: true
+  - id: A.5.24
+    title: Incident management planning and preparation
+    text: >-
+      Incident management processes, roles and responsibilities are planned and
+      prepared.
+    citation: ISO/IEC 27001:2022 Annex A 5.24
+    domain: Incident response
+    rationale: >-
+      The incident process is the operator's. Hive supplies tools it can use (pause,
+      hold labels, sentinel alerts, audit log) but cannot evidence the process.
+    not_covered: true
+  - id: A.5.25
+    title: Assessment and decision on information security events
+    text: Security events are assessed and classified as incidents or not.
+    citation: ISO/IEC 27001:2022 Annex A 5.25
+    domain: Incident response
+    mappings:
+      - setting_path: escalation.disabled
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: A.5.30
+    title: ICT readiness for business continuity
+    text: ICT readiness is planned and tested against continuity objectives.
+    citation: ISO/IEC 27001:2022 Annex A 5.30
+    domain: Incident response
+    rationale: >-
+      Backup, restore and disaster recovery are run by the operator; no Hive setting
+      evidences a tested recovery.
+    not_covered: true
+  - id: A.6.1
+    title: Screening
+    text: Background checks on candidates are carried out before they join.
+    citation: ISO/IEC 27001:2022 Annex A 6.1
+    domain: Access control
+    rationale: >-
+      Screening and other HR controls are the organisation's; Hive cannot verify
+      who a person is or where they are, including any geographic or citizenship
+      eligibility rule.
+    not_covered: true
+  - id: A.7.2
+    title: Physical entry
+    text: Secure areas are protected by entry controls.
+    citation: ISO/IEC 27001:2022 Annex A 7.2
+    domain: Access control
+    rationale: >-
+      Physical security belongs to the operator's hosting provider and facilities.
+    not_covered: true
+  - id: A.8.2
+    title: Privileged access rights
+    text: >-
+      Allocation and use of privileged access rights is restricted and managed.
+    citation: ISO/IEC 27001:2022 Annex A 8.2
+    domain: Access control
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: '2'
+        evaluator: max_owners
+      - setting_path: auto_merge.trusted_authors.enabled
+        recommended: 'false'
+        evaluator: equals
+  - id: A.8.4
+    title: Access to source code
+    text: Read and write access to source code and development tools is managed.
+    citation: ISO/IEC 27001:2022 Annex A 8.4
+    domain: Access control
+    mappings:
+      - setting_path: env.HIVE_PROXY_INJECT_GH_AUTH
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: agent_sandbox.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.human_merge_paths
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A.8.7
+    title: Protection against malware
+    text: >-
+      Protection against malware is implemented and supported by user awareness.
+    citation: ISO/IEC 27001:2022 Annex A 8.7
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: sentinel.disabled_behaviors
+        recommended: none
+        evaluator: empty
+  - id: A.8.8
+    title: Management of technical vulnerabilities
+    text: >-
+      Information on technical vulnerabilities is obtained, exposure evaluated and
+      acted on.
+    citation: ISO/IEC 27001:2022 Annex A 8.8
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A.8.9
+    title: Configuration management
+    text: >-
+      Configurations, including security configurations, are established, documented
+      and monitored.
+    citation: ISO/IEC 27001:2022 Annex A 8.9
+    domain: Change management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: acmm_level
+        recommended: '5'
+        evaluator: at_most
+  - id: A.8.15
+    title: Logging
+    text: >-
+      Logs recording activities, exceptions and events are produced, stored, protected
+      and analysed.
+    citation: ISO/IEC 27001:2022 Annex A 8.15
+    domain: Logging & monitoring
+    rationale: >-
+      Audit retention is fixed at 90 days in code today; the configurable floor
+      is tracked by hivecommons/hive#11077, so this reports a deviation until it
+      lands.
+    mappings:
+      - setting_path: audit.retention_days
+        recommended: '365'
+        evaluator: at_least
+      - setting_path: review.post_comments
+        recommended: 'true'
+        evaluator: equals
+  - id: A.8.16
+    title: Monitoring activities
+    text: Systems and behaviour are monitored for anomalies and acted on.
+    citation: ISO/IEC 27001:2022 Annex A 8.16
+    domain: Logging & monitoring
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: escalation.disabled
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: tool_approval.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: A.8.25
+    title: Secure development life cycle
+    text: >-
+      Rules for secure development of software and systems are established and applied.
+    citation: ISO/IEC 27001:2022 Annex A 8.25
+    domain: Change management
+    mappings:
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A.8.28
+    title: Secure coding
+    text: Secure coding principles are applied to software development.
+    citation: ISO/IEC 27001:2022 Annex A 8.28
+    domain: Vulnerability management
+    mappings:
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: A.8.29
+    title: Security testing in development and acceptance
+    text: >-
+      Security testing processes are defined and implemented in the development
+      life cycle.
+    citation: ISO/IEC 27001:2022 Annex A 8.29
+    domain: Vulnerability management
+    mappings:
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A.8.31
+    title: Separation of development, test and production environments
+    text: >-
+      Development, testing and production environments are separated and secured.
+    citation: ISO/IEC 27001:2022 Annex A 8.31
+    domain: Change management
+    mappings:
+      - setting_path: agent_sandbox.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: A.8.32
+    title: Change management
+    text: >-
+      Changes to information processing facilities and systems follow change management
+      procedures.
+    citation: ISO/IEC 27001:2022 Annex A 8.32
+    domain: Change management
+    rationale: >-
+      Whether an automated review satisfies approval is the organisation's change-management
+      policy; these values describe the conservative posture.
+    mappings:
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.human_merge_paths
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.self_authored
+        recommended: 'false'
+        evaluator: equals

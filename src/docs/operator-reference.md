@@ -138,6 +138,8 @@ Top-level YAML keys accepted by `config.Config`:
 | Field | Default / behavior | Operator note |
 |---|---|---|
 | `github.pr_detail_ttl_s` | `1800` seconds. `HIVE_GITHUB_PR_DETAIL_TTL` overrides for tests/experiments. | Reuses `GET /pulls/{number}` detail responses while the cheap PR list still reports the same `head.sha` and `updated_at`, and GitHub has resolved `mergeable_state`. |
+| `github.graphql_pr_batch` | `true` | Uses one paginated GraphQL query per repository scan to populate the PR detail cache and CI rollup cache, replacing most per-PR `GET /pulls/{number}` and `check-runs` reads. Set `false` to return to the REST-only scan path. |
+| `github.graphql_pr_batch_page_size` | `50` | Page size for the GraphQL `pullRequests(first:)` batch. Values above GitHub's `100` maximum are rejected. |
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `project.repo_policies[].auto_merge` | effective `false` below L6; unset = `true` at L6 | Per-repo off switch. Switching to L6 turns this on for every active repo; owners can toggle repos afterward. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card switch persists this key and takes effect without restart. |
 | `project.repo_policies[].label_driven` | Off (unset) for every repo. | Opt-in for repos whose maintainers accept and park issues with labels and their own bots (for example `needs-triage` → `triage/accepted`). On such a repo the un-park sweep posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction`; `/hive approve`, `/hive decision` and `/hive help` get a one-line reply pointing at the labels. Hive still filters parked issues and may still add `needs-decision` with a question. Config-file key only; see [maintainer-commands.md](maintainer-commands.md#label-driven-repositories). |
@@ -148,6 +150,10 @@ Top-level YAML keys accepted by `config.Config`:
 | `evidence.signing_key_file` | Unset (bundles unsigned). | Path to an Ed25519 private key (32-byte seed or 64-byte key, hex or base64). When set and readable, bundles are signed; when empty, absent or unusable they are written with `"signed": false` and a warning is logged for an unusable key. Keep the key off shared hosts. |
 | `review.all_authors` | Off by default. | Makes every open PR eligible for review, not only agent-authored ones. It only widens what is reviewed; it never lets an agent push to those PRs (see the next row). Features -> Review Gate -> Reviewers. |
 | `review.fix_human_prs` | Off by default; owner-only. | Lets the review-fix kick push commits onto PRs the hive's own agents did not open (a contributor's fork via "allow edits by maintainers", a maintainer's branch, another bot's PR). Off, a `changes_requested` verdict on such a PR stops at the published review, with the proposed fix as a suggestion or patch block in the comment, and the refusal is audited as `review_fix_withheld`. Upgrade rule: a hive that already had `all_authors: true` with this never set is stored as `true` so its behaviour does not change; an explicit `false` is never overwritten. See [review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs). |
+| `review.severity.block_at` | Unset; owner-only. | Lowest finding priority that blocks merge: `P1` (ship fast, P0–P1 block), `P2` (strict, P0–P2 block) or `P3` (everything blocks). Also drives `classification.review_bots.min_priority` when that key is not set in `hive.yaml` or `hive-project.yaml`. Any other value fails load naming the field. Features -> Review Gate -> Severity & backlog. See [review-swarm.md](review-swarm.md#blocking-line-reviewseverity-reviewbacklog). |
+| `review.severity.comment_below` / `backlog_below` | `true` / `true`; owner-only. | Whether findings below the blocking line are posted as non-blocking comments and filed to `review.backlog`. |
+| `review.backlog.destination` | `github_issue`; owner-only. | `github_issue`, `github_project`, `linear` or `jira`. The last three need the matching `governor.work_source.type` (`github_projects`, `linear`, `jira`); on a mismatch the hive falls back to `github_issue`. Destination fields: `project_column_id` (required for `github_project`), `linear_state`, `jira_status`. |
+| `review.backlog.labels` / `max_per_pr_per_day` | `[from-review]` / `10`; owner-only. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). |
 | `review.contributor_prs.base_sync` | Off by default; owner-only. | Lets PR follow-up use GitHub's update-branch API on hive-authored lane PRs whose head is in a contributor fork, whose `mergeable_state` is `behind`/`dirty`, and whose author enabled "allow edits by maintainers". `behind` PRs get a GitHub-authored merge commit; `dirty`/422 falls back to the `hive-base-moved` repair note and kick. This requires an agent/proxy mode with `ISSUES_PRS_MERGE` because `PUT /pulls/{n}/update-branch` is merge-scoped. It does not rewrite history and does not add a human/bot-authored DCO commit; the repository's "Sign-off survives the squash" check examines the PR's own commits, not GitHub's update-branch merge commit. |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
 | `governor.kick_limits.max_issues` / `max_prs` | `100` / `50` | Caps on every issue list and every PR list (actionable, stale drafts, merge-eligible, CI-failing) rendered into a kick prompt; a cut list ends with an explicit "… and N more" line. An absent key or a negative value means the default; an explicit `0` opts out of the cap entirely (`KickListUnlimited` — every item is listed), and anything above `500` is pinned to `500`. Editable without touching this file under **Settings → Repos → Kick prompt list caps**. Truncation drops the *newest, lowest-priority* items: issues are listed oldest first, and PRs in review-priority order (fixes, then refactors/docs, then tests, oldest first within each class), so lowering a cap never hides the most urgent work. Raise `max_prs` only if your agents actually work more than 50 PRs per turn; the tail of a long list costs tokens and delivery time on every kick without changing behaviour (#7368). |
@@ -477,6 +483,57 @@ It also sets `Retry-After` to when the one-hour window (or observed reset) can
 make progress, logs once at 80% of each agent window, and sends one
 stop-polling nudge per agent window. Hive-authored write relays are not
 agent-attributed and are not capped by this path.
+
+Open-PR scans use `github.graphql_pr_batch` by default to move mergeability,
+review-decision, linked-issue and CI-rollup reads into GitHub's separate
+GraphQL bucket. `/api/gh-rate-limits` reports these calls as caller
+`hive:pr_batch` on endpoint `/graphql` and exposes `graphql_pr_batch` counters
+for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
+query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
+GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
+
+### Webhook-driven PR cache invalidation
+
+A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
+either delivered directly by GitHub or relayed by the hub (the hub forwards the
+original signed body to the hive that manages the repository). The receiver
+fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
+the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
+body exactly as the hub does. Deliveries for repositories the hive does not
+manage are ignored.
+
+- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
+  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
+  the GraphQL batch check-run/review entries for the affected PR and mark it
+  dirty. Check and status events are matched by PR number and head SHA (fork
+  PRs arrive without a PR list); `push` invalidates every open PR whose base or
+  head branch is the pushed branch.
+- Webhooks are **healthy** while the last delivery for a managed repository is
+  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
+  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
+  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
+  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
+  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
+  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
+  the next cycle.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
+  Hive logs one WARN per healthy → stale transition and falls back to the
+  configured interval and TTL-bound caching.
+- `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
+  `review_requested` deliveries also queue an early review dispatch when
+  `review.event_driven` is on; see
+  [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+
+`/api/status` and `/api/gh-rate-limits` expose
+`webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
+changed.
+
+```yaml
+governor:
+  eval_interval_s: 300
+  eval_interval_webhook_s: 900
+```
 
 ## `HIVE_GITHUB_TOKEN` permissions
 

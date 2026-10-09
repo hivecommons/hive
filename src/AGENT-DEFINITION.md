@@ -322,7 +322,7 @@ All three features are configurable through the per-agent config dialog (⚙️ 
 | `PUT` | `/api/config/agent/{name}/connections` | Update connections |
 | `GET` | `/api/config/agent/{name}/export` | Export as portable YAML |
 | `POST` | `/api/agents/import` | Import from YAML (URL or paste) |
-| `POST` | `/api/webhook/github` | GitHub webhook receiver for channel triggers |
+| `POST` | `/api/webhook/github` | GitHub App webhook receiver (HMAC-verified; invalidates cached PR state and tracks webhook health) |
 
 ---
 

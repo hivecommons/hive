@@ -207,6 +207,8 @@ func DefaultRegistry() *Registry {
 	_ = r.Register(TypeGitHubWiki, newGitHubWikiConnector)
 	_ = r.Register(TypeConfluence, newConfluenceConnector)
 	_ = r.Register(TypeNotion, newNotionConnector)
+	_ = r.Register(TypeGoogleDrive, newGoogleDriveConnector)
+	_ = r.Register(TypeSharePoint, newSharePointConnector)
 	return r
 }
 

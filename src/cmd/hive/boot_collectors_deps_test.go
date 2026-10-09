@@ -32,6 +32,7 @@ type bootCollectorsFake struct {
 	login          string
 	lookupErr      error
 	contributeSrv  *dashboard.Server
+	postureSrv     *dashboard.Server
 	actionable     []byte
 	actionableErr  error
 }
@@ -52,6 +53,7 @@ func newBootCollectorsFake() *bootCollectorsFake {
 			return f.login, f.lookupErr
 		},
 		startContributeMetrics: func(_ context.Context, srv *dashboard.Server) { f.contributeSrv = srv },
+		startCompliancePosture: func(_ context.Context, srv *dashboard.Server) { f.postureSrv = srv },
 		readLastActionable:     func() ([]byte, error) { return f.actionable, f.actionableErr },
 	}
 	return f
@@ -108,6 +110,9 @@ func TestBootCollectorsWithStartsEveryCollectorAndPersistsOnPVC(t *testing.T) {
 	}
 	if f.contributeSrv != b.dashSrv {
 		t.Fatal("contribute metrics not started on the boot's dashboard server")
+	}
+	if f.postureSrv != b.dashSrv {
+		t.Fatal("compliance posture checks not started on the boot's dashboard server")
 	}
 	if len(f.lookups) != 0 {
 		t.Fatalf("configured ai_author must skip the token lookup, got %v", f.lookups)

@@ -85,7 +85,8 @@ func TestKnowledgeConnectorsListEmpty(t *testing.T) {
 func TestKnowledgeConnectorsListAndSync(t *testing.T) {
 	s, deps := apiServer(t)
 	conn := &blockingConn{started: make(chan struct{}, 1), release: make(chan struct{})}
-	deps.KnowledgeConnectors = newTestConnectorSyncer(t, conn)
+	syncer := newTestConnectorSyncer(t, conn)
+	deps.KnowledgeConnectors = syncer
 
 	got := decodeConnectorList(t, s)
 	if len(got) != 1 || got[0].Name != "wiki" || got[0].Type != "fake" || got[0].Layer != "project" || !got[0].Enabled || got[0].Running {
@@ -120,7 +121,7 @@ func TestKnowledgeConnectorsListAndSync(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		st, _ := deps.KnowledgeConnectors.Status("wiki")
+		st, _ := syncer.Status("wiki")
 		if !st.Running && !st.LastSync.IsZero() {
 			if st.Pages != 1 || st.Facts != 1 || st.Cursor != "c1" || st.LastError != "" {
 				t.Fatalf("status after sync = %+v", st)

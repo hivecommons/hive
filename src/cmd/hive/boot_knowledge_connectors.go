@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
@@ -97,4 +98,14 @@ func (b *boot) bootKnowledgeConnectors(deps bootKnowledgeDeps) {
 		deps.startConnectorSyncer(b.ctx, s)
 	}
 	b.logger.Info("knowledge connectors started", "count", len(b.cfg.Knowledge.Connectors))
+}
+
+// knowledgeConnectorRuntime exposes the syncer to the dashboard. A nil
+// *connector.Syncer must stay a nil interface so the dashboard reports
+// "no connectors configured" instead of calling methods on a nil pointer.
+func (b *boot) knowledgeConnectorRuntime() dashboard.KnowledgeConnectorRuntime {
+	if b.knowledgeConnectors == nil {
+		return nil
+	}
+	return b.knowledgeConnectors
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
@@ -172,6 +173,14 @@ type Server struct {
 	// built like the sparkline rings so a zero-value Server works in tests.
 	budgetWindowOnce sync.Once
 	budgetWindowHist *collect.BudgetWindowTracker
+	// posture is the compliance posture-check runner and its history
+	// (hivecommons/hive#11079). Lazily built like the rings above.
+	postureOnce sync.Once
+	posture     *compliance.PostureRunner
+	// attestations is the compliance owner-attestation store
+	// (hivecommons/hive#11081). Lazily opened like the posture runner.
+	attestOnce   sync.Once
+	attestations *compliance.AttestationStore
 
 	// convergenceModeTrk captures one (mode, generation) pair per enrolled
 	// eval pass and detects transitions (#4263). convergenceSoakTrk records the
@@ -1982,6 +1991,12 @@ func (s *Server) isPublicPath(path string) bool {
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
 		return true
+	case path == githubWebhookPath:
+		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot
+		// hold a dashboard session. NOT actually open — the handler fails
+		// closed without GITHUB_WEBHOOK_SECRET and verifies the HMAC
+		// X-Hub-Signature-256 over the raw body.
+		return true
 	case path == linearAgentWebhookPath:
 		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
 		// dashboard session. NOT actually open — the handler fails closed
@@ -3131,7 +3146,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	statusJSONResponse(w, r, filterStatusPayload(s.statusWithOverviewBands(status, time.Now().UTC()), r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, time.Now().UTC()), Webhooks: github.WebhookHealthSnapshot()}
+	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
+}
+
+// statusWithWebhooks adds the live webhook health block (#11177) to the cached
+// status payload at serve time, so it is never a whole eval cycle stale.
+type statusWithWebhooks struct {
+	*StatusPayload
+	Webhooks github.WebhookHealth `json:"webhooks"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
@@ -3167,7 +3190,7 @@ func statusJSONResponse(w http.ResponseWriter, r *http.Request, data any) {
 	}
 }
 
-func filterStatusPayload(status *StatusPayload, fieldsCSV, omitCSV string) any {
+func filterStatusPayload(status any, fieldsCSV, omitCSV string) any {
 	if strings.TrimSpace(fieldsCSV) == "" && strings.TrimSpace(omitCSV) == "" {
 		return status
 	}

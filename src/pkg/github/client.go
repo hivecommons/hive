@@ -38,11 +38,18 @@ type Client struct {
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
-	rateLimits  rateLimitTracker
-	prDetailTTL func() time.Duration
-	org         string
-	reposMu     sync.RWMutex
-	repos       []string
+	rateLimits             rateLimitTracker
+	prDetailTTL            func() time.Duration
+	graphQLPRBatchEnabled  func() bool
+	graphQLPRBatchPageSize func() int
+	prBatchMu              sync.Mutex
+	prBatchCheckRuns       map[prBatchCheckRunKey][]*gh.CheckRun
+	prBatchReviews         map[string]map[int]prReviewState
+	prBatchStats           GraphQLPRBatchStats
+	prBatchGraphQLRate     RateLimitEntry
+	org                    string
+	reposMu                sync.RWMutex
+	repos                  []string
 	// repoPaused reports whether a repo is under an operator pause (#6203).
 	// Guarded by reposMu because the dashboard can pause a repo while the
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
@@ -123,9 +130,9 @@ type Client struct {
 	// back to the dispatcher's name-token rule.
 	reviewerAgent func(agent string) bool
 	// confidenceScore gates the Confidence line on review comments.
-	confidenceScore func() bool
-	// reviewBacklog controls review out-of-scope finding filing.
-	reviewBacklog func() (enabled bool, cap int)
+	confidenceScore      func() bool
+	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap
+	reviewBacklogRouting func() ReviewBacklogRouting    // review.severity / review.backlog; see review_backlog_routing.go
 	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
 	// means no bundles are written (see review_evidence.go).
 	reviewEvidence func(repo string) ReviewEvidenceSettings
@@ -1014,6 +1021,14 @@ func (c *Client) SetPRDetailTTLFunc(fn func() time.Duration) {
 	c.prDetailTTL = fn
 }
 
+func (c *Client) SetGraphQLPRBatchConfig(enabled func() bool, pageSize func() int) {
+	if c == nil {
+		return
+	}
+	c.graphQLPRBatchEnabled = enabled
+	c.graphQLPRBatchPageSize = pageSize
+}
+
 func (c *Client) effectivePRDetailTTL() time.Duration {
 	if c != nil && c.prDetailTTL != nil {
 		if ttl := c.prDetailTTL(); ttl >= 0 {
@@ -1449,6 +1464,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		}
 		opts.Page = resp.NextPage
 	}
+	c.prefetchOpenPRDetailsGraphQL(ctx, owner, repoName, repo)
 
 	for _, pr := range allPRs {
 		totalPRs++
@@ -1836,11 +1852,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
 	if !ok {
 		var err error
+		started := sharedWebhookTracker.now()
 		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
 		if err != nil {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 		} else {
 			c.storePRDetail(pr.Repo, pr.Number, full)
+			sharedWebhookTracker.clearDirtyBefore(pr.Repo, pr.Number, started)
 		}
 	}
 	if full != nil {
@@ -1849,15 +1867,21 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
 	}
 
-	checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
-		pr.CIStatus = ciStatusPending
-		return nil
+	var allCheckRuns []*gh.CheckRun
+	if cached, ok := c.graphQLBatchCheckRuns(pr.Repo, pr.Number, pr.HeadSHA); ok {
+		allCheckRuns = cached
+	} else {
+		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
+			ListOptions: gh.ListOptions{PerPage: 100},
+		})
+		if err != nil {
+			c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
+			pr.CIStatus = ciStatusPending
+			return nil
+		}
+		allCheckRuns = checkRuns.CheckRuns
 	}
-	latestCheckRuns := latestCheckRunsByNameAndApp(checkRuns.CheckRuns)
+	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
@@ -2736,13 +2760,27 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	APIBudget     APIBudgetSnapshot `json:"api_budget"`
-	Core          RateLimitEntry    `json:"core"`
-	Search        RateLimitEntry    `json:"search"`
-	GraphQL       RateLimitEntry    `json:"graphql"`
-	TopConsumers  []RESTConsumer    `json:"top_consumers,omitempty"`
-	ETagCache     ETagCacheInfo     `json:"etag_cache"`
-	PRDetailCache ETagCacheInfo     `json:"pr_detail_cache"`
+	APIBudget      APIBudgetSnapshot   `json:"api_budget"`
+	Core           RateLimitEntry      `json:"core"`
+	Search         RateLimitEntry      `json:"search"`
+	GraphQL        RateLimitEntry      `json:"graphql"`
+	TopConsumers   []RESTConsumer      `json:"top_consumers,omitempty"`
+	ETagCache      ETagCacheInfo       `json:"etag_cache"`
+	PRDetailCache  ETagCacheInfo       `json:"pr_detail_cache"`
+	GraphQLPRBatch GraphQLPRBatchStats `json:"graphql_pr_batch"`
+	Webhooks       WebhookHealth       `json:"webhooks"`
+}
+
+type GraphQLPRBatchStats struct {
+	Repos     int `json:"repos"`
+	PRs       int `json:"prs"`
+	Pages     int `json:"pages"`
+	Fallbacks int `json:"fallbacks"`
+	Errors    int `json:"errors"`
+	LastCost  int `json:"last_cost"`
+	// WebhookSkips counts repo scans that reused the previous batch because
+	// webhooks were healthy and no PR was marked dirty (#11177).
+	WebhookSkips int `json:"webhook_skips"`
 }
 
 type ETagCacheInfo struct {
@@ -2804,10 +2842,19 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.Core = c.rateLimits.observe("core", info.Core)
 	info.Search = c.rateLimits.observe("search", info.Search)
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
+	if c != nil {
+		c.prBatchMu.Lock()
+		if c.prBatchGraphQLRate != (RateLimitEntry{}) {
+			info.GraphQL = c.rateLimits.observe("graphql", c.prBatchGraphQLRate)
+		}
+		info.GraphQLPRBatch = c.prBatchStats
+		c.prBatchMu.Unlock()
+	}
 	hits, misses, entries := ETagCacheStats()
 	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	hits, misses, entries = PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	info.Webhooks = WebhookHealthSnapshot()
 	info.TopConsumers = RESTTopConsumers(10)
 	_, snapshot := c.APIBudgetMode()
 	info.APIBudget = snapshot
