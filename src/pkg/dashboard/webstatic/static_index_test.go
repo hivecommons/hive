@@ -199,7 +199,10 @@ func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T)
 		"audit-entry-rate-spark",
 		"audit-last-entry",
 		"audit-today-count",
+		"role=\"group\" aria-label=\"${escapeHtml(label)}\"",
 		"audit-sensitive-chip ${chipClass}",
+		"role=\"button\" tabindex=\"0\" data-action=\"showAuditSensitiveEntries\"",
+		"aria-label=\"Show sensitive entries\"",
 		"const chipClass = sensitive > 0 ? 'warning' : 'muted';",
 		"window._auditSummary = _auditSummary;",
 		"return renderAuditCollapsedSummary(text, title);",
@@ -211,6 +214,11 @@ func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T)
 	for _, want := range []string{
 		".audit-sensitive-chip.warning",
 		".audit-sensitive-chip.muted",
+		"id=\"audit-sensitive-filter\"",
+		"function toggleAuditSensitiveFilter()",
+		"function showAuditSensitiveEntries()",
+		"fetch('/api/audit' + (_auditSensitiveOnly ? '?sensitive=1' : ''))",
+		".audit-entry-sensitive-tag",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("static dashboard audit sensitive chip CSS missing %q", want)
