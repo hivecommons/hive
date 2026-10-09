@@ -270,6 +270,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerOpenRouterRoutes()
 	s.registerLinearAgentRoutes()
 	s.mux.HandleFunc("GET /api/upstream-watch", s.handleUpstreamWatch)
+	s.mux.HandleFunc("PUT /api/config/upstream-watch", s.handleUpstreamWatchConfigPut)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)

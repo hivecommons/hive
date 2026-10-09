@@ -106,3 +106,48 @@ func validOwnerRepo(s string) bool {
 	owner, repo, ok := strings.Cut(s, "/")
 	return ok && owner != "" && repo != "" && !strings.ContainsAny(s, " \t") && strings.Count(s, "/") == 1
 }
+
+// ApplyUpstreamWatchDefaults fills the upstream_watch defaults the loader
+// applies, so a block written by the dashboard reads the same in memory as it
+// will after the next load.
+func (c *Config) ApplyUpstreamWatchDefaults() { c.applyUpstreamWatchDefaults() }
+
+// ValidateUpstreamWatch runs the loader's upstream_watch validation, so the
+// dashboard write path rejects a block the next load would refuse.
+func (c *Config) ValidateUpstreamWatch() error { return c.validateUpstreamWatch() }
+
+// ClearUpstreamWatchRepos drops every upstream_watch.repos entry. It is used
+// when a repo-list save moves the hive to another org, where bare keys from
+// the previous org must not silently retarget to same-named repos.
+func (c *Config) ClearUpstreamWatchRepos() bool {
+	if c == nil || len(c.UpstreamWatch.Repos) == 0 {
+		return false
+	}
+	c.UpstreamWatch.Repos = nil
+	return true
+}
+
+// PruneUpstreamWatchToWatched drops upstream_watch.repos entries for repos no
+// longer listed in project.repos, which validateUpstreamWatch would otherwise
+// reject on the next load.
+func (c *Config) PruneUpstreamWatchToWatched() bool {
+	if c == nil || len(c.UpstreamWatch.Repos) == 0 {
+		return false
+	}
+	known := make(map[string]bool, len(c.Project.Repos))
+	for _, r := range c.Project.Repos {
+		known[strings.ToLower(r)] = true
+	}
+	changed := false
+	for key := range c.UpstreamWatch.Repos {
+		bare, _ := NormalizeRepoForOrg(c.Project.Org, key)
+		if !known[strings.ToLower(bare)] {
+			delete(c.UpstreamWatch.Repos, key)
+			changed = true
+		}
+	}
+	if len(c.UpstreamWatch.Repos) == 0 {
+		c.UpstreamWatch.Repos = nil
+	}
+	return changed
+}
