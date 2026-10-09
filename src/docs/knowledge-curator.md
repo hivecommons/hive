@@ -265,6 +265,7 @@ validation with an error naming the field.
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
 | `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
+| `google-drive` | `folder_ids` and/or `shared_drive_ids` (comma-separated Drive IDs, at least one), `include_mime` (comma-separated `docs`, `sheets`, `md`, `txt`; default `docs,md,txt`) | Lists each folder recursively (`'<folder>' in parents`) and each shared drive through Drive v3 `files.list` with pagination. Google Docs are exported as `text/markdown` (falling back to `text/html`), Sheets as CSV rendered to a markdown table capped at 200 rows, and `.md`/plain-text files are downloaded as-is. PDFs are not supported yet. Trashed files are emitted as archived on incremental syncs. `auth` must supply an OAuth2 bearer token with the `drive.readonly` scope (for a service account, mint the token externally and point `auth.env`/`auth.file` at it) and the folders or drives must be shared with that identity. Cursor: newest `modifiedTime` seen; later syncs emit only files modified after it. |
 
 ```yaml
 knowledge:
@@ -274,10 +275,17 @@ knowledge:
       layer: project
       scope:
         repos: acme/app, acme/docs
+    - name: team-drive
+      type: google-drive
+      layer: org
+      scope:
+        folder_ids: 1AbCdEfGhIjKlMnOp
+        include_mime: docs, sheets
+      auth:
+        env: GOOGLE_DRIVE_TOKEN
 ```
 
-Notion, Confluence, SharePoint/OneDrive and Google Drive connectors land in
-#11070–#11073.
+Notion, Confluence and SharePoint/OneDrive connectors land in #11070–#11072.
 
 ### Facts written by connectors
 
