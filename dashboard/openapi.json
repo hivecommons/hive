@@ -12679,6 +12679,217 @@
         }
       }
     },
+    "/api/knowledge/effective": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Effective knowledge for an agent",
+        "description": "Explains the knowledge an agent would receive: its `knowledge.agent_scopes` entry (unrestricted when the agent has none) intersected with the request scope, which defaults to approved knowledge only. Returns the TOC entries the agent receives and the entries filtered out, each with the reason code of the first failing check (lifecycle, layer, repo, type, tag). Returns `{\"enabled\": false}` with empty lists if knowledge is not enabled.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name whose `knowledge.agent_scopes` entry is explained"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Lifecycle states the request admits besides approved (draft, deprecated, superseded, or `all`); the agent's own `include_states` still applies"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum entries per list (default 50, max 200)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective knowledge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "object",
+                      "description": "Resolved scope applied",
+                      "properties": {
+                        "agent": {
+                          "type": "string"
+                        },
+                        "configured": {
+                          "type": "boolean",
+                          "description": "Whether the agent has a knowledge.agent_scopes entry"
+                        },
+                        "layers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "include_states": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "included": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "excluded": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "lifecycle",
+                              "layer",
+                              "repo",
+                              "type",
+                              "tag"
+                            ],
+                            "description": "First failing check, in the order lifecycle, layer, repo, type, tag"
+                          }
+                        }
+                      }
+                    },
+                    "included_total": {
+                      "type": "integer"
+                    },
+                    "excluded_total": {
+                      "type": "integer"
+                    },
+                    "included_returned": {
+                      "type": "integer"
+                    },
+                    "excluded_returned": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Either list was capped at limit"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing agent or invalid include_states"
+          }
+        }
+      }
+    },
     "/api/knowledge/entry/{id}": {
       "get": {
         "tags": [
