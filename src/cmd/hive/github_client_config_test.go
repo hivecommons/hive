@@ -57,6 +57,7 @@ var clientSetterAllowlist = map[string]string{
 		"SetMergeRequestNoCIAllowedRepos, which syncAutoMergePolicyToGitHubClient calls individually",
 	"SetAttributionAudit": "legacy untyped audit sink, superseded by SetAttributionAuditRecord " +
 		"(#9587), which configureGitHubClient installs and which takes precedence",
+	"SetWebhookClockForTest": "test-only injectable clock for webhook health; production uses time.Now",
 }
 
 // clientResyncSetters may be called directly on b.ghClient outside

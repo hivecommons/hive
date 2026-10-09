@@ -19,9 +19,12 @@ type prDetailCacheKey struct {
 type prDetailCacheEntry struct {
 	pr        *gh.PullRequest
 	headSHA   string
+	baseRef   string
+	headRef   string
 	updatedAt time.Time
 	fetchedAt time.Time
 	lastUsed  time.Time
+	dirty     bool
 }
 
 type prDetailCache struct {
@@ -51,17 +54,19 @@ func PRDetailCacheStats() (hits, misses, entries int64) {
 	return c.hits.Load(), c.misses.Load(), int64(n)
 }
 
-func (c *prDetailCache) get(repo string, number int, headSHA string, updatedAt time.Time, ttl time.Duration) (*gh.PullRequest, bool) {
-	return c.getLocked(repo, number, ttl, func(e *prDetailCacheEntry) bool {
+func (c *prDetailCache) get(repo string, number int, headSHA string, updatedAt time.Time, ttl time.Duration, webhookHealthy ...bool) (*gh.PullRequest, bool) {
+	return c.getLocked(repo, number, ttl, healthyArg(webhookHealthy), func(e *prDetailCacheEntry) bool {
 		return strings.TrimSpace(headSHA) != "" && !updatedAt.IsZero() && e.headSHA == headSHA && e.updatedAt.Equal(updatedAt)
 	})
 }
 
-func (c *prDetailCache) getAny(repo string, number int, ttl time.Duration) (*gh.PullRequest, bool) {
-	return c.getLocked(repo, number, ttl, func(e *prDetailCacheEntry) bool { return true })
+func (c *prDetailCache) getAny(repo string, number int, ttl time.Duration, webhookHealthy ...bool) (*gh.PullRequest, bool) {
+	return c.getLocked(repo, number, ttl, healthyArg(webhookHealthy), func(e *prDetailCacheEntry) bool { return true })
 }
 
-func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, match func(*prDetailCacheEntry) bool) (*gh.PullRequest, bool) {
+func healthyArg(v []bool) bool { return len(v) > 0 && v[0] }
+
+func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, webhookHealthy bool, match func(*prDetailCacheEntry) bool) (*gh.PullRequest, bool) {
 	if c == nil || number <= 0 || ttl <= 0 {
 		if c != nil {
 			c.misses.Add(1)
@@ -77,7 +82,7 @@ func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, ma
 		return nil, false
 	}
 	now := c.now()
-	if now.Sub(e.fetchedAt) >= ttl || !match(e) || strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown") {
+	if e.dirty || (!webhookHealthy && now.Sub(e.fetchedAt) >= ttl) || !match(e) || strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown") {
 		c.misses.Add(1)
 		return nil, false
 	}
@@ -95,6 +100,8 @@ func (c *prDetailCache) put(repo string, number int, pr *gh.PullRequest) {
 	entry := &prDetailCacheEntry{
 		pr:        clonePRDetail(pr),
 		headSHA:   pr.GetHead().GetSHA(),
+		baseRef:   pr.GetBase().GetRef(),
+		headRef:   pr.GetHead().GetRef(),
 		updatedAt: pr.GetUpdatedAt().Time,
 		fetchedAt: now,
 		lastUsed:  now,
@@ -103,6 +110,86 @@ func (c *prDetailCache) put(repo string, number int, pr *gh.PullRequest) {
 	defer c.mu.Unlock()
 	c.entries[key] = entry
 	c.evictOldestLocked()
+}
+
+func (c *prDetailCache) Invalidate(repo string, number int) bool {
+	if c == nil || number <= 0 {
+		return false
+	}
+	key := prDetailCacheKey{repo: canonicalPRDetailRepo(repo), number: number}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	e.dirty = true
+	e.lastUsed = c.now()
+	return true
+}
+
+func (c *prDetailCache) InvalidateRepoRefs(repo, baseRef, headRef string) int {
+	if c == nil {
+		return 0
+	}
+	repo = canonicalPRDetailRepo(repo)
+	baseRef = strings.TrimSpace(baseRef)
+	headRef = strings.TrimSpace(headRef)
+	if repo == "" || (baseRef == "" && headRef == "") {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	n := 0
+	for k, e := range c.entries {
+		if k.repo != repo {
+			continue
+		}
+		if (baseRef != "" && e.baseRef == baseRef) || (headRef != "" && e.headRef == headRef) {
+			e.dirty = true
+			e.lastUsed = now
+			n++
+		}
+	}
+	return n
+}
+
+func (c *prDetailCache) PRsByRefs(repo, baseRef, headRef string) []int {
+	if c == nil {
+		return nil
+	}
+	repo = canonicalPRDetailRepo(repo)
+	baseRef = strings.TrimSpace(baseRef)
+	headRef = strings.TrimSpace(headRef)
+	if repo == "" || (baseRef == "" && headRef == "") {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []int
+	for k, e := range c.entries {
+		if k.repo == repo && ((baseRef != "" && e.baseRef == baseRef) || (headRef != "" && e.headRef == headRef)) {
+			out = append(out, k.number)
+		}
+	}
+	return out
+}
+
+func (c *prDetailCache) PRsByHeadSHA(repo, headSHA string) []int {
+	if c == nil || strings.TrimSpace(headSHA) == "" {
+		return nil
+	}
+	repo = canonicalPRDetailRepo(repo)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []int
+	for k, e := range c.entries {
+		if k.repo == repo && e.headSHA == headSHA {
+			out = append(out, k.number)
+		}
+	}
+	return out
 }
 
 func (c *prDetailCache) evictOldestLocked() {

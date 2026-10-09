@@ -427,7 +427,7 @@ Spoke GitHub App installations share one core REST bucket across the scan loop a
 | `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths continue; optional advisory/recommendation/duplicate/escalation/review-thread/SHA/supersession/collector sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
 | `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve, with the eval interval stretched by `4x`. |
 
-Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, and `skipped_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.
+Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. When repository webhooks are healthy, Hive also raises the base eval interval to at least `governor.eval_interval_webhook_s` (default `900`) because clean PRs can be served from the shared PR detail cache until a webhook marks them dirty. The API-budget stretch composes by taking the max of the budget-stretched interval and the webhook interval, then capping with `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, and `skipped_steps`, plus `webhooks` (`healthy`, `last_event_at`, `events_1h`, `invalidations_1h`, `interval_s`); the dashboard shows API budget and webhook-health pills beside the GitHub rate-limit display.
 
 - Recovery from a provider spending limit is automatic, via a probe. Withholding kicks also withholds the inference calls that would reveal the provider is serving again, so the hive suppresses only while the last refusal is recent and then lets a single kick through to test the gateway; the probe re-arms suppression the moment it is released, so at most one probe run flies per interval. A still-clipped key refuses the probe and suppression resumes for another interval; once the provider's window resets the probe succeeds, normal kicking resumes with no operator action, and a one-time recovery notification is sent (the entering notification is likewise sent once per clip, not once per cycle). Tune with `governor.provider_budget.probe_interval_s` (default 1800 — 30 minutes):
 
@@ -483,7 +483,7 @@ GraphQL bucket. `/api/gh-rate-limits` reports these calls as caller
 `hive:pr_batch` on endpoint `/graphql` and exposes `graphql_pr_batch` counters
 for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
 query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
-GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
+GraphQL query fails, GitHub returns `mergeable: UNKNOWN` for that PR, webhooks are stale, or a webhook has marked the PR dirty. Configure GitHub App webhooks with the shared `GITHUB_WEBHOOK_SECRET`; invalidation handles pull request, review, check, status, PR comment, and push events without weakening signature verification.
 
 ## `HIVE_GITHUB_TOKEN` permissions
 

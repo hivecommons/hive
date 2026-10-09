@@ -305,6 +305,7 @@ func BuildFrontendStatus(
 		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
 		GHRateLimits:        ghRateLimits,
 		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
+		Webhooks:            webhooksFromRateLimits(ghRateLimits),
 		AgentMetrics:        agentMetrics,
 		Hold:                buildHold(actionable),
 		IssueToMerge:        issueToMerge,
@@ -2478,6 +2479,7 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 		"alerts":     []any{},
 		"pullbacks":  []any{},
 		"api_budget": map[string]any{"mode": "normal", "skipped_steps": []string{}},
+		"webhooks":   webhookHealthMap(github.WebhookHealthSnapshot{}),
 	}
 
 	authType := "token"
@@ -2501,6 +2503,7 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 		limits, err := ghClient.RateLimits(ctx)
 		if err == nil && limits != nil {
 			result["api_budget"] = apiBudgetMap(limits.APIBudget)
+			result["webhooks"] = webhookHealthMap(limits.Webhooks)
 			now := time.Now()
 			coreEntry := normalizeGHRateLimitForDisplay(limits.Core, now)
 			core := map[string]any{
@@ -2939,4 +2942,27 @@ func apiBudgetFromRateLimits(rateLimits map[string]any) map[string]any {
 		return budget
 	}
 	return map[string]any{"mode": "normal", "skipped_steps": []string{}}
+}
+
+func webhookHealthMap(snapshot github.WebhookHealthSnapshot) map[string]any {
+	out := map[string]any{
+		"healthy":          snapshot.Healthy,
+		"events_1h":        snapshot.Events1h,
+		"invalidations_1h": snapshot.Invalidations1h,
+		"interval_s":       snapshot.IntervalS,
+	}
+	if !snapshot.LastEventAt.IsZero() {
+		out["last_event_at"] = snapshot.LastEventAt.Format(time.RFC3339)
+	}
+	return out
+}
+
+func webhooksFromRateLimits(rateLimits map[string]any) map[string]any {
+	if rateLimits == nil {
+		return webhookHealthMap(github.WebhookHealthSnapshot{})
+	}
+	if wh, ok := rateLimits["webhooks"].(map[string]any); ok {
+		return wh
+	}
+	return webhookHealthMap(github.WebhookHealthSnapshot{})
 }

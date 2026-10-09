@@ -47,6 +47,8 @@ type Client struct {
 	prBatchReviews         map[string]map[int]prReviewState
 	prBatchStats           GraphQLPRBatchStats
 	prBatchGraphQLRate     RateLimitEntry
+	webhooks               webhookHealthTracker
+	webhookCacheHealthy    atomic.Bool
 	org                    string
 	reposMu                sync.RWMutex
 	repos                  []string
@@ -1039,15 +1041,40 @@ func (c *Client) effectivePRDetailTTL() time.Duration {
 }
 
 func (c *Client) cachedPRDetailFromList(repo string, number int, headSHA string, updatedAt time.Time) (*gh.PullRequest, bool) {
-	return sharedPRDetailCache.get(repo, number, headSHA, updatedAt, c.effectivePRDetailTTL())
+	return sharedPRDetailCache.get(repo, number, headSHA, updatedAt, c.effectivePRDetailTTL(), c != nil && c.webhookCacheHealthy.Load())
 }
 
 func (c *Client) cachedPRDetailAny(repo string, number int) (*gh.PullRequest, bool) {
-	return sharedPRDetailCache.getAny(repo, number, c.effectivePRDetailTTL())
+	return sharedPRDetailCache.getAny(repo, number, c.effectivePRDetailTTL(), c != nil && c.webhookCacheHealthy.Load())
 }
 
 func (c *Client) storePRDetail(repo string, number int, pr *gh.PullRequest) {
 	sharedPRDetailCache.put(repo, number, pr)
+}
+
+func (c *Client) Invalidate(repo string, number int) bool {
+	if c == nil {
+		return false
+	}
+	ok := sharedPRDetailCache.Invalidate(repo, number)
+	c.invalidateGraphQLPRBatch(repo, number)
+	return ok
+}
+
+func (c *Client) InvalidateRepoRefs(repo, baseRef, headRef string) int {
+	if c == nil {
+		return 0
+	}
+	numbers := sharedPRDetailCache.PRsByRefs(repo, baseRef, headRef)
+	n := sharedPRDetailCache.InvalidateRepoRefs(repo, baseRef, headRef)
+	for _, number := range numbers {
+		c.invalidateGraphQLPRBatch(repo, number)
+	}
+	return n
+}
+
+func (c *Client) cachedPRNumbersByHeadSHA(repo, headSHA string) []int {
+	return sharedPRDetailCache.PRsByHeadSHA(repo, headSHA)
 }
 
 // SetOrg is nil-receiver safe for the same reason as SetRepos: dashboard saves
@@ -2758,14 +2785,15 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	APIBudget      APIBudgetSnapshot   `json:"api_budget"`
-	Core           RateLimitEntry      `json:"core"`
-	Search         RateLimitEntry      `json:"search"`
-	GraphQL        RateLimitEntry      `json:"graphql"`
-	TopConsumers   []RESTConsumer      `json:"top_consumers,omitempty"`
-	ETagCache      ETagCacheInfo       `json:"etag_cache"`
-	PRDetailCache  ETagCacheInfo       `json:"pr_detail_cache"`
-	GraphQLPRBatch GraphQLPRBatchStats `json:"graphql_pr_batch"`
+	APIBudget      APIBudgetSnapshot     `json:"api_budget"`
+	Webhooks       WebhookHealthSnapshot `json:"webhooks"`
+	Core           RateLimitEntry        `json:"core"`
+	Search         RateLimitEntry        `json:"search"`
+	GraphQL        RateLimitEntry        `json:"graphql"`
+	TopConsumers   []RESTConsumer        `json:"top_consumers,omitempty"`
+	ETagCache      ETagCacheInfo         `json:"etag_cache"`
+	PRDetailCache  ETagCacheInfo         `json:"pr_detail_cache"`
+	GraphQLPRBatch GraphQLPRBatchStats   `json:"graphql_pr_batch"`
 }
 
 type GraphQLPRBatchStats struct {
@@ -2851,6 +2879,7 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.TopConsumers = RESTTopConsumers(10)
 	_, snapshot := c.APIBudgetMode()
 	info.APIBudget = snapshot
+	info.Webhooks = c.WebhookHealth(0)
 
 	return info, nil
 }

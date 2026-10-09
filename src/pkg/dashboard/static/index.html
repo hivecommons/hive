@@ -24989,10 +24989,14 @@ function burnAreaChart() {
       const budgetMode = apiBudget.mode || 'normal';
       const budgetTitle = skipped.length ? 'Skipped for API budget: ' + skipped.join(', ') : 'No API-budget steps skipped';
       const budgetPill = `<span id="api-budget-pill" class="debug-quota-chip ${budgetMode === 'critical' ? 'bad' : budgetMode === 'conserve' ? 'warn' : 'ok'}" title="${escapeHtml(budgetTitle)}">API budget: ${escapeHtml(budgetMode)} (${Number(apiBudget.remaining || rate.remaining || 0).toLocaleString()} left, ${escapeHtml(budgetResetText)})</span>`;
+      const webhooks = status.webhooks || ghRate.webhooks || {};
+      const webhookCls = webhooks.healthy ? 'ok' : 'warn';
+      const webhookTitle = webhooks.last_event_at ? `Last webhook ${new Date(webhooks.last_event_at).toLocaleString()}; ${webhooks.events_1h || 0} events / ${webhooks.invalidations_1h || 0} invalidations in 1h; interval ${webhooks.interval_s || 0}s` : 'No GitHub webhook events observed';
+      const webhookPill = `<span id="webhook-health-pill" class="debug-quota-chip ${webhookCls}" title="${escapeHtml(webhookTitle)}">Webhooks: ${webhooks.healthy ? 'healthy' : 'stale'} · ${Number(webhooks.events_1h || 0).toLocaleString()}/h</span>`;
       const apiText = rate.headline;
       const tokenText = `${debugCompactNum(totals.input)} in · ${debugCompactNum(totals.output)} out · ${debugCompactNum(totals.cacheRead)} cache`;
       const mini = debugQuotaWidgetHtml(status);
-      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span>${budgetPill}</div><span class="debug-headline-mini">${mini}</span></div>`;
+      return `<div class="debug-headline sec-headline" data-collapsed-keep><div class="debug-headline-main"><span class="debug-headline-api ${rate.headlineClass}" title="${escapeHtml(apiText)}">${escapeHtml(apiText)}</span><span class="debug-headline-tokens" title="${escapeHtml(tokenText)}">${escapeHtml(tokenText)}</span>${budgetPill}${webhookPill}</div><span class="debug-headline-mini">${mini}</span></div>`;
     }
     function renderDebugSection() {
       refreshSectionCardShell('debug-section');

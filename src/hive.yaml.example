@@ -313,7 +313,8 @@ agents:
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
-  eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
+  eval_interval_max_s: 1800               # Cap when API budget/webhook health stretches evals
+  eval_interval_webhook_s: 900            # Minimum interval while GitHub webhooks are healthy
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 

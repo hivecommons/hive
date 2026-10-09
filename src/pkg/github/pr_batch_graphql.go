@@ -193,6 +193,30 @@ func (c *Client) clearGraphQLPRBatchRepo(repo string) {
 	}
 }
 
+func (c *Client) invalidateGraphQLPRBatch(repo string, number int) {
+	if c == nil || number <= 0 {
+		return
+	}
+	key := canonicalPRDetailRepo(repo)
+	c.prBatchMu.Lock()
+	defer c.prBatchMu.Unlock()
+	if c.prBatchReviews != nil {
+		if byNumber := c.prBatchReviews[key]; byNumber != nil {
+			delete(byNumber, number)
+			if len(byNumber) == 0 {
+				delete(c.prBatchReviews, key)
+			}
+		}
+	}
+	if c.prBatchCheckRuns != nil {
+		for k := range c.prBatchCheckRuns {
+			if k.repo == key && k.number == number {
+				delete(c.prBatchCheckRuns, k)
+			}
+		}
+	}
+}
+
 func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 	state := graphQLMergeStateStatusToREST(n.MergeStateStatus)
 	mergeable := graphQLMergeable(n.Mergeable)

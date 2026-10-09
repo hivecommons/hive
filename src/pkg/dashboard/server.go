@@ -445,6 +445,7 @@ type StatusPayload struct {
 	CadenceMatrix       []FrontendCadence `json:"cadenceMatrix"`
 	GHRateLimits        map[string]any    `json:"ghRateLimits"`
 	APIBudget           map[string]any    `json:"api_budget"`
+	Webhooks            map[string]any    `json:"webhooks"`
 	AgentMetrics        map[string]any    `json:"agentMetrics"`
 	Hold                FrontendHold      `json:"hold"`
 	IssueToMerge        map[string]any    `json:"issueToMerge"`
@@ -1986,6 +1987,10 @@ func (s *Server) isPublicPath(path string) bool {
 		// Linear agent OAuth return (RFC #4492 Part 2): the installing admin's
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
+		return true
+	case path == "/api/webhook/github":
+		// GitHub App repository webhooks cannot hold a dashboard session. The handler
+		// fails closed without GITHUB_WEBHOOK_SECRET and verifies the GitHub HMAC.
 		return true
 	case path == linearAgentWebhookPath:
 		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a

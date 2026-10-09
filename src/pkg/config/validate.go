@@ -183,6 +183,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
 		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
 	}
+	if c.Governor.EvalIntervalWebhookS < 0 {
+		return fmt.Errorf("governor.eval_interval_webhook_s must be non-negative")
+	}
+	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalWebhookS > c.Governor.EvalIntervalMaxS {
+		return fmt.Errorf("governor.eval_interval_webhook_s must be less than or equal to governor.eval_interval_max_s")
+	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
 	}

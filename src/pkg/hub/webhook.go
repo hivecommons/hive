@@ -88,11 +88,71 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	case "installation", "installation_repositories":
 		s.handleInstallationEvent(body)
 	default:
-		s.logger.Debug("ignoring webhook event", "event", event)
+		s.relayGitHubWebhookToSpoke(event, body, secret)
 	}
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+type repositoryWebhookEvent struct {
+	Repository struct {
+		FullName string `json:"full_name"`
+		Name     string `json:"name"`
+		Owner    struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	} `json:"repository"`
+}
+
+func (s *HubServer) relayGitHubWebhookToSpoke(event string, body []byte, secret string) {
+	var evt repositoryWebhookEvent
+	if err := json.Unmarshal(body, &evt); err != nil {
+		s.logger.Debug("ignoring unparsable repository webhook", "event", event, "error", err)
+		return
+	}
+	full := strings.TrimSpace(evt.Repository.FullName)
+	if full == "" && evt.Repository.Owner.Login != "" && evt.Repository.Name != "" {
+		full = evt.Repository.Owner.Login + "/" + evt.Repository.Name
+	}
+	if full == "" {
+		s.logger.Debug("ignoring repository webhook without repository", "event", event)
+		return
+	}
+	parts := strings.SplitN(full, "/", 2)
+	if len(parts) != 2 {
+		return
+	}
+	hive := s.findHiveByOrgRepos(parts[0], []string{parts[1], full})
+	if hive == nil || strings.TrimSpace(hive.DashboardURL) == "" {
+		s.logger.Debug("no matching hive for repository webhook", "event", event, "repo", full)
+		return
+	}
+	url := strings.TrimRight(hive.DashboardURL, "/") + "/api/webhook/github"
+	ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", event)
+	req.Header.Set("X-Hub-Signature-256", signWebhookPayload(body, secret))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Warn("github webhook relay to spoke failed", "hive_id", hive.ID, "repo", full, "event", event, "error", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		s.logger.Warn("github webhook relay to spoke rejected", "hive_id", hive.ID, "repo", full, "event", event, "status", resp.StatusCode)
+	}
+}
+
+func signWebhookPayload(payload []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func (s *HubServer) handleInstallationEvent(body []byte) {

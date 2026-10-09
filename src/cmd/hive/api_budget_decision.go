@@ -75,8 +75,37 @@ func apiBudgetModeForClient(client *github.Client) github.APIBudgetMode {
 }
 
 func apiBudgetIntervalForConfig(cfg *config.Config, client *github.Client) time.Duration {
-	if cfg == nil {
-		return apiBudgetEffectiveEvalInterval(300, 1800, 2, apiBudgetModeForClient(client))
+	base, maxSeconds, mult := 300, 1800, 2
+	webhookSeconds := 900
+	if cfg != nil {
+		base = cfg.Governor.EvalIntervalS
+		maxSeconds = cfg.Governor.EvalIntervalMaxS
+		mult = cfg.Governor.ConserveIntervalMultiplier
+		webhookSeconds = cfg.Governor.EvalIntervalWebhookS
 	}
-	return apiBudgetEffectiveEvalInterval(cfg.Governor.EvalIntervalS, cfg.Governor.EvalIntervalMaxS, cfg.Governor.ConserveIntervalMultiplier, apiBudgetModeForClient(client))
+	mode := apiBudgetModeForClient(client)
+	budget := apiBudgetEffectiveEvalInterval(base, maxSeconds, mult, mode)
+	if client == nil {
+		return budget
+	}
+	healthAtBase := time.Duration(base) * time.Second
+	if healthAtBase <= 0 {
+		healthAtBase = 300 * time.Second
+	}
+	if client.WebhookHealth(healthAtBase).Healthy {
+		webhookBase := base
+		if webhookSeconds > webhookBase {
+			webhookBase = webhookSeconds
+		}
+		webhookInterval := time.Duration(webhookBase) * time.Second
+		if maxSeconds > 0 && webhookInterval > time.Duration(maxSeconds)*time.Second {
+			webhookInterval = time.Duration(maxSeconds) * time.Second
+		}
+		if webhookInterval > budget {
+			client.WebhookHealth(webhookInterval)
+			return webhookInterval
+		}
+	}
+	client.WebhookHealth(budget)
+	return budget
 }

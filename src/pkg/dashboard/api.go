@@ -159,6 +159,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 
 	s.mux.HandleFunc("GET /api/gh-auth", s.handleGHAuth)
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.handleGHRateLimits)
+	s.mux.HandleFunc("POST /api/webhook/github", s.handleGitHubWebhookInvalidation)
 	s.mux.HandleFunc("GET /api/gh-user-auth/status", s.handleGHUserAuthStatus)
 	s.mux.HandleFunc("POST /api/gh-user-auth/start", s.handleGHUserAuthStart)
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
