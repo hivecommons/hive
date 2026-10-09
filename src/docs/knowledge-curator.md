@@ -343,8 +343,9 @@ Body...
 - **Removal:** a file deleted from the repo is tombstoned (`status: deprecated`).
 - **Validation:** front matter must be flat `key: value` lines closed by `---`
   and `status` must be a known value. Invalid files are skipped, the other
-  files still sync, and the connector's status `last_error` lists each
-  offending `repo/path`.
+  files still sync (deleted files are still tombstoned and the cursor still
+  advances), and the connector's status `last_error` lists each offending
+  `repo/path` until it is fixed.
 
 ### Facts written by connectors
 

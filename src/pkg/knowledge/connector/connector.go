@@ -63,6 +63,22 @@ type FullLister interface {
 	FullListing() bool
 }
 
+// PartialError is returned by Sync when the listing itself completed but some
+// items were skipped (for example files with invalid front matter). The pages
+// that were emitted are still the complete set of valid items, so the syncer
+// tombstones unlisted pages and advances the cursor as for a successful sync,
+// while recording the error as the connector's last error.
+type PartialError struct{ Err error }
+
+func (e *PartialError) Error() string { return e.Err.Error() }
+func (e *PartialError) Unwrap() error { return e.Err }
+
+// IsPartial reports whether err is (or wraps) a PartialError.
+func IsPartial(err error) bool {
+	var pe *PartialError
+	return errors.As(err, &pe)
+}
+
 // Truncator is optionally implemented by connectors that cap the pages one
 // sync may emit. Truncated is consulted after Sync returns: a truncated sync
 // is never treated as a full listing (nothing is tombstoned) and the syncer
