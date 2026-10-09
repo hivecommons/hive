@@ -115,6 +115,7 @@ const chatPanel = { classList: classList() };
 const chatFab = { classList: classList() };
 const chatInput = { focus: () => {} };
 const chatMessages = { scrollTop: 0, scrollHeight: 0 };
+function hiveRememberModalOpen() {}
 function chatPollMessages() {}
 function refreshChatPresence() {}
 const chatClose = {};
