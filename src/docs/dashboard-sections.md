@@ -401,19 +401,19 @@ The same open pull requests laid out as a board, one column per review stage, wi
 
 **What it tells you.** Each column is one stage of the review loop: unreviewed, reviewing, changes requested, fixing, waiting for a human, approved, merged and abandoned. Each card shows the pull request, who has reviewed it, how many findings were raised at each severity and what should happen next.
 
-**How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The Pipeline header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
+**How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The collapsible Pipeline tile header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
 
 **What it is good for.** See at a glance where review work is piling up, and which pull requests have gone round the review loop enough times that a person should step in.
 
 **Example.** Three cards sit in "changes requested" and one has looped twice. The next action on that card says a person should look at it.
 
-### Queue
+## Queue
 
 Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.
 
 **What it tells you.** It ranks open pull requests from all your repositories in one list, whoever wrote them.
 
-**How the numbers are worked out.** Hive scores each pull request by its review priority and history, then sorts them. The Queue header shows how many are in the queue. The order is the same every time for the same data.
+**How the numbers are worked out.** Hive scores each pull request by its review priority and history, then sorts them. The collapsible Queue tile header shows how many are in the queue. The order is the same every time for the same data.
 
 **What it is good for.** Review from the top when you have time. The reasons tell you why an item is high.
 
