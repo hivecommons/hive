@@ -398,12 +398,14 @@ func (a clankerWaitAdmitter) ReporterTrustClankerRequestedAddendum() string { re
 func (a clankerWaitAdmitter) ReporterTrustTrusts(string, string) bool       { return false }
 
 // reporterTrustWaitGolden is the wait comment as it stood before the
-// clanker-requested policy (hivecommons/hive#10780). With the switch off the
-// output must stay byte-identical to it.
+// clanker-requested policy (hivecommons/hive#10780), plus the governance
+// pointer (hivecommons/hive#11018). With the switch off the output must stay
+// byte-identical to it.
 const reporterTrustWaitGolden = "<!-- hive:reporter-trust-wait repo=o/r added-label=needs-triage -->\n" +
 	"Thanks — this hive only works issues from OWNER, MEMBER, COLLABORATOR automatically. " +
 	"A maintainer can admit this one by adding the label `triage/accepted` (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
-	"Until then the hive will not claim, label, or open PRs for it."
+	"Until then the hive will not claim, label, or open PRs for it. " +
+	"See https://github.com/o/r/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these roles mean and how to escalate."
 
 func TestReporterTrustWaitComment_ClankerOffGolden(t *testing.T) {
 	for name, ra := range map[string]ReporterAdmitter{

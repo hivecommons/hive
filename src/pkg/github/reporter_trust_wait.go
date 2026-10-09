@@ -109,7 +109,8 @@ func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) stri
 	body := reporterTrustWaitMarker(repo, addedLabel) + "\n" +
 		"Thanks — this hive only works issues from " + trusted + " automatically. " +
 		"A maintainer can admit this one by adding " + labelText + " (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
-		"Until then the hive will not claim, label, or open PRs for it."
+		"Until then the hive will not claim, label, or open PRs for it. " +
+		"See https://github.com/" + repo + "/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these roles mean and how to escalate."
 	if cc, ok := reporterTrustClankerConfig(ra); ok {
 		body += "\n\n" + clankerRequestedPointer +
 			" Once your relay is connected, this issue will be offered to it like any other queued work." +
