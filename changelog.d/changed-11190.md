@@ -1,0 +1,1 @@
+- The Governor card's settings (⚙️) button now sits next to the card title instead of being pushed to the far right of the header, so it is easy to find on large monitors. (#11190)
