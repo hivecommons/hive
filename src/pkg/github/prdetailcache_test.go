@@ -69,6 +69,12 @@ func TestPRDetailCacheUnknownMergeableBypasses(t *testing.T) {
 	if _, ok := sharedPRDetailCache.get("org/repo", 7, "sha", updated, time.Hour); ok {
 		t.Fatal("expected unknown mergeable_state to bypass cache")
 	}
+	if _, ok := sharedPRDetailCache.getAny("org/repo", 7, time.Hour); ok {
+		t.Fatal("expected default any lookup to bypass unknown mergeable_state")
+	}
+	if _, ok := sharedPRDetailCache.getAnyAllowUnknown("org/repo", 7, time.Hour); !ok {
+		t.Fatal("expected allow-unknown lookup to reuse immutable fields")
+	}
 }
 
 func TestPRDetailCacheEvictsOldest(t *testing.T) {
@@ -107,6 +113,7 @@ func TestEnrichPRCIUsesPRDetailCache(t *testing.T) {
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
+
 	}))
 	defer server.Close()
 
@@ -118,6 +125,71 @@ func TestEnrichPRCIUsesPRDetailCache(t *testing.T) {
 		if pr.Mergeable != MergeableYes || pr.MergeableState != "clean" || !pr.MaintainerCanModify {
 			t.Fatalf("iteration %d did not apply cached mergeability: %+v", i, pr)
 		}
+	}
+	if got := detailHits.Load(); got != 1 {
+		t.Fatalf("PR detail hits = %d, want 1", got)
+	}
+}
+
+func TestPRTerminalMergedByReusesUnknownMergeabilityCache(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	restore := resetPRDetailCacheForTest(func() time.Time { return now }, 0)
+	defer restore()
+
+	var detailHits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/org/repo/pulls/7" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		detailHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"number": 7, "state": "closed", "updated_at": now.Format(time.RFC3339),
+			"merged": true, "mergeable_state": "unknown",
+			"head":      map[string]any{"sha": "sha"},
+			"merged_by": map[string]any{"login": "merger"},
+		})
+	}))
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetPRDetailTTLFunc(func() time.Duration { return time.Hour })
+	pr := &gh.PullRequest{Number: gh.Ptr(7)}
+	for i := 0; i < 2; i++ {
+		if got := c.prTerminalMergedBy(context.Background(), "org", "repo", pr); got != "merger" {
+			t.Fatalf("iteration %d merged_by = %q, want merger", i, got)
+		}
+	}
+	if got := detailHits.Load(); got != 1 {
+		t.Fatalf("PR detail hits = %d, want 1", got)
+	}
+}
+
+func TestPRTerminalMergedByRefetchesCacheWithoutActor(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	restore := resetPRDetailCacheForTest(func() time.Time { return now }, 0)
+	defer restore()
+	sharedPRDetailCache.put("org/repo", 7, testPRDetail(7, "sha", now, "clean"))
+
+	var detailHits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/org/repo/pulls/7" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		detailHits.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{
+			"number": 7, "state": "closed", "updated_at": now.Format(time.RFC3339),
+			"merged": true, "mergeable_state": "unknown",
+			"head":      map[string]any{"sha": "sha"},
+			"merged_by": map[string]any{"login": "merger"},
+		})
+	}))
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetPRDetailTTLFunc(func() time.Duration { return time.Hour })
+	pr := &gh.PullRequest{Number: gh.Ptr(7)}
+	if got := c.prTerminalMergedBy(context.Background(), "org", "repo", pr); got != "merger" {
+		t.Fatalf("merged_by = %q, want merger", got)
 	}
 	if got := detailHits.Load(); got != 1 {
 		t.Fatalf("PR detail hits = %d, want 1", got)

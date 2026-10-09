@@ -1053,6 +1053,14 @@ func (c *Client) cachedPRDetailAny(repo string, number int) (*gh.PullRequest, bo
 	return sharedPRDetailCache.getAny(repo, number, c.effectivePRDetailTTL())
 }
 
+func (c *Client) cachedPRDetailAnyAllowUnknown(repo string, number int) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.getAnyAllowUnknown(repo, number, c.effectivePRDetailTTL())
+}
+
+func (c *Client) cachedPRDetailMergedBy(repo string, number int) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.getMergedBy(repo, number)
+}
+
 func (c *Client) storePRDetail(repo string, number int, pr *gh.PullRequest) {
 	sharedPRDetailCache.put(repo, number, pr)
 }

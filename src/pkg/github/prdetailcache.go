@@ -52,16 +52,40 @@ func PRDetailCacheStats() (hits, misses, entries int64) {
 }
 
 func (c *prDetailCache) get(repo string, number int, headSHA string, updatedAt time.Time, ttl time.Duration) (*gh.PullRequest, bool) {
-	return c.getLocked(repo, number, ttl, func(e *prDetailCacheEntry) bool {
+	return c.getLocked(repo, number, ttl, false, func(e *prDetailCacheEntry) bool {
 		return strings.TrimSpace(headSHA) != "" && !updatedAt.IsZero() && e.headSHA == headSHA && e.updatedAt.Equal(updatedAt)
 	})
 }
 
 func (c *prDetailCache) getAny(repo string, number int, ttl time.Duration) (*gh.PullRequest, bool) {
-	return c.getLocked(repo, number, ttl, func(e *prDetailCacheEntry) bool { return true })
+	return c.getLocked(repo, number, ttl, false, func(e *prDetailCacheEntry) bool { return true })
 }
 
-func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, match func(*prDetailCacheEntry) bool) (*gh.PullRequest, bool) {
+func (c *prDetailCache) getAnyAllowUnknown(repo string, number int, ttl time.Duration) (*gh.PullRequest, bool) {
+	return c.getLocked(repo, number, ttl, true, func(e *prDetailCacheEntry) bool { return true })
+}
+
+func (c *prDetailCache) getMergedBy(repo string, number int) (*gh.PullRequest, bool) {
+	if c == nil || number <= 0 {
+		if c != nil {
+			c.misses.Add(1)
+		}
+		return nil, false
+	}
+	key := prDetailCacheKey{repo: canonicalPRDetailRepo(repo), number: number}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok || safeGetLogin(e.pr.GetMergedBy()) == "" {
+		c.misses.Add(1)
+		return nil, false
+	}
+	e.lastUsed = c.now()
+	c.hits.Add(1)
+	return clonePRDetail(e.pr), true
+}
+
+func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, allowUnknownMergeable bool, match func(*prDetailCacheEntry) bool) (*gh.PullRequest, bool) {
 	if c == nil || number <= 0 || ttl <= 0 {
 		if c != nil {
 			c.misses.Add(1)
@@ -78,7 +102,7 @@ func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, ma
 	}
 	now := c.now()
 	expired := now.Sub(e.fetchedAt) >= ttl && !sharedWebhookTracker.cleanAndHealthy(repo, number)
-	if expired || !match(e) || strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown") {
+	if expired || !match(e) || (!allowUnknownMergeable && strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown")) {
 		c.misses.Add(1)
 		return nil, false
 	}
@@ -172,6 +196,7 @@ func clonePRDetail(pr *gh.PullRequest) *gh.PullRequest {
 		Number:              clonePtr(pr.Number),
 		State:               clonePtr(pr.State),
 		Title:               clonePtr(pr.Title),
+		Body:                clonePtr(pr.Body),
 		UpdatedAt:           cloneTimestamp(pr.UpdatedAt),
 		ClosedAt:            cloneTimestamp(pr.ClosedAt),
 		MergedAt:            cloneTimestamp(pr.MergedAt),
@@ -201,7 +226,7 @@ func clonePRBranchRef(in *gh.PullRequestBranch) *gh.PullRequestBranch {
 	if in == nil {
 		return nil
 	}
-	return &gh.PullRequestBranch{Ref: clonePtr(in.Ref), SHA: clonePtr(in.SHA)}
+	return &gh.PullRequestBranch{Ref: clonePtr(in.Ref), SHA: clonePtr(in.SHA), Repo: cloneRepository(in.Repo)}
 }
 
 func cloneUserLogin(in *gh.User) *gh.User {
@@ -220,6 +245,13 @@ func cloneLabels(in []*gh.Label) []*gh.Label {
 		out = append(out, &gh.Label{Name: clonePtr(l.Name)})
 	}
 	return out
+}
+
+func cloneRepository(in *gh.Repository) *gh.Repository {
+	if in == nil {
+		return nil
+	}
+	return &gh.Repository{FullName: clonePtr(in.FullName)}
 }
 
 func cloneTimestamp(in *gh.Timestamp) *gh.Timestamp {

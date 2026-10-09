@@ -85,7 +85,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 			ListOptions: gh.ListOptions{PerPage: 100},
 		}
 		for page := 0; page < claimSearchMaxPages; page++ {
-			issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, issueOpts)
+			issues, resp, err := c.client.Issues.ListByRepo(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueOpts)
 			if err != nil {
 				if opts.Logger != nil {
 					opts.Logger.Warn("close-on-merge backfill: listing open issues failed", "repo", repo, "error", err)
@@ -120,7 +120,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, Action: CloseOnMergeSkipped, Reason: "no_closing_or_claim_metadata"})
 						continue
 					}
-					res := c.closeIssueForMergedPRClaim(ctx, repo, issue.GetNumber(), pr, true, opts)
+					res := c.closeIssueForMergedPRClaimWithIssue(ctx, repo, issue.GetNumber(), pr, true, opts, issue)
 					out = append(out, res)
 					if res.Action == CloseOnMergeClosed || res.Action == CloseOnMergeAwaiting || res.Action == CloseOnMergeAlreadyDone {
 						break
@@ -155,7 +155,7 @@ func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, 
 	}
 	commentOpts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: closeOnMergeCommentPageSize}}
 	for {
-		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, issue.GetNumber(), commentOpts)
+		comments, resp, err := c.client.Issues.ListComments(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repo, issue.GetNumber(), commentOpts)
 		if err != nil {
 			break
 		}
@@ -171,7 +171,7 @@ func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, 
 	}
 	timelineOpts := &gh.ListOptions{PerPage: closeOnMergeCommentPageSize}
 	for {
-		events, resp, err := c.client.Issues.ListIssueTimeline(ctx, owner, repo, issue.GetNumber(), timelineOpts)
+		events, resp, err := c.client.Issues.ListIssueTimeline(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repo, issue.GetNumber(), timelineOpts)
 		if err != nil {
 			break
 		}
@@ -215,8 +215,19 @@ func (c *Client) getPullRequestForCloseOnMerge(ctx context.Context, repo string,
 	if owner == "" || repoName == "" || number <= 0 {
 		return nil, fmt.Errorf("invalid PR ref %s#%d", repo, number)
 	}
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	fullRepo := owner + "/" + repoName
+	if pr, ok := c.cachedPRDetailAnyAllowUnknown(fullRepo, number); ok && closeOnMergeCachedPRUsable(pr) {
+		return pr, nil
+	}
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, number)
+	if err == nil {
+		c.storePRDetail(fullRepo, number, pr)
+	}
 	return pr, err
+}
+
+func closeOnMergeCachedPRUsable(pr *gh.PullRequest) bool {
+	return pr != nil && strings.TrimSpace(pr.GetBody()) != "" && pr.GetUser().GetLogin() != "" && pr.GetNumber() > 0
 }
 
 func closeOnMergePRClaimsIssue(pr *gh.PullRequest, prRepo, issueRepo string, issue int) bool {
@@ -246,6 +257,10 @@ func closeOnMergePRRefsIssue(pr *gh.PullRequest, prRepo, issueRepo string, issue
 }
 
 func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions) CloseOnMergeResult {
+	return c.closeIssueForMergedPRClaimWithIssue(ctx, issueRepo, issueNumber, pr, claimMetadata, opts, nil)
+}
+
+func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions, issue *gh.Issue) CloseOnMergeResult {
 	prRepo := issueRepo
 	if pr != nil && pr.GetBase() != nil && pr.GetBase().GetRepo() != nil && pr.GetBase().GetRepo().GetFullName() != "" {
 		prRepo = pr.GetBase().GetRepo().GetFullName()
@@ -280,13 +295,16 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 		}
 	}
 	owner, repoName := c.splitRepo(issueRepo)
-	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, issueNumber)
-	if err != nil {
-		res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
-		if opts.Logger != nil {
-			opts.Logger.Warn("close-on-merge: reading issue failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+	if issue == nil {
+		var err error
+		issue, _, err = c.client.Issues.Get(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber)
+		if err != nil {
+			res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
+			if opts.Logger != nil {
+				opts.Logger.Warn("close-on-merge: reading issue failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+			}
+			return res
 		}
-		return res
 	}
 	if !strings.EqualFold(issue.GetState(), "open") {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "issue_not_open"
@@ -298,7 +316,7 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 	}
 	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
 		body := closeOnMergeAwaitingComment(pr)
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"
 			return res
 		}
@@ -310,11 +328,11 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))}); err != nil {
+	if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeCloseComment(pr))}); err != nil {
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
 		return res
 	}
-	err = c.CloseIssue(ctx, issueRepo, issueNumber, IssueCloseOptions{
+	err := c.CloseIssue(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, IssueCloseOptions{
 		OverrideReason:          fmt.Sprintf("fixed by merged PR #%d", pr.GetNumber()),
 		SuppressOverrideComment: true,
 		StateReason:             IssueStateReasonCompleted,
