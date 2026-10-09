@@ -7,6 +7,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,7 @@ type sentinelFixture struct {
 	labelExists bool
 	created     []string
 	labels      map[int][]string
+	removed     []string
 	comments    map[int][]string
 	filesHits   int
 }
@@ -61,10 +63,15 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 				f.labels[num] = append(f.labels[num], labels...)
 				_ = json.NewEncoder(w).Encode([]map[string]string{{"name": labels[0]}})
 				return
+			case r.Method == http.MethodDelete && strings.HasPrefix(rest, "labels/"):
+				f.removed = append(f.removed, fmt.Sprintf("%d|%s", num, strings.TrimPrefix(rest, "labels/")))
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode([]map[string]string{})
+				return
 			case r.Method == http.MethodGet && rest == "comments":
 				var out []map[string]any
-				for _, body := range f.comments[num] {
-					out = append(out, map[string]any{"body": body})
+				for i, body := range f.comments[num] {
+					out = append(out, map[string]any{"id": num*1000 + i + 1, "body": body})
 				}
 				_ = json.NewEncoder(w).Encode(out)
 				return
@@ -95,6 +102,36 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 			f.labelExists = true
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(lbl)
+		case r.Method == http.MethodPatch && strings.HasPrefix(p, "/repos/o/r/issues/comments/"):
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			id := 0
+			for _, ch := range strings.TrimPrefix(p, "/repos/o/r/issues/comments/") {
+				if ch < '0' || ch > '9' {
+					id = 0
+					break
+				}
+				id = id*10 + int(ch-'0')
+			}
+			num, idx := id/1000, id%1000-1
+			if idx >= 0 && idx < len(f.comments[num]) {
+				f.comments[num][idx] = body.Body
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "body": body.Body})
+				return
+			}
+			// Newly-created comments in older tests use id=1.
+			if id == 1 {
+				for num := range f.comments {
+					if len(f.comments[num]) == 1 {
+						f.comments[num][0] = body.Body
+						_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "body": body.Body})
+						return
+					}
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Logf("unexpected %s %s", r.Method, p)
 			w.WriteHeader(http.StatusNotFound)
@@ -375,8 +412,110 @@ func TestSweepSentinelOptionsAndGuards(t *testing.T) {
 	}
 }
 
+func TestDecideSentinelActionTrustedTable(t *testing.T) {
+	tests := []struct {
+		name         string
+		trust        SentinelAuthorTrust
+		blockTrusted bool
+		wantBlock    bool
+		wantReason   string
+	}{
+		{name: "trusted agent", trust: SentinelAuthorTrust{Trusted: true, Reason: "hive agent"}, wantReason: "hive agent"},
+		{name: "owner", trust: SentinelAuthorTrust{Trusted: true, Reason: "owner"}, wantReason: "owner"},
+		{name: "allow-listed bot", trust: SentinelAuthorTrust{Trusted: true, Reason: "allow-listed bot"}, wantReason: "allow-listed bot"},
+		{name: "untrusted fork author", trust: SentinelAuthorTrust{}, wantBlock: true},
+		{name: "trusted but opt-in block", trust: SentinelAuthorTrust{Trusted: true, Reason: "hive agent"}, blockTrusted: true, wantBlock: true, wantReason: "hive agent"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideSentinelAction("sentinel-alert", tc.trust, tc.blockTrusted)
+			if got.Label != "sentinel-alert" || got.Block != tc.wantBlock || got.TrustedReason != tc.wantReason {
+				t.Fatalf("decision=%+v, want block=%v reason=%q", got, tc.wantBlock, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestSweepSentinelTrustedAuthorNoticeOnly(t *testing.T) {
+	f := &sentinelFixture{
+		prs: []map[string]any{sentinelPR(10, "hivecommons-hive[bot]", "ha")},
+		files: map[int][]map[string]any{10: {{
+			"filename": ".github/workflows/ci.yml", "status": "modified", "patch": "+permissions: write-all\n",
+		}}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	opts := defaultSentinelOpts(nil)
+	opts.TrustedAuthor = func(repo, author string) SentinelAuthorTrust {
+		return SentinelAuthorTrust{Trusted: true, Reason: "hive agent"}
+	}
+	res, err := c.SweepSentinel(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(res.Flagged) != 0 || len(res.Notified) != 1 || len(f.created) != 0 || len(f.labels[10]) != 0 {
+		t.Fatalf("trusted author should notify only: res=%+v created=%v labels=%v", res, f.created, f.labels)
+	}
+	if len(f.comments[10]) != 1 {
+		t.Fatalf("comments=%v", f.comments[10])
+	}
+	for _, want := range []string{"ℹ️ Sentinel notice", "author is trusted (hive agent)", "merge is not blocked", "did not add the `sentinel-alert` label"} {
+		if !strings.Contains(f.comments[10][0], want) {
+			t.Errorf("notice missing %q:\n%s", want, f.comments[10][0])
+		}
+	}
+}
+
+func TestSweepSentinelRemediatesTrustedAuthorOnlyWhenCommentSHAOk(t *testing.T) {
+	f := &sentinelFixture{
+		prs: []map[string]any{
+			sentinelPR(20, "github-actions[bot]", "same", "sentinel-alert"),
+			sentinelPR(21, "github-actions[bot]", "moved", "sentinel-alert"),
+			sentinelPR(22, "mallory", "same", "sentinel-alert"),
+		},
+		files: map[int][]map[string]any{
+			20: {{"filename": ".github/workflows/ci.yml", "status": "modified"}},
+			21: {{"filename": ".github/workflows/ci.yml", "status": "modified"}},
+			22: {{"filename": ".github/workflows/ci.yml", "status": "modified"}},
+		},
+		comments: map[int][]string{
+			20: {SentinelMarker + " same\n## ⚠️ old alert"},
+			21: {SentinelMarker + " old\n## ⚠️ old alert"},
+			22: {SentinelMarker + " same\n## ⚠️ old alert"},
+		},
+		labelExists: true,
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	opts := defaultSentinelOpts(nil)
+	opts.TrustedAuthor = func(repo, author string) SentinelAuthorTrust {
+		if author == "github-actions[bot]" {
+			return SentinelAuthorTrust{Trusted: true, Reason: "allow-listed bot"}
+		}
+		return SentinelAuthorTrust{}
+	}
+	res, err := c.SweepSentinel(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(res.Remediated) != 1 || res.Remediated[0].Number != 20 || len(res.Flagged) != 0 {
+		t.Fatalf("expected only PR 20 remediated: %+v", res)
+	}
+	if len(f.removed) != 1 || f.removed[0] != "20|sentinel-alert" {
+		t.Fatalf("removed=%v", f.removed)
+	}
+	if !strings.Contains(f.comments[20][0], "ℹ️ Sentinel notice") || !strings.Contains(f.comments[20][0], "allow-listed bot") {
+		t.Fatalf("comment was not rewritten as trusted notice:\n%s", f.comments[20][0])
+	}
+	if strings.Contains(f.comments[21][0], "ℹ️ Sentinel notice") || strings.Contains(f.comments[22][0], "ℹ️ Sentinel notice") {
+		t.Fatalf("only matching trusted SHA should be rewritten: comments=%v", f.comments)
+	}
+}
+
 func TestSentinelCommentShape(t *testing.T) {
-	body := SentinelComment("lbl", "0123456789abcdef", "eve", []sentinel.Finding{
+	body := SentinelComment(SentinelDecision{Label: "lbl", Block: true}, "0123456789abcdef", "eve", []sentinel.Finding{
 		{Rule: sentinel.RuleTestRemoval, Summary: "deletes 2 test file(s)", Paths: []string{"b_test.go", "a_test.go"}},
 		{Rule: "custom", Summary: "no description"},
 	})
@@ -384,6 +523,17 @@ func TestSentinelCommentShape(t *testing.T) {
 		t.Fatalf("marker line: %q", body[:40])
 	}
 	for _, want := range []string{"`012345678", "@eve", "**test_removal**", "  - `a_test.go`\n  - `b_test.go`", "**custom** — no description\n", "`lbl` label", "`sentinel`"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
+func TestSentinelCommentTrustedNoticeShape(t *testing.T) {
+	body := SentinelComment(SentinelDecision{Label: "sentinel-alert", TrustedReason: "owner"}, "abc123", "clubanderson", []sentinel.Finding{
+		{Rule: sentinel.RuleSensitivePath, Summary: "changes 1 sensitive path(s)", Paths: []string{".github/workflows/ci.yml"}},
+	})
+	for _, want := range []string{"ℹ️ Sentinel notice — informational; author is trusted (owner), merge is not blocked", "did not add the `sentinel-alert` label", "trusted_authors_block: true"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}

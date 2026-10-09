@@ -26944,6 +26944,7 @@ function burnAreaChart() {
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
         case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;
         case 'toggleSentinelBehavior': toggleSentinelBehavior(el); break;
+        case 'toggleSentinelTrustedAuthorsBlock': toggleSentinelTrustedAuthorsBlock(el); break;
         case 'resetSentinelPaths': resetSentinelPaths(); break;
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
@@ -38040,8 +38041,8 @@ function burnAreaChart() {
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
       /* Suspicious Activity (sentinel): flags PRs that look like security
-         overrides, privilege escalation or codebase damage. Observe-and-alert
-         only — it never merges, holds or removes labels. */
+         overrides, privilege escalation or codebase damage. Untrusted authors
+         get the blocking alert label; trusted authors default to notice-only. */
       const sn = sec.sentinel || {};
       const snPaths = Array.isArray(sn.sensitivePaths) ? sn.sensitivePaths : [];
       const snBehaviors = (sn.behaviors || []).map(b => `
@@ -38052,7 +38053,11 @@ function burnAreaChart() {
       const suspicious = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.enabled ? 'on' : ''}" data-action="toggleSentinelEnabled"></div>
-          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets the alert label and one explanatory comment per push so reviewers can route it to a human. Nothing is merged, held or auto-closed.`)}</span>
+          <span class="config-toggle-label">Suspicious-activity alerts ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Suspicious-activity alerts', `Every sweep (~15 min) inspects open PRs from any author. A PR matching a behavior below gets one explanatory comment per push; untrusted authors also get the blocking alert label, while trusted Hive authors default to informational notices that do not block merge.`)}</span>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sn.trustedAuthorsBlock ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelTrustedAuthorsBlock"></div>
+          <span class="config-toggle-label">Block trusted authors ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
         </div>
         <div class="config-field-row">
           <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
@@ -40398,6 +40403,11 @@ function burnAreaChart() {
       const sn = sentinelState();
       sn.behaviors = (sn.behaviors || []).map(b => b.name === el.dataset.rule ? Object.assign({}, b, { enabled: isOn }) : b);
       markSentinelDirty('disabledBehaviors', sn.behaviors.filter(b => !b.enabled).map(b => b.name));
+    }
+    function toggleSentinelTrustedAuthorsBlock(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      markSentinelDirty('trustedAuthorsBlock', isOn);
     }
     function resetSentinelPaths() {
       const sn = sentinelState();
