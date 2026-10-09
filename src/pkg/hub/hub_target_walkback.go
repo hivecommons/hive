@@ -13,7 +13,7 @@ import (
 // the tip has no hub image. Each candidate costs one GHCR manifest probe; the
 // walk stops early at the current target, so in the steady state (image-less
 // release commit on top of a verified one) it probes exactly one commit.
-const hubTargetWalkbackDepth = 10
+const hubTargetWalkbackDepth = 30
 
 // listRecentBranchCommits returns up to n commits reachable from branch,
 // newest first (the tip is index 0), as short SHA + first-line message. A nil
