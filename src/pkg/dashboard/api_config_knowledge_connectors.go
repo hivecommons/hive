@@ -268,6 +268,7 @@ func (s *Server) handleKnowledgeConnectorsStatus(w http.ResponseWriter, r *http.
 	jsonResponse(w, map[string]interface{}{
 		"connectors": rows,
 		"runtime":    s.deps.KnowledgeConnectors != nil,
+		"publish":    s.knowledgePublishView(),
 	})
 }
 

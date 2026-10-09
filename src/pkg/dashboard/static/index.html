@@ -3265,6 +3265,12 @@
     .kc-pill[data-status="ok"] { background: var(--green); }
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
+    .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
+    .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+    .kc-publish-head h4 { margin: 0; }
+    .kc-publish-grid { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-3); margin: var(--sp-3) 0 0; font-size: var(--fs-sm); }
+    .kc-publish-grid dt { color: var(--muted); font-weight: 700; }
+    .kc-publish-grid dd { margin: 0; overflow-wrap: anywhere; }
     .hive-dialog-error[data-ok="true"] { color: var(--green); }
     .public-knowledge-switch-knob { display: inline-block; inline-size: 1.1em; block-size: 1.1em; border-radius: var(--r-pill); background: currentColor; }
     .public-knowledge-url { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
@@ -13183,6 +13189,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         {
           title: 'Issues — left chip is the band',
           entries: issueBandLegendEntries.concat([
+            { cls: 'repo-issue-pill held', kind: 'issue:filtered', label: 'FILTERED', caption: 'skipped by the issue filter or a hard-suppress label', tip: 'Excluded by the project issue filter or a hard-suppress label' },
+            { cls: 'repo-issue-pill held', kind: 'issue:hive_advisory', label: 'ADVISORY', caption: 'Hive advisory report, not agent work', tip: 'Hive advisory report — counted, but not agent work' },
             { cls: 'repo-issue-pill agent-filed', kind: 'issue:role', label: 'STRATEGIST', labelCls: 'pill-role', caption: 'role of the agent that filed it', tip: 'Filed by an agent; the badge names the agent role and the tooltip says whether a human has acknowledged it' }
           ])
         },
@@ -13830,6 +13838,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function repoNonActionableIssueBucketSpec(issue) {
       const bucket = String((issue && issue.bucket) || 'other');
+      if (bucket === 'filtered' && repoItemNeedsHuman(issue)) return { key: 'needs_human', label: 'Needs human', short: 'needs human', rank: -1, tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' };
       if (bucket === 'hive_advisory') return { key: bucket, label: 'Advisory', short: 'advisory', rank: 0, tip: 'Hive advisory report — counted, but not agent work' };
       if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or a hard-suppress label' };
       if (bucket === 'reporter_triage') return { key: bucket, label: 'Needs triage', short: 'triage', rank: 2, tip: 'Waiting for a maintainer triage/admission label before agents can work it' };
@@ -15387,7 +15396,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Held PRs count too: a hold+needs-human PR (a Renovate bump the
       // ledger gave up on) is waiting on a person exactly as much as an
       // unheld one is, and it now has a pill on the card to match.
-      const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).concat(r.heldPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length, 0);
+      const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).concat(r.heldPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length
+        + (r.actionableIssues || []).concat(r.heldIssues || [], r.nonActionableIssues || []).filter(repoItemNeedsHuman).length, 0);
       const nhEl = document.getElementById('repos-needs-human');
       if (nhEl) {
         if (needHumanTotal > 0) {
@@ -15488,7 +15498,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const reason = i.reason || spec.tip;
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
           const rowKinds = ['issue:non-actionable', 'issue:' + spec.key];
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill held repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main held" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
+          const nhClass = spec.key === 'needs_human' ? 'waiting' : 'held';
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill ${nhClass} repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main ${nhClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
         };
         const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {
           const items = g.issues.map(renderNonActionableIssuePill).join('');
@@ -30117,7 +30128,7 @@ function burnAreaChart() {
       'document': [['url', 'Document URL', 'https://example.org/guide.html'], ['file_path', 'File path', '/data/knowledge/guide.pdf'], ['context7_id', 'Context7 ID', '/org/project']],
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']]
     };
-    let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false };
+    let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false, publish: null };
 
     async function loadKnowledgeConnectors() {
       try {
@@ -30125,7 +30136,7 @@ function burnAreaChart() {
         const cfg = await cfgRes.json().catch(() => ({}));
         if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
         const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
-        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime });
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
       } catch (e) {
         _kcState.loaded = true;
         _kcState.error = e.message;
@@ -30158,7 +30169,7 @@ function burnAreaChart() {
       let html = '';
       if (owner) html += '<div class="kc-toolbar"><button type="button" class="hv-btn btn-primary btn-sm" data-action="kcOpenEditor" data-arg0="">Add connector</button></div>';
       if (!_kcState.connectors.length) {
-        return html + '<p class="text-muted fs-base">No connectors configured.' + (owner ? '' : ' Only the hive owner can add connectors.') + '</p>';
+        return html + '<p class="text-muted fs-base">No connectors configured.' + (owner ? '' : ' Only the hive owner can add connectors.') + '</p>' + renderKnowledgePublishBlock(owner);
       }
       html += '<table class="kc-table"><thead><tr><th>Name</th><th>Type</th><th>Layer</th><th>Status</th><th>Last sync</th><th>Pages / facts</th><th>Last error</th>' + (owner ? '<th>Actions</th>' : '') + '</tr></thead><tbody>';
       _kcState.connectors.forEach(c => {
@@ -30182,7 +30193,31 @@ function burnAreaChart() {
       });
       html += '</tbody></table>';
       if (!_kcState.runtime) html += '<p class="text-muted fs-base">The connector syncer is not running, so status and Sync now are unavailable until the hive restarts with these connectors.</p>';
-      return html;
+      return html + renderKnowledgePublishBlock(owner);
+    }
+
+    // Publish mirror (knowledge.publish, #11076): read-only status plus an
+    // owner-only "Publish now". Hidden when publishing is not configured.
+    function renderKnowledgePublishBlock(owner) {
+      const p = _kcState.publish;
+      if (!p) return '';
+      const status = !p.active ? 'disabled' : p.running ? 'syncing' : p.last_error ? 'error' : p.last_success ? 'ok' : 'pending';
+      const err = p.last_error || '';
+      const row = (k, v) => '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>';
+      let html = '<div class="kc-publish" data-section="knowledge-publish"><div class="kc-publish-head"><h4>Publish mirror</h4>';
+      if (owner) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kcPublishNow"' + (!p.active || p.running ? ' disabled' : '') + '>Publish now</button>';
+      html += '</div><dl class="kc-publish-grid">'
+        + row('Status', '<span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span>' + (p.dry_run ? ' <span class="text-muted">dry run</span>' : ''))
+        + row('Connector', '<code>' + esc(p.connector || '') + '</code>')
+        + row('Layers', esc((p.layers || []).join(', ') || '—'))
+        + row('Root', esc(p.root || '—'))
+        + row('Last run', '<span title="' + esc(p.last_run || '') + '">' + esc(kcAgo(p.last_run)) + '</span>')
+        + row('Pages', (p.pages || 0) + ' published · last batch: ' + (p.pages_created || 0) + ' created, ' + (p.pages_updated || 0) + ' updated, ' + (p.pages_deprecated || 0) + ' deprecated, ' + (p.pages_unchanged || 0) + ' unchanged')
+        + row('Collisions', (p.collisions || []).length ? esc(p.collisions.join('; ')) : '—')
+        + row('Last error', err ? '<span class="kc-error" title="' + esc(err) + '">' + esc(err.length > 120 ? err.slice(0, 120) + '…' : err) + '</span>' : '—')
+        + '</dl>';
+      if (!p.active) html += '<p class="text-muted fs-base">The publish mirror is not running. Check the hive log for "knowledge publish mirror disabled", or restart the hive after configuring knowledge.publish.</p>';
+      return html + '</div>';
     }
 
     function renderKnowledgeConnectorsSection() {
@@ -30226,6 +30261,18 @@ function burnAreaChart() {
         setTimeout(loadKnowledgeConnectors, 1500);
       } catch (e) {
         showToast('Sync failed to start: ' + e.message, 'error');
+      }
+    }
+
+    async function kcPublishNow() {
+      try {
+        const r = await fetch('/api/knowledge/publish/sync', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast('Publish started', 'success');
+        setTimeout(loadKnowledgeConnectors, 1500);
+      } catch (e) {
+        showToast('Publish failed to start: ' + e.message, 'error');
       }
     }
 

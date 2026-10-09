@@ -11338,6 +11338,98 @@
         }
       }
     },
+    "/api/knowledge/publish/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Publish the knowledge mirror now",
+        "description": "Owner-only. Asks the running publish mirror for an immediate batch and returns its status; poll `GET /api/knowledge/connectors` for the outcome.",
+        "responses": {
+          "202": {
+            "description": "Publish batch requested; returns the publish mirror status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connector": {"type": "string"},
+                    "layers": {"type": "array", "items": {"type": "string"}},
+                    "root": {"type": "string"},
+                    "dry_run": {"type": "boolean"},
+                    "active": {"type": "boolean"},
+                    "running": {"type": "boolean"},
+                    "last_run": {"type": "string", "format": "date-time"},
+                    "last_success": {"type": "string", "format": "date-time"},
+                    "pages": {"type": "integer"},
+                    "pages_created": {"type": "integer"},
+                    "pages_updated": {"type": "integer"},
+                    "pages_deprecated": {"type": "integer"},
+                    "pages_unchanged": {"type": "integer"},
+                    "collisions": {"type": "array", "items": {"type": "string"}},
+                    "last_error": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A publish batch is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Publish mirror is not running (configure knowledge.publish and restart the hive)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config/knowledge/connectors": {
       "get": {
         "tags": [
@@ -11707,6 +11799,212 @@
           },
           "400": {
             "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/agent-scopes": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List per-agent knowledge scopes",
+        "description": "Returns knowledge.agent_scopes: the layers, repos, types, tags and include_states each agent's kick primer and ?agent= knowledge reads are restricted to.",
+        "responses": {
+          "200": {
+            "description": "Configured agent scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent_scopes": {
+                      "type": "object",
+                      "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "layers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "repos": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "include_states": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "states": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Replace per-agent knowledge scopes",
+        "description": "Replaces knowledge.agent_scopes after validating layer and lifecycle state names, persists hive.yaml and writes a config_knowledge_agent_scopes audit entry. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent_scopes": {
+                    "type": "object",
+                    "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "layers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "include_states": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "agent_scopes"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved agent scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent_scopes": {
+                      "type": "object",
+                      "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "layers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "repos": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "include_states": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "states": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
           },
           "403": {
             "description": "Owner role required"
@@ -12220,6 +12518,14 @@
         "description": "Capped, body-free table of contents of the knowledge visible under the requested scope. Approved entries only unless `include_states` is set. Read an entry in full with `/api/knowledge/entry/{id}`. Returns `{\"enabled\": false, \"entries\": []}` if knowledge is not enabled.",
         "parameters": [
           {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Calling agent; restricts the result to its `knowledge.agent_scopes` entry, which the other scope parameters can only narrow"
+          },
+          {
             "name": "layers",
             "in": "query",
             "schema": {
@@ -12381,6 +12687,14 @@
         "summary": "Read one knowledge entry in full",
         "description": "Returns the complete markdown (YAML front-matter plus body) of one entry. The same scope and lifecycle filter as the table of contents applies; an entry outside it returns 404.",
         "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Calling agent; restricts the result to its `knowledge.agent_scopes` entry, which the other scope parameters can only narrow"
+          },
           {
             "name": "id",
             "in": "path",

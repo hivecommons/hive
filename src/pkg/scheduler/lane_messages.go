@@ -89,7 +89,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		}
 	}
 
-	if knowledgeSection := s.primeKnowledge(scannerIssues); knowledgeSection != "" {
+	if knowledgeSection := s.primeKnowledge("scanner", scannerIssues); knowledgeSection != "" {
 		b.WriteString("\n")
 		b.WriteString(knowledgeSection)
 	}
@@ -264,7 +264,7 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 		}
 	}
 
-	if knowledgeSection := s.primeKnowledge(agentIssues); knowledgeSection != "" {
+	if knowledgeSection := s.primeKnowledge(agentName, agentIssues); knowledgeSection != "" {
 		b.WriteString("\n")
 		b.WriteString(knowledgeSection)
 	}
@@ -318,7 +318,7 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 	b.WriteString("    - Create regression tests for recent bug fixes missing them.\n")
 	b.WriteString("    - Enforce test-first for new features.\n")
 
-	if knowledgeSection := s.primeKnowledge(qualityIssues); knowledgeSection != "" {
+	if knowledgeSection := s.primeKnowledge("quality", qualityIssues); knowledgeSection != "" {
 		b.WriteString("\n")
 		b.WriteString(knowledgeSection)
 	}
@@ -378,7 +378,7 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 	b.WriteString("  ✅ May do without approval: refactoring PRs, perf improvements, dead code removal\n")
 	b.WriteString("  ❌ Needs human approval: API changes, dependency upgrades, schema migrations\n\n")
 
-	if knowledgeSection := s.primeKnowledge(architectIssues); knowledgeSection != "" {
+	if knowledgeSection := s.primeKnowledge("architect", architectIssues); knowledgeSection != "" {
 		b.WriteString(knowledgeSection)
 		b.WriteString("\n")
 	}

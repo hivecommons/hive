@@ -67,6 +67,47 @@ type TOCScope struct {
 	IncludeStates []LifecycleState
 }
 
+// AgentScope builds the scope an agent is bound to by knowledge.agent_scopes
+// (#11201). Empty fields stay unrestricted. An empty includeStates admits every
+// state, so the request's or primer's own lifecycle filter decides; a listed
+// state is admitted only when that filter admits it too. Unknown state names
+// are dropped, and a list with none left admits approved knowledge only.
+func AgentScope(layers, repos, types, tags, includeStates []string) TOCScope {
+	sc := TOCScope{Repos: repos, Types: types, Tags: tags}
+	for _, l := range layers {
+		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
+			sc.Layers = append(sc.Layers, LayerType(l))
+		}
+	}
+	if len(includeStates) == 0 {
+		sc.IncludeStates = append([]LifecycleState(nil), AllLifecycleStates...)
+		return sc
+	}
+	for _, st := range includeStates {
+		if strings.EqualFold(strings.TrimSpace(st), "all") {
+			sc.IncludeStates = append([]LifecycleState(nil), AllLifecycleStates...)
+			return sc
+		}
+		if parsed, err := ParseLifecycleState(st); err == nil {
+			sc.IncludeStates = append(sc.IncludeStates, parsed)
+		}
+	}
+	return sc
+}
+
+// Filter returns the facts that pass the scope. Applying an agent scope with
+// Filter before a request scope intersects the two: an entry is kept only when
+// both admit it, so the request can never widen the agent's scope.
+func (sc TOCScope) Filter(facts []Fact) []Fact {
+	out := make([]Fact, 0, len(facts))
+	for _, f := range facts {
+		if sc.InScope(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // FactRepo returns the repository a fact is scoped to via a repo:<name> tag.
 func FactRepo(f Fact) string {
 	for _, t := range f.Tags {
