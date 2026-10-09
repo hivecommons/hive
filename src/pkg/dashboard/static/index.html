@@ -2779,6 +2779,22 @@
     .qa-table th:first-child, .qa-table td:first-child { padding-left: var(--sp-0); }
     .qa-table th:last-child, .qa-table td:last-child { padding-right: var(--sp-0); }
     .config-subgroup:first-of-type { margin-top: var(--sp-2); }
+    /* Settings → Compliance tab (#11080). */
+    .cmp-banner { border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 8%, transparent); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-6); font-size: var(--fs-sm); }
+    .cmp-banner strong { color: var(--text); }
+    .cmp-banner-detail { color: var(--muted); margin-top: var(--sp-2); }
+    .cmp-framework { display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-3) var(--sp-0); cursor: pointer; }
+    .cmp-framework input { width: auto; margin-top: var(--sp-1); }
+    .cmp-framework-name { font-weight: 600; color: var(--text); }
+    .cmp-framework-desc, .cmp-note { font-size: var(--fs-xs); color: var(--muted); }
+    .cmp-domain-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin: var(--sp-7) var(--sp-0) var(--sp-3); }
+    .cmp-domain-title { font-weight: 600; color: var(--text); }
+    .cmp-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .cmp-table th { text-align: left; color: var(--muted); font-weight: 400; border-bottom: 1px solid var(--border); padding: var(--sp-2) var(--sp-3); }
+    .cmp-table td { vertical-align: top; border-bottom: 1px solid var(--border); padding: var(--sp-3); }
+    .cmp-setting { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .cmp-staged { color: var(--yellow); }
+    .cmp-error { color: var(--red); font-size: var(--fs-sm); }
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
@@ -28849,7 +28865,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -29496,6 +29512,7 @@ function burnAreaChart() {
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') renderPublicKnowledgeControls();
+        if (tabId === 'Compliance') loadComplianceStatus();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -29688,6 +29705,7 @@ function burnAreaChart() {
         case 'Model Gateways': return renderGovGateways();
         case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
+        case 'Compliance': return renderGovCompliance();
         default: return '';
       }
     }
@@ -36931,6 +36949,285 @@ function burnAreaChart() {
             <input type="text" placeholder="/data/wavefront/receipts" value="${esc(wf.receipts_dir||'')}" data-change-action="markWorkSourceDirty" data-arg0="wavefront.receipts_dir" data-arg-types="s,w">
           </div>
         </div>`;
+    }
+
+    // ── Settings → Compliance (#11080) ──
+    // Panel 1 picks the framework profiles (compliance.frameworks, saved by
+    // the footer Save through PUT /api/config/governor/compliance). Panel 2
+    // lists every control of the selected profiles from
+    // GET /api/compliance/status. Inline toggles and "Apply recommended" only
+    // STAGE values in the owning section's dirty bag, so the footer Save
+    // writes each setting through that section's own owner-only endpoint.
+    const COMPLIANCE_DISCLAIMER = 'Hive is not certified; this maps your configuration to control requirements.';
+    const COMPLIANCE_STATUS_PILLS = {
+      meets: ['ok', 'Meets'],
+      deviates: ['warn', 'Deviates'],
+      off: ['error', 'Off'],
+      not_covered: ['neutral', 'Not covered'],
+    };
+    let _complianceState = { loading: false, loaded: false, forbidden: false, error: '', report: null };
+    let _complianceLoadSeq = 0;
+
+    function complianceSetData(path, value) {
+      let node = _configState.data = _configState.data || {};
+      for (let i = 0; i < path.length - 1; i++) {
+        if (!node[path[i]] || typeof node[path[i]] !== 'object') node[path[i]] = {};
+        node = node[path[i]];
+      }
+      node[path[path.length - 1]] = value;
+    }
+
+    function complianceStageTrustedAuthors(key, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).trusted_authors || {};
+      markDirty('auto-merge', 'trusted_authors', Object.assign({}, staged, { [key]: value }));
+      complianceSetData(['auto_merge', 'trusted_authors', key], value);
+    }
+
+    // Where each mapped setting lives in Settings. `stage` exists only for
+    // booleans the owning section's endpoint can write; every other mapping
+    // gets an "Open setting" link to its tab, or a hint when it is
+    // hive.yaml-only.
+    const COMPLIANCE_SETTING_OWNERS = {
+      'review.require_approval': { tab: 'Features', stage: v => { markDirty('review', 'require_approval', v); complianceSetData(['review', 'require_approval'], v); } },
+      'auto_merge.self_authored': { tab: 'Features', stage: v => { markDirty('auto-merge', 'self_authored', v); complianceSetData(['auto_merge', 'self_authored'], v); } },
+      'auto_merge.trusted_authors.enabled': { tab: 'Features', stage: v => complianceStageTrustedAuthors('enabled', v) },
+      'auto_merge.trusted_authors.require_github_permission': { tab: 'Features', stage: v => complianceStageTrustedAuthors('require_github_permission', v) },
+      'auto_merge.required_checks': { tab: 'Features' },
+      'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
+      'sentinel.disabled_behaviors': { tab: 'Security' },
+      'agent_sandbox.enabled': { tab: 'Security', stage: v => { markDirty('security', 'agentSandboxEnabled', v); complianceSetData(['security', 'agentSandboxEnabled'], v); } },
+      'dashboard.authorized_users': { tab: 'Security' },
+      'escalation.disabled': { tab: 'Health', stage: v => { markDirty('escalation', 'disabled', v); if (_configState.data && _configState.data.escalation) _configState.data.escalation.disabled = v; } },
+    };
+
+    async function loadComplianceStatus() {
+      const seq = ++_complianceLoadSeq;
+      _complianceState = Object.assign({}, _complianceState, { loading: true, error: '' });
+      complianceRepaint();
+      try {
+        const res = await fetch('/api/compliance/status');
+        if (seq !== _complianceLoadSeq) return;
+        if (res.status === 403) {
+          _complianceState = { loading: false, loaded: true, forbidden: true, error: '', report: null };
+        } else if (!res.ok) {
+          throw new Error(await saveErrorMessage(res));
+        } else {
+          _complianceState = { loading: false, loaded: true, forbidden: false, error: '', report: await res.json() };
+        }
+      } catch (err) {
+        if (seq !== _complianceLoadSeq) return;
+        _complianceState = { loading: false, loaded: true, forbidden: false, error: err && err.message ? err.message : String(err), report: null };
+      }
+      complianceRepaint();
+    }
+
+    function complianceRepaint() {
+      const root = document.getElementById('compliance-config-root');
+      if (root) root.innerHTML = renderGovComplianceBody();
+    }
+
+    function renderGovCompliance() {
+      return '<div id="compliance-config-root">' + renderGovComplianceBody() + '</div>';
+    }
+
+    function complianceSelectedFrameworks() {
+      if (_configState.complianceFrameworks) return _configState.complianceFrameworks.slice();
+      return ((_complianceState.report || {}).frameworks || []).slice();
+    }
+
+    function complianceStaged() {
+      if (!_configState.complianceStaged) _configState.complianceStaged = {};
+      return _configState.complianceStaged;
+    }
+
+    function renderGovComplianceBody() {
+      const st = _complianceState;
+      const banner = '<div class="cmp-banner" role="note"><strong>' + esc(COMPLIANCE_DISCLAIMER) + '</strong>' +
+        (st.report && st.report.disclaimer ? '<div class="cmp-banner-detail">' + esc(String(st.report.disclaimer)) + '</div>' : '') + '</div>';
+      if (!st.loaded) return banner + '<p class="cmp-note">Loading compliance status…</p>';
+      if (st.forbidden) return banner + '<p class="cmp-note">Compliance status is visible to mergers and owners only.</p>';
+      if (st.error) {
+        return banner + '<p class="cmp-error">Could not load compliance status: ' + esc(st.error) + '</p>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="loadComplianceStatus">Retry</button>';
+      }
+      const owner = viewerIsOwner();
+      const readOnly = owner ? '' : '<p class="cmp-note">Read-only — only owners can change these settings.</p>';
+      return banner + readOnly + renderComplianceFrameworks(st.report || {}, owner) + renderComplianceControls(st.report || {}, owner);
+    }
+
+    function renderComplianceFrameworks(report, owner) {
+      const selected = complianceSelectedFrameworks();
+      const available = report.available || [];
+      const rows = available.map(f => {
+        const id = String(f.id || '');
+        const on = selected.includes(id);
+        return '<label class="cmp-framework">' +
+          '<input type="checkbox" ' + (on ? 'checked ' : '') + (owner ? '' : 'disabled ') +
+            'data-change-action="complianceToggleFramework" data-arg0="' + esc(id) + '" data-arg-types="s,c">' +
+          '<span><span class="cmp-framework-name">' + esc(String(f.name || id)) + '</span> <span class="cmp-framework-desc">' + esc(String(f.version || '')) + ' · ' + Number(f.controls || 0) + ' controls</span>' +
+          (f.description ? '<div class="cmp-framework-desc">' + esc(String(f.description)) + '</div>' : '') + '</span>' +
+        '</label>';
+      }).join('');
+      const pending = _configState.complianceFrameworks ? '<p class="cmp-note cmp-staged">Framework selection changes apply on Save; the controls below still show the saved selection.</p>' : '';
+      const loadErr = report.profile_load_error ? '<p class="cmp-error">Profile load error: ' + esc(String(report.profile_load_error)) + '</p>' : '';
+      const unknown = (report.unknown_frameworks || []).length ? '<p class="cmp-error">Unknown frameworks in hive.yaml: ' + esc((report.unknown_frameworks || []).join(', ')) + '</p>' : '';
+      return '<div class="config-section">' +
+        '<h3>Framework profile</h3>' +
+        '<p class="cmp-note">Select the frameworks whose controls this hive maps its settings against (<code>compliance.frameworks</code>). None selected turns compliance evaluation off.</p>' +
+        (rows || '<p class="cmp-note">No framework profiles are shipped in this build.</p>') + pending + loadErr + unknown +
+      '</div>';
+    }
+
+    function complianceToggleFramework(id, checked) {
+      if (!viewerIsOwner()) return;
+      const next = complianceSelectedFrameworks().filter(f => f !== id);
+      if (checked) next.push(id);
+      _configState.complianceFrameworks = next;
+      markDirty('compliance', 'frameworks', next);
+      complianceRepaint();
+    }
+
+    function complianceOwnerFor(setting) {
+      if (!setting || setting.builtin || String(setting.setting_path || '').startsWith('env.')) return null;
+      return COMPLIANCE_SETTING_OWNERS[setting.setting_path] || null;
+    }
+
+    // A mapping is toggleable when it is a boolean whose owning section can
+    // write it and whose recommendation is a plain true/false.
+    function complianceToggleable(setting) {
+      const owner = complianceOwnerFor(setting);
+      return !!(owner && owner.stage && setting.kind === 'bool' && (setting.recommended === 'true' || setting.recommended === 'false'));
+    }
+
+    function complianceCurrentBool(setting) {
+      const staged = complianceStaged();
+      if (Object.prototype.hasOwnProperty.call(staged, setting.setting_path)) return staged[setting.setting_path];
+      return setting.current === 'true';
+    }
+
+    function renderComplianceSettingControl(setting, owner) {
+      const path = String(setting.setting_path || '');
+      if (setting.builtin) return '<span class="cmp-note">fixed in code</span>';
+      if (path.startsWith('env.')) return '<span class="cmp-note">deployment environment</span>';
+      if (complianceToggleable(setting) && owner) {
+        const on = complianceCurrentBool(setting);
+        return '<div class="config-toggle-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="' + esc(path) + '" data-action="complianceToggleSetting" data-arg0="' + esc(path) + '" data-arg-types="s,t"></div>';
+      }
+      const where = complianceOwnerFor(setting);
+      if (where && where.tab) return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="switchConfigTab" data-tab="' + esc(where.tab) + '">Open setting</button>';
+      return '<span class="cmp-note">hive.yaml only</span>';
+    }
+
+    function complianceToggleSetting(path, el) {
+      if (!viewerIsOwner() || !el) return;
+      const owner = COMPLIANCE_SETTING_OWNERS[path];
+      if (!owner || !owner.stage) return;
+      const next = !el.classList.contains('on');
+      owner.stage(next);
+      complianceStaged()[path] = next;
+      complianceRepaint();
+    }
+
+    function renderComplianceSettingValue(setting) {
+      const staged = complianceStaged();
+      const isStaged = Object.prototype.hasOwnProperty.call(staged, setting.setting_path);
+      const current = isStaged ? String(staged[setting.setting_path]) : String(setting.current == null ? '' : setting.current);
+      return '<div class="cmp-setting"><span>' + esc(current || '(unset)') + ' → ' + esc(String(setting.recommended || '')) + '</span>' +
+        (isStaged ? '<span class="cmp-staged">staged</span>' : '') + '</div>';
+    }
+
+    function renderComplianceControls(report, owner) {
+      const controls = report.controls || [];
+      if (!(report.frameworks || []).length) {
+        return '<div class="config-section"><h3>Controls</h3><p class="cmp-note">Select a framework and save to see its controls.</p></div>';
+      }
+      const multi = (report.frameworks || []).length > 1;
+      const domains = [];
+      const byDomain = {};
+      controls.forEach(c => {
+        const d = String(c.domain || 'Other');
+        if (!byDomain[d]) { byDomain[d] = []; domains.push(d); }
+        byDomain[d].push(c);
+      });
+      const s = report.summary || {};
+      const summary = '<p class="cmp-note">' + Number(s.meets || 0) + ' meet · ' + Number(s.deviates || 0) + ' deviate · ' + Number(s.off || 0) + ' off · ' + Number(s.not_covered || 0) + ' not covered by Hive</p>';
+      const sections = domains.map(d => {
+        const rows = byDomain[d].map(c => {
+          const pill = COMPLIANCE_STATUS_PILLS[c.status] || ['neutral', String(c.status || '')];
+          const tip = [c.text, c.citation ? 'Citation: ' + c.citation : ''].filter(Boolean).join(' — ');
+          const settings = c.settings || [];
+          const settingCell = c.not_covered
+            ? '<span class="cmp-note">' + esc(String(c.rationale || 'Not covered by any Hive setting.')) + '</span>'
+            : settings.map(st => '<div class="cmp-setting"><code>' + esc(String(st.setting_path || '')) + '</code>' + renderComplianceSettingControl(st, owner) + '</div>').join('');
+          const valueCell = c.not_covered ? '' : settings.map(renderComplianceSettingValue).join('');
+          return '<tr>' +
+            '<td><code>' + esc((multi ? c.framework + ' ' : '') + String(c.control_id || '')) + '</code> ' + esc(String(c.title || '')) +
+              (tip ? ' <span class="config-info" tabindex="0">i<span class="config-tooltip">' + esc(tip) + '</span></span>' : '') + '</td>' +
+            '<td>' + settingCell + '</td>' +
+            '<td>' + valueCell + '</td>' +
+            '<td><span class="badge-status" data-status="' + pill[0] + '">' + esc(pill[1]) + '</span></td>' +
+          '</tr>';
+        }).join('');
+        const applyBtn = owner && complianceDomainChanges(d).length
+          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="complianceApplyDomain" data-arg0="' + esc(d) + '">Apply recommended</button>'
+          : '';
+        return '<div class="cmp-domain-head"><span class="cmp-domain-title">' + esc(d) + '</span>' + applyBtn + '</div>' +
+          '<table class="cmp-table"><thead><tr><th>Control</th><th>Implementing setting(s)</th><th>Current → recommended</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      }).join('');
+      return '<div class="config-section"><h3>Controls</h3>' + summary + sections +
+        '<p class="cmp-note">Toggles and "Apply recommended" stage changes in the owning section; nothing is written until Save. Statuses refresh after the save.</p></div>';
+    }
+
+    // complianceDomainChanges lists the boolean mappings in one domain whose
+    // effective value (staged or saved) differs from the recommendation and
+    // that the owning section can write, one entry per setting path.
+    function complianceDomainChanges(domain) {
+      const seen = {};
+      const out = [];
+      (((_complianceState.report || {}).controls) || []).forEach(c => {
+        if (String(c.domain || 'Other') !== domain) return;
+        (c.settings || []).forEach(st => {
+          if (seen[st.setting_path] || !complianceToggleable(st)) return;
+          const want = st.recommended === 'true';
+          if (complianceCurrentBool(st) === want) return;
+          seen[st.setting_path] = true;
+          out.push({ path: st.setting_path, from: complianceCurrentBool(st), to: want });
+        });
+      });
+      return out;
+    }
+
+    function complianceDomainManual(domain) {
+      const seen = {};
+      const out = [];
+      (((_complianceState.report || {}).controls) || []).forEach(c => {
+        if (String(c.domain || 'Other') !== domain) return;
+        (c.settings || []).forEach(st => {
+          if (st.status === 'meets' || complianceToggleable(st) || seen[st.setting_path]) return;
+          seen[st.setting_path] = true;
+          out.push(st.setting_path + ' (' + (st.current || 'unset') + ' → ' + st.recommended + ')');
+        });
+      });
+      return out;
+    }
+
+    async function complianceApplyDomain(domain) {
+      if (!viewerIsOwner()) return;
+      const changes = complianceDomainChanges(domain);
+      if (!changes.length) { showToast('Every writable setting in ' + domain + ' already matches the recommendation', 'info'); return; }
+      const manual = complianceDomainManual(domain);
+      const lines = changes.map(ch => '• ' + ch.path + ': ' + ch.from + ' → ' + ch.to);
+      let message = 'These settings will be staged for Save:\n\n' + lines.join('\n');
+      if (manual.length) message += '\n\nNot changed here (edit in their own section):\n' + manual.map(m => '• ' + m).join('\n');
+      const ok = await hiveConfirm({ title: 'Apply recommended — ' + domain, message, confirmLabel: 'Stage ' + changes.length + ' change' + (changes.length === 1 ? '' : 's'), danger: false });
+      if (!ok) return;
+      const staged = complianceStaged();
+      changes.forEach(ch => {
+        COMPLIANCE_SETTING_OWNERS[ch.path].stage(ch.to);
+        staged[ch.path] = ch.to;
+      });
+      showToast('Staged ' + changes.length + ' change' + (changes.length === 1 ? '' : 's') + ' — Save & close to apply', 'success');
+      complianceRepaint();
     }
 
     function addSensingItem(key, inputId) {
