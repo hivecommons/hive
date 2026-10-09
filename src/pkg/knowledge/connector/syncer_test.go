@@ -51,10 +51,10 @@ func (f *fakeConn) Sync(ctx context.Context, cur Cursor, emit func(Page) error) 
 			return cur, err
 		}
 	}
-	if err != nil {
+	if err != nil && !IsPartial(err) {
 		return cur, err
 	}
-	return next, nil
+	return next, err
 }
 
 type fullFakeConn struct{ *fakeConn }
@@ -206,6 +206,20 @@ func TestSyncerWritesFactsAndStatus(t *testing.T) {
 	full.set([]Page{{ID: "a"}, {ID: "b"}}, "h3", nil)
 	if st, _ = s.SyncNow(ctx, "repo"); st.Facts != 2 || st.Deprecated != 0 {
 		t.Fatalf("reactivated status = %+v", st)
+	}
+	// A partial listing (some items skipped) still tombstones unlisted
+	// pages and advances the cursor, while recording the error.
+	full.set([]Page{{ID: "a"}}, "h4", &PartialError{Err: errors.New("1 invalid file")})
+	st, err = s.SyncNow(ctx, "repo")
+	if err == nil || !IsPartial(err) || st.LastError != "1 invalid file" || st.Cursor != "h4" || st.Pages != 1 || st.LastSync.IsZero() {
+		t.Fatalf("status after partial = %+v (err %v)", st, err)
+	}
+	if st.Facts != 1 || st.Deprecated != 1 || readFact(t, vault, "fake-repo-b")["status"] != StatusDeprecated {
+		t.Fatalf("partial listing did not tombstone: %+v", st)
+	}
+	full.set([]Page{{ID: "a"}}, "h5", nil)
+	if st, err = s.SyncNow(ctx, "repo"); err != nil || st.LastError != "" || st.Cursor != "h5" {
+		t.Fatalf("status after recovery = %+v (err %v)", st, err)
 	}
 
 	names := []string{}

@@ -200,16 +200,21 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 		}
 		if err != nil {
 			st.LastError = err.Error()
-			return
+			// A partial sync still produced a complete listing: record
+			// the error but advance as for a success.
+			if !IsPartial(err) {
+				return
+			}
+		} else {
+			st.LastError = ""
 		}
-		st.LastError = ""
 		st.LastSync = s.opts.Now().UTC()
 		st.Pages = pages
 		st.Cursor = next
 	})
 	s.saveState()
 	if err != nil {
-		s.logger.Warn("knowledge connector sync failed", "name", name, "type", e.cfg.Type, "error", err)
+		s.logger.Warn("knowledge connector sync failed", "name", name, "type", e.cfg.Type, "partial", IsPartial(err), "error", err)
 	} else {
 		s.logger.Info("knowledge connector synced", "name", name, "type", e.cfg.Type, "pages", pages, "facts", st.Facts, "vault", dir)
 	}
@@ -241,9 +246,10 @@ func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor
 		return nil
 	}
 	next, err := e.conn.Sync(ctx, cur, emit)
-	if err != nil {
+	if err != nil && !IsPartial(err) {
 		return pages, cur, err
 	}
+	partial := err
 	if full {
 		existing, err := w.Existing(e.cfg)
 		if err != nil {
@@ -258,7 +264,7 @@ func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor
 			}
 		}
 	}
-	return pages, next, nil
+	return pages, next, partial
 }
 
 // Run syncs every enabled, valid connector immediately and then on its
