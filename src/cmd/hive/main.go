@@ -9167,13 +9167,21 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 // backlog a person is waiting on.
 const issueUnparkSweepInterval = 5 * time.Minute
 
+// issueUnparkLabelDriven adapts the repo policy to the sweep option. cfg is nil
+// only in tests; nil leaves every repo on the default path.
+func issueUnparkLabelDriven(cfg *config.Config) func(repo string) bool {
+	return func(repo string) bool { return cfg.RepoLabelDriven(repo) }
+}
+
 // runIssueUnparkSweepIfDue re-queues parked issues a maintainer has answered
 // with a `/hive` command, and keeps the "What to reply" block current on every
 // parked issue (hivecommons/hive#9879). Every gate — human author, live write
 // permission, first-line command, recent unedited comment, per-tick cap — lives
 // inside SweepIssueUnparkCommands; this function is only the scheduler and the
-// dashboard audit sink, mirroring runTaskListSweepIfDue above.
-func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+// dashboard audit sink, mirroring runTaskListSweepIfDue above. Repos with
+// project.repo_policies[].label_driven skip the notice and keep their parking
+// labels (hivecommons/hive#10537).
+func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
 	if ghClient == nil {
 		return
 	}
@@ -9185,7 +9193,8 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, dash
 		*lastRun = now
 	}
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
-		MaxActions: github.DefaultIssueUnparkSweepMaxActions,
+		MaxActions:  github.DefaultIssueUnparkSweepMaxActions,
+		LabelDriven: issueUnparkLabelDriven(cfg),
 		Audit: func(event github.IssueUnparkEvent) {
 			if dashSrv == nil {
 				return
