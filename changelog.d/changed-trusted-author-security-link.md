@@ -1,1 +1,0 @@
-- Link trusted-author auto-merge role guidance to Security tab authorized users and the hub Manage Access screen.
