@@ -53,6 +53,8 @@ type Dependencies struct {
 	// (bare test deps) means the toggle can only persist the flag, so it
 	// answers restart_required.
 	KnowledgePrimer KnowledgePrimerControl
+	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
+	KnowledgeConnectors KnowledgeConnectorRuntime
 	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.
