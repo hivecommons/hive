@@ -138,16 +138,31 @@ func TestMaybeDowngradeNoCIVerdict(t *testing.T) {
 }
 
 // Covers RequiredStatusCheckContexts (commit_ci.go), previously 38.1%: the
-// config-first / branch-protection-second resolution of the required-check
+// branch-protection-first / config-fallback resolution of the required-check
 // set that decides which CI contexts gate a merge.
 func TestRequiredStatusCheckContexts(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("config-known set wins without any API call", func(t *testing.T) {
+	t.Run("config-known set is fallback when API cannot be called", func(t *testing.T) {
 		cfg := map[string]bool{"build": true}
 		set, known := RequiredStatusCheckContexts(ctx, nil, "o", "r", "main", cfg, true)
 		if !known || !reflect.DeepEqual(set, cfg) {
 			t.Fatalf("configKnown: got (%v,%v), want (%v,true)", set, known, cfg)
+		}
+	})
+
+	t.Run("branch protection wins over config", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"strict":true,"contexts":["protected"]}`)
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		set, known := RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", map[string]bool{"config": true}, true)
+		want := map[string]bool{"protected": true}
+		if !known || !reflect.DeepEqual(set, want) {
+			t.Fatalf("protected branch: got (%v,%v), want (%v,true)", set, known, want)
 		}
 	})
 

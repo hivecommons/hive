@@ -290,6 +290,9 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	if pr.Draft {
 		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft — mark ready for review to enter the sweep"}, ""
 	}
+	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" {
+		return mergeBucketSkip, blockedOrOutstanding(reason), ""
+	}
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
 	// App self-merge sweep gates on the same function (#6258).
 	if v, ok := g.intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && v.BlocksMerge(g.enforceIntent) {
@@ -298,10 +301,6 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			reason = intent.ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
 		}
 		return mergeBucketSkip, blockedOrOutstanding("intent verification: " + reason), reason
-	}
-
-	if hiveAuthoredPR(pr) && conflictMergeState(pr) {
-		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
 	}
 
 	if pr.CIStatus == "failure" {
@@ -344,7 +343,11 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// ci-failing.json, its author never got a fix-before-new block for it,
 	// and it sat red and held until a human did the agent's repair.
 	if held {
-		return mergeBucketSkip, blockedOrOutstanding("held: a hold label keeps it out of the sweep"), ""
+		return mergeBucketSkip, blockedOrOutstanding("label:hold"), ""
+	}
+
+	if conflictMergeState(pr) {
+		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
 	}
 
 	// A PR whose CI is still "pending" is nonetheless merge-eligible when
@@ -358,7 +361,7 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// 2026-08-04: three green console PRs stuck for hours). The merge step
 	// re-enforces branch protection, so trusting the mergeable verdict here
 	// cannot merge anything GitHub would actually block.
-	if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes {
+	if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes && len(g.requiredChecks) == 0 {
 		// Genuinely not ready: a required check is still running (or
 		// mergeability is unknown/no). Leave it out of both buckets, as
 		// before — it neither merges nor gets a fix dispatched.
@@ -377,8 +380,21 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
 		}
 	}
+	if pr.Protection != nil {
+		if rule, known := pr.BranchProtectionBlockReason(); known && (pr.Protection.ReviewDecision == github.ReviewDecisionChangesRequested || pr.Protection.ReviewDecision == github.ReviewDecisionReviewRequired) {
+			return mergeBucketSkip, blockedOrOutstanding(rule), ""
+		}
+	}
+	if pr.Protection != nil && pr.Protection.RequiredChecksKnown {
+		if len(pr.Protection.FailingRequiredChecks) > 0 {
+			return mergeBucketFailing, blockedOrOutstanding("required-check-failing:" + pr.Protection.FailingRequiredChecks[0]), ""
+		}
+		if len(pr.Protection.MissingRequiredChecks) > 0 {
+			return mergeBucketSkip, blockedOrOutstanding("required-check-missing:" + pr.Protection.MissingRequiredChecks[0]), ""
+		}
+	}
 
-	if pr.Mergeable == github.MergeableNo {
+	if pr.Mergeable == github.MergeableNo && conflictMergeState(pr) {
 		// A conflicting PR cannot merge no matter how green its checks
 		// are. Listing it as merge-eligible left the eligible count stuck
 		// at N forever while nothing could actually merge (console
@@ -403,10 +419,32 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		reason += " — non-required checks still pending (GitHub: " + pr.MergeableState + ")"
 	case pr.MergeableState == "unstable":
 		reason += " — non-required checks outstanding (GitHub: unstable)"
+	case pr.MergeableState == "blocked":
+		reason += " — required checks are green; ignoring non-required GitHub blockers (GitHub: blocked)"
 	case pr.Mergeable == github.MergeableUnknown:
 		reason += " — mergeability not yet fetched; the sweep re-checks it at merge time"
 	}
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
+}
+
+func automergeBlockLabelReason(labels []string, trusted bool) string {
+	for _, label := range labels {
+		trimmed := strings.TrimSpace(label)
+		lower := strings.ToLower(trimmed)
+		switch {
+		case lower == "sentinel-alert":
+			if !trusted {
+				return "sentinel"
+			}
+		case lower == "needs-rebase":
+			return "label:needs-rebase"
+		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
+			return "label:" + lower
+		case lower == "hold" || strings.Contains(lower, "hold"):
+			return "label:hold"
+		}
+	}
+	return ""
 }
 
 // mergeabilityUnknownReason is the verdict prefix for a PR whose
@@ -760,15 +798,26 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		switch bucket {
 		case mergeBucketSkip:
 			continue
-		case mergeBucketFailing, mergeBucketConflict:
+		case mergeBucketConflict:
+			if !hiveAuthoredPR(pr) {
+				continue
+			}
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
 			reroutedFrom := ""
-			if bucket == mergeBucketConflict {
-				agent, reroutedFrom = routeConflictFixAgent(agent, cfg)
-			}
+			agent, reroutedFrom = routeConflictFixAgent(agent, cfg)
 			row.Agent = agent
 			row.MergeableState = pr.MergeableState
-			row.Conflict = bucket == mergeBucketConflict
+			row.Conflict = true
+			row.ReroutedFrom = reroutedFrom
+			row.DeferredIncident = pr.SharedCIIncident
+			failing = append(failing, row)
+			continue
+		case mergeBucketFailing:
+			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
+			reroutedFrom := ""
+			row.Agent = agent
+			row.MergeableState = pr.MergeableState
+			row.Conflict = false
 			row.ReroutedFrom = reroutedFrom
 			row.DeferredIncident = pr.SharedCIIncident
 			failing = append(failing, row)

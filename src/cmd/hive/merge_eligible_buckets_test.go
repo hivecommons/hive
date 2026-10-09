@@ -217,12 +217,12 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 		},
 		{
 			name: "pending and conflicting is neither",
-			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo, MergeableState: "dirty"},
 			want: bucketNeither,
 		},
 		{
 			name:     "green but conflicting is neither",
-			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo, MergeableState: "dirty"},
 			want:     bucketNeither,
 			guarding: "2026-08-31: DIRTY go.mod bumps pinned the eligible count at N while nothing could merge",
 		},

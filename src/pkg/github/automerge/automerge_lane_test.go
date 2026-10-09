@@ -261,7 +261,7 @@ func TestLaneMergedBranchesWithoutPassContext(t *testing.T) {
 // The path keeps its own reason and never merges; a lane error is only logged.
 func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
 	blocked := greenSelfPR(11)
-	blocked.mergeableState = "blocked"
+	blocked.mergeableState = "dirty"
 	red := greenSelfPR(12)
 	red.statusState = "pending"
 	held := greenSelfPR(13)
@@ -281,7 +281,7 @@ func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
 	for _, tc := range []struct {
 		number int
 		want   string
-	}{{11, "not-mergeable"}, {12, ""}, {13, "held"}, {14, "draft"}} {
+	}{{11, "conflicting"}, {12, ""}, {13, "label:hold"}, {14, "draft"}} {
 		event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", tc.number, false)
 		if err != nil || event.Number != 0 || reason == "" || (tc.want != "" && reason != tc.want) {
 			t.Fatalf("#%d: trySweepSelfAuthoredPR = %+v, %q, %v; want the path's own rejection %q", tc.number, event, reason, err, tc.want)
@@ -297,7 +297,7 @@ func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
 	}
 
 	queuedBlocked := greenLanePR(7)
-	queuedBlocked.mergeableState = "blocked"
+	queuedBlocked.mergeableState = "dirty"
 	queuedRed := greenLanePR(8)
 	queuedRed.statusState = "failure"
 	qapi := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{queuedBlocked, queuedRed}, &merged)
@@ -319,7 +319,7 @@ func TestLaneSweep_RejectedPRIsHandedToTheLaneFrontOnly(t *testing.T) {
 		return hgithub.LaneMergeResult{}, nil
 	}}
 	c = newLaneSweepEngine(api.URL, config.MergeStrategyDirect, direct.gate, Options{})
-	if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 11, false); err != nil || reason != "not-mergeable" {
+	if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 11, false); err != nil || reason != "conflicting" {
 		t.Fatalf("direct: reason = %q, err = %v", reason, err)
 	}
 	if len(merged) != 0 {
