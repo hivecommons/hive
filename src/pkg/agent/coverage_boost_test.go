@@ -187,6 +187,45 @@ func TestAgentEnvPairs_WithHiveSHA(t *testing.T) {
 	}
 }
 
+// TestAgentEnvPairs_HiveSHADefaultsToBuildCommit: with no HIVE_SHA in the
+// hive's environment, agents get the binary's own short commit; an explicit
+// HIVE_SHA still wins, and an unknown build sets nothing (#11220).
+func TestAgentEnvPairs_HiveSHADefaultsToBuildCommit(t *testing.T) {
+	t.Setenv("HIVE_SHA", "")
+	t.Cleanup(func() { SetBuildCommit("") })
+
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Model: "sonnet"},
+	}, discardLogger(), ProjectContext{})
+	ap := &AgentProcess{
+		Name:   "scanner",
+		Config: config.AgentConfig{Backend: "claude", Model: "sonnet"},
+	}
+	hiveSHA := func() (string, bool) {
+		for _, p := range m.agentEnvPairs(ap) {
+			if p.Key == "HIVE_SHA" {
+				return p.Value, true
+			}
+		}
+		return "", false
+	}
+
+	SetBuildCommit("unknown")
+	if v, ok := hiveSHA(); ok {
+		t.Fatalf("unknown build should not set HIVE_SHA, got %q", v)
+	}
+
+	SetBuildCommit("1ffbbae")
+	if v, ok := hiveSHA(); !ok || v != "1ffbbae" {
+		t.Fatalf("HIVE_SHA = %q, %v; want build commit", v, ok)
+	}
+
+	t.Setenv("HIVE_SHA", "deadbee")
+	if v, ok := hiveSHA(); !ok || v != "deadbee" {
+		t.Fatalf("HIVE_SHA = %q, %v; explicit env should win", v, ok)
+	}
+}
+
 func TestAgentEnvPairs_WithAdvisoryIssue(t *testing.T) {
 	t.Setenv("HIVE_ADVISORY_ISSUE", "99")
 

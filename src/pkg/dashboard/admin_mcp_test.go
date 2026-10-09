@@ -193,3 +193,21 @@ func TestAdminMCPAdvisorRecordsMatchesREST(t *testing.T) {
 		t.Fatal("advisor records must keep the REST read-write floor through admin MCP")
 	}
 }
+
+// TestDashboardAdminMCPVersionReadReturnsAPIVersion: version_read answers with
+// the same currentCommit the authenticated /api/version reports (#11220).
+func TestDashboardAdminMCPVersionReadReturnsAPIVersion(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"currentCommit": "1ffbbae", "branch": "v6"})
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
+	adminmcp.NewHandler(dashboardAdminMCPProvider{server: s}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "1ffbbae") || !strings.Contains(rec.Body.String(), "currentCommit") {
+		t.Fatalf("version_read body = %s", rec.Body.String())
+	}
+}

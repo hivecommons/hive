@@ -17,6 +17,31 @@ import (
 	"github.com/hivecommons/hive/pkg/jev"
 )
 
+// buildCommit is the running binary's ldflags-stamped short commit, recorded
+// once at boot by SetBuildCommit. Launched agents receive it as HIVE_SHA when
+// the hive's own environment does not set one, so their identity footers
+// carry the real build instead of "unknown" (#11220).
+var buildCommit string
+
+// SetBuildCommit records the running binary's short commit. Empty or
+// "unknown" leaves agents without a defaulted HIVE_SHA.
+func SetBuildCommit(short string) {
+	short = strings.TrimSpace(short)
+	if short == "unknown" {
+		short = ""
+	}
+	buildCommit = short
+}
+
+// agentHiveSHA is the HIVE_SHA handed to agents: the operator's explicit
+// value wins, otherwise the binary's own commit.
+func agentHiveSHA() string {
+	if sha := os.Getenv("HIVE_SHA"); sha != "" {
+		return sha
+	}
+	return buildCommit
+}
+
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 	// No boot prompt — the governor's first eval cycle (10s after startup)
 	// kicks all due agents via BuildKickMessages with fully substituted
@@ -223,7 +248,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
 	vars = append(vars, agentEnvPair{"GIT_TERMINAL_PROMPT", "0", false})
 	vars = append(vars, agentEnvPair{"NODE_EXTRA_CA_CERTS", proxyCACertPath, false})
-	if sha := os.Getenv("HIVE_SHA"); sha != "" {
+	if sha := agentHiveSHA(); sha != "" {
 		vars = append(vars, agentEnvPair{"HIVE_SHA", sha, false})
 	}
 	if advisory := os.Getenv("HIVE_ADVISORY_ISSUE"); advisory != "" {

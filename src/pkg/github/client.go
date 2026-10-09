@@ -2985,7 +2985,8 @@ const shaHoldComment = shaHoldMarker + "\n" +
 	"Thanks for filing this issue! To help us reproduce and investigate, " +
 	"could you please include the **commit SHA** of the build you're running?\n\n" +
 	"You can find it by running:\n```\ngit rev-parse --short HEAD\n```\n\n" +
-	"Or check the bottom of the console UI for the version string.\n\n" +
+	"Or check the version string at the bottom of the console UI or dashboard, " +
+	"or call the `version_read` admin-MCP tool (its `currentCommit` is the build SHA).\n\n" +
 	shaHoldLegacyNoticeSentence + " " +
 	"Simply add a comment with the SHA and the hold will be automatically removed._"
 

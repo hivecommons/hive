@@ -929,6 +929,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// hub is always the same length it stores (no short-vs-full mismatch).
 	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
+	agent.SetBuildCommit(gitShort)
 	dashboard.SetFleetReportBuildInfo(reportedVersion(), gitShort)
 	dashboard.SetGitBranch(gitBranch)
 	// Resolve channel and tracking together from the cached Deployment image.

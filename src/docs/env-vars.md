@@ -270,7 +270,8 @@ Set conditionally:
 
 | Variable | When | Value |
 |---|---|---|
-| `HIVE_ID`, `HIVE_SHA`, `HIVE_ADVISORY_ISSUE` | When set in the hive's own environment | Passed through unchanged. |
+| `HIVE_ID`, `HIVE_ADVISORY_ISSUE` | When set in the hive's own environment | Passed through unchanged. |
+| `HIVE_SHA` | Always, unless the build commit is unknown | The hive's own `HIVE_SHA` when set; otherwise the binary's short build commit. |
 | `HIVE_REPO`, `HIVE_REPOS` | When the project has an org and at least one repo | `org/primary-repo`, and the full comma-separated `org/repo` list. Policy templates target `gh issue create --repo "$HIVE_REPO"`. |
 | `GH_HOST` | GHE spokes with a configured forge host | Forge hostname for the `gh` CLI; the gh wrapper pairs it with `GH_ENTERPRISE_TOKEN`. |
 | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `NO_PROXY`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | Inference-routed backends only | Local inference-translate endpoint, a **synthetic** per-agent key (`sk-hive-<agent>` - not a real credential), loopback proxy bypass, an output-token cap every fronted model accepts, and telemetry switched off at the source. |
