@@ -191,7 +191,7 @@ func NewRegistry() *Registry {
 }
 
 // DefaultRegistry returns a registry with the built-in connector types
-// (`git` and `document`) registered.
+// (`git`, `document`, `github-wiki` and `repo-wiki`) registered.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	_ = r.Register(TypeGit, newGitConnector)
@@ -199,6 +199,7 @@ func DefaultRegistry() *Registry {
 	_ = r.Register(TypeGitHubWiki, newGitHubWikiConnector)
 	_ = r.Register(TypeGoogleDrive, newGoogleDriveConnector)
 	_ = r.Register(TypeSharePoint, newSharePointConnector)
+	_ = r.Register(TypeRepoWiki, newRepoWikiConnector)
 	return r
 }
 
