@@ -116,6 +116,63 @@ func (s *Server) handleKnowledgeEntry(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleKnowledgeEffective serves GET /api/knowledge/effective?agent=<name>:
+// an explanation of the knowledge an agent would receive (#11202). The
+// agent's knowledge.agent_scopes entry is intersected with the request scope
+// (the TOC's approved-only default unless include_states says otherwise); an
+// agent without an entry is unrestricted. The response lists the TOC entries
+// the agent receives and the ones filtered out, each with the reason code of
+// the first failing check: lifecycle, layer, repo, type, then tag.
+func (s *Server) handleKnowledgeEffective(w http.ResponseWriter, r *http.Request) {
+	agent := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if agent == "" {
+		jsonError(w, "agent is required", http.StatusBadRequest)
+		return
+	}
+	request, err := knowledgeTOCScope(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	agentScope, configured := s.knowledgeAgentScope(r)
+	if !configured {
+		agentScope = knowledge.AgentScope(nil, nil, nil, nil, nil)
+	}
+	scope := map[string]interface{}{
+		"agent":          agent,
+		"configured":     configured,
+		"layers":         agentScope.Layers,
+		"repos":          agentScope.Repos,
+		"types":          agentScope.Types,
+		"tags":           agentScope.Tags,
+		"include_states": knowledge.StatesAdmitted(agentScope, request),
+	}
+
+	if !s.ensureKnowledge() {
+		jsonResponse(w, map[string]interface{}{
+			"enabled": false, "agent": agent, "scope": scope,
+			"included": []interface{}{}, "excluded": []interface{}{},
+			"included_total": 0, "excluded_total": 0, "included_returned": 0, "excluded_returned": 0, "truncated": false,
+		})
+		return
+	}
+	facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", "", 0)
+	ex := knowledge.ExplainTOC(facts, limit, agentScope, request)
+	jsonResponse(w, map[string]interface{}{
+		"enabled":           true,
+		"agent":             agent,
+		"scope":             scope,
+		"included":          ex.Included,
+		"excluded":          ex.Excluded,
+		"included_total":    ex.IncludedTotal,
+		"excluded_total":    ex.ExcludedTotal,
+		"included_returned": ex.IncludedReturned,
+		"excluded_returned": ex.ExcludedReturned,
+		"truncated":         ex.Truncated,
+	})
+}
+
 // maxKnowledgeStateReason caps the operator-supplied reason recorded in the
 // audit log for a lifecycle change.
 const maxKnowledgeStateReason = 500

@@ -121,33 +121,168 @@ func FactRepo(f Fact) string {
 
 // InScope reports whether f passes the scope, including the lifecycle filter.
 func (sc TOCScope) InScope(f Fact) bool {
+	return sc.ExclusionReason(f) == ""
+}
+
+// Exclusion reason codes reported by ExclusionReason, in check order.
+const (
+	ExcludedLifecycle = "lifecycle"
+	ExcludedLayer     = "layer"
+	ExcludedRepo      = "repo"
+	ExcludedType      = "type"
+	ExcludedTag       = "tag"
+)
+
+// exclusionOrder ranks reason codes so the first failing check wins when
+// several scopes are combined.
+var exclusionOrder = []string{ExcludedLifecycle, ExcludedLayer, ExcludedRepo, ExcludedType, ExcludedTag}
+
+// ExclusionReason is the explain variant of InScope: it returns "" when f
+// passes the scope, otherwise the reason code of the first failing check in
+// the order lifecycle, layer, repo, type, tag.
+func (sc TOCScope) ExclusionReason(f Fact) string {
 	if !lifecycleAllowed(f.EffectiveState(), sc.IncludeStates) {
-		return false
+		return ExcludedLifecycle
 	}
 	if len(sc.Layers) > 0 && !containsLayer(sc.Layers, f.Layer) {
-		return false
-	}
-	if len(sc.Types) > 0 && !containsFold(sc.Types, string(f.Type)) {
-		return false
+		return ExcludedLayer
 	}
 	if len(sc.Repos) > 0 {
 		if repo := FactRepo(f); repo != "" && !containsFold(sc.Repos, repo) {
-			return false
+			return ExcludedRepo
 		}
 	}
+	if len(sc.Types) > 0 && !containsFold(sc.Types, string(f.Type)) {
+		return ExcludedType
+	}
 	if len(sc.Tags) > 0 {
-		found := false
 		for _, t := range f.Tags {
 			if containsFold(sc.Tags, t) {
-				found = true
+				return ""
+			}
+		}
+		return ExcludedTag
+	}
+	return ""
+}
+
+// StatesAdmitted lists the lifecycle states every scope admits, in
+// AllLifecycleStates order. Approved is always admitted.
+func StatesAdmitted(scopes ...TOCScope) []LifecycleState {
+	var out []LifecycleState
+	for _, st := range AllLifecycleStates {
+		ok := true
+		for _, sc := range scopes {
+			if !lifecycleAllowed(st, sc.IncludeStates) {
+				ok = false
 				break
 			}
 		}
-		if !found {
-			return false
+		if ok {
+			out = append(out, st)
 		}
 	}
-	return true
+	return out
+}
+
+// ExcludedTOCEntry is a TOC entry filtered out of an effective view, with the
+// reason code of the first check it failed.
+type ExcludedTOCEntry struct {
+	TOCEntry
+	Reason string `json:"reason"`
+}
+
+// TOCExplanation is the effective view of a set of scopes (#11202): the TOC
+// entries they admit and the entries they filter out, each list capped.
+type TOCExplanation struct {
+	Included         []TOCEntry         `json:"included"`
+	Excluded         []ExcludedTOCEntry `json:"excluded"`
+	IncludedTotal    int                `json:"included_total"`
+	ExcludedTotal    int                `json:"excluded_total"`
+	IncludedReturned int                `json:"included_returned"`
+	ExcludedReturned int                `json:"excluded_returned"`
+	Truncated        bool               `json:"truncated"`
+}
+
+// ExplainTOC reports which facts the intersection of scopes admits (built
+// exactly like BuildTOC) and which it excludes and why. When scopes disagree
+// the earliest reason in check order wins. Each list holds at most
+// ClampTOCLimit(limit) entries; Truncated is set when either was capped.
+// A fact whose slug is admitted from another layer is neither: it is shadowed
+// by precedence, not filtered by the scope.
+func ExplainTOC(facts []Fact, limit int, scopes ...TOCScope) TOCExplanation {
+	limit = ClampTOCLimit(limit)
+	var admitted []Fact
+	type rejected struct {
+		f      Fact
+		reason string
+	}
+	var out []rejected
+	for _, f := range facts {
+		if f.Slug == "" {
+			continue
+		}
+		if reason := combinedExclusion(f, scopes); reason != "" {
+			out = append(out, rejected{f, reason})
+			continue
+		}
+		admitted = append(admitted, f)
+	}
+	toc := BuildTOC(admitted, TOCScope{IncludeStates: AllLifecycleStates}, limit)
+	ex := TOCExplanation{
+		Included:         toc.Entries,
+		Excluded:         []ExcludedTOCEntry{},
+		IncludedTotal:    toc.Total,
+		IncludedReturned: toc.Returned,
+		Truncated:        toc.Truncated,
+	}
+
+	included := make(map[string]bool, len(admitted))
+	for _, f := range admitted {
+		included[f.Slug] = true
+	}
+	kept := out[:0]
+	for _, r := range out {
+		if !included[r.f.Slug] {
+			kept = append(kept, r)
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool {
+		a, b := kept[i].f, kept[j].f
+		if pa, pb := a.Layer.Precedence(), b.Layer.Precedence(); pa != pb {
+			return pa < pb
+		}
+		return a.Slug < b.Slug
+	})
+	ex.ExcludedTotal = len(kept)
+	for _, r := range kept {
+		if len(ex.Excluded) >= limit {
+			ex.Truncated = true
+			break
+		}
+		ex.Excluded = append(ex.Excluded, ExcludedTOCEntry{TOCEntry: tocEntry(r.f), Reason: r.reason})
+	}
+	ex.ExcludedReturned = len(ex.Excluded)
+	return ex
+}
+
+func combinedExclusion(f Fact, scopes []TOCScope) string {
+	best := -1
+	for _, sc := range scopes {
+		reason := sc.ExclusionReason(f)
+		if reason == "" {
+			continue
+		}
+		for i, r := range exclusionOrder {
+			if r == reason && (best < 0 || i < best) {
+				best = i
+			}
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return exclusionOrder[best]
 }
 
 func containsLayer(layers []LayerType, l LayerType) bool {
