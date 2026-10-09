@@ -154,11 +154,13 @@ func TestHandleAgentKickHistoryPage(t *testing.T) {
 		"kick log history",
 		"/api/agents/scanner/log",         // live-log link first
 		"/api/agents/scanner/kicks/" + id, // archived kick link
-		"download",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "download=1") || strings.Contains(body, ">download<") {
+		t.Fatalf("history page must not expose browser download links:\n%s", body)
 	}
 }
 

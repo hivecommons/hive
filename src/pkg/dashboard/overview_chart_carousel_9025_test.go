@@ -126,7 +126,7 @@ func TestOverviewCarouselControlsMovedToSettings9025(t *testing.T) {
 	}
 	for _, want := range []string{
 		"overview-chart-download",
-		"title=\"Download ${format}\"",
+		"data-action=\"overviewOpenExport\"",
 		"aria-label=\"${esc(csvTitle)}\"",
 	} {
 		if !strings.Contains(panel, want) {
