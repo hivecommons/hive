@@ -480,6 +480,13 @@ type RegistryEntry struct {
 	// data", never "zero reach". Carried forward across beats that omit it so
 	// a spoke restart does not blank the last real report.
 	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
+
+	// Compliance is the spoke's framework profile and latest posture-check
+	// summary (#11083), always the sanitized product of sanitizeCompliance.
+	// nil = the spoke has never reported compliance (old spoke); a non-nil
+	// value with no frameworks = compliance not configured. Carried forward
+	// across beats that omit it.
+	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -1646,6 +1653,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/hub/leaderboard", s.handleLeaderboard)
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
+	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	// Delegation-chain verification material (JWKS-equivalent). Registered
@@ -2101,6 +2109,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Component reach (#3993): sanitized + clipped, never the raw spoke
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
+		Compliance:     sanitizeCompliance(payload.Compliance),
 		// Per-repo output activity (hive-health): sanitized/clamped, never the
 		// raw payload. The collected-at + window travel with it so the verdict
 		// can age the summary.
@@ -2397,6 +2406,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// that gap. Same pattern as the fleet-stat counts above.
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
+			}
+			if entry.Compliance == nil && h.Compliance != nil {
+				entry.Compliance = h.Compliance
 			}
 			// Carry the last real repo-activity summary forward when this beat
 			// omits it (minimal upgrade-beat, or a spoke whose collector hasn't

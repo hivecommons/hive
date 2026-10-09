@@ -390,6 +390,15 @@
     .journey-gentle { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
     .journey-firm { background: rgba(244,199,95,0.15); color: #f4c75f; border: 1px solid rgba(244,199,95,0.3); }
     .journey-deprovision-warning { background: rgba(255,126,126,0.18); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.4); }
+    /* Compliance pill (#11083): tone classes instead of inline color so the
+       style ratchet keeps biting; the th-mid helper replaces an inline
+       vertical-align on the header cell. */
+    .compliance-pill-none { color: var(--muted); border: 1px solid var(--muted); }
+    .compliance-pill-pass { color: var(--green); border: 1px solid var(--green); }
+    .compliance-pill-warn { color: var(--yellow); border: 1px solid var(--yellow); }
+    .compliance-pill-fail { color: var(--red); border: 1px solid var(--red); }
+    .compliance-link { text-decoration: none; }
+    .th-mid { vertical-align: middle; }
     .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
     /* The relay badge marks a hive satisfying stage 2 through human
        contributors rather than an assigned method/model — deliberately its own
@@ -951,6 +960,31 @@
         var a = quadrantAxis(q, name);
         return QUADRANT_AXIS_LABELS[name] + (a.scored ? ' ' + a.score : ' not measured');
       }).join(', ');
+    }
+
+    /* complianceCell (#11083): pass-rate pill from the spoke's latest posture
+       run, linking to that spoke's Settings → Compliance tab when its dashboard
+       URL is known. Empty when the spoke has no framework profile selected. */
+    function complianceCell(h) {
+      var c = h && h.compliance;
+      if (!c || !c.frameworks || !c.frameworks.length) return '<span class="text-muted">—</span>';
+      var p = c.posture;
+      var decided = p ? (p.pass || 0) + (p.fail || 0) : 0;
+      var label = 'no run';
+      var tone = 'compliance-pill-none';
+      var tip = c.frameworks.join(', ') + ' — no posture run yet';
+      if (decided > 0) {
+        var pct = Math.round(100 * p.pass / decided);
+        label = pct + '%';
+        tone = p.fail === 0 ? 'compliance-pill-pass' : (pct >= 80 ? 'compliance-pill-warn' : 'compliance-pill-fail');
+        tip = c.frameworks.join(', ') + ' — ' + p.pass + ' pass, ' + p.fail + ' fail' + (p.lastRun ? ' (last run ' + p.lastRun + ')' : '');
+      }
+      var pill = '<span class="journey-badge ' + tone + '" title="' + escAttr(tip) + '">' + esc(label) + '</span>';
+      var fw = '<div class="fs-2xs text-muted">' + esc(c.frameworks.join(', ')) + '</div>';
+      if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
+        return '<a href="' + escAttr(h.dashboardUrl) + '#config/governor/Compliance" target="_blank" title="Open this hive&#39;s Settings → Compliance tab" class="compliance-link">' + pill + '</a>' + fw;
+      }
+      return pill + fw;
     }
 
     /* quadrantCell is the table column: the small kite plus its own hover
@@ -7244,7 +7278,7 @@
         //   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts kept)
         // Counted against the <th> cells in the header and the <td> cells emitted
         // below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 13;
+        var TOTAL_COLUMNS = 14;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -7397,6 +7431,7 @@
           /* QUADRANT: the small kite. Shape only at this size — the numbers
              live in its hover, which is the same chart drawn large. */
           '<td>' + quadrantCell(h) + '</td>' +
+          '<td>' + complianceCell(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -7405,8 +7440,8 @@
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 12 after the 15-to-9 fold (PROV, DRIFT,
          ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity), then 13 with the
-         Quadrant column. Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 13;
+         Quadrant column, 14 with Compliance. Must stay equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 14;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -7563,6 +7598,7 @@
            single axis is the point of the column: "weakest efficiency" turns
            the table into a worklist rather than a picture. */
         '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
+        '<th class="th-mid" title="Compliance framework profiles and the pass rate of the latest posture-check run; click the pill to open the hive&#39;s Compliance settings">Compliance</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
