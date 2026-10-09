@@ -64,17 +64,21 @@ func (c *StdioClient) CallTool(ctx context.Context, name string, args map[string
 		defer wg.Done()
 		client.readLoop()
 	}()
-	defer func() {
+	// Wait is what guarantees the stderr copy goroutine has drained the pipe.
+	shutdown := sync.OnceFunc(func() {
 		_ = stdin.Close()
 		_ = cmd.Wait()
 		wg.Wait()
-	}()
+	})
+	defer shutdown()
 	if _, err := client.request(ctx, "initialize", map[string]any{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "hive-vibe-kanban-extwork", "version": "1"}}); err != nil {
+		shutdown()
 		return nil, withStderr(err, stderr.String())
 	}
 	_ = client.notify("notifications/initialized", nil)
 	res, err := client.request(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
 	if err != nil {
+		shutdown()
 		return nil, withStderr(err, stderr.String())
 	}
 	return decodeToolResult(name, res)

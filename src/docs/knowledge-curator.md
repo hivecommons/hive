@@ -265,6 +265,7 @@ validation with an error naming the field.
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
 | `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
+| `sharepoint` | `drive_ids` and/or `site_ids` (comma-separated, at least one), `folder_path`, `include_files` (default `.md,.txt,.html,.htm`) | Reads document libraries and OneDrive drives through Microsoft Graph. A site contributes its default library. The first sync enumerates the drive with the `delta` endpoint and later syncs fetch only changes; files are downloaded via `/content` (HTML is converted to markdown) and items deleted upstream are marked deprecated. `auth` (required) supplies a Graph bearer token, for example from a client-credentials app registration with the `Sites.Read.All` / `Files.Read.All` application permission, or `Sites.Selected` granted per site for least privilege. docx/pdf files and modern site pages are not read yet. Cursor: JSON map of per-drive delta links. |
 
 ```yaml
 knowledge:
@@ -274,10 +275,20 @@ knowledge:
       layer: project
       scope:
         repos: acme/app, acme/docs
+
+    - name: team-sharepoint
+      type: sharepoint
+      layer: org
+      scope:
+        site_ids: contoso.sharepoint.com,<site-collection-id>,<site-id>
+        folder_path: Handbook
+        include_files: .md,.txt
+      auth:
+        env: GRAPH_TOKEN
 ```
 
-Notion, Confluence, SharePoint/OneDrive and Google Drive connectors land in
-#11070–#11073.
+Notion, Confluence and Google Drive connectors land in #11070, #11071 and
+#11073.
 
 ### Facts written by connectors
 
