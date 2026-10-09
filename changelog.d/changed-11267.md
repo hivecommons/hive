@@ -1,1 +1,1 @@
-- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue (#11267)
+- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue and matched their inner body padding (#11267, #11280)

@@ -4077,6 +4077,8 @@
     .review-subsection { display: grid; gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
     .review-subsection + .review-subsection { margin-top: var(--sp-7); }
     .review-subsection-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+    .review-subsection-body.dash-card-body { padding: var(--sp-4); }
+    .review-subsection-body > .review-queue-panel { padding: 0; }
     .review-subsection-title { font-size: var(--fs-md); font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
     .review-subsection-title .config-info { text-transform: none; letter-spacing: 0; margin-left: var(--sp-2); }
     .review-queue-count { font-size: var(--fs-xs); color: var(--muted); margin-left: var(--sp-4); }
@@ -4867,30 +4869,34 @@
         <div class="review-subsection-head">
           <div>
             <div class="review-subsection-title" id="review-pipeline-heading">Pipeline <span data-section-help="review-pipeline-subsection"></span></div>
-            <div class="review-pipeline-desc">Each open PR in the stage the review pipeline derived for it (<code>GET /api/review/pipeline</code>), with reviewers, P0–P3 findings, the fix-loop counter and the next action.</div>
           </div>
         </div>
-        <div class="review-pipeline-filters">
-          <select id="review-pipeline-repo" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="repo" data-arg-types="s,v" title="Filter by repo"><option value="">All repos</option></select>
-          <select id="review-pipeline-author" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="author" data-arg-types="s,v" title="Filter by author kind"><option value="">All authors</option><option value="agent">Agent</option><option value="contributor">Contributor</option></select>
-          <select id="review-pipeline-stage" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="stage" data-arg-types="s,v" title="Filter by stage"><option value="">All stages</option></select>
+        <div class="review-subsection-body dash-card-body" id="review-pipeline-body">
+          <div class="review-pipeline-desc">Each open PR in the stage the review pipeline derived for it (<code>GET /api/review/pipeline</code>), with reviewers, P0–P3 findings, the fix-loop counter and the next action.</div>
+          <div class="review-pipeline-filters">
+            <select id="review-pipeline-repo" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="repo" data-arg-types="s,v" title="Filter by repo"><option value="">All repos</option></select>
+            <select id="review-pipeline-author" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="author" data-arg-types="s,v" title="Filter by author kind"><option value="">All authors</option><option value="agent">Agent</option><option value="contributor">Contributor</option></select>
+            <select id="review-pipeline-stage" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="stage" data-arg-types="s,v" title="Filter by stage"><option value="">All stages</option></select>
+          </div>
+          <div id="review-pipeline-panel"><div class="loading">Loading review pipeline…</div></div>
         </div>
-        <div id="review-pipeline-panel"><div class="loading">Loading review pipeline…</div></div>
       </section>
       <section class="review-subsection" id="review-queue-subsection" aria-labelledby="review-queue-heading">
         <div class="review-subsection-head">
           <div>
             <div class="review-subsection-title" id="review-queue-heading">Queue</div>
-            <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
           </div>
         </div>
-        <div id="review-queue-panel" class="review-queue-panel">
-          <div class="loading">Loading review queue…</div>
-        </div>
-        <div id="review-queue-paging" class="review-queue-paging">
-          <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
-          <span id="review-queue-range" class="review-queue-range"></span>
-          <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
+        <div class="review-subsection-body dash-card-body" id="review-queue-body">
+          <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
+          <div id="review-queue-panel" class="review-queue-panel">
+            <div class="loading">Loading review queue…</div>
+          </div>
+          <div id="review-queue-paging" class="review-queue-paging">
+            <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
+            <span id="review-queue-range" class="review-queue-range"></span>
+            <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
+          </div>
         </div>
       </section>
     </div>
