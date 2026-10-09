@@ -24,13 +24,24 @@ func TestUpstreamWatchUIHasNoUndefinedCallees(t *testing.T) {
 		`case 'loadUpstreamWatch': loadUpstreamWatch(); break;`,
 		`if (tabId === 'Features') loadUpstreamWatch();`,
 		`/api/upstream-watch`,
+		`/api/config/upstream-watch`,
+		`case 'upstreamWatchToggle': upstreamWatchToggle(el); break;`,
+		`case 'upstreamWatchSaveInterval': upstreamWatchSaveInterval(); break;`,
+		`case 'upstreamWatchAddFork': upstreamWatchAddFork(); break;`,
+		`case 'upstreamWatchSaveRepo': upstreamWatchSaveRepo(el); break;`,
+		`case 'upstreamWatchRemoveRepo': upstreamWatchRemoveRepo(el); break;`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
 		}
 	}
 
-	for _, fn := range []string{"loadUpstreamWatch", "esc"} {
+	for _, fn := range []string{
+		"loadUpstreamWatch", "esc", "showToast", "hiveConfirm", "putUpstreamWatch",
+		"upstreamWatchControls", "upstreamWatchRepoEditor", "upstreamWatchBare",
+		"upstreamWatchToggle", "upstreamWatchSaveInterval", "upstreamWatchAddFork",
+		"upstreamWatchSaveRepo", "upstreamWatchRemoveRepo",
+	} {
 		defined := regexp.MustCompile(`(?:function\s+` + regexp.QuoteMeta(fn) + `\s*\(|(?:const|let|var)\s+` + regexp.QuoteMeta(fn) + `\s*=)`)
 		if !defined.MatchString(html) {
 			t.Errorf("index.html calls %s() from the upstream-watch UI but never defines it", fn)
@@ -45,6 +56,8 @@ func TestUpstreamWatchUIHasNoUndefinedCallees(t *testing.T) {
 		"repo.ported", "repo.dismissed", "repo.skipped", "repo.recent",
 		"it.upstream_ref", "it.upstream_url", "it.diff_url", "it.issue_number",
 		"it.issue_url", "it.state", "it.recorded_at",
+		"data.interval", "data.project_repos", "repo.config", "c.upstream",
+		"c.sources", "c.pr_labels", "c.max_issues_per_run", "c.label",
 	} {
 		if !strings.Contains(html, field) {
 			t.Errorf("upstream-watch panel never reads %s", field)

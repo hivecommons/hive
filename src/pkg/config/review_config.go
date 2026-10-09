@@ -76,11 +76,21 @@ func ValidateReviewModelsFallback(v string) bool {
 // value preserves existing behavior: merge eligibility does not require a
 // review-verdicts.json aggregate approval unless an operator opts in.
 type ReviewConfig struct {
-	RequireApproval    bool     `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
-	FanOut             bool     `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	FanOut          bool `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	// EventDriven lets pull_request webhooks trigger review dispatches when
+	// the review swarm is otherwise enabled. Nil keeps the safe derived default.
+	EventDriven *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
+	// EventDebounceS is the per-PR quiet period before webhook-triggered
+	// dispatch. Zero uses DefaultReviewEventDebounceS.
+	EventDebounceS     int      `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
 	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+	// Severity controls which review findings block vs. comment/backlog.
+	Severity ReviewSeverityConfig `yaml:"severity,omitempty" json:"severity,omitempty"`
+	// Backlog controls where non-blocking review findings are filed.
+	Backlog ReviewBacklogConfig `yaml:"backlog,omitempty" json:"backlog,omitempty"`
 	// PostComments tells review-swarm reviewers to publish their verdict as a
 	// PR comment via the `hive-review` relay, in addition to returning the
 	// JSON aggregate. Opt-in: the zero value keeps the verdict internal, which

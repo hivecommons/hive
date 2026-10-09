@@ -84,6 +84,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 		return
 	}
 	client.SetHoldLabels(b.githubHoldLabels())
+	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
 	// automerge sweep without a restart.
@@ -98,6 +99,11 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
+	client.SetPRDetailTTLFunc(func() time.Duration { return b.cfg.GitHub.PRDetailTTL() })
+	client.SetGraphQLPRBatchConfig(
+		func() bool { return b.cfg.GitHub.GraphQLPRBatchEnabled() },
+		func() int { return b.cfg.GitHub.EffectiveGraphQLPRBatchPageSize() },
+	)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		client.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))

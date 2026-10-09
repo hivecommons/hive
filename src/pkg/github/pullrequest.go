@@ -249,7 +249,7 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	// hive-merge relay) asked for the merge. A failed lookup falls through to
 	// the requested method.
 	if mergeMethod == "squash" {
-		if pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number); err == nil && IsForwardMergePR(pr) {
+		if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_pr"), owner, repo, number); err == nil && IsForwardMergePR(pr) {
 			c.logger.Warn("MergePR: forcing merge commit for forward-merge PR",
 				slog.String("requested", mergeMethod), slog.Int("number", number))
 			mergeMethod = "merge"
@@ -328,7 +328,7 @@ func isDefiniteMergeRefusal(err error) bool {
 // so the requester sees GitHub's own answer rather than the journal sentinel.
 // When the PR cannot be read the original refusal stands.
 func (c *Client) reconcileMerge(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
-	pr, _, getErr := c.client.PullRequests.Get(ctx, owner, repo, number)
+	pr, _, getErr := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:reconcile_merge"), owner, repo, number)
 	if getErr != nil {
 		return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, getErr)
 	}

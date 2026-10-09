@@ -1,0 +1,1 @@
+- Hub GitHub API polling now prefers a GitHub App installation identity and uses the shared ETag/rate-limit transport instead of spending an operator PAT by default.

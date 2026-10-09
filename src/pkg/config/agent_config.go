@@ -141,6 +141,10 @@ func ValidateKickTemplateName(v string) error {
 }
 
 type AgentConfig struct {
+	// GitHubAPIHourlyCap overrides agents.github_api_hourly_cap for this agent.
+	// Nil inherits the global value; 0 disables the cap for this agent.
+	GitHubAPIHourlyCap *int `yaml:"github_api_hourly_cap,omitempty" json:"github_api_hourly_cap,omitempty"`
+
 	ID           string             `yaml:"id" json:"id,omitempty"`
 	Backend      string             `yaml:"backend" json:"backend,omitempty"`
 	Model        string             `yaml:"model" json:"model,omitempty"`

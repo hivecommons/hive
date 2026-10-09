@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // AppSignedCommitsEnabled reports whether the PR-request watcher re-authors
@@ -48,6 +51,18 @@ type GitHubConfig struct {
 	OAuthClientID      string               `yaml:"oauth_client_id"`
 	Mentions           GitHubMentionsConfig `yaml:"mentions,omitempty" json:"mentions,omitempty"`
 	Actions            GitHubActionsConfig  `yaml:"actions,omitempty" json:"actions,omitempty"`
+	// PRDetailTTLS bounds reuse of per-PR detail GETs whose head SHA and
+	// updated_at still match the cheap /pulls list payload.
+	PRDetailTTLS int `yaml:"pr_detail_ttl_s,omitempty"`
+	// GraphQLPRBatch replaces per-PR detail/check-run fan-out during scans with
+	// one paginated GraphQL query per repository. Default ON (nil == true).
+	GraphQLPRBatch *bool `yaml:"graphql_pr_batch,omitempty" json:"graphql_pr_batch,omitempty"`
+	// GraphQLPRBatchPageSize controls the pullRequests(first:) page size.
+	// Zero uses DefaultGraphQLPRBatchPageSize.
+	GraphQLPRBatchPageSize int `yaml:"graphql_pr_batch_page_size,omitempty" json:"graphql_pr_batch_page_size,omitempty"`
+	// AgentReserveFloor reserves hourly GitHub REST calls for the hive itself
+	// before per-agent proxy budgets spend the remainder.
+	AgentReserveFloor int `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -69,6 +84,10 @@ type GitHubConfig struct {
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
 	APIURL string `yaml:"api_url"`
+	// APIReserve is the core REST quota floor where Hive sheds optional work.
+	APIReserve int `yaml:"api_reserve,omitempty"`
+	// APICritical is the lower core REST quota floor where Hive enters critical mode.
+	APICritical int `yaml:"api_critical,omitempty"`
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
@@ -147,6 +166,47 @@ type GitHubConfig struct {
 // spoke committed to App auth, failed to read a PEM that was never provisioned,
 // and exited before the HTTP listener bound — invisible from the dashboard.
 const PlaceholderAppID int64 = 999999999
+
+const (
+	// DefaultGitHubPRDetailTTL is the default freshness window for cached
+	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.
+	DefaultGitHubPRDetailTTL      = 30 * time.Minute
+	GitHubPRDetailTTLEnv          = "HIVE_GITHUB_PR_DETAIL_TTL"
+	DefaultGraphQLPRBatchPageSize = 50
+)
+
+func (g GitHubConfig) PRDetailTTL() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(GitHubPRDetailTTLEnv)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
+			return d
+		}
+		if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	if g.PRDetailTTLS > 0 {
+		return time.Duration(g.PRDetailTTLS) * time.Second
+	}
+	return DefaultGitHubPRDetailTTL
+}
+
+func (g GitHubConfig) GraphQLPRBatchEnabled() bool {
+	return g.GraphQLPRBatch == nil || *g.GraphQLPRBatch
+}
+
+func (g GitHubConfig) EffectiveGraphQLPRBatchPageSize() int {
+	return NormalizeGraphQLPRBatchPageSize(g.GraphQLPRBatchPageSize)
+}
+
+func NormalizeGraphQLPRBatchPageSize(n int) int {
+	if n <= 0 {
+		return DefaultGraphQLPRBatchPageSize
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
+}
 
 const (
 	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).

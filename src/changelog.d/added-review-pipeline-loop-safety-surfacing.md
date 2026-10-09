@@ -1,0 +1,1 @@
+- The review pipeline now warns when a PR is one fix cycle from its cap (or a review-bot thread is at its attempt cap) and offers a one-click "send to human" that applies `needs-human` with a single explanatory comment (`POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human`).

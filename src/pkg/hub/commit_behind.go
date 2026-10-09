@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -32,24 +35,27 @@ var (
 )
 
 // Keep this client's transport independent of the process-global default.
-// Some tests temporarily replace http.DefaultTransport; a background
-// commit-behind lookup may outlive the request that started it, so allowing
-// Client.Do to resolve a nil Transport through that mutable global races with
-// those tests.
+// hubGitHubHTTPClient honours a replaced http.DefaultTransport at call time;
+// a background commit-behind lookup may outlive the request that started it,
+// so reading that mutable global here would race with tests that swap it.
 var commitBehindHTTPClient = &http.Client{
-	Transport: http.DefaultTransport.(*http.Transport).Clone(),
+	Transport: hgithub.NewHTTPTransport(nil),
 	Timeout:   commitBehindCompareTimeout,
 }
 
 var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count int, known bool, err error) {
+	client := commitBehindHTTPClient
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "commit_behind"), commitBehindCompareTimeout)
+	defer cancel()
 	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
 		githubAPIBase, url.PathEscape(base), url.PathEscape(head))
-	req, err := http.NewRequest(http.MethodGet, compareURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, compareURL, nil)
 	if err != nil {
 		return 0, false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := commitBehindHTTPClient.Do(req)
+	authGitHubRequest(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, false, err
 	}

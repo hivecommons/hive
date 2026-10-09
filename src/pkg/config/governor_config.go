@@ -8,8 +8,12 @@ import (
 )
 
 type GovernorConfig struct {
-	Modes         map[string]ModeConfig `yaml:"modes"`
-	EvalIntervalS int                   `yaml:"eval_interval_s"`
+	Modes                      map[string]ModeConfig `yaml:"modes"`
+	EvalIntervalS              int                   `yaml:"eval_interval_s"`
+	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
+	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see

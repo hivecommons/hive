@@ -77,6 +77,10 @@ type UpstreamWatchRepo struct {
 	Skipped   int `json:"skipped"`
 	// Recent lists refs newest-first, capped at upstreamWatchRecentLimit.
 	Recent []UpstreamWatchItem `json:"recent,omitempty"`
+	// Config is the repo's upstream_watch.repos entry as configured, so the
+	// Features-tab editor can prefill it. Upstream above is the resolved
+	// value; Config.Upstream stays empty when the fork parent is used.
+	Config config.UpstreamWatchRepo `json:"config"`
 }
 
 // UpstreamWatchStatus is the GET /api/upstream-watch payload.
@@ -92,6 +96,12 @@ type UpstreamWatchStatus struct {
 	// than looking like "nothing has happened yet").
 	StateError string              `json:"state_error,omitempty"`
 	Repos      []UpstreamWatchRepo `json:"repos,omitempty"`
+	// Interval is upstream_watch.interval as a Go duration string, empty when
+	// unset (the default applies).
+	Interval string `json:"interval,omitempty"`
+	// ProjectRepos is project.repos: the only repos the editor may add, since
+	// validateUpstreamWatch rejects any other key.
+	ProjectRepos []string `json:"project_repos,omitempty"`
 }
 
 // handleUpstreamWatch serves the upstream-watch divergence view: per watched
@@ -99,7 +109,7 @@ type UpstreamWatchStatus struct {
 // been surfaced / ported / dismissed, and the recent refs with their fork
 // issue. It is strictly read-only — it reads the config and the state file the
 // eval-tick pass writes, and never polls GitHub, so it is cheap enough to sit
-// behind a panel refresh.
+// behind a panel refresh. Writes go through handleUpstreamWatchConfigPut.
 func (s *Server) handleUpstreamWatch(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -117,6 +127,10 @@ func (s *Server) handleUpstreamWatch(w http.ResponseWriter, r *http.Request) {
 		Configured: len(cfg.UpstreamWatch.Repos) > 0,
 		StatePath:  upstreamWatchStatePath,
 	}
+	if cfg.UpstreamWatch.Interval > 0 {
+		out.Interval = cfg.UpstreamWatch.Interval.String()
+	}
+	out.ProjectRepos = append(out.ProjectRepos, cfg.Project.Repos...)
 	state, err := upstreamwatch.NewFileStore(upstreamWatchStatePath).Load()
 	if err != nil {
 		out.StateError = err.Error()
@@ -139,7 +153,7 @@ func (s *Server) handleUpstreamWatch(w http.ResponseWriter, r *http.Request) {
 // configured at all".
 func upstreamWatchRepoView(cfg *config.Config, key string, state upstreamwatch.State) UpstreamWatchRepo {
 	rc := cfg.UpstreamWatch.Repos[key]
-	view := UpstreamWatchRepo{Repo: key, Upstream: strings.TrimSpace(rc.Upstream)}
+	view := UpstreamWatchRepo{Repo: key, Upstream: strings.TrimSpace(rc.Upstream), Config: rc}
 	sum, ok := state.Summary(key, upstreamWatchRecentLimit)
 	if !ok {
 		return view

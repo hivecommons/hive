@@ -84,7 +84,7 @@ func TestReviewBotsSettingsReadOnlyUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(raw)
-	start := strings.Index(html, ">External review bots <")
+	start := strings.Index(html, ">External review bots ")
 	if start < 0 {
 		t.Fatal("Review card must display the external review-bot settings")
 	}

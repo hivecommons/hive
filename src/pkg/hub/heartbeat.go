@@ -329,6 +329,7 @@ type HeartbeatPayload struct {
 	ComponentReach               *tracing.ReachReport            `json:"component_reach,omitempty"`
 	StatsStale                   bool                            `json:"stats_stale,omitempty"`
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
+	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
 }
 
 const (

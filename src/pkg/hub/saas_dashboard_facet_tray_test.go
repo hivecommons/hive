@@ -355,17 +355,17 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	//   DRIFT   → a dot on the Version cell (driftBadge, full hover preserved)
 	//   ACMM+JOURNEY  → one Maturity cell (both badges stacked, both sorts kept)
 	//   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts)
-	// The 13 <th>/<td> cells are: bulk, ⋮ menu, Hive, Location, Uptime, Version,
-	// Repos, Maturity, Agents, Tokens, Mode, Activity, Quadrant.
-	const wantColumns = 13
+	// The 14 <th>/<td> cells are: bulk, ⋮ menu, Hive, Location, Uptime, Version,
+	// Repos, Maturity, Agents, Tokens, Mode, Activity, Quadrant, Compliance.
+	const wantColumns = 14
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 13;",
-		"var TOTAL_COLUMNS_HEADER = 13;",
+		"var TOTAL_COLUMNS = 14;",
+		"var TOTAL_COLUMNS_HEADER = 14;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)

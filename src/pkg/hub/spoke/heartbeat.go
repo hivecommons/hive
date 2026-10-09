@@ -1066,6 +1066,12 @@ type HeartbeatPayload struct {
 	// spans yet, or one too old to report reach, sends nothing — which the
 	// hub reads as "no data", never as an error and never as zero reach.
 	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
+	// Compliance is the spoke's compliance profile (#11083): selected
+	// framework profiles plus the latest posture-check run summary. Always
+	// non-nil from a current spoke — an empty value means compliance is not
+	// configured and clears what the hub stored; nil (old spoke, minimal
+	// beat) leaves the hub's stored profile untouched.
+	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
@@ -1117,6 +1123,20 @@ type RouteExistenceCheck struct {
 	Host      string `json:"host,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// HeartbeatCompliance is the compliance block of a heartbeat.
+type HeartbeatCompliance struct {
+	Frameworks []string                    `json:"frameworks,omitempty"`
+	Posture    *HeartbeatCompliancePosture `json:"posture,omitempty"`
+}
+
+// HeartbeatCompliancePosture summarizes the latest posture-check run.
+// LastRun is RFC3339 UTC.
+type HeartbeatCompliancePosture struct {
+	Pass    int    `json:"pass"`
+	Fail    int    `json:"fail"`
+	LastRun string `json:"lastRun,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload

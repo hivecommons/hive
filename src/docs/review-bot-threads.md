@@ -88,8 +88,11 @@ key the Go side reads from the project file
   authored by the App bot — so there is no state file to drift.
 - `resolve_after_fix: false` makes the agent reply but leave the thread open.
 - `min_priority` optionally limits routing to `P0` through `P3` (P0 is most
-  urgent). `P1` includes P0/P1 and excludes P2/P3. Unset or unrecognised
-  values preserve routing of every finding. Case and surrounding whitespace
+  urgent). `P1` includes P0/P1 and excludes P2/P3. When neither `hive.yaml`
+  nor `hive-project.yaml` sets it, `review.severity.block_at` supplies the
+  threshold (see [review-swarm.md](review-swarm.md#blocking-line-reviewseverity-reviewbacklog)).
+  With no threshold anywhere, or an unrecognised value, every finding is
+  routed. Case and surrounding whitespace
   in the threshold are ignored.
   Only Codex's Markdown badge format, `![P0 Badge]` through `![P3 Badge]`,
   is recognised today, using the first matching badge in the first comment.

@@ -16,7 +16,7 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
@@ -43,6 +43,14 @@
 # the merge instead of waiting for reporter confirmation. Use it for code-sweep
 # findings and bugs the reporter cannot reproduce on demand. Only meaningful for
 # a create; the marker is not added twice if the body already carries it.
+#
+# --needs-decision parks the new issue on a maintainer decision
+# (hivecommons/hive#11215): the watcher applies the hive's configured
+# needs-decision label (hard_suppress_labels.needs_decision) itself, so the
+# issue gets the "What to reply" notice and stays out of the actionable queue
+# until the maintainer answers with /hive approve or /hive decision. Use it
+# whenever the body asks the maintainer to choose or approve before work can
+# start; do not name the label yourself. Only meaningful for a create.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -98,12 +106,13 @@ OVERRIDE_REASON=""
 PARENT=""
 BLOCKED_BY=()
 CLOSE_ON_MERGE=0
+NEEDS_DECISION=0
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -131,6 +140,7 @@ while [ $# -gt 0 ]; do
     --blocked-by=*) BLOCKED_BY+=("${1#*=}"); shift;;
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --close-on-merge) CLOSE_ON_MERGE=1; shift;;
+    --needs-decision) NEEDS_DECISION=1; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
@@ -173,6 +183,11 @@ fi
 
 if [ "$CLOSE_ON_MERGE" -eq 1 ] && [ "$KIND" != "issue" ]; then
   echo "hive-open-issue: --close-on-merge only applies when creating an issue; nothing was written." >&2
+  exit 2
+fi
+
+if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ]; then
+  echo "hive-open-issue: --needs-decision only applies when creating an issue; nothing was written." >&2
   exit 2
 fi
 
@@ -252,9 +267,9 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by = sys.argv[1:16]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision = sys.argv[1:17]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -316,6 +331,10 @@ else:
                 blockers.append(n)
     if blockers:
         req["blocked_by"] = blockers
+    # --needs-decision: the watcher applies the configured needs-decision
+    # label itself (hivecommons/hive#11215).
+    if needs_decision == "1":
+        req["needs_decision"] = True
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
@@ -344,6 +363,9 @@ else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
   if [ -n "$PARENT" ] && [ "$PARENT" != "0" ]; then
     echo "hive-open-issue: will link as a GitHub sub-issue of $REPO#$PARENT"
+  fi
+  if [ "$NEEDS_DECISION" -eq 1 ]; then
+    echo "hive-open-issue: will park the issue on a maintainer decision (needs-decision label)"
   fi
 fi
 echo "hive-open-issue: request $REQ_FILE (Hive validates and fulfills it within one watcher tick; result appears at ${REQ_FILE%.json}.result.json)"

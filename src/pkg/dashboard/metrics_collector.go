@@ -179,8 +179,10 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 	outreach := mc.collectOutreach(ctx)
 	metrics["outreach"] = outreach
 
-	ciMaintainer := mc.collectCoverage(ctx)
+	coveragePct, coverageOK := mc.measureCoverage(ctx)
+	ciMaintainer := ciMaintainerCoverageMetrics(coveragePct, coverageOK)
 	metrics["ci-maintainer"] = ciMaintainer
+	metrics[qualityAgentName] = qualityCoverageMetrics(coveragePct, coverageOK)
 
 	architect := mc.collectArchitect()
 	metrics["architect"] = architect
@@ -409,20 +411,48 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 // file from the hive's own repo via the App client. Nothing configured, or
 // anything unreadable, reports 0 — never a number for some OTHER project.
 func (mc *MetricsCollector) collectCoverage(ctx context.Context) map[string]any {
+	return ciMaintainerCoverageMetrics(mc.measureCoverage(ctx))
+}
+
+// measureCoverage reads the coverage badge once and reports the parsed
+// percentage, with ok=false when no badge is configured or it is unreadable.
+func (mc *MetricsCollector) measureCoverage(ctx context.Context) (int, bool) {
+	if mc.badgeURL == "" {
+		return 0, false
+	}
+	body, ok := mc.fetchCoverageBadge(ctx)
+	if !ok {
+		return 0, false
+	}
+	return parseCoverageBadge(body)
+}
+
+// ciMaintainerCoverageMetrics is the ci-maintainer card's coverage map; an
+// unknown reading stays 0 there for backwards compatibility.
+func ciMaintainerCoverageMetrics(pct int, ok bool) map[string]any {
 	result := map[string]any{
 		"coverage":       0,
 		"coverageTarget": coverageTarget,
 	}
-
-	if mc.badgeURL == "" {
-		return result
+	if ok {
+		result["coverage"] = pct
 	}
+	return result
+}
 
-	body, ok := mc.fetchCoverageBadge(ctx)
-	if !ok {
-		return result
+// qualityCoverageSource labels where the quality card's coverage comes from.
+const qualityCoverageSource = "coverage badge (HIVE_COVERAGE_BADGE_URL)"
+
+// qualityCoverageMetrics is the quality agent's view of the same coverage
+// reading (#11150): the figure the ACMM Level 3 coverage loop drives toward
+// the target. Unlike the ci-maintainer map, an unknown reading omits
+// "coverage" entirely so the card renders "—" instead of a fabricated 0%.
+func qualityCoverageMetrics(pct int, ok bool) map[string]any {
+	result := map[string]any{
+		"coverageTarget": coverageTarget,
+		"coverageSource": qualityCoverageSource,
 	}
-	if pct, ok := parseCoverageBadge(body); ok {
+	if ok {
 		result["coverage"] = pct
 	}
 	return result

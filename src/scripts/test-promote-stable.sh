@@ -427,6 +427,73 @@ else
   bad "no eligible build must hold with the next eligible_at (rc=${rc}; output: ${out})"
 fi
 
+# #11196: two successful docker.yml runs on the same commit share one short-SHA
+# tag, which carries only one run's generation. The newer duplicate must be
+# skipped (not held by the digest integrity gate) so the run that owns the tag
+# is evaluated and promoted.
+dup_run="$tmp/dup-run"
+mkdir -p "$dup_run/bin"
+cat > "$dup_run/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
+  ref=${@: -1}
+  if [[ $* == *'.Manifest.Digest'* ]]; then
+    case "$*" in
+      *:stable*) echo 'sha256:stable' ;;
+      *:dup1234*) echo 'sha256:dup' ;;
+      *) echo 'sha256:unknown' ;;
+    esac
+    exit 0
+  fi
+  case "$ref" in
+    *:stable) gen=100; rev=stable00 ;;
+    *@sha256:dup|*:dup1234) gen=259; rev=dup1234 ;;
+    *) gen=0; rev=unknown ;;
+  esac
+  printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s","org.opencontainers.image.revision":"%s"}}}\n' "$gen" "$rev"
+  exit 0
+fi
+printf '%q ' "$@" >> "$MOCK_CAPTURE"
+printf '\n' >> "$MOCK_CAPTURE"
+MOCK
+cat > "$dup_run/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+jqexpr=""
+prev=""
+for a in "$@"; do
+  [[ $prev == --jq ]] && jqexpr=$a
+  prev=$a
+done
+if [[ $1 == api && $* == *'actions/workflows/docker.yml/runs'* ]]; then
+  json='{"workflow_runs":[{"run_number":260,"head_sha":"dup1234","updated_at":"2033-05-16T12:00:00Z","status":"completed","conclusion":"success"},{"run_number":259,"head_sha":"dup1234","updated_at":"2033-05-16T11:00:00Z","status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == api && $* == *'head_sha='* ]]; then
+  json='{"workflow_runs":[{"status":"completed","conclusion":"success"}]}'
+  jq -r "$jqexpr" <<<"$json"
+  exit 0
+fi
+if [[ $1 == issue && $2 == list ]]; then
+  echo 0
+  exit 0
+fi
+echo '[]'
+MOCK
+cp "$select_build/bin/curl" "$dup_run/bin/curl"
+chmod +x "$dup_run/bin/docker" "$dup_run/bin/gh" "$dup_run/bin/curl"
+capture="$dup_run/create"
+out=$(PATH="$dup_run/bin:$PATH" MOCK_CAPTURE="$capture" REPO=example/repo OWNER=example IMAGE_PREFIX=ghcr.io/example IMAGE_NAMES=hive DRY_RUN=true NOW_EPOCH=2000000000 \
+  STABLE_PROMOTION_STATE_JSON='{"auto_promote":true,"maintained_hives":[{"id":"h","image_ref":"ghcr.io/example/hive:dup1234","git_hash":"dup1234","last_heartbeat_at":"2033-05-18T00:00:00Z","healthy":true,"crash_restarts_24h":0}]}' \
+  "$promoter" promote 2>&1) && rc=0 || rc=$?
+if [[ $rc -eq 0 ]] && grep -q '^decision=promote' <<<"$out" && grep -q 'generation 259 > 100' <<<"$out" && ! grep -q 'digest integrity gate' <<<"$out"; then
+  pass "duplicate docker.yml run on the same commit is skipped, and the run owning the tag is promoted"
+else
+  bad "duplicate run on the same commit must not hold the digest integrity gate (rc=${rc}; output: ${out})"
+fi
+
 echo
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL — stable promotion gate regressed."

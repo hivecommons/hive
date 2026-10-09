@@ -99,6 +99,21 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		ReviewBots *struct {
 			MinPriority *string `json:"min_priority"`
 		} `json:"review_bots"`
+		// Severity and Backlog are the 'Severity & backlog' settings
+		// (#11088). Pointer fields keep "absent means unchanged".
+		Severity *struct {
+			BlockAt      *string `json:"block_at"`
+			CommentBelow *bool   `json:"comment_below"`
+			BacklogBelow *bool   `json:"backlog_below"`
+		} `json:"severity"`
+		Backlog *struct {
+			Destination     *string   `json:"destination"`
+			ProjectColumnID *string   `json:"project_column_id"`
+			LinearState     *string   `json:"linear_state"`
+			JiraStatus      *string   `json:"jira_status"`
+			Labels          *[]string `json:"labels"`
+			MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
+		} `json:"backlog"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -128,6 +143,74 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.deps.Config
+
+	// Severity and backlog are staged on copies and validated with the same
+	// Validate the loader runs, so the error names the field and a bad value
+	// rejects the whole request before anything is mutated.
+	severity, backlog := cfg.Review.Severity, cfg.Review.Backlog
+	if body.Severity != nil {
+		if body.Severity.BlockAt != nil {
+			b, ok := config.NormalizeReviewSeverityBlockAt(*body.Severity.BlockAt)
+			if !ok {
+				jsonError(w, "review.severity.block_at must be P1, P2, P3, or empty", http.StatusBadRequest)
+				return
+			}
+			severity.BlockAt = b
+		}
+		if body.Severity.CommentBelow != nil {
+			v := *body.Severity.CommentBelow
+			severity.CommentBelow = &v
+		}
+		if body.Severity.BacklogBelow != nil {
+			v := *body.Severity.BacklogBelow
+			severity.BacklogBelow = &v
+		}
+	}
+	if body.Backlog != nil {
+		bl := body.Backlog
+		if bl.Destination != nil {
+			d, ok := config.NormalizeReviewBacklogDestination(*bl.Destination)
+			if !ok {
+				jsonError(w, "review.backlog.destination must be github_issue, github_project, linear, or jira", http.StatusBadRequest)
+				return
+			}
+			if !config.ReviewBacklogDestinationAllowed(d, cfg.Governor.WorkSource.Type) {
+				jsonError(w, "review.backlog.destination "+d+" requires the matching active work source (governor.work_source.type)", http.StatusBadRequest)
+				return
+			}
+			backlog.Destination = d
+		}
+		if bl.ProjectColumnID != nil {
+			backlog.ProjectColumnID = sanitizeString(*bl.ProjectColumnID)
+		}
+		if bl.LinearState != nil {
+			backlog.LinearState = sanitizeString(*bl.LinearState)
+		}
+		if bl.JiraStatus != nil {
+			backlog.JiraStatus = sanitizeString(*bl.JiraStatus)
+		}
+		if bl.Labels != nil {
+			labels := make([]string, 0, len(*bl.Labels))
+			for _, l := range *bl.Labels {
+				if l = sanitizeString(l); l != "" {
+					labels = append(labels, l)
+				}
+			}
+			backlog.Labels = labels
+		}
+		if bl.MaxPerPRPerDay != nil {
+			backlog.MaxPerPRPerDay = *bl.MaxPerPRPerDay
+		}
+	}
+	if err := severity.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := backlog.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Validated against the real resolver rather than a copy of its rules, so
 	// what the API accepts is exactly what the hive will load. Rejected here
 	// with the resolver's own message, which names the offending perspective.
@@ -271,6 +354,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Review.Recommendations = rec
 	}
+
+	cfg.Review.Severity = severity
+	cfg.Review.Backlog = backlog
 
 	// Written into hive.yaml's review_bots block only; EffectiveReviewBots
 	// lets it override the project file's threshold without copying the

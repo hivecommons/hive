@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hivecommons/hive/src/pkg/evidence/schema/v1.json",
+  "title": "Hive review evidence bundle, schema v1",
+  "type": "object",
+  "required": ["schema_version", "id", "repo", "number", "author", "base_sha", "head_sha", "policy", "ci", "created_at", "updated_at", "signed"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "v1"},
+    "id": {"type": "string", "minLength": 1},
+    "repo": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+    "number": {"type": "integer", "minimum": 1},
+    "author": {
+      "type": "object",
+      "required": ["login", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "login": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["human", "agent", "bot"]}
+      }
+    },
+    "base_sha": {"type": "string", "minLength": 1},
+    "head_sha": {"type": "string", "minLength": 1},
+    "previous_bundle_id": {"type": "string"},
+    "policy": {
+      "type": "object",
+      "required": ["acmm_level", "require_approval"],
+      "additionalProperties": false,
+      "properties": {
+        "acmm_level": {"type": "integer"},
+        "perspectives": {"type": "array", "items": {"type": "string"}},
+        "require_approval": {"type": "boolean"},
+        "min_priority": {"type": "string"},
+        "human_merge_paths": {"type": "array", "items": {"type": "string"}},
+        "sentinel_config_hash": {"type": "string"}
+      }
+    },
+    "verdicts": {"type": "array", "items": {"$ref": "#/$defs/verdict"}},
+    "posted_reviews": {"type": "array", "items": {"$ref": "#/$defs/posted_review"}},
+    "ci": {
+      "type": "object",
+      "required": ["captured_at"],
+      "additionalProperties": false,
+      "properties": {
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}},
+        "captured_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "sentinel": {"type": "array", "items": {"$ref": "#/$defs/sentinel_finding"}},
+    "human_actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "merge": {
+      "type": "object",
+      "required": ["actor", "method", "at", "sha"],
+      "additionalProperties": false,
+      "properties": {
+        "actor": {"type": "string", "minLength": 1},
+        "method": {"type": "string", "minLength": 1},
+        "at": {"type": "string", "format": "date-time"},
+        "sha": {"type": "string", "minLength": 1}
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "signed": {"type": "boolean"},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signature": {"type": "string"}
+  },
+  "$defs": {
+    "verdict": {
+      "type": "object",
+      "required": ["perspective", "model", "backend", "verdict", "confidence", "recorded_at"],
+      "additionalProperties": false,
+      "properties": {
+        "perspective": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "backend": {"type": "string"},
+        "verdict": {"type": "string", "minLength": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+        "recorded_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["path", "line", "severity", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "line": {"type": "integer", "minimum": 0},
+        "severity": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "posted_review": {
+      "type": "object",
+      "required": ["url", "head", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {"type": "string", "minLength": 1},
+        "head": {"type": "string", "minLength": 1},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["name", "conclusion"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "conclusion": {"type": "string", "minLength": 1},
+        "url": {"type": "string"}
+      }
+    },
+    "sentinel_finding": {
+      "type": "object",
+      "required": ["rule", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "rule": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "paths": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["actor", "kind", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "actor": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "detail": {"type": "string"},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

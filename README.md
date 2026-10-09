@@ -520,7 +520,7 @@ Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control 
 
 Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with the literal `hold` level-gate label), or full (auto-merge). The dashboard `hive-pause/<hive-id>` label is a separate manual hold; `hive/<hive-id>` is provenance only. See `src/docs/acmm-policy-matrix.md` for the full matrix and `src/docs/labels-and-control-signals.md` for label behavior. Browse the [documentation map](src/docs/documentation-map.md) for operations, contributor relay, snapshots, health checks, and design guides. Questions and newcomer help are welcome in [Join our Discord](https://hivecommons.dev/discord).
 
-Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
+Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [review evidence bundle](src/docs/review-evidence.md) and its [SOC 2 control mapping (not a compliance claim)](src/docs/soc2-control-mapping.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
 
 
 ### Recent shipped capabilities
@@ -549,7 +549,7 @@ flowchart LR
     dash["Dashboard :3001"] -.->|"SSE"| gov
 ```
 
-**See [src/docs/architecture.md](src/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](src/docs/trajectory-review.md), [dashboard health checks](src/docs/health-checks.md), [sandbox guardrails](src/docs/sandbox-isolation.md), [manual provisioning](src/docs/manual-provisioning.md), [cross-cluster migration](src/docs/cross-cluster-migration.md), and [config layering](src/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
+**See [src/docs/architecture.md](src/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](src/docs/trajectory-review.md), [dashboard health checks](src/docs/health-checks.md), [sandbox guardrails](src/docs/sandbox-isolation.md), [compliance controls](src/docs/compliance.md) (framework control mapping; not a certification), [manual provisioning](src/docs/manual-provisioning.md), [cross-cluster migration](src/docs/cross-cluster-migration.md), and [config layering](src/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
 
 See also the [roadmap](ROADMAP.md) (release-line trajectory, with the [detailed near-term plan](src/docs/roadmap.md)), the [upgrade guide](UPGRADE.md), the [documentation map](src/docs/documentation-map.md), and the [landscape comparison](src/docs/landscape.md) for community-facing documentation and positioning.
 
@@ -640,3 +640,7 @@ Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. 
 ---
 
 Apache 2.0
+
+Hive is a [Cloud Native Computing Foundation](https://www.cncf.io/) sandbox project candidate; onboarding status is tracked in [src/docs/cncf-sandbox-onboarding.md](src/docs/cncf-sandbox-onboarding.md). This does not imply CNCF acceptance or endorsement.
+
+Copyright The Linux Foundation and Hive contributors. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see the [Linux Foundation Trademark Usage page](https://www.linuxfoundation.org/legal/trademark-usage). Hive project names and logos are used in accordance with that policy once ownership is transferred to the Linux Foundation/CNCF.

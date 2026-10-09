@@ -130,6 +130,14 @@ Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
 must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Closes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
 
+**Park an issue that needs the maintainer's call.** If the issue body asks the
+maintainer to choose between options, or to approve before work can start, add
+`--needs-decision` to the issue-create command below (it is relayed to
+`hive-open-issue`). Hive then applies its configured needs-decision label
+itself, posts the "What to reply" notice offering `/hive approve` and
+`/hive decision`, and keeps the issue out of the work queue until the
+maintainer answers. Use the flag; do not name the label yourself.
+
 ${WRITING_GUIDE}
 
 ```bash
@@ -200,6 +208,7 @@ Priority: 0 (CI broken/blocking), 1 (persistent failure/coverage drop), 2 (flaky
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". A turn spent waiting is a turn the rest of the
+- If `gh` returns 429 'hourly cap reached', stop all GitHub reads for this session and finish with local work.
 work list did not get. The hive's automerge sweep merges your PR the moment its
 checks are green — waiting buys nothing.
 

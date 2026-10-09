@@ -1252,6 +1252,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // dereference b at call time, so bootConfig wires them before the
 // collaborators exist; tests that drive a single phase call this directly.
 func (b *boot) wireBootClosures() {
+	b.installReviewEvents()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1377,18 +1378,41 @@ func (b *boot) wireBootClosures() {
 		return out
 	}
 
+	var ownerHeartbeatTokenPath string
+	var ownerHeartbeatTokenMTime time.Time
+	var ownerHeartbeatTokenSize int64
+	var ownerHeartbeatLogin string
+	var ownerHeartbeatMu sync.Mutex
 	b.ownerForHeartbeat = func() string {
-		if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
-			tok := strings.TrimSpace(string(td))
-			if tok != "" {
-				// gh-user-token is a github.com OAuth token — validate its identity against github.com,
-				// not the (possibly GHE) repo host.
-				if u, err := github.ValidateToken(tok, b.cfg.GitHub.OAuthAPIURL()); err == nil {
-					return u.Login
+		ownerHeartbeatMu.Lock()
+		defer ownerHeartbeatMu.Unlock()
+		const tokenPath = "/data/gh-user-token"
+		st, err := os.Stat(tokenPath)
+		if err == nil && tokenPath == ownerHeartbeatTokenPath && st.ModTime().Equal(ownerHeartbeatTokenMTime) && st.Size() == ownerHeartbeatTokenSize {
+			return ownerHeartbeatLogin
+		}
+		ownerHeartbeatTokenPath = tokenPath
+		if err == nil {
+			ownerHeartbeatTokenMTime = st.ModTime()
+			ownerHeartbeatTokenSize = st.Size()
+		} else {
+			ownerHeartbeatTokenMTime = time.Time{}
+			ownerHeartbeatTokenSize = 0
+		}
+		ownerHeartbeatLogin = ""
+		if err == nil {
+			if td, err := os.ReadFile(tokenPath); err == nil {
+				tok := strings.TrimSpace(string(td))
+				if tok != "" {
+					// gh-user-token is a github.com OAuth token — validate its identity against github.com,
+					// not the (possibly GHE) repo host.
+					if u, err := github.ValidateTokenCached(tok, b.cfg.GitHub.OAuthAPIURL()); err == nil {
+						ownerHeartbeatLogin = u.Login
+					}
 				}
 			}
 		}
-		return ""
+		return ownerHeartbeatLogin
 	}
 
 	b.dashboardURLForHeartbeat = func() string {
@@ -1429,6 +1453,7 @@ func (b *boot) wireBootClosures() {
 			},
 			Governor:          b.gov,
 			GHClient:          b.ghClient,
+			ReviewEvents:      b.reviewEvents,
 			GHAppAuth:         b.appAuth,
 			GHTokenScopes:     b.ghAuth.TokenScopes,
 			Tokens:            b.tokenCollector,
@@ -1448,6 +1473,8 @@ func (b *boot) wireBootClosures() {
 			Activity:              b.activityCollector,
 			RepoCost:              b.repoCostCollector,
 			BeadSynthesizer:       b.beadSynth,
+			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
+			KnowledgePublish:      b.knowledgePublishRuntime(),
 			BeadStores:            b.beadStores,
 			BeadStoreLoadFailures: b.beadStoreLoadFailures,
 			AuditLedger:           auditLedger,
@@ -3019,6 +3046,12 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
 	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
 	deps.startContributeMetrics(b.ctx, b.dashSrv)
+	// Compliance posture checks (#11079): a pass every
+	// compliance.posture_checks.interval while a framework is selected, with
+	// the history persisted on the /data PVC.
+	if deps.startCompliancePosture != nil {
+		deps.startCompliancePosture(b.ctx, b.dashSrv)
+	}
 	b.refreshDashboard = func() {
 		// Capture the mutation epoch BEFORE reading any state: if a mutation
 		// (e.g. a restart-count or budget-window reset) lands while this
@@ -3194,6 +3227,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		b.knowledgeAPIFallback = true
 		b.logger.Info("auto-enabled file-based knowledge API")
 	}
+	b.bootKnowledgeConnectors(deps)
 	if len(b.beadStores) > 0 {
 		synthVaultPath := b.beadSynthVaultPath()
 		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {
@@ -3253,6 +3287,10 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// Generated repository code maps (#11106); opt-in, connects its vault
+	// before stores are registered with the primer below.
+	b.startCodeMaps()
+
 	// Register everything connected above with the boot-time primer. With
 	// knowledge.enabled false there is none, and the stores are only primed
 	// once the dashboard toggle builds one (#9231).
@@ -3280,6 +3318,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			"hint", "set knowledge.curator.enabled: true to opt in",
 		)
 	}
+	// After the promotion scheduler so a promotion sweep can trigger a publish.
+	b.bootKnowledgePublish(deps, nil)
 
 	// Open the graph store in a background goroutine. NewGraphStore acquires
 	// a SQLite file lock that blocks if the old pod still holds it. Deferring
@@ -4127,6 +4167,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
+		if b.agentMgr != nil {
+			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
+		}
 		dashboard.SetProxyViolationsProvider(b.githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
@@ -5023,6 +5067,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
 				ComponentReach: tracing.ReachSnapshot(),
+				// Compliance profile + latest posture pass/fail (#11083); an
+				// empty block when compliance is not configured.
+				Compliance: b.dashSrv.ComplianceHeartbeat(),
 			}
 
 		}, heartbeatSendInterval, b.logger,
@@ -5975,9 +6022,10 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	b.logger.Info("entering governor loop", "interval_seconds", b.cfg.Governor.EvalIntervalS)
-	lastEvalInterval := b.cfg.Governor.EvalIntervalS
-	ticker := deps.newTicker(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
+	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
+	lastEvalInterval := initialEvalInterval
+	ticker := deps.newTicker(initialEvalInterval)
 	defer ticker.Stop()
 
 	var agentTickCh <-chan time.Time
@@ -6038,6 +6086,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 	}
+	b.evalCycles++
 	deps.runEval(b, nil)
 	deps.runRotation(b)
 	if b.wd != nil {
@@ -6046,6 +6095,104 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	deps.runSweeps(b)
 	deps.persist(b)
 
+	// tick is one governor pass. The cadence ticker runs it, and so does a
+	// review webhook wake (hivecommons/hive#11091) so a pushed PR is planned
+	// now instead of at the next cadence, under exactly the same gates.
+	tick := func() {
+		b.cfgReloadMu.Lock()
+		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
+		for _, name := range restarted {
+			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
+		}
+		// If brainstorm crashed during inception, re-kick via SendKick.
+		// SendKick waits for the CLI to be ready and sends the message
+		// If brainstorm crashed during inception, re-kick with bootstrap.
+		// The table parser in the watcher will catch questions from the
+		// agent's output even if bd create doesn't execute.
+		for _, name := range restarted {
+			if name == "brainstorm" && b.inceptionEngine != nil {
+				if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
+					msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
+					if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
+						b.logger.Warn("inception re-kick after crash failed", "error", err)
+					} else {
+						b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
+						b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
+					}
+					b.gov.RecordKick("brainstorm")
+				}
+			}
+		}
+		// Watchdog sweep (RFC #4665): synchronous but bounded — every
+		// probe carries a deadline and restarts run detached under a hard
+		// timeout, so a wedged agent can never stall this tick. Tick
+		// self-gates to watchdog.probe_interval_s.
+		//
+		// It runs BEFORE runEvalCycle so agents it revived join this
+		// cycle's resume-kick list rather than waiting a full eval
+		// interval. Restarts are detached, so a given sweep's completions
+		// are usually collected on the next pass — TakeRestarted drains
+		// whatever has finished, and the governor gate gets the final say
+		// either way.
+		if b.wd != nil {
+			// Re-resolve the mode each sweep so a change saved from the
+			// dashboard (or the fleet-wide kill switch being engaged)
+			// takes effect without a restart — and so dead-session
+			// ownership moves with it. Without this, leaving heal via the
+			// settings page would stop the watchdog restarting while the
+			// manager's crash loop was still standing down: a window in
+			// which NEITHER recovers a dead agent.
+			if s, errs := watchdog.SettingsFrom(b.cfg.Governor.Watchdog); s.Mode != b.wd.Mode() {
+				for _, e := range errs {
+					b.logger.Warn("watchdog config problem", "error", e)
+				}
+				b.logger.Info("watchdog mode changed", "from", string(b.wd.Mode()), "to", string(s.Mode))
+				b.dashSrv.AuditLog("system", "watchdog-mode", "from="+string(b.wd.Mode())+", to="+string(s.Mode), "")
+				b.wd.SetSettings(s)
+				b.agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
+			}
+			b.wd.Tick(b.ctx)
+			for _, name := range b.wd.TakeRestarted() {
+				b.dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
+				restarted = append(restarted, name)
+			}
+		}
+		b.evalCycles++
+		deps.runEval(b, restarted)
+		deps.runRotation(b)
+		deps.runSweeps(b)
+		// Trajectory review runs after the eval cycle (so kicks/intents are
+		// current) on its own cadence, gated by Due().
+		if b.trajLane != nil && b.trajLane.Due(time.Now()) {
+			b.trajLane.Run(b.ctx)
+		}
+		// Stall-replan runs on the same tick, gated by its own Due() cadence.
+		// It is synchronous and adds no goroutine; kicks go through the same
+		// out-of-band SendKick path as the eval cycle above.
+		if b.replanLane != nil && b.replanLane.Due(time.Now()) {
+			refs, coveredRepos := activeIssueRefsFromLastActionable(b.lastActionable.Load())
+			b.replanLane.SetActiveIssueRefs(refs, coveredRepos)
+			if n := b.replanLane.Run(b.ctx); n > 0 {
+				b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
+			}
+		}
+		if b.retroLane != nil && b.retroLane.Due(time.Now()) {
+			if n := b.retroLane.Run(b.ctx); n > 0 {
+				b.logger.Info("retro lane filed advisory beads", "findings", n)
+			}
+		}
+		deps.persist(b)
+		effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+		if effectiveEvalInterval != lastEvalInterval {
+			b.logger.Info("eval interval changed, resetting ticker",
+				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+			ticker.Reset(effectiveEvalInterval)
+			lastEvalInterval = effectiveEvalInterval
+		}
+		b.cfgReloadMu.Unlock()
+	}
+	b.startReviewEvents()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -6053,93 +6200,10 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
-			b.cfgReloadMu.Lock()
-			restarted := deps.restartCrashed(b.ctx, b.agentMgr)
-			for _, name := range restarted {
-				b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
-			}
-			// If brainstorm crashed during inception, re-kick via SendKick.
-			// SendKick waits for the CLI to be ready and sends the message
-			// If brainstorm crashed during inception, re-kick with bootstrap.
-			// The table parser in the watcher will catch questions from the
-			// agent's output even if bd create doesn't execute.
-			for _, name := range restarted {
-				if name == "brainstorm" && b.inceptionEngine != nil {
-					if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
-						msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
-						if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
-							b.logger.Warn("inception re-kick after crash failed", "error", err)
-						} else {
-							b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
-							b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
-						}
-						b.gov.RecordKick("brainstorm")
-					}
-				}
-			}
-			// Watchdog sweep (RFC #4665): synchronous but bounded — every
-			// probe carries a deadline and restarts run detached under a hard
-			// timeout, so a wedged agent can never stall this tick. Tick
-			// self-gates to watchdog.probe_interval_s.
-			//
-			// It runs BEFORE runEvalCycle so agents it revived join this
-			// cycle's resume-kick list rather than waiting a full eval
-			// interval. Restarts are detached, so a given sweep's completions
-			// are usually collected on the next pass — TakeRestarted drains
-			// whatever has finished, and the governor gate gets the final say
-			// either way.
-			if b.wd != nil {
-				// Re-resolve the mode each sweep so a change saved from the
-				// dashboard (or the fleet-wide kill switch being engaged)
-				// takes effect without a restart — and so dead-session
-				// ownership moves with it. Without this, leaving heal via the
-				// settings page would stop the watchdog restarting while the
-				// manager's crash loop was still standing down: a window in
-				// which NEITHER recovers a dead agent.
-				if s, errs := watchdog.SettingsFrom(b.cfg.Governor.Watchdog); s.Mode != b.wd.Mode() {
-					for _, e := range errs {
-						b.logger.Warn("watchdog config problem", "error", e)
-					}
-					b.logger.Info("watchdog mode changed", "from", string(b.wd.Mode()), "to", string(s.Mode))
-					b.dashSrv.AuditLog("system", "watchdog-mode", "from="+string(b.wd.Mode())+", to="+string(s.Mode), "")
-					b.wd.SetSettings(s)
-					b.agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
-				}
-				b.wd.Tick(b.ctx)
-				for _, name := range b.wd.TakeRestarted() {
-					b.dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
-					restarted = append(restarted, name)
-				}
-			}
-			deps.runEval(b, restarted)
-			deps.runRotation(b)
-			deps.runSweeps(b)
-			// Trajectory review runs after the eval cycle (so kicks/intents are
-			// current) on its own cadence, gated by Due().
-			if b.trajLane != nil && b.trajLane.Due(time.Now()) {
-				b.trajLane.Run(b.ctx)
-			}
-			// Stall-replan runs on the same tick, gated by its own Due() cadence.
-			// It is synchronous and adds no goroutine; kicks go through the same
-			// out-of-band SendKick path as the eval cycle above.
-			if b.replanLane != nil && b.replanLane.Due(time.Now()) {
-				if n := b.replanLane.Run(b.ctx); n > 0 {
-					b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
-				}
-			}
-			if b.retroLane != nil && b.retroLane.Due(time.Now()) {
-				if n := b.retroLane.Run(b.ctx); n > 0 {
-					b.logger.Info("retro lane filed advisory beads", "findings", n)
-				}
-			}
-			deps.persist(b)
-			if b.cfg.Governor.EvalIntervalS != lastEvalInterval && b.cfg.Governor.EvalIntervalS > 0 {
-				b.logger.Info("eval interval changed, resetting ticker",
-					"from", lastEvalInterval, "to", b.cfg.Governor.EvalIntervalS)
-				ticker.Reset(time.Duration(b.cfg.Governor.EvalIntervalS) * time.Second)
-				lastEvalInterval = b.cfg.Governor.EvalIntervalS
-			}
-			b.cfgReloadMu.Unlock()
+			tick()
+		case <-b.reviewWake:
+			b.logger.Info("review webhook wake: running an early eval cycle")
+			tick()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
@@ -6207,6 +6271,8 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
 
+var evalAPIBudgetCycle atomic.Uint64
+
 // applyBudgetAlerts is a thin wrapper around spokealerts.ApplyBudget, kept so
 // call sites in this file do not need the package-qualified name (same
 // pattern as applyModeUnscheduledAlert below).
@@ -6229,6 +6295,32 @@ func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 
 func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 	spokealerts.ApplyModeUnscheduled(gov, dashSrv)
+}
+
+func activeIssueRefsFromLastActionable(actionable *github.ActionableResult) (map[string]struct{}, map[string]struct{}) {
+	if actionable == nil {
+		return nil, nil
+	}
+	refs := make(map[string]struct{})
+	coveredRepos := make(map[string]struct{})
+	for repo := range actionable.TotalByRepo {
+		coveredRepos[repo] = struct{}{}
+	}
+	for _, issue := range actionable.Issues.Items {
+		if ref := planning.IssueRef(issue); ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	for _, held := range actionable.Hold.Items {
+		if held.Type != "issue" || held.Repo == "" || held.Number <= 0 {
+			continue
+		}
+		ref := planning.IssueRef(github.Issue{Repo: held.Repo, Number: held.Number, Title: held.Title})
+		if ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	return refs, coveredRepos
 }
 
 // agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
@@ -6744,6 +6836,10 @@ func runEvalCycle(
 		return
 	}
 
+	budgetMode, _ := ghClient.APIBudgetMode()
+	budgetDecision := decideEvalBudgetWork(budgetMode, cfg.Governor.OptionalSweepEveryNCycles, evalAPIBudgetCycle.Add(1))
+	ghClient.RecordAPIBudgetSkippedSteps(budgetDecision.SkippedSteps)
+
 	// Re-ensure the pinned advisory issue whenever it is still unresolved, not
 	// only while the App banner is up (#4167). The startup ensure can fail for
 	// reasons that deliberately do NOT raise that banner — a rate limit, a 5xx,
@@ -6763,8 +6859,11 @@ func runEvalCycle(
 	if ghClient != nil {
 		advisoryEnsureDepsForCycle.ensure = ghClient.EnsureAdvisoryIssue
 	}
-	advisoryEnsureErr := ensurePinnedAdvisoryIssue(
-		ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+	advisoryEnsureErr := error(nil)
+	if !budgetDecision.SkipOptional {
+		advisoryEnsureErr = ensurePinnedAdvisoryIssue(
+			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+	}
 
 	enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
 	actionable, err := ghClient.EnumerateActionable(enumCtx)
@@ -6792,17 +6891,23 @@ func runEvalCycle(
 	// red and no agent was ever told to fix it (hivecommons/hive#7438). This
 	// enriches the held list ONLY for the repair path — held PRs still never
 	// reach the merge sweep, escalation or the queue counts.
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	if budgetMode != github.APIBudgetCritical {
+		ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	}
 	// Stale drafts sit in the same dashboard PR column; they get the
 	// review/link signals only — no mergeability or check-run fetches, a
 	// draft is not a merge candidate (hivecommons/hive#8968).
-	ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	if !budgetDecision.SkipOptional {
+		ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	}
 
 	// Publish the human-facing "what should I merge next?" digest. This reads
 	// the PR set enumerated and CI-enriched immediately above, so it must stay
 	// after those two calls: Mergeable and the failing-check names it sorts on
 	// are populated by EnrichCIStatus, not by EnumerateActionable.
-	postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
+	if !budgetDecision.SkipOptional {
+		postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
+	}
 
 	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
 	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
@@ -6817,7 +6922,9 @@ func runEvalCycle(
 	// start, and the agent — having no memory of the PR it just filed — files
 	// another. Backed by a PVC ledger so it survives those restarts, and fails
 	// closed (keeps the last known claims) when the GitHub API is unavailable.
-	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
+	if !budgetDecision.SkipOptional {
+		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
+	}
 
 	// PR review queue (#9590): stamp each PR's rank, priority and reasons
 	// onto the snapshot so last-actionable.json carries them next to
@@ -6838,7 +6945,10 @@ func runEvalCycle(
 	// flooding them (#5656).
 	recordEnumeratedIssues(ctx, dashSrv, actionable)
 
-	escalatedPRs := runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+	escalatedPRs := map[string]bool{}
+	if !budgetDecision.SkipOptional {
+		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+	}
 	runWaitEscalationSweep(cfg, dashSrv, logger)
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
@@ -6869,7 +6979,9 @@ func runEvalCycle(
 	// review-threads.json, attributed to the agent that opened the PR the
 	// same way ci-failing.json is, so the scheduler can route each PR back
 	// to its author for a fix + in-thread replies before any new work.
-	writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+	if !budgetDecision.SkipOptional {
+		writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+	}
 
 	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
 	// CI failures, changes-requested reviews and new review-bot threads on a
@@ -6906,19 +7018,21 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
-	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
-		PrimaryRepo:     cfg.Project.PrimaryRepo,
-		AIAuthor:        cfg.Project.AIAuthor,
-		InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
-	})
-	if shaErr != nil {
-		logger.Warn("SHA hold enforcement failed", "error", shaErr)
-	} else {
-		logger.Info("SHA hold enforcement complete",
-			"held", shaResult.Held,
-			"unheld", shaResult.Unheld,
-			"skipped", shaResult.Skipped,
-		)
+	if !budgetDecision.SkipOptional {
+		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
+			PrimaryRepo:     cfg.Project.PrimaryRepo,
+			AIAuthor:        cfg.Project.AIAuthor,
+			InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+		})
+		if shaErr != nil {
+			logger.Warn("SHA hold enforcement failed", "error", shaErr)
+		} else {
+			logger.Info("SHA hold enforcement complete",
+				"held", shaResult.Held,
+				"unheld", shaResult.Unheld,
+				"skipped", shaResult.Skipped,
+			)
+		}
 	}
 
 	// Refresh budget spend from lifetime token totals before Evaluate so
@@ -9245,6 +9359,12 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
 	})
+	client.SetReviewBacklogRouting(func() github.ReviewBacklogRouting {
+		return reviewBacklogRouting(client, cfg, logger)
+	})
+	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
+		return reviewEvidenceSettings(cfg, repo)
+	})
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.
@@ -9255,6 +9375,22 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },
 	)
+}
+
+// reviewBacklogRouting resolves review.severity / review.backlog and the
+// backlog sink for the active work source (hivecommons/hive#11089). A
+// destination whose work source cannot be built falls back to GitHub issues;
+// the reason is logged so the operator can fix the work-source config.
+func reviewBacklogRouting(client *github.Client, cfg *config.Config, logger *slog.Logger) github.ReviewBacklogRouting {
+	ghToken := cfg.GitHub.Token
+	if ghToken == "" {
+		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	}
+	sink, err := worksource.NewReviewBacklogSink(cfg.Governor.WorkSource, cfg.Review.Backlog, client, ghToken, cfg.Project.Org, logger)
+	if err != nil && logger != nil {
+		logger.Warn("review backlog: destination unavailable, filing GitHub issues", "error", err)
+	}
+	return github.ReviewBacklogRouting{Severity: cfg.Review.Severity, Backlog: cfg.Review.Backlog, Sink: sink}
 }
 
 // installReviewBots installs classification.review_bots on a (possibly
@@ -9538,6 +9674,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			ScopeContract: pr.ScopeContract,
 		})
 	}
+	// PRs a review webhook just fired for go first, so the early eval cycle
+	// it triggered spends its review budget on them (hivecommons/hive#11091).
+	prs = prioritizeEventPRs(prs, activeReviewEvents.Load())
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
 	for name, ac := range cfg.EnabledAgents() {
 		agents = append(agents, review.AgentCapability{

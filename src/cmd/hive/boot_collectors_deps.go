@@ -35,6 +35,7 @@ type bootCollectorsDeps struct {
 	enablePersistence      func(name string, p pvcPersister, path string)
 	lookupTokenLogin       func(token, apiURL string) (string, error)
 	startContributeMetrics func(ctx context.Context, srv *dashboard.Server)
+	startCompliancePosture func(ctx context.Context, srv *dashboard.Server)
 	readLastActionable     func() ([]byte, error)
 }
 
@@ -51,6 +52,7 @@ func defaultBootCollectorsDeps() bootCollectorsDeps {
 			return botUser.Login, nil
 		},
 		startContributeMetrics: func(ctx context.Context, srv *dashboard.Server) { srv.StartContributeMetrics(ctx) },
+		startCompliancePosture: func(ctx context.Context, srv *dashboard.Server) { srv.StartCompliancePosture(ctx) },
 		readLastActionable:     func() ([]byte, error) { return os.ReadFile(lastActionablePath) },
 	}
 }

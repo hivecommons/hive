@@ -179,3 +179,23 @@ func TestNormalizeGHRateLimitForDisplayTreatsResetPassedAsRestored(t *testing.T)
 		t.Fatalf("remaining fraction = %v, want 1", fraction)
 	}
 }
+
+func TestBuildGHRateLimitsCarriesAPIBudgetShape(t *testing.T) {
+	deps := testDeps(t)
+	srv := rateLimitServer(t)
+	ghc := ghpkg.NewClientForTest(srv.URL, "myorg", []string{"repo1"}, rateLimitTestLogger())
+	ghc.SetAPIBudgetThresholds(7000, 100)
+	ghc.RecordAPIBudgetSkippedSteps([]string{"review_threads"})
+	got := buildGHRateLimits(ghc, context.Background(), deps.Config)
+	budget, ok := got["api_budget"].(map[string]any)
+	if !ok {
+		t.Fatalf("api_budget missing or wrong type: %#v", got["api_budget"])
+	}
+	if budget["mode"] != "conserve" || budget["remaining"] != 6815 {
+		t.Fatalf("api_budget = %#v, want conserve with remaining", budget)
+	}
+	steps, ok := budget["skipped_steps"].([]string)
+	if !ok || len(steps) != 1 || steps[0] != "review_threads" {
+		t.Fatalf("skipped_steps = %#v", budget["skipped_steps"])
+	}
+}

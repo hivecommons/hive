@@ -111,6 +111,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
 - [Dashboard sections explained](dashboard-sections.md) — what each dashboard section shows and what to do about it.
+- [Dashboard settings explained](settings.md) — what each Settings tab controls and where each setting is documented.
 - [Maintainer commands](maintainer-commands.md) — slash commands for un-parking
   issues, requesting help, confirming fixes, reopening issues, and using label
   or assignment helpers.

@@ -222,6 +222,9 @@ func (s *Server) registerLinearAgentRoutes() {
 	s.mux.HandleFunc("GET "+linearAgentCallbackPath, s.handleLinearAgentCallback)
 	s.mux.HandleFunc("POST "+linearAgentWebhookPath, s.handleLinearAgentWebhook)
 	s.mux.Handle("POST "+githubMentionWebhookPath, http.HandlerFunc(s.handleGitHubMentionWebhook))
+	// The GitHub App webhook receiver is the other public, HMAC-verified
+	// forge webhook; it registers alongside Linear's.
+	s.registerGitHubWebhookRoutes()
 }
 
 func (s *Server) handleGitHubMentionWebhook(w http.ResponseWriter, r *http.Request) {

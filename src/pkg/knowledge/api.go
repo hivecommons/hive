@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -334,20 +335,46 @@ func createFactSource(sourceRef string) string {
 }
 
 // UpdateFactRequest is the payload for updating an existing fact.
+//
+// State and SupersededBy change a fact's lifecycle (#11102). On a local
+// vault (channel) they rewrite the fact's frontmatter; SupersededBy marks the
+// fact superseded and links both facts. Remote wiki layers only carry a
+// status, so State is forwarded as the status there and SupersededBy is
+// rejected.
 type UpdateFactRequest struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Type       string   `json:"type"`
-	Tags       []string `json:"tags"`
-	Status     string   `json:"status"`
-	Confidence float64  `json:"confidence"`
+	Title        string   `json:"title"`
+	Body         string   `json:"body"`
+	Type         string   `json:"type"`
+	Tags         []string `json:"tags"`
+	Status       string   `json:"status"`
+	Confidence   float64  `json:"confidence"`
+	State        string   `json:"state,omitempty"`
+	SupersededBy string   `json:"superseded_by,omitempty"`
 }
 
 // UpdateFact modifies an existing fact in the specified layer.
 func (k *KnowledgeAPI) UpdateFact(ctx context.Context, layer LayerType, slug string, req UpdateFactRequest) error {
+	if req.State != "" || req.SupersededBy != "" {
+		if v := k.vaultByName(string(layer)); v != nil {
+			return k.updateVaultLifecycle(v, slug, req)
+		}
+	}
+
 	client := k.clientForLayer(layer)
 	if client == nil {
 		return fmt.Errorf("layer %s has no configured endpoint", layer)
+	}
+	if req.SupersededBy != "" {
+		return fmt.Errorf("layer %s does not support supersession links; supersede facts in a local channel", layer)
+	}
+	if req.State != "" {
+		st, err := ParseLifecycleState(req.State)
+		if err != nil {
+			return err
+		}
+		if req.Status == "" {
+			req.Status = string(st)
+		}
 	}
 
 	update := pageUpdateRequest{
@@ -365,6 +392,94 @@ func (k *KnowledgeAPI) UpdateFact(ctx context.Context, layer LayerType, slug str
 
 	k.logger.Info("fact updated", "slug", slug, "layer", layer)
 	return nil
+}
+
+// updateVaultLifecycle applies a lifecycle change to a fact in a local vault.
+func (k *KnowledgeAPI) updateVaultLifecycle(v *FileStore, slug string, req UpdateFactRequest) error {
+	if req.SupersededBy != "" {
+		if req.State != "" {
+			st, err := ParseLifecycleState(req.State)
+			if err != nil {
+				return err
+			}
+			if st != StateSuperseded {
+				return fmt.Errorf("superseded_by requires state %q, got %q", StateSuperseded, st)
+			}
+		}
+		if err := v.Supersede(slug, req.SupersededBy); err != nil {
+			return fmt.Errorf("superseding fact %s: %w", slug, err)
+		}
+		k.logger.Info("fact superseded", "slug", slug, "superseded_by", req.SupersededBy, "channel", v.Name())
+		return nil
+	}
+	st, err := ParseLifecycleState(req.State)
+	if err != nil {
+		return err
+	}
+	if err := v.SetLifecycleState(slug, st); err != nil {
+		return fmt.Errorf("updating lifecycle of fact %s: %w", slug, err)
+	}
+	k.logger.Info("fact lifecycle updated", "slug", slug, "state", st, "channel", v.Name())
+	return nil
+}
+
+// ErrEntryNotWritable reports that no writable local channel holds the entry.
+var ErrEntryNotWritable = errors.New("knowledge entry not found in a writable channel")
+
+// ErrReplacementNotInChannel reports that a supersession target is missing
+// from the channel holding the superseded entry.
+var ErrReplacementNotInChannel = errors.New("replacement entry not found in the same channel")
+
+// EntryStateChange describes a lifecycle change applied by SetEntryState.
+type EntryStateChange struct {
+	Channel  string
+	Previous LifecycleState
+	Fact     *Fact
+}
+
+// SetEntryState changes the lifecycle state of the entry id in whichever
+// writable local channel holds it. A non-empty supersededBy marks the entry
+// superseded by that entry, which must live in the same channel.
+func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, supersededBy string) (EntryStateChange, error) {
+	v, before := k.writableVaultHolding(id)
+	if v == nil {
+		return EntryStateChange{}, ErrEntryNotWritable
+	}
+	if supersededBy != "" {
+		if _, err := v.ReadPage(supersededBy); err != nil {
+			return EntryStateChange{}, ErrReplacementNotInChannel
+		}
+	}
+	change := EntryStateChange{Channel: v.Name(), Previous: before.EffectiveState()}
+	if err := k.updateVaultLifecycle(v, id, UpdateFactRequest{State: string(state), SupersededBy: supersededBy}); err != nil {
+		return change, err
+	}
+	after, err := v.ReadPage(id)
+	if err != nil {
+		return change, err
+	}
+	change.Fact = after
+	return change, nil
+}
+
+// writableVaultHolding returns the first non-reserved vault holding id and
+// the entry as currently stored.
+func (k *KnowledgeAPI) writableVaultHolding(id string) (*FileStore, *Fact) {
+	if id == "" {
+		return nil, nil
+	}
+	k.mu.RLock()
+	vaults := append([]*FileStore(nil), k.vaults...)
+	k.mu.RUnlock()
+	for _, v := range vaults {
+		if v.Name() == reservedVaultName {
+			continue
+		}
+		if f, err := v.ReadPage(id); err == nil {
+			return v, f
+		}
+	}
+	return nil, nil
 }
 
 // DeleteFact removes a fact from the specified layer.
