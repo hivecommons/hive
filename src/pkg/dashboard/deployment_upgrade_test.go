@@ -473,7 +473,7 @@ func TestPodmanSelfUpgradeWritesRequestWithoutExecutingHelper(t *testing.T) {
 					t.Fatalf("request = %+v, timestamp error=%v", payload, err)
 				}
 				st, err := os.Stat(path)
-				if err != nil || st.Mode().Perm() != 0o600 || !strings.HasSuffix(path, ".json") {
+				if err != nil || st.Mode().Perm() != 0o644 || !strings.HasSuffix(path, ".json") {
 					t.Fatalf("published request permissions/name: %v, %v", st, err)
 				}
 			}
