@@ -157,12 +157,44 @@ REF_RE='^ghcr\.io/hivecommons/hive(:[A-Za-z0-9._-]{1,128}|@sha256:[0-9a-f]{64})$
 
 # --- reading a request ------------------------------------------------------
 #
+# The request is read ONCE into REQUEST_BODY, and only after the same checks
+# the drain loop relies on: a symlink or anything but a regular file is never
+# read. A read error is reported as such instead of surfacing later as an
+# empty `<missing>` ref. On a rootless host the container uid maps to a host
+# subuid, so a request the drain user cannot read is retried through
+# `podman unshare`, whose userns root can read what the container wrote.
+read_request() {
+  local file="$1" owner reason
+  REQUEST_BODY=""
+  if [ -L "$file" ] || [ ! -f "$file" ]; then
+    bad "request is not a regular file; refusing to read it"
+    return 1
+  fi
+  if [ -r "$file" ] && REQUEST_BODY="$(cat -- "$file" 2>/dev/null)"; then
+    return 0
+  fi
+  if [ "$ROOTFUL" -eq 0 ] && command -v podman >/dev/null 2>&1 \
+     && REQUEST_BODY="$(podman unshare cat -- "$file" 2>/dev/null)"; then
+    info "read through podman unshare (the request is owned by a container subuid)"
+    return 0
+  fi
+  REQUEST_BODY=""
+  owner="$(stat -c %u -- "$file" 2>/dev/null)" || owner="?"
+  reason="read error"
+  [ -r "$file" ] || reason="permission denied"
+  bad "cannot read request: ${reason} (owner uid ${owner}, drain uid $(id -u))"
+  info "The dashboard writes requests mode 0644; a 0600 request from an older"
+  info "image is unreadable to the host user on a rootless install."
+  return 1
+}
+
 # Deliberately NOT `jq -r` piped into eval, and deliberately not sourced: the
-# request is attacker-shaped input. This extracts one string field with a
-# single sed and takes the FIRST match, so a duplicated key cannot smuggle a
-# second value past the validation of the first.
+# request is attacker-shaped input. This extracts one string field from
+# REQUEST_BODY with a single sed and takes the FIRST match, so a duplicated key
+# cannot smuggle a second value past the validation of the first.
 request_field() {
-  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n1
+  printf '%s\n' "$REQUEST_BODY" \
+    | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
 }
 
 # The advisory fields are only ever echoed, but they are echoed into the
@@ -186,12 +218,13 @@ request_age_seconds() {
 # A directory under the bind mount is only used if it is a real directory,
 # not a symlink the container planted. Symlinks are rejected with -L BEFORE
 # -d, since -d follows them. Creation is `mkdir` without -p: -p treats a
-# symlink to an existing directory as success.
+# symlink to an existing directory as success. Archives are created 0700: the
+# requests they keep are 0644 and carry the requester login.
 real_dir() {
   local dir="$1"
   [ -L "$dir" ] && return 1
   [ -d "$dir" ] && return 0
-  mkdir "$dir" 2>/dev/null || return 1
+  mkdir -m 0700 "$dir" 2>/dev/null || return 1
   [ ! -L "$dir" ] && [ -d "$dir" ]
 }
 
@@ -262,13 +295,18 @@ apply_one() {
     return 1
   fi
 
+  if ! read_request "$file"; then
+    archive_request "$file" "$FAILED_DIR" "rejected: unreadable request"
+    return 1
+  fi
+
   # The dashboard writes target_ref/requested_at (src/pkg/dashboard); the
   # camelCase and bare spellings are accepted for hand-written requests.
-  ref="$(request_field "$file" target_ref)"
-  [ -n "$ref" ] || ref="$(request_field "$file" ref)"
-  requester="$(printable "$(request_field "$file" requester)")"
-  requested_at="$(printable "$(request_field "$file" requested_at)")"
-  [ -n "$requested_at" ] || requested_at="$(printable "$(request_field "$file" requestedAt)")"
+  ref="$(request_field target_ref)"
+  [ -n "$ref" ] || ref="$(request_field ref)"
+  requester="$(printable "$(request_field requester)")"
+  requested_at="$(printable "$(request_field requested_at)")"
+  [ -n "$requested_at" ] || requested_at="$(printable "$(request_field requestedAt)")"
   [ -n "$requester" ] || requester="unknown"
   [ -n "$requested_at" ] || requested_at="unknown"
 
