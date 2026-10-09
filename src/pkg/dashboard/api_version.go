@@ -707,6 +707,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 			StartedFrom: versionHash,
 			StartedAt:   time.Now().UTC(),
 			UpdatedAt:   time.Now().UTC(),
+			Action:      deployment.UpgradeAction,
 		})
 		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
 		if deployment.UpgradeAction == "podman-quadlet-request" {

@@ -119,7 +119,7 @@ channel/tag/digest image reference, or a legacy 7–40 character hexadecimal
 commit normalized to the first seven lowercase characters.
 `requester` is the authenticated request's audit user (`local` for local token
 access), not a value supplied in the JSON body. `requested_at` is UTC RFC3339.
-Files have mode `0600` and are written and closed under a hidden temporary name
+Files have mode `0644` and are written and closed under a hidden temporary name
 in the same directory before an atomic rename. The host must watch **only
 `*.json`** in the directory's top level, ignoring `.hive-upgrade-*` temporary
 files and `.hive-upgrade-probe-*` write probes.
@@ -128,7 +128,10 @@ This is an asynchronous trust boundary: the host bridge validates references
 and request age before invoking the host lifecycle, then archives results in
 `done/` or `failed/`. No Docker, Podman, or systemd socket is exposed to Hive.
 Only the authorized Hive container and host bridge should have access to the
-request directory; the host consumer must be able to read its `0600` files.
+request directory; the host consumer must be able to read its files. They are
+`0644` because on rootless Podman the container uid maps to a host subuid, so
+the host user reads them only through the "other" bits; the payload holds no
+secrets, and the `770` request directory still limits who can reach them.
 Rootless bridges run as the hive user, rootful bridges under the system manager.
 The host installation, units, age limit, and result handling belong to #10416;
 this dashboard change alone does not install a consumer.
@@ -223,7 +226,12 @@ Unknown fields are ignored.
 
 Each handled request is **moved** into `done/` or `failed/` beside a
 `.result` file before its outcome is recorded, so neither a success nor a
-failure can be replayed by the watch re-triggering. Inspect either with:
+failure can be replayed by the watch re-triggering. Archive directories the
+bridge creates are `0700`. A request the host user cannot read is retried
+through `podman unshare cat` on a rootless host; if it is still unreadable the
+bridge reports `cannot read request: permission denied (owner uid …, drain uid
+…)`, archives it as `rejected: unreadable request` and exits `78`. Inspect
+either archive with:
 
 ```sh
 hive-upgrade-request.sh status

@@ -1188,6 +1188,32 @@ check "the handled request is archived under done/" '[ -n "$(find "$REQ_DIR/done
 check "the result file records the upgrade" 'grep -qF "ok: upgraded to ${REPO}:abc" "$REQ_DIR"/done/*-ok.json.result'
 check "the requester is still reported, minus the escape bytes" 'grep -qF "requested by op[31mRED[0m at 2026-01-01T00:00:00Z" <<<"$out"'
 check "control bytes in advisory fields never reach the log" '! grep -q "$(printf "\033")" <<<"$out"'
+
+# #11291: on rootless Podman the request is owned by a container subuid and the
+# drain user cannot read it. That must fail loudly, never as a `<missing>`
+# ref, and the drain must first retry through `podman unshare`. Root reads
+# anything, so these only mean something as an unprivileged user.
+if [ "$(id -u)" != 0 ]; then
+  UNSHARE_BIN="${TEST_TMP}/unshare-bin"
+  rm -rf "$UNSHARE_BIN"; mkdir -p "$UNSHARE_BIN"
+  printf '#!/bin/sh\nexit 125\n' >"$UNSHARE_BIN/podman"; chmod +x "$UNSHARE_BIN/podman"
+  reset_request 0
+  printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/locked.json"; chmod 000 "$REQ_DIR/locked.json"
+  out="$(PATH="${UNSHARE_BIN}:${PATH}" run_request apply --rootless)"; rc=$?
+  check "an unreadable request is EX_CONFIG with a permission-denied reason" \
+    '[ "$rc" = 78 ] && grep -qF "cannot read request: permission denied (owner uid $(id -u), drain uid $(id -u))" <<<"$out"'
+  check "an unreadable request is never reported as a missing ref" '! grep -qF "<missing>" <<<"$out"'
+  check "an unreadable request is archived as unreadable" 'grep -qF "rejected: unreadable request" "$REQ_DIR"/failed/*-locked.json.result'
+
+  printf '#!/bin/sh\n[ "$1 $2 $3" = "unshare cat --" ] || exit 125\nprintf %%s "{\\"target_ref\\":\\"%s:abc\\"}"\n' "$REPO" >"$UNSHARE_BIN/podman"
+  reset_request 0
+  printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/subuid.json"; chmod 000 "$REQ_DIR/subuid.json"
+  out="$(PATH="${UNSHARE_BIN}:${PATH}" run_request apply --rootless)"; rc=$?
+  check "a rootless request the drain cannot read is read through podman unshare" \
+    '[ "$rc" = 0 ] && grep -qF "read through podman unshare" <<<"$out" && grep -qF "completed and ended healthy" <<<"$out"'
+  check "archive directories are created private to the host user" '[ "$(stat -c %a "$REQ_DIR/done")" = 700 ]'
+  chmod -R u+rw "$REQ_DIR" 2>/dev/null
+fi
 unset REQ_DIR FAKE_UPDATE VICTIM HOST_DIR
 
 echo "== invocation =="
