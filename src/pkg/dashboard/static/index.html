@@ -4630,9 +4630,9 @@
           <button class="avatar-menu-item" type="button" data-action="openFeedbackModal" data-arg0="submit">Feedback</button>
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
-          <a href="/api/widget" id="oc-gh-menu-widget" class="avatar-menu-item" title="Download Übersicht widget">⬇ Widget</a>
-          <a href="/api/config/download" id="oc-gh-menu-download" class="avatar-menu-item" hidden>Download hive.yaml</a>
-          <a href="/api/config/export" id="oc-gh-menu-config-export" class="avatar-menu-item" hidden>Export effective config (JSON)</a>
+          <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
+          <button type="button" id="oc-gh-menu-download" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/download" data-arg1="hive.yaml" data-arg-types="s,s" hidden>View hive.yaml</button>
+          <button type="button" id="oc-gh-menu-config-export" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/export" data-arg1="hive-config.json" data-arg-types="s,s" hidden>Export effective config (JSON)</button>
           <div class="avatar-menu-divider"></div>
           <div class="avatar-menu-label">Layout</div>
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-save" data-action="saveDashboardLayoutPreset">Save layout</button>
@@ -7165,8 +7165,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function applyDashboardLayoutPreset(id){var p=dashboardReadLayoutPresets().find(function(x){return x.id===id;});if(!p)return;dashboardApplySnapshotState(p.state);dashboardMarkAppliedLayout('preset',p.name,p.id,p.state);dashboardLayoutAnnounce('Applied layout '+p.name+'.');showToast('Layout applied: '+p.name,'success');}
     async function renameDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;var name=(await hivePrompt({title:'Rename layout',message:'New layout name.',defaultValue:p.name||DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Rename'}));name=String(name||'').trim();if(!name)return;p.name=name;p.updatedAt=new Date().toISOString();dashboardWriteLayoutPresets(presets);var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('preset',p.name,p.id,p.state);}
     async function deleteDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;if(!await hiveConfirm({title:'Delete saved layout?',message:'Delete "'+(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'"? The current working layout will not change.',confirmLabel:'Delete',danger:true}))return;dashboardWriteLayoutPresets(presets.filter(function(x){return x.id!==id;}));var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('custom','', '', dashboardLayoutSnapshot());}
-    function dashboardDownloadJSON(filename,obj){var blob=new Blob([JSON.stringify(obj,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);}
-    function exportDashboardLayoutJSON(){dashboardDownloadJSON('hive-dashboard-layout.json',dashboardLayoutSnapshot());showToast('Layout JSON exported','success');}
+    function dashboardDownloadJSON(filename,obj){hiveExportViewer({title:filename,filename:filename,text:JSON.stringify(obj,null,2)+'\n',mime:'application/json'});}
+    function exportDashboardLayoutJSON(){dashboardDownloadJSON('hive-dashboard-layout.json',dashboardLayoutSnapshot());showToast('Layout JSON ready to copy','success');}
     function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
     async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, hidden sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
     function dashboardIsSectionNode(node){return !!(node&&node.getAttribute&&node.getAttribute('data-dashboard-section'));}
@@ -8229,7 +8229,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${agentPowerSwitchHtml(a)}
           ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>`)}
           ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
-          ${sessionChip(a, '⬇ log', `<a href="${fullLogUrl(a.name, true)}" download class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Download the full retained log of this agent's latest run as a text file">⬇ log</a>`)}
+          ${sessionChip(a, '📋 log text', `<a href="${fullLogUrl(a.name, false)}" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log in the in-app viewer for copying">📋 log text</a>`)}
           <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
           <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="hv-btn config-gear btn-primary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
@@ -10931,8 +10931,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     async function openTerminal(agentName, href) {
       const baseUrl = href || terminalUrl(agentName);
-      const tab = window.open('about:blank', '_blank');
-      if (tab) tab.opener = null;
       const renewal = await renewTerminalAssertion();
       // Token-secured self-hosted hives do not have a hive_session cookie for
       // assertion renewal, but the handoff POST authenticates with the
@@ -10941,20 +10939,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (code) {
         const url = new URL(baseUrl, window.location.href);
         url.searchParams.set('code', code);
-        if (tab) tab.location.href = url.toString();
-        else window.open(url.toString(), '_blank', 'noopener');
+        hiveExportViewer({title:'Terminal URL for ' + agentName, text:url.toString(), sourceURL:url.toString(), allowOpen:true});
         return;
       }
       // The handoff could not mint the assertion either, so the renewal's
       // verdict is now the actionable one — surface it.
       if (renewal.message) showToast(renewal.message, 'error');
       if (!(await dashboardTokenConfigured())) {
-        if (tab) tab.location.href = baseUrl;
-        else window.open(baseUrl, '_blank', 'noopener');
-      } else if (tab) {
-        tab.close();
+        hiveExportViewer({title:'Terminal URL for ' + agentName, text:baseUrl, sourceURL:baseUrl, allowOpen:true});
       }
     }
+
 
 
     window.hiveOpenAuthenticatedChildLink = function(href, download) {
@@ -10971,31 +10966,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const contentType = resp.headers.get('Content-Type') || '';
         if (!download && contentType.includes('text/html')) {
           const html = await resp.text();
-          const tab = window.open('about:blank', '_blank');
-          if (!tab) throw new Error('popup blocked');
-          tab.document.open();
-          tab.document.write(html + `<script>(function(){document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href')||'';if(h.indexOf('/api/agents/')===0&&window.opener&&window.opener.hiveOpenAuthenticatedChildLink){e.preventDefault();window.opener.hiveOpenAuthenticatedChildLink(h,a.href.indexOf('download=1')!==-1);}});})();<\/script>`);
-          tab.document.close();
+          hiveExportViewer({title:'Authenticated HTML',text:html,mime:contentType,sourceURL:href});
           return;
         }
-        const blob = await resp.blob();
-        const objectUrl = URL.createObjectURL(blob);
         if (download) {
-          const a = document.createElement('a');
-          a.href = objectUrl;
-          a.download = '';
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
-        } else {
-          const tab = window.open(objectUrl, '_blank', 'noopener');
-          if (!tab) {
-            URL.revokeObjectURL(objectUrl);
-            throw new Error('popup blocked');
-          }
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          hiveBinaryExportNotice('Authenticated file', 'This authenticated link points to a file response.');
+          return;
         }
+        const text = await resp.text();
+        hiveExportViewer({title:'Authenticated content',text:text,mime:contentType,sourceURL:href});
       } catch (e) {
         showToast('Could not open link: ' + (e.message || e), 'error');
       }
@@ -11004,8 +10983,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fullLogUrl points at the server-side endpoint that captures the agent's
     // full retained tmux scrollback (issue #3693). The live "▶ terminal" only
     // shows the last screenful; this returns the whole latest-run buffer as
-    // plain, selectable, searchable text. download=1 makes the browser save it
-    // as a .log file instead of rendering it inline. Dashboard navigations never
+    // plain, selectable, searchable text. The save-as-file query remains an
+    // explicit API opt-in for external clients. Dashboard navigations never
     // carry the shared token in the URL; token-secured spokes use
     // authenticated fetches for API calls instead.
     function fullLogUrl(agentName, download) {
@@ -14253,6 +14232,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return path + (params.size ? '?' + params.toString() : '');
     }
 
+    async function overviewOpenExport(url) {
+      try {
+        const resp = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const fallback = String(url || '').indexOf('.json') !== -1 ? 'hive-overview.json' : 'hive-overview.csv';
+        const name = hiveFilenameFromDisposition(resp.headers.get('Content-Disposition') || '', fallback);
+        const text = await resp.text();
+        hiveExportViewer({title:name,filename:name,text:text,mime:resp.headers.get('Content-Type') || '',sourceURL:url});
+      } catch (err) {
+        showToast('Overview export failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    }
+
     function overviewChartLabelPoint(percentOffset, percentSize) {
       const midPercent = percentOffset + (percentSize / 2);
       const angle = (midPercent / OVERVIEW_CHART_PERCENT_SCALE) * OVERVIEW_CHART_DEGREES + OVERVIEW_CHART_START_ANGLE;
@@ -14579,7 +14571,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const format = ((state && state.exportFormat) || 'csv').toUpperCase();
-        const download = kind ? `<a class="overview-band-download" href="${esc(overviewExportURL(kind, s.key))}" data-action="overviewDownload" data-stop="1" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</a>` : '';
+        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
         return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
@@ -14722,8 +14714,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const total = (slices || []).reduce((n, s) => n + s.count, 0);
       const csvKind = kind === 'pr' ? 'prs' : 'issues';
       const format = (state.exportFormat || 'csv').toUpperCase();
-      const csvTitle = total ? ('Download ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to download';
-      const download = `<a class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" href="${esc(overviewExportURL(csvKind))}" data-stop="1" title="Download ${format}" aria-label="${esc(csvTitle)}">⬇︎</a>`;
+      const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to export';
+      const download = `<button type="button" class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}">⬇︎</button>`;
       return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
@@ -19178,10 +19170,8 @@ function burnAreaChart() {
       const dto = prtLast || {};
       const rows = [['t','opened','merged','closed']].concat((dto.buckets || []).map(b => [b.t || '', b.opened || 0, b.merged || 0, b.closed || 0]));
       const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n') + '\n';
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-      a.download = 'pr-throughput-' + (prtRepo ? prtRepo.replace(/[^a-z0-9._-]+/ig, '-') : 'all') + '.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      const name = 'pr-throughput-' + (prtRepo ? prtRepo.replace(/[^a-z0-9._-]+/ig, '-') : 'all') + '.csv';
+      hiveExportViewer({title:name,filename:name,text:csv,mime:'text/csv'});
     }
     window.setPRThroughputHours = setPRThroughputHours;
     window.setPRThroughputRepo = setPRThroughputRepo;
@@ -22812,7 +22802,7 @@ function burnAreaChart() {
     }
 
     async function downloadReviewEvidence(repo, number, head, format) {
-      var extra = format === 'zip' ? 'format=zip' : 'download=1';
+      var extra = format === 'zip' ? 'format=zip' : 'format=json';
       try {
         var resp = await reviewEvidenceFetch(reviewEvidenceUrl(repo, number, head, extra));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -22821,15 +22811,9 @@ function burnAreaChart() {
         var m = cd.match(/filename="?([^";]+)"?/);
         if (m) name = m[1];
         if (!name) name = String(repo).replace('/', '-') + '-' + number + '-evidence.' + (format === 'zip' ? 'zip' : 'json');
-        var blob = await resp.blob();
-        var objectUrl = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(function() { URL.revokeObjectURL(objectUrl); }, 30000);
+        if (format === 'zip') { hiveBinaryExportNotice(name, 'Review evidence ZIP bundles are binary archives.'); return; }
+        var text = await resp.text();
+        hiveExportViewer({title:name,filename:name,text:text,mime:resp.headers.get('Content-Type') || 'application/json',sourceURL:reviewEvidenceUrl(repo, number, head, '')});
       } catch (err) {
         showToast('Evidence download failed: ' + (err && err.message ? err.message : err), 'error');
       }
@@ -24949,15 +24933,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/inception/download', {headers: _inceptionAuthHeaders()});
         if (!r.ok) { showToast('Download failed', 'error'); return; }
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'inception-project.zip';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        hiveBinaryExportNotice('Inception project ZIP', 'Inception scaffold ZIP files are binary archives.');
       } catch (e) { showToast('Download error: ' + e.message, 'error'); }
     }
 
@@ -25829,6 +25805,70 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
         hiveWireDialog(overlay, resolve, undefined, '.primary', null, close => close());
       });
+    }
+
+    function hiveFilenameFromDisposition(header, fallback) {
+      const m = String(header || '').match(/filename="?([^";]+)"?/i);
+      return (m && m[1]) ? m[1] : (fallback || 'hive-export.txt');
+    }
+    function hiveExportViewer(opts) {
+      const cfg = opts || {};
+      const title = cfg.title || cfg.filename || 'Export';
+      const text = String(cfg.text == null ? '' : cfg.text);
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title" style="width:min(920px, calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column">
+        <div id="hive-export-title" class="hive-dialog-title"></div>
+        <div class="hive-dialog-body long" style="display:flex;flex-direction:column;gap:8px;min-height:0">
+          <div class="cmp-note hive-export-note"></div>
+          <textarea class="hive-export-text" readonly spellcheck="false" style="width:100%;min-height:360px;max-height:60vh;resize:vertical;font-family:var(--font-mono);font-size:var(--fs-sm);line-height:1.4;background:var(--terminal-bg);color:var(--terminal-fg);border:1px solid var(--terminal-line);border-radius:var(--r);padding:10px;white-space:pre"></textarea>
+        </div>
+        <div class="hive-dialog-buttons">
+          <a class="hv-btn btn-secondary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
+          <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
+          <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button>
+        </div></div>`;
+      overlay.querySelector('#hive-export-title').textContent = title;
+      const note = overlay.querySelector('.hive-export-note');
+      const textarea = overlay.querySelector('.hive-export-text');
+      textarea.value = text;
+      const sourceURL = cfg.sourceURL || '';
+      const token = localStorage.getItem('hive-token') || '';
+      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
+      if (note) note.textContent = sourceURL && token && !cfg.allowOpen ? 'Rendered in-app because this dashboard uses a bearer token that a new tab would not receive.' : 'Rendered in-app so the browser does not prompt for downloads.';
+      const open = overlay.querySelector('.hive-export-open');
+      if (open && canOpen) { open.href = sourceURL; open.hidden = false; }
+      overlay.querySelector('.hive-export-copy').addEventListener('click', function(e) {
+        e.preventDefault();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textarea.focus(); textarea.select(); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
+        } else {
+          textarea.focus(); textarea.select();
+          showToast('Selected text for manual copy', 'info');
+        }
+      });
+      document.body.appendChild(overlay);
+      hiveWireDialog(overlay, function(){}, undefined, '.primary', null, close => close());
+    }
+    function hiveBinaryExportNotice(name, detail) {
+      hiveAlert((detail || 'This export is binary and cannot be rendered safely in the dashboard.') + '\n\nBrowser downloads are disabled by policy to avoid native permission prompts. Use the API or CLI from a trusted shell if you need to save this file.', name || 'Binary export');
+    }
+    async function hiveOpenTextEndpoint(url, fallbackName) {
+      try {
+        const headers = {};
+        const token = localStorage.getItem('hive-token') || '';
+        if (token) headers.Authorization = 'Bearer ' + token;
+        const resp = await fetch(url, { credentials: 'same-origin', cache: 'no-store', headers });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const name = hiveFilenameFromDisposition(cd, fallbackName || 'hive-export.txt');
+        const text = await resp.text();
+        const sourceURL = /^attachment/i.test(cd) ? '' : url;
+        hiveExportViewer({title:name,filename:name,text:text,mime:resp.headers.get('Content-Type') || '',sourceURL:sourceURL});
+      } catch (err) {
+        showToast('Export failed: ' + (err && err.message ? err.message : err), 'error');
+      }
     }
     function maybeShowLevelAutoMergeActiveModal(data) {
       if (!data || data.self_merge_sweep_active !== true) return Promise.resolve();
@@ -33889,15 +33929,7 @@ function burnAreaChart() {
       var el = document.getElementById('export-yaml-content');
       if (!el) return;
       var agentName = _configState.agent || 'agent';
-      var blob = new Blob([el.value], {type: 'text/yaml'});
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = agentName + '.yaml';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      hiveExportViewer({title: agentName + '.yaml', filename: agentName + '.yaml', text: el.value, mime: 'text/yaml'});
     }
 
     function importAgentFromURL() {
@@ -38206,17 +38238,10 @@ function burnAreaChart() {
       try {
         const res = await fetch('/api/compliance/export?' + qs.toString(), { cache: 'no-store' });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
-        const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
-        const name = match ? match[1] : 'hive-compliance-' + kind + '.' + format;
-        const url = URL.createObjectURL(await res.blob());
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 30000);
-        showToast('Downloaded ' + name, 'success');
+        const name = hiveFilenameFromDisposition(res.headers.get('Content-Disposition') || '', 'hive-compliance-' + kind + '.' + format);
+        const text = await res.text();
+        hiveExportViewer({title:name,filename:name,text:text,mime:res.headers.get('Content-Type') || '',sourceURL:'/api/compliance/export?' + qs.toString()});
+        showToast('Opened ' + name + ' in the dashboard', 'success');
       } catch (err) {
         showToast('Export failed: ' + (err && err.message ? err.message : String(err)), 'error');
       }
@@ -38889,8 +38914,8 @@ function burnAreaChart() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         if (!data.authorize_url) throw new Error('no authorize URL returned');
-        window.open(data.authorize_url, '_blank', 'noopener');
-        showToast('Approve the hive in the Linear tab, then press Refresh here.', 'info');
+        hiveExportViewer({title:'Linear authorization URL', text:data.authorize_url, sourceURL:data.authorize_url, allowOpen:true});
+        showToast('Open the Linear authorization link from the in-app dialog, then press Refresh here.', 'info');
       } catch (err) {
         showToast(`Linear connect failed: ${err.message}`, 'error');
       }
@@ -40447,27 +40472,14 @@ function burnAreaChart() {
           }
           return;
         }
-        const blob = await resp.blob();
-        /* Prefer the server's filename; fall back to a generic one rather
-           than parsing a header that may be absent. */
+        /* The archive is binary; do not synthesize a browser save. */
         let name = 'hive-spoke-backup.tar.gz.enc';
         const cd = resp.headers.get('Content-Disposition') || '';
         const m = cd.match(/filename="([^"]+)"/);
         if (m && m[1]) name = m[1];
-        url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
         const beadDirs = resp.headers.get('X-Hive-Backup-Bead-Dirs') || '0';
         const files = resp.headers.get('X-Hive-Backup-Files') || '0';
-        showToast(
-          'Encrypted backup downloaded — ' + files + ' files, ' + beadDirs +
-          ' bead ledgers. Decrypt with this hive’s backup encryption key ' +
-          '(Settings → Security → Backup); the key is not in the file.',
-          'success');
+        hiveBinaryExportNotice(name, 'Encrypted backup archive prepared (' + files + ' files, ' + beadDirs + ' bead ledgers), but it is a binary file.');
       } catch (e) {
         showToast('Backup failed: ' + (e && e.message ? e.message : 'network error'), 'error');
       } finally {
@@ -41059,7 +41071,9 @@ function burnAreaChart() {
         if (remaining <= 0) {
           clearInterval(countdownInterval);
           if (cdEl) cdEl.textContent = 'Claude login tab opened';
-          if (authorizeUrl) window.open(authorizeUrl, '_blank');
+          if (authorizeUrl) {
+            hiveExportViewer({title:'Claude authorization URL', text:authorizeUrl, sourceURL:authorizeUrl, allowOpen:true});
+          }
         } else if (cdEl) {
           cdEl.textContent = 'Opening Claude login in ' + remaining + 's…';
         }
@@ -41902,7 +41916,7 @@ function burnAreaChart() {
         return;
       }
       const url = (window._lastStatus && window._lastStatus.githubAppInstallURL) || '';
-      if (url) { window.open(url, '_blank', 'noopener'); return; }
+      if (url) { hiveExportViewer({title:'GitHub App install URL',text:url,sourceURL:url,allowOpen:true}); return; }
       const installed = !!(window._lastStatus) && window._lastStatus.githubAppRequired !== true;
       showToast(installed ? 'GitHub App already installed ✓' : 'Install URL not available yet — waiting for the next status refresh', 'info');
     }
@@ -42134,7 +42148,7 @@ function burnAreaChart() {
       acmmShowLevelDialog(level);
     }
     function ghOpenUrl(url) {
-      window.open(url, '_blank');
+      hiveExportViewer({title:'External link',text:String(url || ''),sourceURL:String(url || ''),allowOpen:true});
     }
     const HIVE_GEN_HANDLERS = {
       gh70: function (event, A) { saveGovGeneralAdvanced('eval_interval_s', this.value === '' ? null : parseInt(this.value,10)); },

@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,10 +12,8 @@ import (
 
 func TestNoNativeBrowserDialogsRatchet(t *testing.T) {
 	native := regexp.MustCompile(`\b(?:window\.)?(?:prompt|alert|confirm)\s*\(|showModalDialog\s*\(|\.showModal\s*\(|onbeforeunload`)
-	files := map[string]string{
-		"static/index.html":     indexHTML(t),
-		"contribute_landing.go": mustReadDashboardFile(t, "contribute_landing.go"),
-	}
+	files := servedUIFiles(t)
+	files["contribute_landing.go"] = mustReadDashboardFile(t, "contribute_landing.go")
 	var offenders []string
 	for name, body := range files {
 		for i, line := range strings.Split(body, "\n") {
@@ -23,8 +23,54 @@ func TestNoNativeBrowserDialogsRatchet(t *testing.T) {
 		}
 	}
 	if len(offenders) > 0 {
-		t.Fatalf("native browser dialog calls are forbidden in spoke UI; use hivePrompt, hiveConfirm, hiveAlert/showToast, or the contribute in-app admin modal:\n  %s", strings.Join(offenders, "\n  "))
+		t.Fatalf("native browser dialog calls are forbidden in served UI; use hivePrompt, hiveConfirm, hiveAlert/showToast, or an in-app modal:\n  %s", strings.Join(offenders, "\n  "))
 	}
+}
+
+func TestNoForcedBrowserDownloadsRatchet(t *testing.T) {
+	forced := regexp.MustCompile(`(?i)(?:\.\s*download\s*=|<[^>]*\sdownload(?:\s*=|[\s>]))`)
+	var offenders []string
+	for name, body := range servedUIFiles(t) {
+		for i, line := range strings.Split(body, "\n") {
+			if forced.MatchString(line) {
+				offenders = append(offenders, name+":"+itoaNoNativeDialog(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("served UI must not force browser downloads; render exports in-app with copy/open affordances instead:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+func servedUIFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := map[string]string{
+		"static/index.html": indexHTML(t),
+	}
+	for _, root := range []string{"../hub/static", "../hub/assets"} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".html" && ext != ".js" {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			files[filepath.ToSlash(path)] = string(b)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking served UI files under %s: %v", root, err)
+		}
+	}
+	return files
 }
 
 func mustReadDashboardFile(t *testing.T, name string) string {

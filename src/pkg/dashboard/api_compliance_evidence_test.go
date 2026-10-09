@@ -418,7 +418,7 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 				t.Fatalf("content-type = %q, want %q", ct, tc.contentType)
 			}
 			cd := rr.Header().Get("Content-Disposition")
-			if !strings.HasPrefix(cd, `attachment; filename="hive-compliance-`) || !strings.Contains(cd, "-hive-a-") || !strings.HasSuffix(cd, "."+tc.ext+`"`) {
+			if !strings.HasPrefix(cd, `inline; filename="hive-compliance-`) || !strings.Contains(cd, "-hive-a-") || !strings.HasSuffix(cd, "."+tc.ext+`"`) {
 				t.Fatalf("content-disposition = %q", cd)
 			}
 			if rr.Header().Get("Cache-Control") != "no-store" {
@@ -429,6 +429,21 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			}
 			tc.check(t, rr.Body.Bytes())
 		})
+	}
+}
+
+func TestHandleComplianceExportDownloadOptIn(t *testing.T) {
+	isolateComplianceEvidence(t)
+	s := complianceTestServer()
+	rr := complianceEvidenceRequest(t, s, http.MethodGet, "/api/compliance/export?kind=controls&download=1", "", true)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rr.Code, rr.Body.String())
+	}
+	if cd := rr.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, `attachment; filename="hive-compliance-controls-`) {
+		t.Fatalf("content-disposition = %q", cd)
+	}
+	if auditCount(s, "compliance_export") != 1 {
+		t.Fatal("download opt-in export not audited")
 	}
 }
 

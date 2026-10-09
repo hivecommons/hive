@@ -341,9 +341,13 @@ func (s *Server) handleComplianceExport(w http.ResponseWriter, r *http.Request) 
 	if hiveID == "" {
 		hiveID = "hive"
 	}
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		disposition = "attachment"
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="hive-compliance-%s-%s-%s.%s"`, kind, hiveID, now.Format("20060102-1504"), format))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`%s; filename="hive-compliance-%s-%s-%s.%s"`, disposition, kind, hiveID, now.Format("20060102-1504"), format))
 	_, _ = w.Write(body)
 }
 

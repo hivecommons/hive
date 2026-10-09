@@ -525,7 +525,7 @@
     <a href="/" class="brand">
       <span class="brand-mark">🐝</span>
       <span>Hive</span>
-      <span onclick="window.open(&#39;https://github.com/hivecommons/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:var(--sp-1);cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
+      <span onclick="event.preventDefault(); location.href='https://github.com/hivecommons/hive'" title="Source Code" style="opacity:0.6;margin-left:var(--sp-1);cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
     </a>
     <nav>
       <a href="/">Hives</a>
@@ -1514,6 +1514,38 @@
         ta.remove();
         return okc;
       } catch (e) { return false; }
+    }
+
+    function showTextExport(name, text) {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:24px';
+      var panel = document.createElement('div');
+      panel.style.cssText = 'width:min(900px,100%);max-height:90vh;background:var(--surface-1);border:1px solid var(--line-strong);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px';
+      var title = document.createElement('h2');
+      title.textContent = name;
+      title.style.margin = '0';
+      var note = document.createElement('div');
+      note.textContent = 'Rendered in-app so the browser does not prompt for downloads.';
+      note.style.color = 'var(--text-muted)';
+      var area = document.createElement('textarea');
+      area.readOnly = true;
+      area.value = text;
+      area.style.cssText = 'min-height:360px;max-height:60vh;resize:vertical;font-family:monospace;background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:8px;padding:10px';
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+      var copy = document.createElement('button');
+      copy.type = 'button';
+      copy.textContent = 'Copy to clipboard';
+      copy.onclick = function() { copyHiveText(text, name); };
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.textContent = 'Close';
+      close.onclick = function() { overlay.remove(); };
+      row.appendChild(copy); row.appendChild(close);
+      panel.appendChild(title); panel.appendChild(note); panel.appendChild(area); panel.appendChild(row); overlay.appendChild(panel);
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+      document.body.appendChild(overlay);
+      close.focus();
     }
 
     function hiveDialogOptions(first, fallbackRawHTML) {
@@ -2873,8 +2905,9 @@
       if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
       var target = a.getAttribute(SSO_NAV_ATTR);
       if (!target) return;
-      ev.preventDefault();
-      window.open(target, '_blank');
+      a.href = target;
+      a.target = '_blank';
+      a.rel = 'noopener';
     });
 
     // Show or hide the sticky "Viewing as … read-only" banner and nudge the page
@@ -13157,15 +13190,9 @@
           csvField(u.last_active || '')
         ].join(','));
       });
-      var blob = new Blob([lines.join('\r\n') + '\r\n'], {type: 'text/csv;charset=utf-8'});
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'hive-access-' + (_accessHiveId || 'unknown') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      hiveToast('Access list exported', 'success');
+      var name = 'hive-access-' + (_accessHiveId || 'unknown') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      showTextExport(name, lines.join('\r\n') + '\r\n');
+      hiveToast('Access list ready to copy', 'success');
     }
 
     /* expiryToDateInput maps a stored RFC3339 expiry to the value a
