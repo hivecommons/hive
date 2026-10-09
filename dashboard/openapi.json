@@ -19244,7 +19244,7 @@
           "System"
         ],
         "summary": "Get compliance control status",
-        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles: soc2-type2, fedramp-moderate, iso27001-annex-a) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
         "responses": {
           "200": {
             "description": "compliance.Report",
@@ -19282,6 +19282,9 @@
                           "version": {
                             "type": "string"
                           },
+                          "description": {
+                            "type": "string"
+                          },
                           "controls": {
                             "type": "integer"
                           }
@@ -19312,7 +19315,7 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "compliance.ControlStatus: framework, control_id, title, citation, domain, status, not_covered, rationale, settings[] (setting_path, evaluator, current, recommended, status, builtin)"
+                        "description": "compliance.ControlStatus: framework, control_id, title, text, citation, domain, status, not_covered, rationale, settings[] (setting_path, kind, description, evaluator, current, recommended, status, builtin)"
                       }
                     },
                     "profile_load_error": {
@@ -19411,6 +19414,54 @@
           },
           "403": {
             "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/config/governor/compliance": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Select compliance framework profiles",
+        "description": "Settings \u2192 Compliance framework picker (#11080). Sets compliance.frameworks to the given profile ids (case-insensitive; an empty list deselects every framework; an absent key leaves the selection unchanged). Unknown, malformed, blank or duplicate ids are rejected with 400 before anything changes. Persists the config, is audited as config_compliance, and returns the re-evaluated compliance.Report. Requires owner role. Selecting a framework is not a certification claim.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "frameworks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "compliance.Report (same shape as GET /api/compliance/status)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or framework id"
+          },
+          "403": {
+            "description": "Owner access required"
           },
           "503": {
             "description": "Config unavailable"

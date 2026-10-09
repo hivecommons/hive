@@ -20,6 +20,7 @@ type KnowledgeConfig struct {
 	Curator         KnowledgeCurator      `yaml:"curator"`
 	Primer          KnowledgePrimer       `yaml:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
+	CodeMaps        KnowledgeCodeMaps     `yaml:"code_maps,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
