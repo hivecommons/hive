@@ -1,1 +1,0 @@
-- Roll hosted spokes to the newest GHCR-published image on fast-moving branches instead of waiting indefinitely for HEAD. (#11258)

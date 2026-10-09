@@ -1,1 +1,0 @@
-- Hive now closes fixed issues itself after merged hive/trusted PRs, and backfills previously merged fixes that GitHub left open.
