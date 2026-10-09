@@ -156,6 +156,16 @@ func agentGitIdentity(agentName string) (name, email string, ok bool) {
 	return gitidentity.AgentIdentity(agentName)
 }
 
+// bobDisplayName is the bob reporting label (#11273): the configured
+// bob_display_name, falling back to the agent name. It never alters the
+// functional agent identity.
+func bobDisplayName(agent *AgentProcess) string {
+	if label := strings.TrimSpace(agent.Config.BobDisplayName); label != "" {
+		return label
+	}
+	return agent.Name
+}
+
 func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	model := agent.Config.Model
 	if agent.ModelOverride != "" {
@@ -360,6 +370,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		// bug fixed in #2228, so the auth type must ride the always-reapplied
 		// path or a relaunch into an existing session loses it.
 		vars = append(vars, agentEnvPair{config.BobAuthTypeEnvVar, config.BobAuthTypeAPIKey, false})
+		vars = append(vars, agentEnvPair{"HIVE_BOB_DISPLAY_NAME", bobDisplayName(agent), false})
 	}
 	// BD_DIR tells the `bd` CLI where to read/write beads. Without this,
 	// bd falls back to cwd (/data/agents/<name>) instead of the configured

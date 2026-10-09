@@ -1286,6 +1286,30 @@ func (c *Config) JevAssistEnabled(agent string) bool {
 // the prompt editor), answered with a warning by
 // scheduler.WarnDanglingKickTemplates and shown in the prompt editor
 // (hivecommons/hive#7390).
+// MaxBobDisplayNameLen bounds agents.<name>.bob_display_name.
+const MaxBobDisplayNameLen = 64
+
+// ValidateBobDisplayName checks an optional bob reporting label. Empty is
+// valid (falls back to the agent name). Non-empty values must be at most
+// MaxBobDisplayNameLen bytes of ASCII letters, digits, '-', '_' or '.', so the
+// label is safe in env vars, file names and report keys.
+func ValidateBobDisplayName(v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > MaxBobDisplayNameLen {
+		return fmt.Errorf("bob_display_name %q is longer than %d characters", v, MaxBobDisplayNameLen)
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("bob_display_name %q contains %q (allowed: letters, digits, '-', '_', '.')", v, r)
+		}
+	}
+	return nil
+}
+
 func ValidateKickTemplateName(v string) error {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -1514,6 +1538,13 @@ type AgentConfig struct {
 	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
 	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string        `yaml:"description" json:"description,omitempty"`
+	// BobDisplayName is an optional reporting/session label for bob-backed
+	// agents (#11273), e.g. "hive-scanner". It is exported to the bob pane as
+	// HIVE_BOB_DISPLAY_NAME without changing the functional agent identity
+	// (tmux session, workdir, beads dir, claims, token buckets). bobshell has
+	// no session-label flag today, so Bob's own reports still key on the
+	// workdir basename. See ValidateBobDisplayName.
+	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
 	Role           string   `yaml:"role" json:"role,omitempty"`
