@@ -21322,6 +21322,62 @@
                     "type": "integer",
                     "nullable": true,
                     "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
+                  },
+                  "severity": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.severity blocking line (hivecommons/hive#11088). block_at also drives classification.review_bots.min_priority when that is not set explicitly.",
+                    "properties": {
+                      "block_at": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["", "P1", "P2", "P3"]
+                      },
+                      "comment_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      },
+                      "backlog_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "backlog": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.backlog destination for findings below the blocking line (hivecommons/hive#11088). github_project, linear and jira require the matching governor.work_source.type.",
+                    "properties": {
+                      "destination": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["github_issue", "github_project", "linear", "jira"]
+                      },
+                      "project_column_id": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "linear_state": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "jira_status": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "labels": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "max_per_pr_per_day": {
+                        "type": "integer",
+                        "nullable": true,
+                        "minimum": 0
+                      }
+                    }
                   }
                 }
               }

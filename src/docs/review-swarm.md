@@ -163,7 +163,34 @@ review:
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
+  severity:
+    block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
+    comment_below: true                     # default true
+    backlog_below: true                     # default true
+  backlog:
+    destination: github_issue               # github_issue | github_project | linear | jira
+    labels: [from-review]                   # default [from-review]
+    max_per_pr_per_day: 10                  # default 10
 ```
+
+### Blocking line (`review.severity`, `review.backlog`)
+
+`review.severity.block_at` is the lowest finding priority that still blocks merge, on the P0–P3 scale (critical → P0, high → P1, medium → P2, low/info → P3). **Settings → Features → Review Gate → Severity & backlog** offers three presets: *Strict (P0–P2 block)* sets `P2`, *Ship fast (P0–P1 block)* sets `P1`, and *Everything blocks* sets `P3`. Unset keeps today's behaviour. Findings below the line are posted as non-blocking comments when `comment_below` is true (default) and filed as follow-up work when `backlog_below` is true (default).
+
+`review.backlog` says where that follow-up work goes:
+
+| Key | Default | Notes |
+|---|---|---|
+| `destination` | `github_issue` | `github_project`, `linear` and `jira` require `governor.work_source.type` to be `github_projects`, `linear` or `jira` respectively. The dashboard only offers the active work source's destination, and the owner-only `PUT /api/config/review` rejects a mismatch. If the work source later changes, the hive falls back to `github_issue` rather than failing to load. |
+| `project_column_id` | — | Projects v2 status option id; required when `destination: github_project`. |
+| `linear_state` | team default | Linear workflow state for new items. |
+| `jira_status` | project initial status | Jira status for new tickets. |
+| `labels` | `[from-review]` | Applied to every item. |
+| `max_per_pr_per_day` | `10` | Cap per PR per day. |
+
+These settings record the choice only; routing below-the-line findings to the destination is tracked in hivecommons/hive#11089.
+
+**Precedence with `classification.review_bots.min_priority`.** One blocking line governs both the hive reviewer and external review bots. The bot threshold resolves in this order, first non-empty wins: `hive.yaml` `classification.review_bots.min_priority` (including an explicit `all`), then `hive-project.yaml` `classification.review_bots.min_priority`, then `review.severity.block_at`. With none set, every bot finding is routed. `block_at` is never copied into `min_priority`; clearing the explicit override hands control back to `block_at`. Invalid values fail config load with an error naming the field (for example `review.severity.block_at`, `review.backlog.project_column_id`).
 
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
