@@ -30,3 +30,15 @@ test('banner never shows on first visit and shows once per SHA transition', () =
   d = h.releaseNotesBannerDecision(d.state, 'bbbbbbb2222');
   assert.strictEqual(d.show, false);
 });
+
+
+test('upgrade banner host stays in top notice stack before dashboard sections', () => {
+  const noticesStart = html.indexOf('id="dash-notices"');
+  const noticesEndMarker = html.indexOf('<div id="toast-container"></div>', noticesStart);
+  const banner = html.indexOf('id="release-notes-banner"');
+  const overview = html.indexOf('id="overview-section"');
+  assert.ok(noticesStart >= 0, 'dash-notices stack exists');
+  assert.ok(noticesEndMarker > noticesStart, 'dash-notices stack end marker follows start');
+  assert.ok(banner > noticesStart && banner < noticesEndMarker, 'upgrade banner host is a descendant of dash-notices');
+  assert.ok(banner < overview, 'upgrade banner host precedes the first dashboard section');
+});

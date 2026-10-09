@@ -147,6 +147,7 @@
     .dashboard-notice__icon { font-size: var(--fs-lg); }
     .dashboard-notice__body { flex: 1; color: var(--text); }
     .dashboard-notice--planning { background: rgba(124,58,237,0.10); border: 1px solid rgba(124,58,237,0.32); }
+    .dashboard-notice--info { background: color-mix(in srgb, var(--status-info) 12%, var(--panel)); border: 1px solid var(--status-info); }
     .git-version .git-dirty { color: var(--yellow); }
     .header-spacer { flex: 1; }
     /* .widget-dl / .layout-toggle — ghost buttons (system recipe at end of
@@ -2581,8 +2582,8 @@
     .release-notes-also { margin-top: var(--sp-4); }
     .release-notes-cat { font-size: var(--fs-sm); font-weight: 700; color: var(--text); margin: var(--sp-3) 0 var(--sp-1); }
     .release-notes-list { margin: 0; padding-left: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
-    .release-notes-banner { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-4); border: 1px solid var(--accent); border-radius: var(--r); background: var(--panel); }
-    .release-notes-banner-text { flex: 1; font-size: var(--fs-sm); }
+    .release-notes-banner { display: flex; align-items: center; gap: var(--sp-4); }
+    .release-notes-banner-text { flex: 1; }
     .level-automerge-dialog { width: min(760px, 94vw); }
     .level-automerge-list { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; }
     .level-automerge-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--panel) 92%, var(--fg) 8%); }
@@ -4399,6 +4400,7 @@
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
   <div class="gh-rate-alert" id="gh-rate-alert"></div>
+  <div id="release-notes-banner" class="hidden"></div>
   </div>
 <div id="toast-container"></div>
 <!-- Hive Chat FAB + Panel -->
@@ -4707,7 +4709,6 @@
         <div class="config-body overview-settings-body" id="overview-chart-settings-body"></div>
       </div>
     </div>
-    <div id="release-notes-banner" class="hidden"></div>
     <div class="section-body">
       <div class="overview-card" id="overview-card"></div>
     </div>
@@ -29448,11 +29449,11 @@ function burnAreaChart() {
       var fromShort = versionShortSHA(from);
       var toShort = versionShortSHA(to);
       host.textContent = '';
-      host.className = 'release-notes-banner';
+      host.className = 'dashboard-notice dashboard-notice--info release-notes-banner';
       var text = rnEl('div', 'release-notes-banner-text', 'Upgraded ' + fromShort + ' → ' + toShort);
-      var open = rnEl('button', 'hv-btn btn-sm', 'What changed ▸');
+      var open = rnEl('button', 'hv-btn btn-secondary btn-sm', 'What changed ▸');
       open.type = 'button';
-      var dismiss = rnEl('button', 'hv-btn btn-sm', 'Dismiss');
+      var dismiss = rnEl('button', 'hv-btn btn-secondary btn-sm', 'Dismiss');
       dismiss.type = 'button';
       dismiss.setAttribute('aria-label', 'Dismiss upgrade banner');
       host.appendChild(text);
