@@ -3180,6 +3180,10 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		}
 	}
 
+	// Generated repository code maps (#11106); opt-in, connects its vault
+	// before stores are registered with the primer below.
+	b.startCodeMaps()
+
 	// Register everything connected above with the boot-time primer. With
 	// knowledge.enabled false there is none, and the stores are only primed
 	// once the dashboard toggle builds one (#9231).
