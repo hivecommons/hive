@@ -58,6 +58,8 @@ func TestHivePromptAndConfirmNode(t *testing.T) {
 	script := dialogHarnessJS() +
 		extractJSFunction(t, html, "hiveDialogEscape") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveNormalizeDialogOptions") + "\n    }\n" +
+		"let _hiveModalSequence = 0;\n" +
+		extractJSFunction(t, html, "hiveRememberModalOpen") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveWireDialog") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveConfirmIsDanger") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveConfirm") + "\n    }\n" +
@@ -103,7 +105,7 @@ function parse(html, root){ const re=/<(div|button|input|label)[^>]*>/g; let m; 
 function match(el,sel){ if(sel.startsWith('#'))return el.id===sel.slice(1); if(sel.startsWith('.'))return (el.className||'').split(/\s+/).includes(sel.slice(1)); if(sel==='button')return el.tagName==='BUTTON'; if(sel==='input')return el.tagName==='INPUT'; let m=sel.match(/^\[data-([^=\]]+)(?:="([^"]*)")?\]$/); if(m){let k=m[1].replace(/-([a-z])/g,(_,c)=>c.toUpperCase()); return m[2]===undefined ? el.dataset[k]!==undefined : el.dataset[k]===m[2];} return false; }
 function query(root,sel,one){ let out=[]; function walk(n){ for(const c of n.children){ if(match(c,sel))out.push(c); walk(c); } } walk(root); return one ? (out[0]||null) : out; }
 const document = { body:new Element('body'), activeElement:null, listeners:{}, createElement:t=>new Element(t), addEventListener(t,fn){(this.listeners[t]||(this.listeners[t]=[])).push(fn);}, removeEventListener(t,fn){this.listeners[t]=(this.listeners[t]||[]).filter(x=>x!==fn);}, querySelector(sel){return this.body.querySelector(sel);}, querySelectorAll(sel){return this.body.querySelectorAll(sel);} };
-function dispatchKey(key){ (document.listeners.keydown||[]).forEach(fn=>fn({key, preventDefault(){}})); }
+function dispatchKey(key){ (document.listeners.keydown||[]).forEach(fn=>fn({key, preventDefault(){}, stopPropagation(){}, stopImmediatePropagation(){}})); }
 function tick(){ return new Promise(r=>setTimeout(r,1)); }
 global.document=document;
 `

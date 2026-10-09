@@ -1865,12 +1865,31 @@
       document.getElementById('contrib-modal').style.display = 'none';
       document.body.style.overflow = '';
     }
+    var _hubLandingModalSeq = 0;
+    function hubLandingRememberModalOpen(el) {
+      if (!el) return el;
+      _hubLandingModalSeq++;
+      if (!el.dataset) el.dataset = {};
+      el.dataset.hiveModalSequence = String(_hubLandingModalSeq);
+      return el;
+    }
+    function hubLandingDismissTopModal() {
+      var modal = document.getElementById('contrib-modal');
+      if (!modal || modal.style.display !== 'flex') return false;
+      closeContribModal();
+      return true;
+    }
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && document.getElementById('contrib-modal').style.display === 'flex') closeContribModal();
-    });
+      if (e.key !== 'Escape') return;
+      if (e.isComposing) return;
+      if (!hubLandingDismissTopModal()) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
     async function openContributeInfo(name, id) {
       _contribHiveId = id;
       document.getElementById('contrib-modal').style.display = 'flex';
+      hubLandingRememberModalOpen(document.getElementById('contrib-modal'));
       // Lock the page scroll behind the modal (#4805); restored on close.
       document.body.style.overflow = 'hidden';
       document.getElementById('contrib-hive-name').textContent = name;

@@ -39,7 +39,9 @@ func TestHubPromptAndConfirmNode(t *testing.T) {
 		t.Skip("node not installed")
 	}
 	script := hubDialogHarnessJS() +
+		"var _hiveHubModalSeq = 0;\n" +
 		extractHubJSFunction(t, dashboardHTML, "hiveDialogOptions") +
+		extractHubJSFunction(t, dashboardHTML, "hiveHubRememberModalOpen") +
 		extractHubJSFunction(t, dashboardHTML, "hiveDialogWire") +
 		extractHubJSFunction(t, dashboardHTML, "hiveConfirmIsDanger") +
 		extractHubJSFunction(t, dashboardHTML, "hiveConfirm") +
@@ -63,6 +65,85 @@ function esc(s){return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(
 	}
 	if got := strings.TrimSpace(string(out)); got != `["saved",null,true,false]` {
 		t.Fatalf("unexpected dialog results: %s", got)
+	}
+}
+
+func TestHubModalEscapeDismissesLIFOAndNoops(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	script := `const assert = require('node:assert/strict');
+function makeEl(id, z) {
+  return { id, dataset: {}, hidden: false, style: { display: 'none', zIndex: String(z || 100) }, classList: { contains() { return false; } } };
+}
+const closed = [];
+const els = {
+  'banner-modal': makeEl('banner-modal', 100),
+  'create-modal': makeEl('create-modal', 100),
+  'access-modal': makeEl('access-modal', 100),
+  'timeline-modal': makeEl('timeline-modal', 100),
+  'request-access-modal': makeEl('request-access-modal', 100),
+  'approve-overlay': makeEl('approve-overlay', 2000),
+  'assign-overlay': makeEl('assign-overlay', 2000),
+  'orf-overlay': makeEl('orf-overlay', 2000)
+};
+global.window = { getComputedStyle(el) { return { display: el.style.display, zIndex: el.style.zIndex }; } };
+global.document = {
+  getElementById(id) { return els[id] || null; },
+  querySelectorAll(sel) { return sel === '.hive-confirm-overlay' ? [] : []; },
+  addEventListener() {}
+};
+function closeApproveModal() { els['approve-overlay'].style.display = 'none'; closed.push('approve-overlay'); }
+function closeAssignModal() { els['assign-overlay'].style.display = 'none'; closed.push('assign-overlay'); }
+function closeOrFundModal() { els['orf-overlay'].style.display = 'none'; closed.push('orf-overlay'); }
+function closeRequestAccessModal() { els['request-access-modal'].style.display = 'none'; closed.push('request-access-modal'); }
+var _hiveHubModalSeq = 0;
+` + extractHubJSFunction(t, dashboardHTML, "hiveHubRememberModalOpen") +
+		extractHubJSFunction(t, dashboardHTML, "hiveHubModalVisible") +
+		extractHubJSFunction(t, dashboardHTML, "hiveHubModalRank") +
+		extractHubJSFunction(t, dashboardHTML, "hiveHubModalOrder") +
+		extractHubJSFunction(t, dashboardHTML, "hiveHubDismissTopModal") + `
+els['create-modal'].style.display = 'flex';
+hiveHubRememberModalOpen(els['create-modal']);
+els['banner-modal'].style.display = 'flex';
+hiveHubRememberModalOpen(els['banner-modal']);
+assert.equal(hiveHubDismissTopModal(), true);
+assert.equal(els['banner-modal'].style.display, 'none');
+assert.equal(els['create-modal'].style.display, 'flex');
+assert.equal(hiveHubDismissTopModal(), true);
+assert.equal(els['create-modal'].style.display, 'none');
+assert.equal(hiveHubDismissTopModal(), false);
+els['approve-overlay'].style.display = 'flex';
+hiveHubRememberModalOpen(els['approve-overlay']);
+els['assign-overlay'].style.display = 'flex';
+hiveHubRememberModalOpen(els['assign-overlay']);
+assert.equal(hiveHubDismissTopModal(), true);
+assert.deepEqual(closed, ['assign-overlay']);
+assert.equal(hiveHubDismissTopModal(), true);
+assert.deepEqual(closed, ['assign-overlay', 'approve-overlay']);
+`
+	out, err := exec.Command("node", "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node hub modal Escape LIFO failed: %v\n%s", err, out)
+	}
+}
+
+func TestHubModalEscapeRegistryCoversKnownOverlays(t *testing.T) {
+	body := extractHubJSFunction(t, dashboardHTML, "hiveHubDismissTopModal")
+	for _, want := range []string{
+		".hive-confirm-overlay",
+		"approve-overlay",
+		"assign-overlay",
+		"orf-overlay",
+		"request-access-modal",
+		"banner-modal",
+		"create-modal",
+		"timeline-modal",
+		"access-modal",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("hub modal Escape registry no longer covers %q", want)
+		}
 	}
 }
 
@@ -97,7 +178,7 @@ function parse(html,root){const re=/<(div|button|input|label|h3|p)[^>]*>/g;let m
 function match(el,s){if(s.startsWith('#'))return el.id===s.slice(1);if(s.startsWith('.'))return (el.className||'').split(/\s+/).includes(s.slice(1));if(s==='input')return el.tagName==='INPUT';let m=s.match(/^\[data-([^=\]]+)(?:="([^"]*)")?\]$/);if(m){let k=m[1].replace(/-([a-z])/g,(_,c)=>c.toUpperCase());return m[2]===undefined?el.dataset[k]!==undefined:el.dataset[k]===m[2];}return false;}
 function query(root,s,one){let out=[];function walk(n){for(const c of n.children){if(match(c,s))out.push(c);walk(c);}}walk(root);return one?(out[0]||null):out;}
 const document={body:new Element('body'),activeElement:null,listeners:{},createElement:t=>new Element(t),addEventListener(t,fn){(this.listeners[t]||(this.listeners[t]=[])).push(fn);},removeEventListener(t,fn){this.listeners[t]=(this.listeners[t]||[]).filter(x=>x!==fn);},querySelector(s){return this.body.querySelector(s);},querySelectorAll(s){return this.body.querySelectorAll(s);}};
-function dispatchKey(key){(document.listeners.keydown||[]).forEach(fn=>fn({key,preventDefault(){}}));}
+function dispatchKey(key){(document.listeners.keydown||[]).forEach(fn=>fn({key,preventDefault(){},stopPropagation(){}}));}
 function tick(){return new Promise(r=>setTimeout(r,1));}
 global.document=document;
 `
