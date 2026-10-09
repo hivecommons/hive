@@ -485,6 +485,45 @@ for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
 query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
 GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
 
+### Webhook-driven PR cache invalidation
+
+A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
+either delivered directly by GitHub or relayed by the hub (the hub forwards the
+original signed body to the hive that manages the repository). The receiver
+fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
+the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
+body exactly as the hub does. Deliveries for repositories the hive does not
+manage are ignored.
+
+- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
+  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
+  the GraphQL batch check-run/review entries for the affected PR and mark it
+  dirty. Check and status events are matched by PR number and head SHA (fork
+  PRs arrive without a PR list); `push` invalidates every open PR whose base or
+  head branch is the pushed branch.
+- Webhooks are **healthy** while the last delivery for a managed repository is
+  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
+  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
+  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
+  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
+  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
+  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
+  the next cycle.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
+  Hive logs one WARN per healthy → stale transition and falls back to the
+  configured interval and TTL-bound caching.
+
+`/api/status` and `/api/gh-rate-limits` expose
+`webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
+changed.
+
+```yaml
+governor:
+  eval_interval_s: 300
+  eval_interval_webhook_s: 900
+```
+
 ## `HIVE_GITHUB_TOKEN` permissions
 
 `github.token: ${HIVE_GITHUB_TOKEN}` creates the main GitHub client when a GitHub

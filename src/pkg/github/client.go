@@ -1852,11 +1852,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
 	if !ok {
 		var err error
+		started := sharedWebhookTracker.now()
 		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
 		if err != nil {
 			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
 		} else {
 			c.storePRDetail(pr.Repo, pr.Number, full)
+			sharedWebhookTracker.clearDirtyBefore(pr.Repo, pr.Number, started)
 		}
 	}
 	if full != nil {
@@ -2766,6 +2768,7 @@ type RateLimitInfo struct {
 	ETagCache      ETagCacheInfo       `json:"etag_cache"`
 	PRDetailCache  ETagCacheInfo       `json:"pr_detail_cache"`
 	GraphQLPRBatch GraphQLPRBatchStats `json:"graphql_pr_batch"`
+	Webhooks       WebhookHealth       `json:"webhooks"`
 }
 
 type GraphQLPRBatchStats struct {
@@ -2775,6 +2778,9 @@ type GraphQLPRBatchStats struct {
 	Fallbacks int `json:"fallbacks"`
 	Errors    int `json:"errors"`
 	LastCost  int `json:"last_cost"`
+	// WebhookSkips counts repo scans that reused the previous batch because
+	// webhooks were healthy and no PR was marked dirty (#11177).
+	WebhookSkips int `json:"webhook_skips"`
 }
 
 type ETagCacheInfo struct {
@@ -2848,6 +2854,7 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
 	hits, misses, entries = PRDetailCacheStats()
 	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	info.Webhooks = WebhookHealthSnapshot()
 	info.TopConsumers = RESTTopConsumers(10)
 	_, snapshot := c.APIBudgetMode()
 	info.APIBudget = snapshot
