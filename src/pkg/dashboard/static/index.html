@@ -4096,6 +4096,11 @@
     .review-pipeline-loop { color: var(--muted); font-variant-numeric: tabular-nums; }
     .review-pipeline-loop.hot { color: var(--red); font-weight: 800; }
     .review-pipeline-action { margin-top: var(--sp-2); }
+    .review-evidence-action { margin-top: var(--sp-2); }
+    .review-evidence-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-7); font-size: var(--fs-sm); }
+    .review-evidence-grid dt { color: var(--muted); }
+    .review-evidence-grid dd { margin: 0; color: var(--text); font-family: var(--font-mono); overflow-wrap: anywhere; }
+    .review-evidence-status { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-7); }
     .review-pipeline-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
     .review-pipeline-colempty { color: var(--muted); font-size: var(--fs-xs); }
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
@@ -22495,6 +22500,7 @@ function burnAreaChart() {
             '<div class="review-queue-titlerow">' + priorityBadge + titleHtml + '</div>' +
             '<div class="review-queue-meta">' + repoRef + ' · ' + metaBits.join(' · ') + '</div>' +
             reasonsHtml +
+            reviewEvidenceButtonHtml(e.repo, e.number) +
           '</div>' +
         '</div>' +
       '</div>';
@@ -22633,7 +22639,112 @@ function burnAreaChart() {
       return '<div class="review-pipeline-card" title="' + esc(reasons) + '">' + titleHtml +
         '<div class="review-pipeline-meta">' + meta + '</div>' +
         (chips ? '<div class="review-pipeline-chips">' + chips + '</div>' : '') +
-        '<div class="review-pipeline-chips">' + sevHtml + loopHtml + '</div>' + actionHtml + '</div>';
+        '<div class="review-pipeline-chips">' + sevHtml + loopHtml + '</div>' + actionHtml +
+        reviewEvidenceButtonHtml(c.repo, c.number) + '</div>';
+    }
+
+    // Review evidence (#11062): owner-only modal summarising the PR's
+    // evidence bundle with authenticated JSON / ZIP downloads from
+    // /api/review/evidence.
+    function reviewEvidenceButtonHtml(repo, number) {
+      if (!repo || !number || !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return '';
+      return '<div class="review-evidence-action"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="openReviewEvidence" data-arg0="' + esc(String(repo)) + '" data-arg1="' + esc(String(number)) + '" data-arg-types="s,s" title="Review evidence bundle for this PR">Evidence</button></div>';
+    }
+
+    function reviewEvidenceUrl(repo, number, head, extra) {
+      var q = 'repo=' + encodeURIComponent(String(repo)) + '&number=' + encodeURIComponent(String(number));
+      if (head) q += '&head=' + encodeURIComponent(String(head));
+      return '/api/review/evidence?' + q + (extra ? '&' + extra : '');
+    }
+
+    async function reviewEvidenceFetch(url) {
+      var headers = {};
+      var t = localStorage.getItem('hive-token');
+      if (t) headers['Authorization'] = 'Bearer ' + t;
+      return fetch(url, { credentials: 'same-origin', cache: 'no-store', headers: headers });
+    }
+
+    async function downloadReviewEvidence(repo, number, head, format) {
+      var extra = format === 'zip' ? 'format=zip' : 'download=1';
+      try {
+        var resp = await reviewEvidenceFetch(reviewEvidenceUrl(repo, number, head, extra));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var name = '';
+        var cd = resp.headers.get('Content-Disposition') || '';
+        var m = cd.match(/filename="?([^";]+)"?/);
+        if (m) name = m[1];
+        if (!name) name = String(repo).replace('/', '-') + '-' + number + '-evidence.' + (format === 'zip' ? 'zip' : 'json');
+        var blob = await resp.blob();
+        var objectUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function() { URL.revokeObjectURL(objectUrl); }, 30000);
+      } catch (err) {
+        showToast('Evidence download failed: ' + (err && err.message ? err.message : err), 'error');
+      }
+    }
+
+    function reviewEvidenceSummaryHtml(b) {
+      var verdicts = Array.isArray(b.verdicts) ? b.verdicts.length : 0;
+      var merge = b.merge
+        ? 'merged' + (b.merge.sha ? ' at ' + String(b.merge.sha).slice(0, 12) : '') + (b.merge.actor ? ' by ' + b.merge.actor : '')
+        : 'not merged';
+      var rows = [
+        ['Bundle', b.id || '—'],
+        ['Head', b.head_sha || '—'],
+        ['Hash', b.hash ? 'sha256:' + b.hash : '—'],
+        ['Signed', (b.signed || b.signature) ? 'yes' : 'no'],
+        ['Verdicts', String(verdicts)],
+        ['Merge', merge]
+      ];
+      return '<dl class="review-evidence-grid">' + rows.map(function(r) {
+        return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>';
+      }).join('') + '</dl>';
+    }
+
+    async function openReviewEvidence(repo, number) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      var overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      var id = 'review-evidence-' + Math.random().toString(36).slice(2);
+      overlay.innerHTML = '<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
+        '<div id="' + id + '-title" class="hive-dialog-title">Evidence · ' + esc(String(repo)) + '#' + esc(String(number)) + '</div>' +
+        '<div class="review-evidence-content"><div class="review-evidence-status">Loading evidence bundle…</div></div>' +
+        '<div class="hive-dialog-buttons">' +
+          '<button type="button" class="hv-btn btn-secondary hive-dialog-btn evidence-json" disabled>Download JSON</button>' +
+          '<button type="button" class="hv-btn btn-secondary hive-dialog-btn evidence-zip" disabled>Download ZIP</button>' +
+          '<button type="button" class="hv-btn btn-primary hive-dialog-btn close" data-initial-focus>Close</button>' +
+        '</div></div>';
+      document.body.appendChild(overlay);
+      hiveWireDialog(overlay, function() {}, null, '.close', null, function(close) { close(null); });
+      var content = overlay.querySelector('.review-evidence-content');
+      var head = '';
+      try {
+        var resp = await reviewEvidenceFetch(reviewEvidenceUrl(repo, number));
+        var body = null;
+        try { body = await resp.json(); } catch (_) { body = null; }
+        if (!resp.ok) {
+          var msg = (body && body.expired)
+            ? 'Evidence for this PR has expired under the retention policy.'
+            : (resp.status === 404 ? 'No evidence bundle has been recorded for this PR yet.' : ((body && body.error) || ('HTTP ' + resp.status)));
+          content.innerHTML = '<div class="review-evidence-status">' + esc(msg) + '</div>';
+          return;
+        }
+        head = String((body && body.head_sha) || '');
+        content.innerHTML = reviewEvidenceSummaryHtml(body || {});
+        var jsonBtn = overlay.querySelector('.evidence-json');
+        var zipBtn = overlay.querySelector('.evidence-zip');
+        jsonBtn.disabled = false;
+        zipBtn.disabled = false;
+        jsonBtn.addEventListener('click', function() { downloadReviewEvidence(repo, number, head, 'json'); });
+        zipBtn.addEventListener('click', function() { downloadReviewEvidence(repo, number, head, 'zip'); });
+      } catch (err) {
+        content.innerHTML = '<div class="review-evidence-status">' + esc('Could not load evidence: ' + (err && err.message ? err.message : err)) + '</div>';
+      }
     }
 
     function renderReviewPipelineBoard() {

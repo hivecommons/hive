@@ -2,7 +2,7 @@
 
 A **review evidence bundle** is one self-contained JSON document per pull request head commit. It records what Hive reviewed, under which policy, what the reviewers found, what CI reported, who acted on the PR, and how it was merged. A bundle is **evidence, not certification**: it lets your own control owners decide whether Hive's automated review satisfies your change-management policy. See [SOC 2 control mapping](soc2-control-mapping.md) for how to use it, and [general technical review](general-technical-review.md) for what Hive does and does not claim.
 
-> **Status.** The schema, canonical hash, signing and verification (`pkg/evidence`) exist today, and the review relay writes bundles (verdicts, posted reviews and the policy snapshot; see [Where it lives](#where-it-lives-and-retention)). Sentinel findings, CI, human actions and the merge event, the `GET /api/review/evidence` endpoint, the dashboard "Download evidence" action and `hivectl review evidence` are tracked in the [epic #11058](https://github.com/hivecommons/hive/issues/11058) and are **landing in follow-up issues #11060/#11061/#11062**. Sections below that describe those surfaces are the design, not yet shipped behaviour.
+> **Status.** The schema, canonical hash, signing and verification (`pkg/evidence`) exist today; the review relay writes bundles (verdicts, posted reviews and the policy snapshot; see [Where it lives](#where-it-lives-and-retention)); every merge path records the merge event and posts the evidence pointer comment; and bundles can be read through `GET /api/review/evidence`, the dashboard Evidence action and `hivectl review evidence` (see [Downloading](#downloading)). Sentinel findings, CI and human actions are tracked in the [epic #11058](https://github.com/hivecommons/hive/issues/11058) and land in follow-up issue #11060.
 
 ## What a bundle is
 
@@ -68,16 +68,20 @@ The review relay writes them whenever it records a validated verdict (with or wi
 - A finding reported against the PR as a whole, with no file, is recorded with `path` `(pr)`. A verdict's `confidence` is that perspective's own 0 to 5 review confidence score divided by 5.
 - `evidence.enabled: false` stops new writes. Failures are logged and never fail or retry the review itself.
 
-Planned (follow-up issue #11061): reads follow the same retention contract as `/api/runs/audit`: when a bundle ages out it is reported with an explicit `expired` marker, never as silent absence.
+Nothing prunes bundles automatically; they stay until an operator removes them. Reads follow the same retention contract as `/api/runs/audit`: a bundle Hive can prove existed (its PR directory is still there, or a newer bundle's `previous_bundle_id` names it) is reported with an explicit `expired` marker, never as silent absence.
 
 ## Downloading
 
-Landing in follow-up issues #11060/#11061/#11062:
+- **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>][&format=json|zip]` for owner/merger roles. The default is the bundle for the PR's latest head; `head` takes a full SHA or a unique prefix of at least 7 characters (409 if it matches more than one). `format=json` returns the bundle bytes exactly as stored, so its hash and signature verify offline; add `download=1` for an attachment. `format=zip` returns `bundle.json`, `verdicts.json` (the matching verdict reports), `review-links.json` (the PR's review-links slice) and `manifest.json` (SHA-256 of each file, plus the signing public key when the bundle is signed and the key is readable). A missing bundle is a 404 whose body has `status: "expired"` and `expired: true` when retention removed it, otherwise `status: "not_found"`. `GET /api/review/evidence/list?repo=&number=` lists every retained bundle id and head for the PR.
+- **Dashboard:** owners get an **Evidence** button on review queue rows and review pipeline cards. It opens a modal with the bundle id, head, hash, whether it is signed, the verdict count and merge status, and **Download JSON** / **Download ZIP** buttons.
+- **CLI:** `hivectl review evidence <owner/repo#n> [--head <sha>] [-o FILE] [--zip]` prints or saves the bundle, and `hivectl review evidence verify FILE [--pubkey KEY]` checks it offline (see [hivectl](hivectl.md#review--review-evidence)).
+- **On the PR:** when a PR merges through any Hive merge path, the merge event is added to the head's bundle (re-signed) and Hive posts one comment:
 
-- **Dashboard:** a "Download evidence" action on the review queue row and PR detail, owner-only.
-- **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>]` for owner/merger roles; `&format=zip` adds the referenced artifacts.
-- **CLI:** `hivectl review evidence <owner/repo#n>` prints or saves the bundle.
-- **On the PR:** on merge the relay posts one `<!-- hive-review-evidence -->` comment carrying the bundle id and hash.
+  ```
+  <!-- hive-review-evidence --> Evidence bundle `<id>` sha256:<hash> — download from the dashboard or `hivectl review evidence <owner/repo#n>`.
+  ```
+
+  The marker makes it idempotent: a PR gets one such comment, however many sweeps see the merge.
 
 ## Signing key
 
