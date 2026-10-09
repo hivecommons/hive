@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.154.0)
+
+### Added
+
+- Operators can now see exactly which knowledge an agent receives and why the rest is filtered out ([#11202](https://github.com/hivecommons/hive/issues/11202)). `GET /api/knowledge/effective?agent=<name>` resolves the agent's `knowledge.agent_scopes` entry (unrestricted when it has none), intersects it with the request scope, and returns the resolved `scope`, the `included` TOC entries, and the `excluded` entries each with a `reason` code — `lifecycle`, `layer`, `repo`, `type` or `tag`, the first failing check in that order — plus counts and a `truncated` marker. The dashboard Knowledge section gains an **Effective knowledge** panel with an agent picker that renders both lists and every exclusion reason.
+- dashboard: configure upstream_watch forks from the Features tab (#11214)
+
+### Changed
+
+- dashboard: the help marks next to Settings fields are now the same circled **?** as the dashboard card help marks. Hovering or focusing one still shows the same tooltip; clicking it opens the guide for that setting (or the tab's entry on the new [Dashboard settings explained](https://github.com/hivecommons/hive/blob/v5/src/docs/settings.md) page) in a new tab, on the docs for the running release line ([#11213](https://github.com/hivecommons/hive/issues/11213)).
+
+### Fixed
+
+- Agent-filed issues that ask the maintainer to choose are now parked reliably ([#11215](https://github.com/hivecommons/hive/issues/11215)). Previously an issue only got a park label if the filing agent remembered to name one, so an architect-lane issue asking "pick A or B" could sit unparked with no "What to reply" notice, and `/hive approve` / `/hive decision` on it were ignored. `hive-open-issue` (and `gh issue create` through the wrapper) now takes `--needs-decision`, which sends `needs_decision: true` on the issue relay request; the watcher then applies the hive's configured needs-decision label (`project.issue_filter.hard_suppress_labels.needs_decision`, `needs-decision` by default) itself, even if the agent left it out of `--label`. Every lane policy that files issues now carries the same rule: if the body asks the maintainer to choose or approve before work can start, pass `--needs-decision`. `src/docs/hive-open-issue.md` now says this is the path an agent uses to park an issue it files; the `label` operation still refuses `needs-decision`.
+
 ## 2026-10-09 (v5.153.0)
 
 ### Added
