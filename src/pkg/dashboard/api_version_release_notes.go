@@ -228,7 +228,7 @@ func cachedReleaseNotes(key string) (releaseNotesResponse, bool) {
 	if !ok {
 		return releaseNotesResponse{}, false
 	}
-	if time.Since(e.at) > releaseNotesCacheTTL {
+	if releaseNotesNow().Sub(e.at) > releaseNotesCacheTTL {
 		delete(releaseNotesCache.entries, key)
 		return releaseNotesResponse{}, false
 	}

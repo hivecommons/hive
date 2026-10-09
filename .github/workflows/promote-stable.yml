@@ -85,8 +85,21 @@ jobs:
         run: |
           set -euo pipefail
           since=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          recent=$(gh api "repos/${REPO}/actions/workflows/promote-stable.yml/runs?per_page=30&created=>=${since}" \
-            --jq "[.workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | select(true)] | length" || echo 0)
+          ids=$(gh api "repos/${REPO}/actions/workflows/promote-stable.yml/runs?per_page=100&created=>=${since}" \
+            --jq ".workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | .id" || true)
+          # Only a run whose `promote` job actually ran (or is running) covers
+          # this one. A run whose own gate skipped promote still concludes
+          # "success", and a sibling whose jobs are about to be skipped is
+          # briefly "in_progress"; counting those let skip-only runs chain
+          # every <30 min on a busy v5 and starved promotion for ~10h (#11196).
+          recent=0
+          for id in $ids; do
+            ran=$(gh api "repos/${REPO}/actions/runs/${id}/jobs" \
+              --jq '[.jobs[] | select(.name == "promote") | select(.status != "completed" or .conclusion == "success")] | length' || echo 0)
+            if [ "${ran:-0}" != "0" ]; then
+              recent=$((recent + 1))
+            fi
+          done
           if [ "$EVENT" = "workflow_dispatch" ] || [ "${recent:-0}" = "0" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
