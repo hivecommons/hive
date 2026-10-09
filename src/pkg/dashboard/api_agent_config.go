@@ -948,6 +948,10 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if !s.deps.Config.BackendAllowed(backend) {
+			jsonError(w, fmt.Sprintf("backend %q is disabled on this spoke by the backends allow/deny list in hive.yaml", backend), http.StatusBadRequest)
+			return
+		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
 		effectiveBackend = agentCfg.Backend

@@ -87,6 +87,9 @@ type Config struct {
 	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
 	Hub                         HubConfig           `yaml:"hub"`
+	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
+	// at pack apply and by PUT /api/config/agent/{name}/models.
+	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
