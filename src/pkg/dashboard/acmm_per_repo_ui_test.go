@@ -45,7 +45,17 @@ func jsFunc(t *testing.T, html, name string) string {
 		case '}':
 			depth--
 			if depth == 0 {
-				return html[declStart : i+1]
+				src := html[declStart : i+1]
+				if strings.Contains(src, "formatDashboard") || strings.Contains(src, "dashboardDateFormatter") {
+					src = `function selectedDashboardTimeZone() { return (typeof _navbarClockTimeZone !== 'undefined' && _navbarClockTimeZone) || (typeof _dashboardServerTimeZone !== 'undefined' && _dashboardServerTimeZone) || 'UTC'; }
+function dashboardDateFormatter(options) { const opts = Object.assign({}, options || {}); const tz = selectedDashboardTimeZone(); if (tz) opts.timeZone = tz; return new Intl.DateTimeFormat([], opts); }
+					function formatDashboardDateTime(value, options, fallback) { const d = value instanceof Date ? value : new Date(value); if (isNaN(d.getTime())) return fallback !== undefined ? fallback : String(value || ''); const opts = options || { month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' }; try { const fmt = dashboardDateFormatter(opts); if (typeof fmt.formatToParts === 'function' && opts.month === 'numeric' && opts.day === 'numeric') { const parts = {}; for (const p of fmt.formatToParts(d)) parts[p.type] = p.value; const datePart = parts.month && parts.day ? parts.month + '/' + parts.day : ''; if (opts.hour || opts.minute) { const dayPeriod = parts.dayPeriod ? ' ' + parts.dayPeriod : ''; const zone = parts.timeZoneName ? ' ' + parts.timeZoneName : ''; return (datePart + ' ' + (parts.hour || '') + ':' + (parts.minute || '') + dayPeriod + zone).trim(); } if (datePart) return datePart; } return fmt.format(d); } catch (e) { return d.toISOString(); } }
+function formatDashboardDate(value, options, fallback) { return formatDashboardDateTime(value, options || { month:'numeric', day:'numeric' }, fallback); }
+function formatDashboardTime(value, options, fallback) { return formatDashboardDateTime(value, options || { hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' }, fallback); }
+function formatNumber(value, locale, options) { try { return new Intl.NumberFormat(locale || undefined, options || {}).format(value); } catch (e) { return String(value); } }
+` + src
+				}
+				return src
 			}
 		}
 	}

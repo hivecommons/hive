@@ -768,11 +768,17 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			cadenceValue = lookupCadenceValue(name, cfg)
 		}
 		cadence := cadenceDisplay(cadenceValue)
-		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
+		nextKick := ""
+		nextKickAt := ""
+		if next, ok := computeNextKickTimeFromCadence(proc.LastKick, cadenceValue); ok {
+			nextKick = formatHumanTime(next)
+			nextKickAt = next.UTC().Format(time.RFC3339)
+		}
 		nextKickIn := computeNextKickETA(proc.LastKick, cadenceValue)
 		continuousState := govState.Continuous[name]
 		if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(currentMode, cadenceValue) && !continuousState.NextKick.IsZero() {
 			nextKick = formatHumanTime(continuousState.NextKick)
+			nextKickAt = continuousState.NextKick.UTC().Format(time.RFC3339)
 			if d := time.Until(continuousState.NextKick); d > 0 {
 				nextKickIn = formatETA(d)
 			} else {
@@ -893,6 +899,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
 			NextKick:        nextKick,
+			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,
 			Continuous:      continuousNow,
 			FrontendAgentContinuous: FrontendAgentContinuous{
@@ -1632,15 +1639,19 @@ func formatHumanTime(t time.Time) string {
 	return local.Format("1/2 3:04 PM MST")
 }
 
-func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+func computeNextKickTimeFromCadence(lastKick *time.Time, cadence config.Cadence) (time.Time, bool) {
 	if cadence == "" || cadence.IsPaused() {
-		return ""
+		return time.Time{}, false
 	}
 	base := time.Now()
 	if lastKick != nil && cadence.Mode() == config.CadenceModeInterval {
 		base = *lastKick
 	}
-	next, ok := cadence.NextAfter(base)
+	return cadence.NextAfter(base)
+}
+
+func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+	next, ok := computeNextKickTimeFromCadence(lastKick, cadence)
 	if !ok {
 		return ""
 	}

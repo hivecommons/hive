@@ -658,6 +658,7 @@ type FrontendAgent struct {
 	LastKick          string `json:"lastKick,omitempty"`
 	LastKickAt        string `json:"lastKickAt,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
+	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
