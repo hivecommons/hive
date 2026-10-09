@@ -17,7 +17,7 @@ func TestIssueFilingPoliciesParkDecisionIssues(t *testing.T) {
 
 	rule := []byte("**Park an issue that needs the maintainer's call.** If the issue body asks the\n" +
 		"maintainer to choose between options, or to approve before work can start, add\n" +
-		"`--needs-decision` to the create command")
+		"`--needs-decision` to the issue-create command below")
 
 	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
 	if err != nil {
