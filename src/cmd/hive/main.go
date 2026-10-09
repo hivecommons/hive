@@ -4723,6 +4723,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
 				ComponentReach: tracing.ReachSnapshot(),
+				// Compliance profile + latest posture pass/fail (#11083); an
+				// empty block when compliance is not configured.
+				Compliance: b.dashSrv.ComplianceHeartbeat(),
 			}
 
 		}, heartbeatSendInterval, b.logger,
