@@ -58,7 +58,6 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 		}
 		p := cfg.AutoMerge.TrustedAuthors
 		excludeLabels := p.ExcludeLabelSet()
-		excludeLabels[strings.ToLower(strings.TrimSpace(cfg.Sentinel.LabelOrDefault()))] = true
 		return automerge.TrustedAuthorPolicy{
 			Enabled:                 p.Enabled,
 			Repos:                   p.RepoSet(),
