@@ -1,0 +1,1 @@
+- Fix automerge required-check discovery for GitHub App installations without administration permission by using branch/rules fallbacks and deferring unknown required-check failures to GitHub's merge enforcement.
