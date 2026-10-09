@@ -194,7 +194,7 @@ above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
 
 ## Policy gates that change or reject your request
 
-For the full operator-side label reference, including `hold`, `approved-direction`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
+For the full operator-side label reference, including `hold`, `approved-direction`, `hive: needs-confirmation`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 Beyond the empty-body and `--issues` checks above, the watcher applies policy
 gates before opening the PR. Tracker/epic claims can be rewritten, and unsafe
@@ -219,15 +219,11 @@ finish it:
   free ([#7156](https://github.com/hivecommons/hive/issues/7156)).
 
 Human-filed bug reports are no longer rewritten to `Refs #N` for
-reporter-confirmation. A fix PR should still carry `Fixes #N`;
-when the merge reaches the issue close path, `CloseIssue` applies the
-reporter-confirmation gate. If the issue has `hive: reporter-confirmed` or
-`hive: close-on-merge`, the close proceeds. Otherwise Hive leaves the issue
-open, asks the reporter to confirm, and the reporter or a maintainer can reply
-`/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue) to close it
-([#9746](https://github.com/hivecommons/hive/issues/9746),
-`.github/workflows/issue-confirm-fixed.yml`). This keeps GitHub's PR/issue
-closing relationship visible while Hive owns the reporter-verification policy.
+reporter-confirmation. A fix PR should still carry `Fixes #N`; when it
+merges, the issue closes by default. Add `hive: needs-confirmation` to the
+issue body or as a label (or enable `issues.reporter_confirmation`) only when
+the reporter genuinely must verify before closure. `hive: reporter-confirmed`
+and `hive: close-on-merge` remain accepted legacy bypass markers.
 
 A downgraded tracker reference says so in the PR body it lands in:
 

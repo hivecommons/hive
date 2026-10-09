@@ -1,0 +1,1 @@
+- Issues now close on fix merge by default while reporter confirmation is opt-in via `hive: needs-confirmation` or `issues.reporter_confirmation` (#11119)

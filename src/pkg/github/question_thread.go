@@ -55,7 +55,7 @@ func (c *Client) IssueThread(ctx context.Context, repo string, number int) (Issu
 		State:         issue.GetState(),
 		Author:        issue.GetUser().GetLogin(),
 		IsPullRequest: issue.IsPullRequest(),
-		BugFamily:     ReporterConfirmationCloseGateReason(issue) != "",
+		BugFamily:     c.reporterConfirmationCloseGateReason(issue) != "",
 	}
 	for _, l := range issue.Labels {
 		if name := l.GetName(); name != "" {

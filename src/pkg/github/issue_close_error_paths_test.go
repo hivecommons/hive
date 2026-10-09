@@ -99,7 +99,7 @@ func failHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestCloseIssueConfirmationCommentFailureStillGates(t *testing.T) {
-	issue := closeGateIssue("human", "User", "Bug: broken", "reported by a person", []string{"bug"})
+	issue := closeGateIssue("human", "User", "Bug: broken", "reported by a person\n\nhive: needs-confirmation", []string{"bug"})
 	srv := closeGateMux(t, issue, emptyCommentList, failHandler, failHandler)
 	defer srv.Close()
 	c := testClient(t, srv.URL)
@@ -114,7 +114,7 @@ func TestCloseIssueConfirmationCommentFailureStillGates(t *testing.T) {
 }
 
 func TestCloseIssueOverrideCommentFailureAbortsClose(t *testing.T) {
-	issue := closeGateIssue("human", "User", "Bug: dup", "reported by a person", []string{"bug"})
+	issue := closeGateIssue("human", "User", "Bug: dup", "reported by a person\n\nhive: needs-confirmation", []string{"bug"})
 	var closed bool
 	srv := closeGateMux(t, issue, emptyCommentList, failHandler,
 		func(w http.ResponseWriter, r *http.Request) { closed = true },
@@ -147,7 +147,7 @@ func TestCloseIssueEditFailure(t *testing.T) {
 // confirmation request posted 100+ comments ago (page 2) must still be found,
 // so the gate does not re-notify the reporter.
 func TestHasReporterConfirmationRequestPaginates(t *testing.T) {
-	issue := closeGateIssue("human", "User", "Bug: old thread", "reported by a person", []string{"bug"})
+	issue := closeGateIssue("human", "User", "Bug: old thread", "reported by a person\n\nhive: needs-confirmation", []string{"bug"})
 	var posted int
 	var srvURL string
 	srv := closeGateMux(t, issue,

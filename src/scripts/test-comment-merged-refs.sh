@@ -241,13 +241,11 @@ if grep -q '^POST repos/hivecommons/hive/issues/10/comments' "$CALL_LOG"; then
 else
   bad "issue #10 was not commented"
 fi
-if grep -q '^POST repos/hivecommons/hive/issues/10/labels' "$CALL_LOG" \
-  && grep -q 'labels\[]=needs-reporter-confirmation' "$CALL_LOG" \
-  && grep -q 'labels\[]=needs-human' "$CALL_LOG"; then
-  pass "refs sweep labels the issue and maintainer reporter for dashboard visibility"
-else
-  bad "refs sweep did not add reporter-confirmation and needs-human labels"
+if grep -q '^POST repos/hivecommons/hive/issues/10/labels' "$CALL_LOG"; then
+  bad "refs sweep should not add reporter-confirmation labels by default"
   cat "$CALL_LOG" | sed 's/^/      | /'
+else
+  pass "refs sweep leaves reporter-confirmation labels alone by default"
 fi
 
 for issue in 12 13 14 15 16 17; do
@@ -263,10 +261,10 @@ else
   cat "$BODY_LOG" | sed 's/^/      | /'
 fi
 
-if grep -q 'reply `/fixed`' "$BODY_LOG"; then
-  pass "comment tells the reader how to confirm the fix (#9746)"
+if grep -q 'hive: needs-confirmation' "$BODY_LOG" && ! grep -q 'reply `/fixed`' "$BODY_LOG"; then
+  pass "comment explains the opt-in gate without asking for /fixed by default"
 else
-  bad "comment body does not mention the /fixed confirmation reply"
+  bad "comment body did not explain the opt-in gate correctly"
 fi
 
 if printf '%s\n' "$output" | grep -q 'Skipping #12: issue state is closed' \
@@ -277,11 +275,11 @@ else
   bad "expected skip messages were missing"
   echo "$output" | sed 's/^/      | /'
 fi
-if grep -q '^POST repos/hivecommons/hive/issues/15/labels labels\[]=needs-reporter-confirmation' "$CALL_LOG"; then
-  pass "duplicate refs-sweep comments backfill the reporter-confirmation label"
-else
-  bad "duplicate refs-sweep comment did not backfill the reporter-confirmation label"
+if grep -q '^POST repos/hivecommons/hive/issues/15/labels' "$CALL_LOG"; then
+  bad "duplicate refs-sweep comments should not backfill reporter-confirmation labels"
   cat "$CALL_LOG" | sed 's/^/      | /'
+else
+  pass "duplicate refs-sweep comments do not backfill reporter-confirmation labels"
 fi
 
 : > "$CALL_LOG"
