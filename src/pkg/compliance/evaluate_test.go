@@ -271,7 +271,7 @@ func TestBuildReport(t *testing.T) {
 	if len(r.Available) == 0 || len(r.Available) != 3 || r.Available[2].ID != "soc2-type2" || r.Available[0].Controls == 0 {
 		t.Fatalf("available = %+v", r.Available)
 	}
-	if r.PostureCheckInterval != "1h0m0s" || !r.PostureChecksPending || r.ProfileLoadError != "" {
+	if r.PostureCheckInterval != "1h0m0s" || r.PostureChecksPending || r.PostureChecksTracking != "" || r.ProfileLoadError != "" {
 		t.Fatalf("report meta = %+v", r)
 	}
 	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != 4 {

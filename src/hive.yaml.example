@@ -668,7 +668,10 @@ governor:
 # compliance:
 #   frameworks: [soc2-type2]   # also: fedramp-moderate, iso27001-annex-a
 #   posture_checks:
-#     interval: 1h   # 5m..168h; 0/unset = 1h
+#     interval: 1h        # 5m..168h; 0/unset = 1h. Posture checks (#11079) run
+#                         # on this cadence; GET /api/compliance/posture.
+#     window_days: 30     # merged-PR look-back, 1..90; 0/unset = 30
+#     history_days: 365   # posture-history retention, 30..1095; 0/unset = 365
 
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the

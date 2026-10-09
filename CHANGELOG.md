@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.147.1)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.9 and `golang.org/x/net` to v0.60.0 so the `govulncheck` gate stops flagging GO-2026-6599 through GO-2026-6611 (HTTP/2 framer, `crypto/tls`, `net/http`, `mime/multipart`, `html/template`). The vulnerable versions were reachable from the dashboard's HTTP server and the GitHub client, and the gate was red on the default branch itself, blocking every open PR.
+
 ## 2026-10-08 (v5.147.0)
 
 ### Added

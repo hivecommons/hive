@@ -42,6 +42,23 @@ func TestComplianceConfigSelectedFrameworksNormalizes(t *testing.T) {
 	}
 }
 
+func TestCompliancePostureWindowAndHistoryDefaults(t *testing.T) {
+	var c ComplianceConfig
+	if got := c.PostureWindowOrDefault(); got != DefaultCompliancePostureWindowDays*24*time.Hour {
+		t.Fatalf("window = %s", got)
+	}
+	if got := c.PostureHistoryRetentionOrDefault(); got != DefaultCompliancePostureHistoryDays*24*time.Hour {
+		t.Fatalf("history = %s", got)
+	}
+	c.PostureChecks = CompliancePostureChecksConfig{WindowDays: 7, HistoryDays: 90}
+	if got := c.PostureWindowOrDefault(); got != 7*24*time.Hour {
+		t.Fatalf("window = %s", got)
+	}
+	if got := c.PostureHistoryRetentionOrDefault(); got != 90*24*time.Hour {
+		t.Fatalf("history = %s", got)
+	}
+}
+
 func TestIsKnownComplianceFramework(t *testing.T) {
 	if !IsKnownComplianceFramework(" SOC2-TYPE2 ") {
 		t.Fatal("soc2-type2 must be known regardless of case/space")
@@ -74,6 +91,11 @@ func TestComplianceConfigValidate(t *testing.T) {
 		{name: "negative interval", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: -time.Minute}}, wantErr: "must not be negative"},
 		{name: "too short", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: time.Second}}, wantErr: "at least"},
 		{name: "too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: MaxCompliancePostureInterval + time.Hour}}, wantErr: "at most"},
+		{name: "window bounds", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: MaxCompliancePostureWindowDays, HistoryDays: MinCompliancePostureHistoryDays}}},
+		{name: "negative window", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: -1}}, wantErr: "window_days"},
+		{name: "window too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: MaxCompliancePostureWindowDays + 1}}, wantErr: "window_days"},
+		{name: "history too short", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{HistoryDays: MinCompliancePostureHistoryDays - 1}}, wantErr: "history_days"},
+		{name: "history too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{HistoryDays: MaxCompliancePostureHistoryDays + 1}}, wantErr: "history_days"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
