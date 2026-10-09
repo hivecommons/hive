@@ -89,7 +89,7 @@ func (s *Server) handleOverviewExport(w http.ResponseWriter, r *http.Request, ki
 		return
 	}
 	w.Header().Set("Content-Type", overviewCSVType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+overviewFilename(status.HiveID, kind, filters, bands, now)+`"`)
+	w.Header().Set("Content-Disposition", `inline; filename="`+overviewFilename(status.HiveID, kind, filters, bands, now)+`"`)
 	if _, err := w.Write([]byte(overviewCSV(rows, overviewCSVColumns(kind)))); err != nil {
 		slogWarnOverviewEncode(err)
 	}

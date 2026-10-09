@@ -1050,10 +1050,24 @@ document.getElementById("rows").addEventListener("click", function (ev) {
     el.textContent = "copied";
     setTimeout(function () { el.classList.remove("copied"); el.textContent = "⎘ attach"; }, 1200);
   };
+  function manualCopy() {
+    var input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = cmd;
+    input.setAttribute("aria-label", "Attach command");
+    input.style.cssText = "position:absolute;z-index:20;min-width:24rem";
+    el.insertAdjacentElement("afterend", input);
+    input.focus();
+    input.select();
+    el.classList.add("copied");
+    el.textContent = "selected";
+    setTimeout(function () { input.remove(); el.classList.remove("copied"); el.textContent = "⎘ attach"; }, 8000);
+  }
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(cmd).then(done, function () { window.prompt("copy:", cmd); });
+    navigator.clipboard.writeText(cmd).then(done, manualCopy);
   } else {
-    window.prompt("copy:", cmd);
+    manualCopy();
   }
 }, true);
 load();

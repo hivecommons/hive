@@ -333,8 +333,10 @@ below is owner only (verified owner session), because the evidence names
 owners, PRs and config locations.
 
 **Exports.** `GET /api/compliance/export?kind=&format=&since=&until=`
-returns a download (`Content-Disposition: attachment`, never cached) for the
-range `[since, until)`. `since` takes an RFC 3339 time, a `YYYY-MM-DD` date
+returns inline text (`Content-Disposition: inline`, never cached) for the
+range `[since, until)` so dashboards can show exports without triggering
+browser download permission prompts. Add `download=1` for an explicit
+attachment outside the dashboard. `since` takes an RFC 3339 time, a `YYYY-MM-DD` date
 or a look-back such as `720h`; `until` takes an RFC 3339 time or a
 `YYYY-MM-DD` date meaning the end of that day. Without them the range is
 the last 30 days. Every export is written to the
@@ -479,8 +481,8 @@ files, docs). **Run checks now** runs one pass through
 `POST /api/compliance/posture/run` and refreshes the panel.
 
 **Evidence & attestations** (owners only). Pick an optional date range and
-download any export in the table above. Each button saves the file under the
-server's filename. To attest, choose a framework, the review date (default
-today) and a note, then **Record attestation**. A confirmation dialog shows
+open any export in the table above. Each button renders the export in an
+in-app viewer with copy support; it does not force a browser download. To
+attest, choose a framework, the review date (default today) and a note, then **Record attestation**. A confirmation dialog shows
 what will be written to the audit log under your login. Recorded
 attestations are listed below the form, newest first.
