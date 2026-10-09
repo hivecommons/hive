@@ -5670,7 +5670,7 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	initialEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
 	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
 	lastEvalInterval := initialEvalInterval
 	ticker := deps.newTicker(initialEvalInterval)
@@ -5831,7 +5831,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				}
 			}
 			deps.persist(b)
-			effectiveEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+			effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
 			if effectiveEvalInterval != lastEvalInterval {
 				b.logger.Info("eval interval changed, resetting ticker",
 					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))

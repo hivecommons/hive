@@ -2037,6 +2037,7 @@ type GovernorConfig struct {
 	Modes                      map[string]ModeConfig `yaml:"modes"`
 	EvalIntervalS              int                   `yaml:"eval_interval_s"`
 	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
 	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
 	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
@@ -6105,6 +6106,7 @@ const (
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
 	defaultEvalIntervalMaxS       = 1800
+	defaultEvalIntervalWebhookS   = 900
 	defaultConserveIntervalMult   = 2
 	defaultOptionalSweepEveryN    = 1
 	defaultGitHubAPIReserve       = 800
@@ -6224,6 +6226,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalMaxS == 0 {
 		c.Governor.EvalIntervalMaxS = defaultEvalIntervalMaxS
+	}
+	if c.Governor.EvalIntervalWebhookS == 0 {
+		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
 	}
 	if c.Governor.ConserveIntervalMultiplier == 0 {
 		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult

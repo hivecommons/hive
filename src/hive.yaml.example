@@ -314,6 +314,7 @@ agents:
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
   eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
+  eval_interval_webhook_s: 900            # Base interval while GitHub webhooks are healthy (see /api/webhook/github)
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 

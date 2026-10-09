@@ -18640,6 +18640,56 @@
         }
       }
     },
+    "/api/webhook/github": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GitHub App webhook receiver",
+        "description": "Public webhook endpoint for GitHub App deliveries, sent directly by GitHub or relayed by the hub. Fails closed without GITHUB_WEBHOOK_SECRET and verifies X-Hub-Signature-256 over the raw body. pull_request, pull_request_review, check_suite, check_run, status, issue_comment (on PRs) and push events invalidate the matching cached PR state and mark it dirty for the next eval cycle; every delivery for a managed repository refreshes webhook health. Deliveries for unmanaged repositories are ignored.",
+        "responses": {
+          "200": {
+            "description": "Processed or ignored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "invalidated": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing X-GitHub-Event header or malformed payload"
+          },
+          "401": {
+            "description": "Invalid signature"
+          },
+          "503": {
+            "description": "No webhook secret configured"
+          }
+        }
+      }
+    },
     "/api/linear/webhook": {
       "post": {
         "tags": [
