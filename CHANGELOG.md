@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.155.1)
+
+### Fixed
+
+- `stable` no longer stalls behind the 24h soak line on a busy `v5` ([#11196](https://github.com/hivecommons/hive/issues/11196)). When two successful `docker.yml` runs built the same commit, the promoter evaluated the duplicate whose generation the shared short-SHA tag did not carry and held the digest integrity gate indefinitely; it now skips the duplicate and evaluates the run that owns the tag. The promote-stable `gate` de-dup also now counts only runs whose `promote` job actually ran, so chains of skip-only runs can no longer suppress promotion for hours.
+
 ## 2026-10-09 (v5.155.0)
 
 ### Added
