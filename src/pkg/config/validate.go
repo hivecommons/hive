@@ -135,6 +135,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
 	}
+	if err := ValidateKnowledgePublish(c.Knowledge.Publish); err != nil {
+		return err
+	}
 	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
 		return err
 	}
