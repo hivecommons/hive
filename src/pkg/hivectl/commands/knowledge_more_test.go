@@ -276,3 +276,42 @@ func TestKnowledgeGraphWithoutRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestKnowledgeStateSendsLifecycleChange covers knowledge state with and
+// without the optional --superseded-by and --reason flags.
+func TestKnowledgeStateSendsLifecycleChange(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want map[string]any
+	}{
+		{args: []string{"old-relay", "deprecated"}, want: map[string]any{"state": "deprecated"}},
+		{
+			args: []string{"old-relay", "superseded", "--superseded-by", "relay-v2", "--reason", "relay rewritten"},
+			want: map[string]any{"state": "superseded", "superseded_by": "relay-v2", "reason": "relay rewritten"},
+		},
+	} {
+		var got map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPut || r.URL.Path != "/api/knowledge/entry/old-relay/state" {
+				t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"ok":true}`)
+		}))
+		if _, _, err := execute(t, server, "", append([]string{"knowledge", "state"}, tc.args...)...); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		server.Close()
+		if len(got) != len(tc.want) {
+			t.Fatalf("%v: body = %v, want %v", tc.args, got, tc.want)
+		}
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Fatalf("%v: body[%s] = %v, want %v", tc.args, k, got[k], v)
+			}
+		}
+	}
+}

@@ -154,6 +154,18 @@ from `--file` or `--stdin` (`--format` defaults to `markdown`, `--layer` to
 `project`) and, like the other knowledge writes, needs the layer's wiki `url`
 configured — see [Running against a local Hive](#running-against-a-local-hive).
 
+`state` changes an entry's lifecycle state (`draft`, `approved`, `deprecated`
+or `superseded`) in the local channel that holds it, via
+`PUT /api/knowledge/entry/{id}/state`. It is owner-only, and the change is
+recorded in the audit log together with `--reason`. `superseded` requires
+`--superseded-by`, which names the replacement entry in the same channel. See
+[Knowledge lifecycle states](knowledge-lifecycle.md#changing-state-over-the-api).
+
+```bash
+hivectl knowledge state old-relay deprecated --reason "relay removed"
+hivectl knowledge state old-relay superseded --superseded-by relay-v2 --reason "relay rewritten"
+```
+
 `suggest` lets an agent propose a knowledge change without changing what other
 agents see. It runs locally against a repository checkout (no dashboard call):
 it writes the change under `.hive/wiki/` (`--dir`, `--repo-root`) and prints

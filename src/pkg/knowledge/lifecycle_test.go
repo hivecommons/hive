@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,5 +337,43 @@ func TestKnowledgeAPI_UpdateFactLifecycleOnVault(t *testing.T) {
 	}
 	if err := api.UpdateFact(ctx, "vault", "a", UpdateFactRequest{State: "bogus"}); err == nil {
 		t.Error("expected error for invalid state")
+	}
+}
+
+func TestKnowledgeAPI_SetEntryState(t *testing.T) {
+	api, vaultDir := apiWithVault(t)
+	writeLifecycleFact(t, vaultDir, "a", "title: Fact A\n", "Body A.")
+	writeLifecycleFact(t, vaultDir, "b", "title: Fact B\n", "Body B.")
+	if err := api.ReindexVault(vaultDir); err != nil {
+		t.Fatal(err)
+	}
+
+	change, err := api.SetEntryState("a", StateDeprecated, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.Channel != "vault" || change.Previous != StateApproved || change.Fact == nil || change.Fact.State != StateDeprecated {
+		t.Fatalf("set state change = %+v", change)
+	}
+
+	change, err = api.SetEntryState("a", StateSuperseded, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.Previous != StateDeprecated || change.Fact.State != StateSuperseded || change.Fact.SupersededBy != "b" {
+		t.Fatalf("supersede change = %+v", change.Fact)
+	}
+
+	if _, err := api.SetEntryState("missing", StateDraft, ""); !errors.Is(err, ErrEntryNotWritable) {
+		t.Errorf("missing entry err = %v, want ErrEntryNotWritable", err)
+	}
+	if _, err := api.SetEntryState("", StateDraft, ""); !errors.Is(err, ErrEntryNotWritable) {
+		t.Errorf("empty id err = %v, want ErrEntryNotWritable", err)
+	}
+	if _, err := api.SetEntryState("a", StateSuperseded, "missing"); !errors.Is(err, ErrReplacementNotInChannel) {
+		t.Errorf("missing replacement err = %v, want ErrReplacementNotInChannel", err)
+	}
+	if _, err := api.SetEntryState("b", StateSuperseded, ""); err == nil {
+		t.Error("expected error for superseded without a replacement")
 	}
 }

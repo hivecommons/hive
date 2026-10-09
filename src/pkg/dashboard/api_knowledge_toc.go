@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -103,5 +104,83 @@ func (s *Server) handleKnowledgeEntry(w http.ResponseWriter, r *http.Request) {
 		"status":   state,
 		"markdown": knowledge.RenderFactMarkdown(*fact),
 		"fact":     fact,
+	})
+}
+
+// maxKnowledgeStateReason caps the operator-supplied reason recorded in the
+// audit log for a lifecycle change.
+const maxKnowledgeStateReason = 500
+
+// handleKnowledgeEntryState serves PUT /api/knowledge/entry/{id}/state: an
+// owner-only lifecycle change (draft, approved, deprecated, superseded) of an
+// entry in a local channel. Every change is audited with the actor, the
+// previous and new state and the operator's reason (#11200).
+func (s *Server) handleKnowledgeEntryState(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	var req struct {
+		State        string `json:"state"`
+		SupersededBy string `json:"superseded_by"`
+		Reason       string `json:"reason"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	supersededBy := strings.TrimSpace(req.SupersededBy)
+	state, err := knowledge.ParseLifecycleState(req.State)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch {
+	case state == knowledge.StateSuperseded && supersededBy == "":
+		jsonError(w, "state superseded requires superseded_by", http.StatusBadRequest)
+		return
+	case state != knowledge.StateSuperseded && supersededBy != "":
+		jsonError(w, "superseded_by requires state superseded", http.StatusBadRequest)
+		return
+	case supersededBy == id:
+		jsonError(w, "an entry cannot supersede itself", http.StatusBadRequest)
+		return
+	}
+	reason := strings.Join(strings.Fields(req.Reason), " ")
+	if len(reason) > maxKnowledgeStateReason {
+		reason = reason[:maxKnowledgeStateReason]
+	}
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	change, err := s.deps.Knowledge.SetEntryState(id, state, supersededBy)
+	switch {
+	case errors.Is(err, knowledge.ErrEntryNotWritable):
+		jsonError(w, "knowledge entry not found in a writable channel", http.StatusNotFound)
+		return
+	case errors.Is(err, knowledge.ErrReplacementNotInChannel):
+		jsonError(w, "superseded_by entry not found in the same channel", http.StatusBadRequest)
+		return
+	case err != nil:
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	action, detail := "knowledge_set_state", []string{"id", id, "channel", change.Channel, "from", string(change.Previous), "to", string(state)}
+	if supersededBy != "" {
+		action = "knowledge_supersede"
+		detail = append(detail, "superseded_by", supersededBy)
+	}
+	s.auditFromRequest(r, action, auditDetail(append(detail, "reason", reason)...), "")
+	jsonResponse(w, map[string]interface{}{
+		"ok":             true,
+		"id":             id,
+		"channel":        change.Channel,
+		"previous_state": change.Previous,
+		"state":          change.Fact.EffectiveState(),
+		"superseded_by":  change.Fact.SupersededBy,
+		"fact":           change.Fact,
 	})
 }
