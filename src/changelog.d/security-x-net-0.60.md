@@ -1,1 +1,1 @@
-- Bump golang.org/x/net to v0.60.0 to clear GO-2026-6617 (http2) from govulncheck.
+- Bump golang.org/x/net to v0.60.0 and Go toolchain to 1.26.9 to clear GO-2026-6617 (http2 / net/http) from govulncheck.
