@@ -155,9 +155,9 @@ profile disagree.
 <!-- END GENERATED: compliance-profile soc2-type2 -->
 
 A step-by-step SOC 2 operator guide, written for auditors and control
-owners, is being added as `src/docs/soc2-control-mapping.md` in
-[#11063](https://github.com/hivecommons/hive/issues/11063); this page is the
-reference for what the registry evaluates.
+owners, is [SOC 2 control mapping](soc2-control-mapping.md); it maps auditor
+questions to the fields of a PR's [review evidence bundle](review-evidence.md).
+This page is the reference for what the registry evaluates.
 
 ## FedRAMP Moderate mapping
 
