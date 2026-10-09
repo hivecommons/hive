@@ -20,7 +20,7 @@ for (const id of ['oc-gh-menu-profile','oc-gh-menu-widget','oc-gh-menu-download'
   if (!tag) fail('missing menu item ' + id);
   if (!/\bclass="[^"]*\bavatar-menu-item\b/.test(tag[0])) fail(id + ' does not use avatar-menu-item');
 }
-if (!/<a href="\/api\/widget"[^>]*id="oc-gh-menu-widget"[^>]*title="Download Übersicht widget"/.test(block)) fail('widget item missing href/title');
+if (!/<button type="button"[^>]*id="oc-gh-menu-widget"[^>]*data-action="hiveOpenTextEndpoint"[^>]*title="View Übersicht widget JSON"/.test(block)) fail('widget item missing in-app export wiring');
 if (/<a href="\/api\/widget"[^>]*class="[^"]*widget-dl/.test(html)) fail('topbar widget link still present');
 if (!/<a href="\/api\/docs"[^>]*class="avatar-menu-item"/.test(block)) fail('API docs item does not use avatar-menu-item');
 if (!/<button class="avatar-menu-item avatar-menu-signout"[^>]*>Sign out<\/button>/.test(block)) fail('sign out item does not use avatar-menu-item');

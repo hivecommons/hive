@@ -149,7 +149,7 @@ func TestDisabledAgentSessionActionsAreInert(t *testing.T) {
 		// agent card and the operations-center detail panel.
 		`${sessionChip(a, '▶ terminal',`,
 		`${sessionChip(a, '📄 full log',`,
-		`${sessionChip(a, '⬇ log',`,
+		`${sessionChip(a, '📋 log text',`,
 		// The card says WHY it is grey rather than leaving "stopped" to be
 		// read as a crash.
 		`<span class="status-badge disabled"`,

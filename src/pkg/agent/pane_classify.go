@@ -51,7 +51,10 @@ var loginPromptPatterns = []string{
 // network failure killed the agent at startup. These errors leave the Copilot
 // chrome visible (❯, / commands) so paneShowsCLIReady returns true, but the
 // agent is dead and will never recover without a restart.
-var fatalNetworkErrorPatterns = []string{
+// FatalNetworkErrorPatterns is exported so prompt builders can assert their
+// text never contains one: a prompt echoed into the pane that quotes one of
+// these restarts the agent every time it pauses to think.
+var FatalNetworkErrorPatterns = []string{
 	"invalid peer certificate",
 	"BadSignature",
 	"fetch failed",
@@ -61,7 +64,7 @@ var fatalNetworkErrorPatterns = []string{
 // TLS/network error pattern that requires an agent restart.
 func paneShowsFatalNetworkError(lines []string) bool {
 	for _, line := range lines {
-		for _, pat := range fatalNetworkErrorPatterns {
+		for _, pat := range FatalNetworkErrorPatterns {
 			if strings.Contains(line, pat) {
 				return true
 			}
@@ -131,7 +134,7 @@ func agentIsProducing(lastPaneChange, now time.Time) bool {
 }
 
 // transientAPIErrorPatterns are substrings of API failures that a plain retry
-// fixes (#4697). They are the OPPOSITE of fatalNetworkErrorPatterns above: the
+// fixes (#4697). They are the OPPOSITE of FatalNetworkErrorPatterns above: the
 // CLI survives, drops back to its idle prompt with the response truncated, and
 // stays there until the next scheduled kick — which can be hours away. The
 // session is alive with full context, so the remedy is a nudge, not a restart.

@@ -61,13 +61,28 @@ permissions:
   contents: write
   pull-requests: write
 
+# Only a new push may cancel a running guard: the superseded run is on the
+# old head SHA, where nothing merges anyway. Label events must NOT cancel —
+# hive's bots apply three or four labels seconds after every push, each
+# label spawned a run that cancelled the push-triggered one, and the head SHA
+# was left with CANCELLED check-runs for this *required* context. GitHub
+# scores every run of a required name, so one cancelled sibling kept the PR
+# at mergeStateStatus=BLOCKED with a green survivor beside it (#11250).
 concurrency:
   group: changelog-fragment-guard-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
   changelog-fragment-guard:
     name: changelog-fragment-guard
+    # Label events only matter when the label is `no-changelog`; every other
+    # label (size/*, dco-signoff, agent/*, hive/*) cannot change the verdict.
+    # A skipped job still reports a check-run, and GitHub treats "skipped" as
+    # passing for a required context, so this keeps the rollup green instead
+    # of adding a redundant run per label (#11250).
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled')
+      || github.event.label.name == 'no-changelog'
     # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
     # ones maintainers open when those conflict) live on sync/* branches —
     # or on <lane>/sync-vN-to-vM when an agent opens the top-up, since the

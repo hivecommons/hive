@@ -261,7 +261,10 @@ func buildReadInstruction(pr PullRequest) string {
 	if pr.HeadSHA != "" {
 		fmt.Fprintf(&b, "Every citation must be code you actually read at head %s — in the diff or in the files around it. If the PR has moved on since, review the current head and say which revision you read.\n", pr.HeadSHA)
 	}
-	b.WriteString("If you cannot read the diff — fetch failed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
+	// Phrased to avoid the substrings in FatalNetworkErrorPatterns:
+	// "fetch failed" in this very sentence was echoed into the reviewer pane
+	// and read as a dead network, restarting the reviewer mid-review.
+	b.WriteString("If you cannot read the diff — the download did not succeed, or it is too large — return verdict requires_human and say so. Never infer the contents of a diff you did not read: an invented file:line is worse than no review at all.\n\n")
 	return b.String()
 }
 
