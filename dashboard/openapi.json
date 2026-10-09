@@ -18832,7 +18832,7 @@
           "System"
         ],
         "summary": "Get compliance control status",
-        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles: soc2-type2, fedramp-moderate, iso27001-annex-a) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
         "responses": {
           "200": {
             "description": "compliance.Report",

@@ -53,8 +53,7 @@ Validation rejects unknown, malformed or duplicate framework ids and an
 interval outside 5 minutes–7 days (or a window / history retention outside
 the ranges above), so a typo cannot leave you believing a
 profile is being evaluated when it is not. Shipped profile ids:
-`soc2-type2`. FedRAMP Moderate and ISO 27001 Annex A profiles are follow-ups
-under [#11077](https://github.com/hivecommons/hive/issues/11077).
+`soc2-type2`, `fedramp-moderate` and `iso27001-annex-a`.
 
 ## Reading the status
 
@@ -92,8 +91,8 @@ The tab itself ships in [#11080](https://github.com/hivecommons/hive/issues/1108
 until then the status API above is the interface. As designed, it has four
 panels:
 
-1. **Framework profile** — select one or more frameworks (SOC 2 Type II
-   today; FedRAMP Moderate and ISO 27001 later; or none). The selection is
+1. **Framework profile** — select one or more frameworks (SOC 2 Type II,
+   FedRAMP Moderate, ISO 27001 Annex A; or none). The selection is
    `compliance.frameworks`.
 2. **Controls** — grouped by domain (Access control, Segregation of duties,
    Change management, Logging & monitoring, Vulnerability management,
@@ -156,6 +155,126 @@ A step-by-step SOC 2 operator guide, written for auditors and control
 owners, is being added as `src/docs/soc2-control-mapping.md` in
 [#11063](https://github.com/hivecommons/hive/issues/11063); this page is the
 reference for what the registry evaluates.
+
+## FedRAMP Moderate mapping
+
+A **subset** of the NIST SP 800-53 Rev 5 Moderate baseline: the families AC,
+AU, CM, IA, RA, SA and SI. Control text is a short paraphrase, not NIST's
+wording; the authoritative text is NIST SP 800-53 Rev 5 and the FedRAMP
+baseline. PE-3 and PS-3 sit outside the subset and are listed `not_covered`
+so silence is not read as coverage, as are location/citizenship eligibility
+(AC-2.ELIG) and external service providers (SA-9). IA-2 is informational:
+authentication happens at GitHub or the hub, Hive only holds the allowlist.
+Selecting this profile does not make a hive FedRAMP authorized, and Hive is
+not a FedRAMP authorization boundary. Generated from
+`src/pkg/compliance/profiles/fedramp-moderate.yaml`; do not edit by hand.
+
+<!-- BEGIN GENERATED: compliance-profile fedramp-moderate -->
+| Control | Domain | Hive setting | Recommended | Evaluator | Notes |
+|---|---|---|---|---|---|
+| AC-2 — Account management | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` | The dashboard allowlist is the account roster; periodic review of it is the operator's process. |
+| AC-2 — Account management | Access control | `dashboard.authorized_users` | `2` | `max_owners` |  |
+| AC-2.ELIG — Personnel eligibility by location or citizenship | Access control | _not covered by Hive_ | — | — | Hive cannot verify where a person is or their citizenship. Enforce eligibility at the identity provider and the hosting region; Hive only records who is on the allowlist. |
+| AC-3 — Access enforcement | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` |  |
+| AC-3 — Access enforcement | Access control | `auto_merge.trusted_authors.require_github_permission` | `true` | `equals` |  |
+| AC-5 — Separation of duties | Segregation of duties | `dashboard.authorized_users` | `1` | `min_mergers` |  |
+| AC-5 — Separation of duties | Segregation of duties | `auto_merge.self_authored` | `false` | `equals` |  |
+| AC-5 — Separation of duties | Segregation of duties | `review.require_approval` | `true` | `equals` |  |
+| AC-6 — Least privilege | Access control | `auto_merge.trusted_authors.enabled` | `false` | `equals` |  |
+| AC-6 — Least privilege | Access control | `agent_sandbox.enabled` | `true` | `equals` |  |
+| AC-6 — Least privilege | Access control | `env.HIVE_PROXY_INJECT_GH_AUTH` | `true` | `equals` |  |
+| AU-2 — Event logging | Logging & monitoring | `review.post_comments` | `true` | `equals` |  |
+| AU-2 — Event logging | Logging & monitoring | `audit.retention_days` | `365` | `at_least` |  |
+| AU-3 — Content of audit records | Logging & monitoring | `review.post_comments` | `true` | `equals` | Review verdicts are published as PR comments with the evidence; the audit log record format is fixed in code. |
+| AU-6 — Audit record review and reporting | Logging & monitoring | `sentinel.enabled` | `true` | `equals` |  |
+| AU-6 — Audit record review and reporting | Logging & monitoring | `escalation.disabled` | `false` | `equals` |  |
+| AU-11 — Audit record retention | Logging & monitoring | `audit.retention_days` | `365` | `at_least` | Retention is fixed in code at 90 days today; the configurable floor is tracked by hivecommons/hive#11077, so this reports a deviation until it lands. |
+| AU-12 — Audit record generation | Logging & monitoring | `sentinel.enabled` | `true` | `equals` |  |
+| AU-12 — Audit record generation | Logging & monitoring | `review.post_comments` | `true` | `equals` |  |
+| CM-3 — Configuration change control | Change management | `review.require_approval` | `true` | `equals` | Whether an automated review satisfies approval is the organisation's change-management policy; these values describe the conservative posture. |
+| CM-3 — Configuration change control | Change management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| CM-3 — Configuration change control | Change management | `auto_merge.human_merge_paths` | `non-empty` | `non_empty` |  |
+| CM-3 — Configuration change control | Change management | `auto_merge.self_authored` | `false` | `equals` |  |
+| CM-5 — Access restrictions for change | Change management | `auto_merge.human_merge_paths` | `non-empty` | `non_empty` |  |
+| CM-5 — Access restrictions for change | Change management | `auto_merge.trusted_authors.require_github_permission` | `true` | `equals` |  |
+| CM-5 — Access restrictions for change | Change management | `dashboard.authorized_users` | `1` | `min_mergers` |  |
+| CM-6 — Configuration settings | Change management | `sentinel.enabled` | `true` | `equals` |  |
+| CM-6 — Configuration settings | Change management | `sentinel.disabled_behaviors` | `none` | `empty` |  |
+| IA-2 — Identification and authentication (organizational users) | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` | Informational. Authentication is performed by GitHub OAuth or the hub; Hive only holds the allowlist of named users, so a non-empty list is the most it can evidence. |
+| IA-5 — Authenticator management | Access control | `env.HIVE_PROXY_INJECT_GH_AUTH` | `true` | `equals` | Hive keeps the real GitHub credential out of agent processes; issuing, rotating and revoking credentials belongs to the operator and GitHub. |
+| RA-5 — Vulnerability monitoring and scanning | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
+| RA-5 — Vulnerability monitoring and scanning | Vulnerability management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| SA-11 — Developer testing and evaluation | Vulnerability management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| SA-11 — Developer testing and evaluation | Vulnerability management | `review.require_approval` | `true` | `equals` |  |
+| SA-9 — External system services | Risk management | _not covered by Hive_ | — | — | Model providers, GitHub and the host are the operator's external providers; assessing them is the operator's vendor-management process. |
+| SI-4 — System monitoring | Logging & monitoring | `sentinel.enabled` | `true` | `equals` |  |
+| SI-4 — System monitoring | Logging & monitoring | `escalation.disabled` | `false` | `equals` |  |
+| SI-4 — System monitoring | Logging & monitoring | `tool_approval.enabled` | `true` | `equals` |  |
+| SI-7 — Software, firmware and information integrity | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
+| SI-7 — Software, firmware and information integrity | Vulnerability management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| SI-7 — Software, firmware and information integrity | Vulnerability management | `agent_sandbox.enabled` | `true` | `equals` |  |
+| PE-3 — Physical access control | Access control | _not covered by Hive_ | — | — | Hive is software on infrastructure the operator chooses; physical security belongs to the hosting provider. |
+| PS-3 — Personnel screening | Access control | _not covered by Hive_ | — | — | Hiring and background screening are HR processes; no Hive setting can evidence them. |
+<!-- END GENERATED: compliance-profile fedramp-moderate -->
+
+## ISO 27001 Annex A mapping
+
+Selected controls of ISO/IEC 27001:2022 Annex A, covering policies and roles
+(5), people (6), physical (7) and technological controls (8: access, secure
+development, logging, change). Control text is a short paraphrase, not ISO's
+wording; the authoritative text is the standard. Policy, supplier, incident
+programme, continuity, screening and physical controls are `not_covered`.
+Selecting this profile does not make a hive ISO 27001 certified. Generated
+from `src/pkg/compliance/profiles/iso27001-annex-a.yaml`; do not edit by hand.
+
+<!-- BEGIN GENERATED: compliance-profile iso27001-annex-a -->
+| Control | Domain | Hive setting | Recommended | Evaluator | Notes |
+|---|---|---|---|---|---|
+| A.5.1 — Policies for information security | Risk management | _not covered by Hive_ | — | — | Policies are organisational documents; Hive cannot evidence that they exist or were approved. |
+| A.5.2 — Information security roles and responsibilities | Segregation of duties | `dashboard.authorized_users` | `non-empty` | `non_empty` |  |
+| A.5.2 — Information security roles and responsibilities | Segregation of duties | `dashboard.authorized_users` | `1` | `min_mergers` |  |
+| A.5.3 — Segregation of duties | Segregation of duties | `auto_merge.self_authored` | `false` | `equals` |  |
+| A.5.3 — Segregation of duties | Segregation of duties | `review.require_approval` | `true` | `equals` |  |
+| A.5.3 — Segregation of duties | Segregation of duties | `auto_merge.trusted_authors.enabled` | `false` | `equals` |  |
+| A.5.15 — Access control | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` |  |
+| A.5.15 — Access control | Access control | `dashboard.authorized_users` | `2` | `max_owners` |  |
+| A.5.16 — Identity management | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` | Hive holds the allowlist of named users; identity lifecycle is run at the identity provider. |
+| A.5.18 — Access rights | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` |  |
+| A.5.18 — Access rights | Access control | `auto_merge.trusted_authors.require_github_permission` | `true` | `equals` |  |
+| A.5.19 — Information security in supplier relationships | Risk management | _not covered by Hive_ | — | — | Model providers, GitHub and hosting are the operator's suppliers; supplier assessment is the operator's process. |
+| A.5.24 — Incident management planning and preparation | Incident response | _not covered by Hive_ | — | — | The incident process is the operator's. Hive supplies tools it can use (pause, hold labels, sentinel alerts, audit log) but cannot evidence the process. |
+| A.5.25 — Assessment and decision on information security events | Incident response | `escalation.disabled` | `false` | `equals` |  |
+| A.5.25 — Assessment and decision on information security events | Incident response | `sentinel.enabled` | `true` | `equals` |  |
+| A.5.30 — ICT readiness for business continuity | Incident response | _not covered by Hive_ | — | — | Backup, restore and disaster recovery are run by the operator; no Hive setting evidences a tested recovery. |
+| A.6.1 — Screening | Access control | _not covered by Hive_ | — | — | Screening and other HR controls are the organisation's; Hive cannot verify who a person is or where they are, including any geographic or citizenship eligibility rule. |
+| A.7.2 — Physical entry | Access control | _not covered by Hive_ | — | — | Physical security belongs to the operator's hosting provider and facilities. |
+| A.8.2 — Privileged access rights | Access control | `dashboard.authorized_users` | `2` | `max_owners` |  |
+| A.8.2 — Privileged access rights | Access control | `auto_merge.trusted_authors.enabled` | `false` | `equals` |  |
+| A.8.4 — Access to source code | Access control | `env.HIVE_PROXY_INJECT_GH_AUTH` | `true` | `equals` |  |
+| A.8.4 — Access to source code | Access control | `agent_sandbox.enabled` | `true` | `equals` |  |
+| A.8.4 — Access to source code | Access control | `auto_merge.human_merge_paths` | `non-empty` | `non_empty` |  |
+| A.8.7 — Protection against malware | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
+| A.8.7 — Protection against malware | Vulnerability management | `sentinel.disabled_behaviors` | `none` | `empty` |  |
+| A.8.8 — Management of technical vulnerabilities | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
+| A.8.8 — Management of technical vulnerabilities | Vulnerability management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| A.8.9 — Configuration management | Change management | `sentinel.enabled` | `true` | `equals` |  |
+| A.8.9 — Configuration management | Change management | `acmm_level` | `5` | `at_most` |  |
+| A.8.15 — Logging | Logging & monitoring | `audit.retention_days` | `365` | `at_least` | Audit retention is fixed at 90 days in code today; the configurable floor is tracked by hivecommons/hive#11077, so this reports a deviation until it lands. |
+| A.8.15 — Logging | Logging & monitoring | `review.post_comments` | `true` | `equals` |  |
+| A.8.16 — Monitoring activities | Logging & monitoring | `sentinel.enabled` | `true` | `equals` |  |
+| A.8.16 — Monitoring activities | Logging & monitoring | `escalation.disabled` | `false` | `equals` |  |
+| A.8.16 — Monitoring activities | Logging & monitoring | `tool_approval.enabled` | `true` | `equals` |  |
+| A.8.25 — Secure development life cycle | Change management | `review.require_approval` | `true` | `equals` |  |
+| A.8.25 — Secure development life cycle | Change management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| A.8.28 — Secure coding | Vulnerability management | `review.require_approval` | `true` | `equals` |  |
+| A.8.28 — Secure coding | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
+| A.8.29 — Security testing in development and acceptance | Vulnerability management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| A.8.31 — Separation of development, test and production environments | Change management | `agent_sandbox.enabled` | `true` | `equals` |  |
+| A.8.32 — Change management | Change management | `review.require_approval` | `true` | `equals` | Whether an automated review satisfies approval is the organisation's change-management policy; these values describe the conservative posture. |
+| A.8.32 — Change management | Change management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
+| A.8.32 — Change management | Change management | `auto_merge.human_merge_paths` | `non-empty` | `non_empty` |  |
+| A.8.32 — Change management | Change management | `auto_merge.self_authored` | `false` | `equals` |  |
+<!-- END GENERATED: compliance-profile iso27001-annex-a -->
 
 ## Posture checks catalogue
 
@@ -266,8 +385,9 @@ rather than implying coverage:
   wherever your policy requires accountability.
 - **Physical, HR, vendor, incident-response and recovery controls.** These
   belong to your hosting provider and your organisation's programmes. The
-  SOC 2 profile marks CC6.4, CC7.4, CC7.5 and CC9.2 `not_covered` for this
-  reason.
+  profiles mark these `not_covered` for this reason: SOC 2 CC6.4, CC7.4,
+  CC7.5 and CC9.2; FedRAMP AC-2.ELIG, SA-9, PE-3 and PS-3; ISO 27001 A.5.1,
+  A.5.19, A.5.24, A.5.30, A.6.1 and A.7.2.
 
 ## Related
 

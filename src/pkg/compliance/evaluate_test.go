@@ -268,7 +268,7 @@ func TestBuildReport(t *testing.T) {
 	if !reflect.DeepEqual(r.Frameworks, []string{"soc2-type2"}) || !reflect.DeepEqual(r.UnknownFrameworks, []string{"not-shipped"}) {
 		t.Fatalf("frameworks = %v unknown = %v", r.Frameworks, r.UnknownFrameworks)
 	}
-	if len(r.Available) == 0 || r.Available[0].ID != "soc2-type2" || r.Available[0].Controls == 0 {
+	if len(r.Available) == 0 || len(r.Available) != 3 || r.Available[2].ID != "soc2-type2" || r.Available[0].Controls == 0 {
 		t.Fatalf("available = %+v", r.Available)
 	}
 	if r.PostureCheckInterval != "1h0m0s" || r.PostureChecksPending || r.PostureChecksTracking != "" || r.ProfileLoadError != "" {
