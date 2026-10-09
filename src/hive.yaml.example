@@ -899,14 +899,6 @@ knowledge:
     #   url: https://github.com/your-org/knowledge-base
     #   subpath: patterns
     #   layer: org
-  connectors:                                # External knowledge systems (see docs/knowledge-curator.md)
-    # - name: repo-knowledge                 # Repository-carried knowledge: .hive/wiki/*.md
-    #   type: repo-wiki                      # from each repo's reviewed history
-    #   layer: project
-    #   scope:
-    #     repos: your-org/app, your-org/docs
-    #     branch: main                       # Default: main
-    #     dir: .hive/wiki                    # Default: .hive/wiki
   vaults:                                    # Local Obsidian vaults auto-connected at boot
     # - name: team-notes                     # Display name (also the vault name in the API)
     #   path: /data/vaults/team-notes        # git-inited and seeded on first boot
@@ -918,8 +910,15 @@ knowledge:
     #   url: https://example.com/style-guide.pdf   # Or file_path: /data/docs/guide.pdf
     #   layer: project                       # personal, project, org, or community
   connectors:                                # Scheduled external sources → vault facts
-                                             # (docs/knowledge-connectors.md). Secrets only
-                                             # via auth.env / auth.file, never inline.
+                                             # (docs/knowledge-curator.md, docs/knowledge-connectors.md).
+                                             # Secrets only via auth.env / auth.file, never inline.
+    # - name: repo-knowledge                 # Repository-carried knowledge: .hive/wiki/*.md
+    #   type: repo-wiki                      # from each repo's reviewed history
+    #   layer: project
+    #   scope:
+    #     repos: your-org/app, your-org/docs
+    #     branch: main                       # Default: main
+    #     dir: .hive/wiki                    # Default: .hive/wiki
     # - name: eng-wiki                       # Unique: lowercase letters, digits, dashes
     #   type: confluence                     # Cloud + Data Center
     #   layer: org
