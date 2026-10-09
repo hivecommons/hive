@@ -74,6 +74,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 |---|---|---|---|---|
 | `GET` | `/api/gh-auth` | Dashboard auth/session | GitHub Auth | `pkg/dashboard/api.go:160` |
 | `GET` | `/api/gh-rate-limits` | Dashboard auth/session | GitHub Rate Limits | `pkg/dashboard/api.go:161` |
+| `POST` | `/api/webhook/github` | Public (HMAC `X-Hub-Signature-256`; 503 without `GITHUB_WEBHOOK_SECRET`) | GitHub repository webhook receiver — invalidates cached PR detail/check-run entries for the affected PRs ([#11177](https://github.com/hivecommons/hive/issues/11177)) | `pkg/dashboard/api.go:162` |
 | `GET` | `/api/gh-user-auth/status` | Public | GitHub User Auth Status | `pkg/dashboard/api.go:163` |
 | `POST` | `/api/gh-user-auth/start` | Public | GitHub User Auth Start | `pkg/dashboard/api.go:164` |
 | `POST` | `/api/gh-user-auth/poll` | Public | GitHub User Auth Poll | `pkg/dashboard/api.go:165` |
