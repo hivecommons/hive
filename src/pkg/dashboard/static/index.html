@@ -28698,6 +28698,26 @@ function burnAreaChart() {
       return '<button id="spoke-upgrade-btn" class="hv-btn btn-primary btn-sm' + available + '" type="button"' + action + disabled + ' title="' + escapeHtml(title || label) + '">' + escapeHtml(label) + '</button>';
     }
 
+    function versionHiveDisplayName(v) {
+      v = v || {};
+      const names = [v.hive_name, v.display_name, v.instance_name, v.spoke_name];
+      for (let i = 0; i < names.length; i++) {
+        const name = String(names[i] || '').trim();
+        if (name) return name;
+      }
+      return 'Hive';
+    }
+
+    function versionRuntimeUpgradeCaveat(runtimeLabel) {
+      runtimeLabel = String(runtimeLabel || '').trim();
+      if (!runtimeLabel || runtimeLabel === 'unknown runtime') return '';
+      return 'Runs on ' + runtimeLabel + ' — the ' + runtimeLabel + ' deployment is restarted with the new image; the cluster itself is not changed.';
+    }
+
+    function versionJoinCaveats() {
+      return Array.from(arguments).map(function(c) { return String(c || '').trim(); }).filter(Boolean).join(' ');
+    }
+
     function renderVersionUpgradeAction(v, ctx) {
       ctx = ctx || {};
       const targetHash = String(ctx.offeredUpgradeHash || '').trim();
@@ -28706,6 +28726,7 @@ function burnAreaChart() {
       const target = v && v.target || {};
       const dep = v && v.deployment || {};
       const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
+      const runtimeDeploymentSuffix = runtimeLabel === 'unknown runtime' ? '' : ' (' + runtimeLabel + ' deployment)';
       const progress = ctx.upgradeProgress || null;
       if (progress && !progress.completedAt) {
         return versionButtonHTML('Upgrading…', 'Upgrade to ' + (progress.targetShort || targetShort) + ' is in progress', progress.target || targetHash, false) + versionBeeProgressHTML(progress, v || {});
@@ -28724,7 +28745,7 @@ function burnAreaChart() {
         const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
         return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false);
       }
-      return versionButtonHTML('Upgrade to ' + targetShort, runtimeLabel + ': current ' + (v.short || '?') + ' → ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort, target.ref || targetHash, true);
+      return versionButtonHTML('Upgrade to ' + targetShort, 'Upgrade this Hive' + runtimeDeploymentSuffix + ' to ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort + ' now', target.ref || targetHash, true);
     }
 
     function renderVersionDetails(v, ctx) {
@@ -28909,6 +28930,7 @@ function burnAreaChart() {
         const dep = v.deployment || {};
         const upgradeSupported = dep.upgradeSupported === true;
         const runtimeLabel = dep.runtime ? String(dep.runtime) : 'unknown runtime';
+        const runtimeDeploymentSuffix = runtimeLabel === 'unknown runtime' ? '' : ' (' + runtimeLabel + ' deployment)';
         if (um && um.failed) {
           statusText = 'Auto-update failed' + (um.target ? ' → ' + um.target : '');
           compactStatusHTML = '<span class="git-behind text-danger" title="Auto-update failed">⚠ auto-update failed</span>';
@@ -28934,9 +28956,9 @@ function burnAreaChart() {
             manualUpdateHTML = `<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
           } else if (v.autoUpgrade && !um) {
             compactStatusHTML += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
-            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade ${escapeHtml(runtimeLabel)} deployment to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
+            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade this Hive${escapeHtml(runtimeDeploymentSuffix)} to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
           } else {
-            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeRef || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="${escapeHtml(runtimeLabel)}: current ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)}">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
+            upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeRef || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade this Hive${escapeHtml(runtimeDeploymentSuffix)} to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
           }
         } else if (v.latestHash) {
           statusText = 'Up to date';
@@ -29455,9 +29477,12 @@ function burnAreaChart() {
       const fromSha = lv.hash || lv.short || '';
       const notesTo = isChannel ? target.ref : (targetHash || (target && target.sha) || '');
       const targetLabel = isChannel ? target.ref : (versionShortSHA(targetHash) || 'latest');
+      const hiveName = versionHiveDisplayName(lv);
+      const runtimeCaveat = versionRuntimeUpgradeCaveat(runtimeLabel);
+      const channelCaveat = isChannel ? 'Current channel revision ' + (target.short || 'unknown') + '. The channel may advance before the host pulls it.' : '';
       const proceed = await releaseNotesOpenModal({
-        title: 'Upgrade ' + runtimeLabel + ': ' + (versionShortSHA(fromSha) || 'unknown') + ' → ' + targetLabel,
-        caveat: isChannel ? 'Current channel revision ' + (target.short || 'unknown') + '. The channel may advance before the host pulls it.' : '',
+        title: 'Upgrade ' + hiveName + ': ' + (versionShortSHA(fromSha) || 'unknown') + ' → ' + targetLabel,
+        caveat: versionJoinCaveats(runtimeCaveat, channelCaveat),
         from: fromSha,
         to: notesTo
       });
