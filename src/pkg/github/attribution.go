@@ -96,6 +96,9 @@ const (
 	// (approved|changes_requested|commented). This makes reviews a first-class
 	// audited activity instead of an invisible agent-CLI write.
 	AuditActionPRReviewed = "agent_pr_reviewed"
+	// AuditActionSentinelBlockedApproval records an approval/LGTM path refused
+	// because the configured sentinel alert label is present.
+	AuditActionSentinelBlockedApproval = "sentinel-blocked-approval"
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"

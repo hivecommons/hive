@@ -73,6 +73,11 @@ type Options struct {
 	// TrustedAuthorizer reports whether a PR author holds the policy's required
 	// authorized-users role. nil fails closed.
 	TrustedAuthorizer TrustedAuthorizer
+	// SentinelLabel returns the configured sentinel alert label. The label also
+	// travels through the transport's hold-label set, but the sweep names this
+	// skip distinctly so operators can tell a sentinel block from an ordinary
+	// hold in tick stats.
+	SentinelLabel func() string
 	// MinHeadAge is the youngest PR head commit age the sweep may merge when
 	// the required-check set is not config-declared and fully green.
 	MinHeadAge time.Duration
@@ -106,6 +111,7 @@ type Engine struct {
 	trustedBotAuthors                 func() map[string]bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
+	sentinelLabel                     func() string
 	minHeadAge                        time.Duration
 	now                               func() time.Time
 	evaluatedHeadsMu                  sync.Mutex
@@ -134,6 +140,7 @@ func New(transport Transport, opts Options) *Engine {
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
+		sentinelLabel:                     opts.SentinelLabel,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
 		evaluatedHeads:                    make(map[string]string),
@@ -567,7 +574,7 @@ func (c *Engine) currentTrustedAuthorPolicy() TrustedAuthorPolicy {
 		p.RequireRole = "merger"
 	}
 	if p.ExcludeLabels == nil {
-		p.ExcludeLabels = map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true}
+		p.ExcludeLabels = map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true, "sentinel-alert": true}
 	}
 	return p
 }
@@ -889,7 +896,11 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			for _, reason := range []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "not-mergeable"} {
+			skipReasonOrder := []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "not-mergeable"}
+			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
+				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
+			}
+			for _, reason := range skipReasonOrder {
 				if count := repoSkipReasons[reason]; count > 0 {
 					args = append(args, reason, count)
 				}
@@ -947,6 +958,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			}
 			result.Seen++
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
+				if strings.HasPrefix(reason, "excluded-label:") || reason == c.sentinelLabelName() {
+					c.info("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason)
+				}
 				result.Skipped++
 				continue
 			}
@@ -958,6 +972,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				continue
 			}
 			if reason != "" {
+				if strings.HasPrefix(reason, "excluded-label:") || reason == c.sentinelLabelName() {
+					c.info("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason)
+				}
 				result.Skipped++
 				continue
 			}
@@ -1402,6 +1419,26 @@ func (c *Engine) isHeld(labels []string) bool {
 	return c.transport.IsHeldLabels(labels)
 }
 
+func (c *Engine) sentinelLabelName() string {
+	if c == nil || c.sentinelLabel == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(c.sentinelLabel()))
+}
+
+func (c *Engine) sentinelBlockedLabel(labels []string) string {
+	sentinelLabel := c.sentinelLabelName()
+	if sentinelLabel == "" {
+		return ""
+	}
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), sentinelLabel) {
+			return sentinelLabel
+		}
+	}
+	return ""
+}
+
 func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 	if pr == nil {
 		return "missing-head-sha"
@@ -1416,6 +1453,9 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
+	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+		return blocked
+	}
 	if c.isHeld(labels) {
 		return "held"
 	}
@@ -1435,6 +1475,9 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	labels := labelNames(issue.Labels)
 	if !hasLabel(labels, label) {
 		return "label-removed"
+	}
+	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+		return blocked
 	}
 	if c.isHeld(labels) {
 		return "held"
@@ -1456,6 +1499,9 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
+	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+		return blocked
+	}
 	if excluded := policy.excludedLabel(labels); excluded != "" {
 		return "excluded-label:" + excluded
 	}

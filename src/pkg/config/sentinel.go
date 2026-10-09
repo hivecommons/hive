@@ -24,8 +24,8 @@ const (
 // permission widening, secret exfiltration, CI-gate softening, test deletion,
 // curl|sh payloads, …). On a match the sweep ensures and applies Label, posts
 // one marker-stamped comment naming the finding(s), and records an audit
-// entry. It never merges, closes or blocks on its own; the intent tier gate
-// and auto_merge.human_merge_paths remain the merge-time enforcement.
+// entry. The alert label is also a hard block for Hive approval and every
+// auto-merge lane until a maintainer removes it.
 //
 // Default ON: an unset block evaluates every watched repo with
 // sentinel.DefaultSensitivePaths and all behaviors enabled.

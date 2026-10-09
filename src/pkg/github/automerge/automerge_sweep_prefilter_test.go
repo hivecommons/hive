@@ -21,8 +21,8 @@ func newPrefilterEngine(t *testing.T) *Engine {
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "http://127.0.0.1:0")
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	client.SetExemptLabels([]string{"lfx"})
-	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1")})
-	return New(client, Options{})
+	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1"), "sentinel-alert"})
+	return New(client, Options{SentinelLabel: func() string { return "sentinel-alert" }})
 }
 
 func selfAuthoredListPR(mutate func(*gh.PullRequest)) *gh.PullRequest {
@@ -62,6 +62,9 @@ func TestPrefilterSelfAuthoredPRReasons(t *testing.T) {
 		{"hive provenance is not a hold", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr(hgithub.HiveProvenanceLabel("h1"))}}
 		}, ""},
+		{"sentinel alert", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr("Sentinel-Alert")}}
+		}, "sentinel-alert"},
 		{"exempt label", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("LFX")}}
 		}, "exempt-label"},
@@ -110,6 +113,7 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 		{"held", queuedListIssue(label, "hold"), "held"},
 		{"hive-pause held", queuedListIssue(label, "hive-pause/h1"), "held"},
 		{"hive provenance is not a hold", queuedListIssue(label, hgithub.HiveProvenanceLabel("h1")), ""},
+		{"sentinel alert", queuedListIssue(label, "Sentinel-Alert"), "sentinel-alert"},
 		{"exempt label", queuedListIssue(label, "LFX"), "exempt-label"},
 	}
 	for _, tc := range cases {
@@ -118,6 +122,18 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 				t.Fatalf("prefilterQueuedIssue = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPrefilterTrustedAuthorPRSentinelAlert(t *testing.T) {
+	c := newPrefilterEngine(t)
+	policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+	pr := selfAuthoredListPR(func(pr *gh.PullRequest) {
+		pr.User = &gh.User{Login: gh.Ptr("alice")}
+		pr.Labels = []*gh.Label{{Name: gh.Ptr("Sentinel-Alert")}}
+	})
+	if got := c.prefilterTrustedAuthorPR(pr, policy); got != "sentinel-alert" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want sentinel-alert", got)
 	}
 }
 
