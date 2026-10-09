@@ -1,0 +1,1 @@
+- Generated repository code maps (`knowledge.code_maps`): opt-in, size-capped summaries of packages, entry points, ownership hotspots, public APIs, test layout and extension points, stored as repo-scoped knowledge with freshness metadata and regenerated when HEAD changes (#11106)
