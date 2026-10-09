@@ -33,9 +33,12 @@ lint-timeout	step	level=error msg="Timeout exceeded
 runner-lost	annotation	The self-hosted runner lost communication with the server
 # Node-local tool cache clobbered by concurrent setup-go/setup-node on a fresh
 # node (#10234, 2026-10-02): "Found in cache" then an empty go path, a copyfile
-# ENOENT into the cache, or npm/node/go vanishing from PATH mid-job.
+# ENOENT into the cache, or npm/node/go vanishing from PATH mid-job. #11175
+# (2026-10-09) added setup-go's rm -rf of the cache dir losing to a sibling
+# job's copy (ENOTEMPTY on rmdir).
 toolcache-clobbered	step	^##\[error\]Command failed:\s+version$
 toolcache-clobbered	step	ENOENT: no such file or directory, copyfile .* -> '/mnt/toolcache/
+toolcache-clobbered	step	ENOTEMPTY: directory not empty, rmdir '/mnt/toolcache/
 toolcache-clobbered	step	: (npm|node|go): command not found$
 runner-lost	annotation	The runner has received a shutdown signal
 test-list-empty	step	^##\[error\]go test -list produced no test functions

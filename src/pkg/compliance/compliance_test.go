@@ -108,6 +108,53 @@ func TestSOC2ProfileCoversRequiredSeries(t *testing.T) {
 	}
 }
 
+// TestShippedProfilesCoverTheirScope pins what each profile is for: FedRAMP
+// stays inside the families the epic lists (plus explicitly not-covered
+// out-of-subset markers), and every profile marks what Hive cannot evidence
+// and maps real settings for the rest.
+func TestShippedProfilesCoverTheirScope(t *testing.T) {
+	families := map[string]bool{"AC": true, "AU": true, "CM": true, "IA": true, "RA": true, "SA": true, "SI": true}
+	for _, id := range []string{"soc2-type2", "fedramp-moderate", "iso27001-annex-a"} {
+		p := mustProfile(t, id)
+		covered, notCovered := 0, 0
+		for _, c := range p.Controls {
+			if c.NotCovered {
+				notCovered++
+			} else {
+				covered++
+			}
+			if id == "fedramp-moderate" && !c.NotCovered {
+				if fam := strings.SplitN(c.ID, "-", 2)[0]; !families[fam] {
+					t.Errorf("fedramp-moderate covered control %s is outside the AC/AU/CM/IA/RA/SA/SI subset", c.ID)
+				}
+			}
+		}
+		if covered < 10 || notCovered == 0 {
+			t.Errorf("%s: covered=%d not_covered=%d", id, covered, notCovered)
+		}
+	}
+	fed := mustProfile(t, "fedramp-moderate")
+	have := map[string]bool{}
+	for _, c := range fed.Controls {
+		have[c.ID] = true
+	}
+	for _, want := range []string{"AC-2", "AC-3", "AC-5", "AC-6", "AU-2", "AU-3", "AU-6", "AU-11", "AU-12", "CM-3", "CM-5", "CM-6", "IA-2", "RA-5", "SA-11", "SI-4", "SI-7", "PE-3", "PS-3"} {
+		if !have[want] {
+			t.Errorf("fedramp-moderate missing %s", want)
+		}
+	}
+	iso := mustProfile(t, "iso27001-annex-a")
+	have = map[string]bool{}
+	for _, c := range iso.Controls {
+		have[c.ID] = true
+	}
+	for _, want := range []string{"A.5.1", "A.5.15", "A.8.9", "A.8.15", "A.8.25", "A.8.32", "A.6.1", "A.7.2"} {
+		if !have[want] {
+			t.Errorf("iso27001-annex-a missing %s", want)
+		}
+	}
+}
+
 // TestKnownFrameworksMatchConfig keeps config.KnownComplianceFrameworks (which
 // config validation uses, and which cannot import this package) equal to the
 // embedded profile set.

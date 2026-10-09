@@ -11,6 +11,7 @@ type ControlStatus struct {
 	Framework  string          `json:"framework"`
 	ControlID  string          `json:"control_id"`
 	Title      string          `json:"title"`
+	Text       string          `json:"text"`
 	Citation   string          `json:"citation"`
 	Domain     string          `json:"domain"`
 	Status     Status          `json:"status"`
@@ -22,6 +23,10 @@ type ControlStatus struct {
 // SettingStatus is one mapping's current vs recommended value.
 type SettingStatus struct {
 	SettingPath string `json:"setting_path"`
+	// Kind is the setting's value kind (bool, int, string, list), so a UI
+	// knows which mappings it can offer as a toggle.
+	Kind        string `json:"kind"`
+	Description string `json:"description,omitempty"`
 	Evaluator   string `json:"evaluator"`
 	Current     string `json:"current"`
 	Recommended string `json:"recommended"`
@@ -78,6 +83,7 @@ func EvaluateProfile(p Profile, cfg *config.Config, getenv func(string) string) 
 			Framework:  p.ID,
 			ControlID:  c.ID,
 			Title:      c.Title,
+			Text:       c.Text,
 			Citation:   c.Citation,
 			Domain:     c.Domain,
 			NotCovered: c.NotCovered,
@@ -123,6 +129,8 @@ func evaluateMapping(m Mapping, cfg *config.Config, getenv func(string) string) 
 		return ss
 	}
 	ss.Builtin = s.Builtin
+	ss.Kind = s.Kind
+	ss.Description = s.Description
 	ss.Status, ss.Current = ev.eval(s.read(cfg, getenv), m.Recommended)
 	return ss
 }
@@ -147,10 +155,11 @@ func Summarize(statuses []ControlStatus) Summary {
 
 // FrameworkInfo identifies one shipped profile.
 type FrameworkInfo struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Version  string `json:"version"`
-	Controls int    `json:"controls"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description,omitempty"`
+	Controls    int    `json:"controls"`
 }
 
 // Report is the full evaluated view of a config, as served by
@@ -180,16 +189,16 @@ func BuildReport(cfg *config.Config, getenv func(string) string) Report {
 		Available:            []FrameworkInfo{},
 		Controls:             []ControlStatus{},
 		PostureCheckInterval: cfg.Compliance.PostureIntervalOrDefault().String(),
-		// The posture-check runner lands in hivecommons/hive#11079.
-		PostureChecksPending:  true,
-		PostureChecksTracking: "https://github.com/hivecommons/hive/issues/11079",
+		// Posture checks run (hivecommons/hive#11079); results are served by
+		// GET /api/compliance/posture. The fields stay for API compatibility.
+		PostureChecksPending: false,
 	}
 	ps, err := Profiles()
 	if err != nil {
 		r.ProfileLoadError = err.Error()
 	}
 	for _, p := range ps {
-		r.Available = append(r.Available, FrameworkInfo{ID: p.ID, Name: p.Name, Version: p.Version, Controls: len(p.Controls)})
+		r.Available = append(r.Available, FrameworkInfo{ID: p.ID, Name: p.Name, Version: p.Version, Description: FrameworkDescription(p.ID), Controls: len(p.Controls)})
 	}
 	for _, id := range cfg.Compliance.SelectedFrameworks() {
 		if _, ok := ProfileByID(id); ok {

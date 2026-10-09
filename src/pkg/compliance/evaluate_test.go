@@ -185,7 +185,7 @@ func TestEvaluateCarriesCurrentAndRecommended(t *testing.T) {
 		if s.ControlID == "CC7.2" {
 			cc72 = s
 		}
-		if s.Framework != "soc2-type2" || s.Title == "" || s.Citation == "" || s.Domain == "" {
+		if s.Framework != "soc2-type2" || s.Title == "" || s.Text == "" || s.Citation == "" || s.Domain == "" {
 			t.Fatalf("incomplete status %+v", s)
 		}
 		if s.NotCovered != (s.Status == StatusNotCovered) || (s.NotCovered && len(s.Settings) != 0) {
@@ -196,7 +196,10 @@ func TestEvaluateCarriesCurrentAndRecommended(t *testing.T) {
 		t.Fatalf("CC7.2 settings = %+v", cc72.Settings)
 	}
 	audit := cc72.Settings[0]
-	want := SettingStatus{SettingPath: "audit.retention_days", Evaluator: EvalAtLeast, Current: "90", Recommended: "365", Status: StatusDeviates, Builtin: true}
+	want := SettingStatus{
+		SettingPath: "audit.retention_days", Kind: kindInt, Description: settings["audit.retention_days"].Description,
+		Evaluator: EvalAtLeast, Current: "90", Recommended: "365", Status: StatusDeviates, Builtin: true,
+	}
 	if audit != want {
 		t.Fatalf("audit mapping = %+v, want %+v", audit, want)
 	}
@@ -268,10 +271,10 @@ func TestBuildReport(t *testing.T) {
 	if !reflect.DeepEqual(r.Frameworks, []string{"soc2-type2"}) || !reflect.DeepEqual(r.UnknownFrameworks, []string{"not-shipped"}) {
 		t.Fatalf("frameworks = %v unknown = %v", r.Frameworks, r.UnknownFrameworks)
 	}
-	if len(r.Available) == 0 || r.Available[0].ID != "soc2-type2" || r.Available[0].Controls == 0 {
+	if len(r.Available) == 0 || len(r.Available) != 3 || r.Available[2].ID != "soc2-type2" || r.Available[0].Controls == 0 {
 		t.Fatalf("available = %+v", r.Available)
 	}
-	if r.PostureCheckInterval != "1h0m0s" || !r.PostureChecksPending || r.ProfileLoadError != "" {
+	if r.PostureCheckInterval != "1h0m0s" || r.PostureChecksPending || r.PostureChecksTracking != "" || r.ProfileLoadError != "" {
 		t.Fatalf("report meta = %+v", r)
 	}
 	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != 4 {

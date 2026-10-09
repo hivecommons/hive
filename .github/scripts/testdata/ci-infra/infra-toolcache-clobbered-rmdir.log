@@ -1,0 +1,24 @@
+##[group]Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+with:
+  cache: false
+  go-version-file: src/go.mod
+  check-latest: false
+  token: ***
+env:
+  CGO_ENABLED: 1
+  KUBERNETES_SERVICE_HOST: 
+  KUBERNETES_SERVICE_PORT: 
+  ACTIONS_CACHE_SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+  GO_CACHE_GUARD_BUILD_CACHE: job
+##[endgroup]
+Setup go version spec 1.26.9
+Attempting to download 1.26.9...
+matching 1.26.9...
+Not found in manifest.  Falling back to download directly from Go
+Install from dist
+Acquiring go1.26.9 from https://go.dev/dl/go1.26.9.linux-amd64.tar.gz
+Extracting Go...
+[command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/_temp/6baab5c6-ff3f-4191-99c6-c72ce79dd546 -f /home/runner/_temp/24c524f5-4ef5-4a3c-9fe4-6ee24c9324f8
+Successfully extracted go to /home/runner/_temp/6baab5c6-ff3f-4191-99c6-c72ce79dd546
+Adding to the cache ...
+##[error]Failed to download version 1.26.9: Error: File was unable to be removed Error: ENOTEMPTY: directory not empty, rmdir '/mnt/toolcache/hostedtoolcache/go/1.26.9/x64'

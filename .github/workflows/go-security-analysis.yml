@@ -89,6 +89,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
@@ -116,6 +122,12 @@ jobs:
       # cache: false — the hive runners mount a persistent GOCACHE/GOMODCACHE;
       # setup-go's post-step would otherwise tar that multi-GB shared cache
       # into the Actions cache on every run (#8762).
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
@@ -160,6 +172,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
@@ -232,6 +250,12 @@ jobs:
       - name: Exercise generated-NOTICE validation
         run: src/scripts/test-validate-generated-notice.sh
 
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           cache: false
