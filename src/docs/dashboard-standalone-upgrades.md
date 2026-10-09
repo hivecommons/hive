@@ -63,6 +63,12 @@ repo-owned file copying to its existing `reconcile apply` path. Ordinary
 `hive.env` and the running Hive container untouched. Do not use `setup --force`
 for this migration: that can replace operator configuration and tokens.
 
+Migration also records `HIVE_SELF_IMAGE` and `HIVE_SELF_IMAGE_TRACKING` in
+`hive.env` from the effective unit image (skipped when the unit is
+digest-pinned). A rootless run first checks the systemd user bus and, if it is
+unreachable, stops before writing anything; export
+`XDG_RUNTIME_DIR=/run/user/$(id -u)` or use `machinectl shell hive@`.
+
 ## Upgrade target
 
 For a standalone deployment with `HIVE_SELF_IMAGE` naming a release channel

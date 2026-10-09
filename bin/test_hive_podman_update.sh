@@ -80,6 +80,7 @@ case "${args[0]:-}" in
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;
   daemon-reload) : ;;
+  show-environment) exit "${FAKE_USER_BUS_RC:-0}" ;;
   is-enabled|is-active)
     if [ "${args[1]:-}" = hive-upgrade.path ]; then
       [ -f "$sd/bridge-enabled" ]; exit $?
@@ -252,6 +253,7 @@ reset_env() {
   export FAKE_AUTOUPDATE_LABEL=""
   export FAKE_AUTO_UPDATE_UPDATED="true"
   export FAKE_AUTO_UPDATE_RC=0
+  export FAKE_USER_BUS_RC=0
   # The gateway (#4493): known, startable, and answering by default; each case
   # breaks exactly the link it is about. Retries are collapsed so a dead
   # gateway costs the suite nothing.
@@ -950,6 +952,30 @@ check "symlink rejection never changes secrets permissions" '[ "$(stat -c %a "$C
 reset_env; seed_managed_host; seed_bridge_checkout
 case_expect "migration refuses an absent operator env rather than provisioning" 78 "needs an existing" reconcile migrate
 check "absent env remains absent" '[ ! -e "$CONF_DIR/hive.env" ]'
+
+echo
+echo "== migrate records self-image env and preflights the user bus (#11296) =="
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+printf 'Image=%s:edge\n' "$REPO" >"$QUADLET_DIR/hive.container.d/10-image.conf"
+case_expect "migrating a registry-tracked unit succeeds" 0 "migration complete" reconcile migrate
+check "migrate records the effective image and registry tracking" \
+  'grep -qx "HIVE_SELF_IMAGE=${REPO}:edge" "$CONF_DIR/hive.env" && grep -qx HIVE_SELF_IMAGE_TRACKING=registry "$CONF_DIR/hive.env"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+mkdir -p "$QUADLET_DIR/hive.container.d"; printf 'Image=%s@%s\n' "$REPO" "$DIGEST_OLD" >"$QUADLET_DIR/hive.container.d/10-image.conf"
+case_expect "migrating a digest-pinned unit succeeds" 0 "migration complete" reconcile migrate
+check "migrate leaves the self-image env to the pin path for a digest pin" \
+  '! grep -q "^HIVE_SELF_IMAGE" "$CONF_DIR/hive.env"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_USER_BUS_RC=1
+cp "$CONF_DIR/hive.env" "$TEST_TMP/nobus.env"
+case_expect "rootless migrate without a user bus fails with a hint" 78 "XDG_RUNTIME_DIR" reconcile migrate
+check "a missing user bus is caught before any managed file is written" \
+  'cmp -s "$TEST_TMP/nobus.env" "$CONF_DIR/hive.env" && [ ! -e "$CONF_DIR/upgrade-requests" ] && [ ! -e "$CONF_DIR/.upgrade-bridge-migration-pending" ] && ! grep -q daemon-reload "$SYSTEMCTL_CALL_LOG"'
+export FAKE_USER_BUS_RC=0
 
 echo
 echo "== drift is visible without being asked for (#6078) =="
