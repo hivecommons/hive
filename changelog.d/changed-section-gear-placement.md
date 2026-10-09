@@ -1,1 +1,0 @@
-- Align dashboard section settings gears with the section help mark instead of far-right header actions.

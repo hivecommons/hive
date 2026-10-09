@@ -1,1 +1,0 @@
-- Review Pipeline and Queue now render as separately collapsible tiles inside the Review dashboard section.
