@@ -20,6 +20,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
@@ -172,6 +173,10 @@ type Server struct {
 	// built like the sparkline rings so a zero-value Server works in tests.
 	budgetWindowOnce sync.Once
 	budgetWindowHist *collect.BudgetWindowTracker
+	// posture is the compliance posture-check runner and its history
+	// (hivecommons/hive#11079). Lazily built like the rings above.
+	postureOnce sync.Once
+	posture     *compliance.PostureRunner
 
 	// convergenceModeTrk captures one (mode, generation) pair per enrolled
 	// eval pass and detects transitions (#4263). convergenceSoakTrk records the

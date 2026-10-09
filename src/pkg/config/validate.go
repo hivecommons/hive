@@ -108,6 +108,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		(strings.TrimSpace(c.GitHub.Forge_) == "" || c.GitHub.ResolvedAppID() == 0) {
 		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
+	if c.GitHub.GraphQLPRBatchPageSize < 0 || c.GitHub.GraphQLPRBatchPageSize > 100 {
+		return fmt.Errorf("github.graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err
 	}

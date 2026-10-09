@@ -666,9 +666,12 @@ governor:
 # evaluates against this config. Read-only: each control points at an existing
 # setting. Not a certification — see src/docs/compliance.md. Default: none.
 # compliance:
-#   frameworks: [soc2-type2]
+#   frameworks: [soc2-type2]   # also: fedramp-moderate, iso27001-annex-a
 #   posture_checks:
-#     interval: 1h   # 5m..168h; 0/unset = 1h
+#     interval: 1h        # 5m..168h; 0/unset = 1h. Posture checks (#11079) run
+#                         # on this cadence; GET /api/compliance/posture.
+#     window_days: 30     # merged-PR look-back, 1..90; 0/unset = 30
+#     history_days: 365   # posture-history retention, 30..1095; 0/unset = 365
 
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the
@@ -694,6 +697,9 @@ github:
   token: ${HIVE_GITHUB_TOKEN}
   # Reuse per-PR detail GETs while list head.sha/updated_at still match.
   pr_detail_ttl_s: 1800
+  # Batch open PR detail and CI rollups with GraphQL during scans (default true).
+  graphql_pr_batch: true
+  graphql_pr_batch_page_size: 50
 
   # Option 2: GitHub App (recommended for production)
   # app_id: 12345

@@ -2940,6 +2940,12 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
 	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
 	deps.startContributeMetrics(b.ctx, b.dashSrv)
+	// Compliance posture checks (#11079): a pass every
+	// compliance.posture_checks.interval while a framework is selected, with
+	// the history persisted on the /data PVC.
+	if deps.startCompliancePosture != nil {
+		deps.startCompliancePosture(b.ctx, b.dashSrv)
+	}
 	b.refreshDashboard = func() {
 		// Capture the mutation epoch BEFORE reading any state: if a mutation
 		// (e.g. a restart-count or budget-window reset) lands while this

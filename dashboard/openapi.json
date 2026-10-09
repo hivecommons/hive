@@ -11580,6 +11580,278 @@
         }
       }
     },
+    "/api/knowledge/toc": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Scoped knowledge table of contents",
+        "description": "Capped, body-free table of contents of the knowledge visible under the requested scope. Approved entries only unless `include_states` is set. Read an entry in full with `/api/knowledge/entry/{id}`. Returns `{\"enabled\": false, \"entries\": []}` if knowledge is not enabled.",
+        "parameters": [
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum entries (default 50, max 200)"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Set to `prompt` to also return a size-bounded markdown rendering in `prompt`"
+          },
+          {
+            "name": "max_chars",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Character budget for `format=prompt` (default 4000)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table of contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          },
+                          "confidence": {
+                            "type": "number"
+                          },
+                          "updated": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "size_bytes": {
+                            "type": "integer"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "superseded_by": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "In-scope entries before the cap"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          }
+        }
+      }
+    },
+    "/api/knowledge/entry/{id}": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read one knowledge entry in full",
+        "description": "Returns the complete markdown (YAML front-matter plus body) of one entry. The same scope and lifecycle filter as the table of contents applies; an entry outside it returns 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Entry id (slug) from the table of contents"
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "markdown": {
+                      "type": "string"
+                    },
+                    "fact": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          },
+          "404": {
+            "description": "Entry not found or outside the requested scope"
+          }
+        }
+      }
+    },
     "/api/knowledge/stats": {
       "get": {
         "tags": [
@@ -18560,7 +18832,7 @@
           "System"
         ],
         "summary": "Get compliance control status",
-        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Read-only; requires merger or owner role. Not a certification.",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles: soc2-type2, fedramp-moderate, iso27001-annex-a) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
         "responses": {
           "200": {
             "description": "compliance.Report",
@@ -18647,6 +18919,149 @@
           },
           "403": {
             "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture-check results",
+        "description": "Returns the posture-check catalogue (pkg/compliance: non-author review, owner not auto-merge author, audit retention, agent confinement, sentinel enabled, no secrets in config, dashboard auth, hold labels exist) and the latest pass, persisted under /data. With ?since= (RFC 3339 time, YYYY-MM-DD date or a look-back duration such as 168h) also returns every pass since then, oldest first, capped at 1000. Requires merger or owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Return the history since this RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "history_days": {
+                      "type": "integer"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureCheckInfo: id, title, control_ids[]"
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "nullable": true,
+                      "description": "compliance.PostureRun: at, trigger (schedule|manual), summary {pass, fail, skip, error}, results[] (check_id, title, control_ids, at, pass, status pass|fail|skip|error, detail, evidence_refs)"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureRun"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since parameter"
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/run": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Run the compliance posture checks now",
+        "description": "Runs one posture-check pass immediately and records it in the history like a scheduled pass; the run is written to the audit log (compliance_posture_run). Requires merger or owner role.",
+        "responses": {
+          "200": {
+            "description": "compliance.PostureRun",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "pass": {
+                          "type": "integer"
+                        },
+                        "fail": {
+                          "type": "integer"
+                        },
+                        "skip": {
+                          "type": "integer"
+                        },
+                        "error": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.Result: check_id, title, control_ids, at, pass, status, detail, evidence_refs"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "409": {
+            "description": "No compliance framework selected, or a posture run is already in progress"
           },
           "503": {
             "description": "Config unavailable"

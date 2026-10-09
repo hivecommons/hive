@@ -11,6 +11,31 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.147.1)
+
+### Security
+
+- Bumped the Go toolchain to 1.26.9 and `golang.org/x/net` to v0.60.0 so the `govulncheck` gate stops flagging GO-2026-6599 through GO-2026-6611 (HTTP/2 framer, `crypto/tls`, `net/http`, `mime/multipart`, `html/template`). The vulnerable versions were reachable from the dashboard's HTTP server and the GitHub client, and the gate was red on the default branch itself, blocking every open PR.
+
+## 2026-10-08 (v5.147.0)
+
+### Added
+
+- Compliance control registry ([#11078](https://github.com/hivecommons/hive/issues/11078), [#11084](https://github.com/hivecommons/hive/issues/11084)): new `pkg/compliance` maps framework controls to the Hive settings that implement them, with profiles shipped as data (`pkg/compliance/profiles/*.yaml`) and a SOC 2 Type II profile covering CC6–CC9 (authorized-user roles, `review.require_approval`, `auto_merge.human_merge_paths`, trusted-author lanes, `sentinel.*`, `agent_sandbox`, audit retention, proxy credential injection, ACMM level), with physical, incident-response, recovery and vendor controls marked not covered. Select profiles with `compliance: {frameworks: [soc2-type2], posture_checks: {interval: 1h}}`; `GET /api/compliance/status` (merger or owner) reports meets/deviates/off/not_covered per control with current vs recommended values. [Compliance controls](src/docs/compliance.md) documents the mapping (tables generated from the profile), the planned Settings → Compliance tab, posture checks, exports and attestations, and the gaps. Hive remains uncertified; this helps operators evidence their own controls.
+- Knowledge: agents can now see what knowledge exists without flooding their prompts. `GET /api/knowledge/toc` returns a capped, body-free table of contents (id, title, type, layer, repo, tags, lifecycle status, updated, size, source) filtered by layer, repo, type and tag, with an optional bounded markdown rendering via `format=prompt`; `GET /api/knowledge/entry/{id}` returns one entry's full markdown and front-matter; and the public knowledge MCP gains a `knowledge_toc` tool. Only approved entries are listed or readable unless an operator passes `include_states`. See `docs/knowledge-toc.md` (#11103, refs #11100).
+- GitHub API budget governor: shed optional sweeps and stretch the eval interval when quota runs low (#11123)
+- review-pipeline: kanban board in the dashboard (#11125)
+- review-pipeline: loop-safety surfacing (#11126)
+- Add the `github-wiki` knowledge connector type: syncs `<owner>/<repo>.wiki.git` wikis through the git clone/SSRF path, emitting `Home` as the root page, ordering and nesting pages from `_Sidebar.md`, taking `updated_at` from git history, and reporting a clear error when a repository has no wiki (#11074).
+- The review relay now writes a review evidence bundle per PR head to `/data/evidence/<owner>/<repo>/<number>/<head>.json` whenever it records a verdict or posts a review ([#11060](https://github.com/hivecommons/hive/issues/11060), part of [#11058](https://github.com/hivecommons/hive/issues/11058)). The bundle records validated verdicts, posted review links, the PR author and base, a policy snapshot, and a link to the previous head's bundle. Re-runs never duplicate entries. Bundles are hashed, and signed when `evidence.signing_key_file` names an Ed25519 key. They are on by default. Set `evidence.enabled: false` to turn them off. Sentinel findings, CI, human actions and the merge event come in later changes. See `docs/review-evidence.md`.
+
+### Fixed
+
+- fix(dashboard): reflow repo card grid on narrow screens (#11139)
+- dashboard: left-justify repo card name in every theme (#11148)
+- Past-kick logs are no longer a single-frame tail on long-lived agents: tmux sessions created before the alternate-screen fix kept rendering the agent TUI on the alternate screen, which never reaches scrollback, so their archived kick logs held only the last screen. Hive now turns alternate-screen off on the live window at every kick rotation, so the next archive carries the full kick. ([#9579](https://github.com/hivecommons/hive/issues/9579))
+- Hide the Projects active-filter chip when no filter is active so clearing filters no longer leaves an empty pill.
+
 ## 2026-10-08 (v5.146.0)
 
 ### Added
