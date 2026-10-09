@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"gopkg.in/yaml.v3"
 )
 
 // Tests for runIssueUnparkSweepIfDue: the eval-cycle gate in front of the
@@ -46,7 +48,7 @@ func (s *unparkGateServer) count() int {
 func TestIssueUnparkSweepGate_NoClientNoCalls(t *testing.T) {
 	var lastRun time.Time
 
-	runIssueUnparkSweepIfDue(context.Background(), nil, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), nil, nil, nil, &lastRun, sweepQuietLogger())
 
 	if !lastRun.IsZero() {
 		t.Fatal("a sweep that did not run must not consume the throttle clock")
@@ -58,7 +60,7 @@ func TestIssueUnparkSweepGate_ThrottledToOnePassPerInterval(t *testing.T) {
 	client := github.NewClientForTest(srv.URL, "o", []string{"o/r"}, sweepQuietLogger())
 	var lastRun time.Time
 
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	first := srv.count()
 	if first == 0 {
 		t.Fatal("first pass made no API calls, want at least the issue listing")
@@ -67,14 +69,42 @@ func TestIssueUnparkSweepGate_ThrottledToOnePassPerInterval(t *testing.T) {
 		t.Fatal("first pass did not stamp the throttle clock")
 	}
 
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	if srv.count() != first {
 		t.Fatalf("second pass inside the interval made %d calls, want %d", srv.count(), first)
 	}
 
 	lastRun = time.Now().Add(-2 * issueUnparkSweepInterval)
-	runIssueUnparkSweepIfDue(context.Background(), client, nil, &lastRun, sweepQuietLogger())
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
 	if srv.count() <= first {
 		t.Fatal("a pass after the interval elapsed should have run")
+	}
+}
+
+func TestIssueUnparkLabelDrivenReflectsConfig(t *testing.T) {
+	var cfg config.Config
+	raw := []byte(`
+project:
+  org: projectbluefin
+  repos: [common, other]
+  repo_policies:
+    - repo: common
+      label_driven: true
+`)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	fn := issueUnparkLabelDriven(&cfg)
+	if fn == nil {
+		t.Fatal("LabelDriven func is nil")
+	}
+	if !fn("common") {
+		t.Error("label_driven repo reported as not label-driven")
+	}
+	if fn("other") {
+		t.Error("repo without label_driven reported as label-driven")
+	}
+	if issueUnparkLabelDriven(nil)("common") {
+		t.Error("nil config must leave repos on the default path")
 	}
 }
