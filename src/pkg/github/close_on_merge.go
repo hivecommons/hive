@@ -130,7 +130,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 			if resp == nil || resp.NextPage == 0 {
 				break
 			}
-			issueOpts.Page = resp.NextPage
+			issueOpts.ListOptions.Page = resp.NextPage
 		}
 	}
 	return out
@@ -340,7 +340,7 @@ func closeOnMergeNeedsConfirmation(issue *gh.Issue) bool {
 
 func closeOnMergeCloseComment(pr *gh.PullRequest) string {
 	return fmt.Sprintf("%s\nFixed by #%d (merged %s). Closing. Reply /reopen if the problem persists.",
-		CloseOnMergeMarker, pr.GetNumber(), shortSHA(pr.GetMergeCommitSHA()))
+		CloseOnMergeMarker, pr.GetNumber(), closeOnMergeShortSHA(pr.GetMergeCommitSHA()))
 }
 
 func closeOnMergeAwaitingComment(pr *gh.PullRequest) string {
@@ -348,7 +348,7 @@ func closeOnMergeAwaitingComment(pr *gh.PullRequest) string {
 		CloseOnMergeMarker, closeOnMergeAwaitingMarker, pr.GetNumber())
 }
 
-func shortSHA(sha string) string {
+func closeOnMergeShortSHA(sha string) string {
 	sha = strings.TrimSpace(sha)
 	if len(sha) > 12 {
 		return sha[:12]
