@@ -66,7 +66,8 @@ var dashboardKeyboardSnapshot=null;
 var window={_lastStatus:{features:{strategy_lab:true}}};
 function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
 function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
-function dashboardFeatureSectionHidden(id){return id==='nous-section'&&!strategyLabEnabled();}
+function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
+function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
 `
 }
 
