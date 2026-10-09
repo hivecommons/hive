@@ -77,7 +77,22 @@ agents:
     role: scanner                # behavioral role; defaults to the agent name
     sort_order: 20               # dashboard ordering (supervisors default to 0, others 100)
     aliases: [sc]                # short names accepted in dispatch/commands
+    bob_display_name: hive-scanner # bob backend only: reporting label (defaults to the YAML key)
 ```
+
+`bob_display_name` gives a bob-backed agent a reporting/session label, for
+example a `hive-` prefix, without renaming the agent. Renaming the agent would
+also change its tmux session, `/data/agents/<name>` workdir, beads directory,
+claims, token buckets, and attribution. The label may contain up to 64 ASCII
+letters, digits, `-`, `_`, or `.` characters. Hive exports it to the bob pane as
+`HIVE_BOB_DISPLAY_NAME`, alongside `HIVE_AGENT` and `HIVE_AGENT_DISPLAY_NAME`.
+
+Fallback: bobshell has no CLI flag, environment variable, or session-metadata
+file for a session label. Bob and Bobalytics reports therefore still key
+sessions by the project folder, which is the agent workdir basename. Hive's own
+token attribution also stays keyed by the agent name. The label is available
+to scripts and skills in the bob pane now. Hive can pass it to Bob once
+bobshell supports a session label.
 
 ### Engine — what powers it
 

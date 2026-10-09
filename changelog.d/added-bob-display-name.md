@@ -1,0 +1,1 @@
+- Add an optional per-agent `bob_display_name` reporting label for bob-backed agents, exported as `HIVE_BOB_DISPLAY_NAME`, so operators can tag Bob sessions (for example with a `hive-` prefix) without renaming the agent. (#11273)

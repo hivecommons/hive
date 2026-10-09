@@ -295,6 +295,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
 		}
+		if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err
 		}

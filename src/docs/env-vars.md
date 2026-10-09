@@ -279,6 +279,7 @@ Set conditionally:
 | `LINEAR_ACCESS_TOKEN` / `LINEAR_API_KEY` | ISSUES_ONLY+ agents on Linear-connected hives | See the [Linear agent integration](#linear-agent-integration) note above. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Last resort: claude backend **and** no readable credential file | Dashboard-obtained access token; never injected when the agent can read (and refresh) `~/.claude/.credentials.json` itself. **Secret.** |
 | `BOBSHELL_API_KEY`, `BOBSHELL_DEFAULT_AUTH_TYPE` | bob backend only | The resolved Bob API key (**secret**) and the literal `api-key` auth-type selector (non-secret by design - see the #2228 relaunch note in code). |
+| `HIVE_BOB_DISPLAY_NAME` | bob backend only | The agent's `bob_display_name` reporting label, falling back to the agent name. A label only: `HIVE_AGENT` and all functional identity are unchanged. See [agent-configuration.md](agent-configuration.md). |
 | `BD_DIR` | When the agent has a configured `beads_dir` | Beads data directory for the `bd` CLI. |
 | `HIVE_CAVEMAN_MODE` | When set in the agent's config | Passed through from `caveman_mode`. |
 | `HIVE_JEV_MODE`, `HIVE_JEV_ENDPOINT` | Only when the agent's `jev_mode` is `assist` | The mode (`assist`) and the hive's loopback Jev decision endpoint (`http://127.0.0.1:18446`) that `hive jev decide` calls. The Jev API key itself is never exported — the hive attaches it server-side. |
