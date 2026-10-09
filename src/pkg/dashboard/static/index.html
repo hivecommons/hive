@@ -384,6 +384,8 @@
     .oc-version-chip:hover, .oc-version-chip[aria-expanded="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
     .oc-version-sha { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .oc-version-channel { flex: 0 1 auto; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent); font-weight: 700; }
+    .oc-version-manual-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
+    .oc-version-upgrade-note { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
@@ -28748,9 +28750,9 @@ function burnAreaChart() {
       }
       if (dep.upgradeSupported !== true) {
         const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-        const pill = ctx.manualUpdateHTML || '<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="' + escapeHtml(why) + '">manual update required (' + escapeHtml(runtimeLabel) + ')</span>';
+        const pill = ctx.manualUpdateHTML || '<span class="oc-version-manual-pill" title="' + escapeHtml(why) + '">manual update required (' + escapeHtml(runtimeLabel) + ')</span>';
         return versionButtonHTML('Upgrade to ' + targetShort, why + ' (' + runtimeLabel + ')', targetHash, false) +
-          '<div class="oc-version-upgrade-note" role="note" style="color:var(--muted);font-size:var(--fs-xs);overflow-wrap:anywhere">' + pill + ' ' + escapeHtml(why) + '</div>';
+          '<div class="oc-version-upgrade-note" role="note">' + pill + ' ' + escapeHtml(why) + '</div>';
       }
       return versionButtonHTML('Upgrade to ' + targetShort, 'Upgrade this Hive' + runtimeDeploymentSuffix + ' to ' + (ctx.offeredUpgradeLabel || 'target') + ' ' + targetShort + ' now', target.ref || targetHash, true);
     }
@@ -28940,7 +28942,7 @@ function burnAreaChart() {
         const runtimeDeploymentSuffix = runtimeLabel === 'unknown runtime' ? '' : ' (' + runtimeLabel + ' deployment)';
         if (!upgradeSupported) {
           const why = dep.reason ? String(dep.reason) : 'deployment runtime is unknown';
-          manualUpdateHTML = `<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
+          manualUpdateHTML = `<span class="oc-version-manual-pill" title="${escapeHtml(why)}">manual update required (${escapeHtml(runtimeLabel)})</span>`;
         }
         if (um && um.failed) {
           statusText = 'Auto-update failed' + (um.target ? ' → ' + um.target : '');
