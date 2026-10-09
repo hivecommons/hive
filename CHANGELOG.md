@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.153.0)
+
+### Added
+
+- **The knowledge publish mirror now runs** ([#11068](https://github.com/hivecommons/hive/issues/11068)): when `knowledge.publish` is set, `hive` starts the mirror at boot through the named `knowledge.connectors` entry. Promotion sweeps that promote a fact trigger a publish. A missing connector, or one whose type can't publish, logs a warning and leaves publishing off without blocking boot. **Settings → Knowledge → Connectors** shows a **Publish mirror** status block with an owner-only **Publish now** button. `GET /api/knowledge/connectors` and `GET /api/config/knowledge/connectors/status` include a `publish` object, and the new `POST /api/knowledge/publish/sync` endpoint runs a batch on demand.
+- **Confluence, Notion and Google Drive publish mirror targets** ([#11068](https://github.com/hivecommons/hive/issues/11068)): `knowledge.publish.connector` can now name a `confluence`, `notion` or `google-drive` connector as well as `sharepoint`. Confluence publishes each curator-promoted fact as a child page of the numeric parent page id in `root` (markdown converted to storage format). Notion publishes it as a child page of the parent page id in `root`, with headings, paragraphs, dividers and code blocks. Google Drive uploads it as `<root>/hive-<layer>-<slug>.md` under the first configured folder or shared drive and creates any missing folders. Every target finds the existing page or file by its `hive-<layer>-<slug>` name and updates it in place, so republishing never creates a duplicate. See `docs/knowledge-connectors.md`.
+- Agents can now be bound to the knowledge relevant to their role ([#11201](https://github.com/hivecommons/hive/issues/11201)). `knowledge.agent_scopes` in `hive.yaml` maps an agent name to `layers`, `repos`, `types`, `tags` and `include_states`; the scope restricts that agent's kick primer (graph-expanded related facts included) and `GET /api/knowledge/toc` / `GET /api/knowledge/entry/{id}` requests that pass `agent=<name>`. The agent scope is intersected with the request scope and can never be widened by it, and its `include_states` only admits states the request or primer also includes. An agent without an entry, or an empty field, stays unrestricted, so nothing changes by default. Unknown layer or state names fail config load, and owners can read and replace the scopes through `GET`/`PUT /api/config/knowledge/agent-scopes` (saved to `hive.yaml`, audited as `config_knowledge_agent_scopes`).
+
+### Fixed
+
+- dashboard: mark needs-human issues on repo cards and add FILTERED/ADVISORY chips to the pill legend (#11212)
+
 ## 2026-10-09 (v5.152.0)
 
 ### Added

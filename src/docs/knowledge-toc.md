@@ -84,6 +84,28 @@ Config load rejects unknown layer names (`personal`, `project`, `org`,
 is validated as a whole, saved to `hive.yaml` and audited as
 `config_knowledge_agent_scopes`.
 
+### Effective knowledge
+
+`GET /api/knowledge/effective?agent=<name>[&limit=N]` explains what an agent
+receives. It resolves the agent's `knowledge.agent_scopes` entry (an agent
+without one is unrestricted), intersects it with the request scope (approved
+only unless `include_states` is set), and returns:
+
+- `scope`: the resolved scope applied — `layers`, `repos`, `types`, `tags`,
+  the lifecycle states both sides admit (`include_states`) and `configured`
+  (whether the agent has an entry).
+- `included`: the TOC entries the agent would receive (`id`, `title`, `layer`,
+  `repo`, `type`, `status`, …).
+- `excluded`: the entries filtered out, each with a `reason` code. The checks
+  run in the order `lifecycle`, `layer`, `repo`, `type`, `tag` and the first
+  failing one is reported. A lower-precedence copy of an included id is
+  shadowed by layer precedence and is not listed.
+- `included_total`, `excluded_total`, `included_returned`,
+  `excluded_returned`, and `truncated` when either list hit `limit`.
+
+The dashboard Knowledge section has an **Effective knowledge** panel with an
+agent picker that renders both lists and each exclusion reason.
+
 ### Prompt-size caps
 
 - `limit` defaults to 50 and is clamped to 200.

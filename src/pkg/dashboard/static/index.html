@@ -3341,6 +3341,14 @@
     .kb-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: var(--fs-base); }
     .kb-empty-icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-4); }
     .kb-disabled { text-align: center; padding: 40px 20px; color: var(--muted); }
+    .kb-effective { margin-top: var(--sp-6); padding-top: var(--sp-5); border-top: var(--line-width) solid var(--border); }
+    .kb-effective-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+    .kb-effective-scope { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); overflow-wrap: anywhere; }
+    .kb-effective-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5); }
+    .kb-effective-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+    .kb-effective-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); border-radius: var(--r); background: var(--surface); }
+    .kb-effective-meta { color: var(--muted); font-size: var(--fs-xs); }
+    .kb-effective-reason { border-radius: var(--r-pill); padding: 0 var(--sp-2); font-size: var(--fs-xs); font-weight: 700; color: var(--yellow); border: var(--line-width) solid var(--yellow); }
     .kb-notice { margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); background: var(--bg); border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); border-left: 3px solid var(--yellow); }
     .kb-setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); margin-top: var(--sp-6); }
     @media (max-width: 640px) { .kb-setup-grid { grid-template-columns: 1fr; } }
@@ -21245,12 +21253,102 @@ function burnAreaChart() {
       html += '</div>';
 
       html += '</div>'; // kb-layout
+      html += '<div id="kb-effective-panel" class="kb-effective"></div>';
       panel.innerHTML = html;
+      renderKbEffective();
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
         kbSearch();
       }
+    }
+
+    // Effective knowledge (#11202): what one agent would receive under its
+    // knowledge.agent_scopes entry, and why the rest is filtered out.
+    let _kbEffectiveAgent = '';
+    let _kbEffectiveData = null;
+    let _kbEffectiveError = '';
+    const KB_EFFECTIVE_REASONS = {
+      lifecycle: 'lifecycle state not admitted',
+      layer: 'layer outside scope',
+      repo: 'repo outside scope',
+      type: 'type outside scope',
+      tag: 'no matching tag',
+    };
+
+    function kbEffectiveAgentNames() {
+      const names = new Set(((window._lastStatus || {}).agents || []).map(a => a && a.name).filter(Boolean));
+      if (_kbEffectiveAgent) names.add(_kbEffectiveAgent);
+      return Array.from(names).sort();
+    }
+
+    function kbEffectiveEntryHTML(e, reason) {
+      let meta = [e.layer, e.type, e.status].filter(Boolean).map(escapeHtml).join(' · ');
+      if (e.repo) meta += ' · repo ' + escapeHtml(e.repo);
+      let html = '<li class="kb-effective-item"><code>' + escapeHtml(e.id) + '</code><span>' + escapeHtml(e.title || '') + '</span><span class="kb-effective-meta">' + meta + '</span>';
+      if (reason) html += '<span class="kb-effective-reason" title="' + escapeHtml(KB_EFFECTIVE_REASONS[reason] || reason) + '">' + escapeHtml(reason) + '</span>';
+      return html + '</li>';
+    }
+
+    function renderKbEffective() {
+      const el = document.getElementById('kb-effective-panel');
+      if (!el) return;
+      let html = '<div class="kb-effective-head"><div class="section-label m-0">Effective knowledge</div>';
+      html += '<select class="hv-btn btn-secondary btn" data-change-action="kbEffectiveSelectAgent" data-arg-types="v" title="Show the knowledge this agent receives under its knowledge.agent_scopes entry">';
+      html += '<option value="">Choose an agent…</option>';
+      for (const name of kbEffectiveAgentNames()) {
+        html += '<option value="' + escapeHtml(name) + '"' + (name === _kbEffectiveAgent ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+      }
+      html += '</select>';
+      if (_kbEffectiveAgent) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbEffectiveRefresh" title="Reload the effective knowledge for this agent">Refresh</button>';
+      html += '</div>';
+      const d = _kbEffectiveData;
+      if (_kbEffectiveError) {
+        html += '<div class="kb-notice">' + escapeHtml(_kbEffectiveError) + '</div>';
+      } else if (!_kbEffectiveAgent) {
+        html += '<div class="dash-card-subtitle">Pick an agent to see which knowledge entries it receives and why the others are filtered out.</div>';
+      } else if (d) {
+        const sc = d.scope || {};
+        const dims = [['layers', sc.layers], ['repos', sc.repos], ['types', sc.types], ['tags', sc.tags]]
+          .map(([k, v]) => k + ': ' + ((v && v.length) ? v.join(', ') : 'any'));
+        dims.push('states: ' + (sc.include_states || []).join(', '));
+        html += '<div class="kb-effective-scope">' + (sc.configured ? 'Scope from knowledge.agent_scopes' : 'No knowledge.agent_scopes entry — unrestricted') + ' · ' + escapeHtml(dims.join(' · ')) + '</div>';
+        if (d.truncated) html += '<div class="kb-notice">Lists are capped; showing ' + (d.included_returned || 0) + ' of ' + (d.included_total || 0) + ' included and ' + (d.excluded_returned || 0) + ' of ' + (d.excluded_total || 0) + ' excluded entries.</div>';
+        html += '<div class="kb-effective-cols">';
+        html += '<div><div class="section-label m-0">Included (' + (d.included_total || 0) + ')</div><ul class="kb-effective-list">';
+        html += (d.included || []).map(e => kbEffectiveEntryHTML(e, '')).join('') || '<li class="kb-effective-meta">Nothing in scope.</li>';
+        html += '</ul></div>';
+        html += '<div><div class="section-label m-0">Excluded (' + (d.excluded_total || 0) + ')</div><ul class="kb-effective-list">';
+        html += (d.excluded || []).map(e => kbEffectiveEntryHTML(e, e.reason)).join('') || '<li class="kb-effective-meta">Nothing filtered out.</li>';
+        html += '</ul></div></div>';
+      } else {
+        html += '<div class="dash-card-subtitle">Loading…</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    async function kbEffectiveSelectAgent(name) {
+      _kbEffectiveAgent = (name || '').trim();
+      _kbEffectiveData = null;
+      _kbEffectiveError = '';
+      renderKbEffective();
+      if (!_kbEffectiveAgent) return;
+      const agent = _kbEffectiveAgent;
+      try {
+        const r = await fetch('/api/knowledge/effective?agent=' + encodeURIComponent(agent));
+        const data = await r.json().catch(() => ({}));
+        if (agent !== _kbEffectiveAgent) return;
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kbEffectiveData = data;
+      } catch (e) {
+        if (agent !== _kbEffectiveAgent) return;
+        _kbEffectiveError = 'Could not load effective knowledge: ' + e.message;
+      }
+      renderKbEffective();
+    }
+
+    function kbEffectiveRefresh() {
+      return kbEffectiveSelectAgent(_kbEffectiveAgent);
     }
 
     // Fact hygiene: synthesized/imported facts can carry raw markdown heading
