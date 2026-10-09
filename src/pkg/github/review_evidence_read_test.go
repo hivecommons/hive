@@ -368,17 +368,17 @@ func TestCompleteReviewEvidenceMergeKeepsRecordedMerge(t *testing.T) {
 	root := withEvidenceRoot(t)
 	b := writeTestEvidence(t, root, "h1", "", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 	c := evidenceMergeClient(t, &evidenceMergeFixture{head: "h1"}, &ReviewEvidenceSettings{Enabled: true})
-	first := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "a", Method: "merge", SHA: "m1", At: time.Now().UTC()}, ReviewEvidenceSettings{})
+	first := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "a", Method: "merge", SHA: "m1", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil)
 	if first == nil || first.Hash == b.Hash {
 		t.Fatalf("first merge not recorded: %+v", first)
 	}
-	second := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "b", Method: "squash", SHA: "m2", At: time.Now().UTC()}, ReviewEvidenceSettings{})
+	second := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "b", Method: "squash", SHA: "m2", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil)
 	if second == nil || second.Hash != first.Hash || second.Merge.Actor != "a" {
 		t.Fatalf("replayed merge changed the bundle: %+v", second)
 	}
 	// An invalid merge event (no actor) is refused rather than written.
 	writeTestEvidence(t, root, "h2", "", time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
-	if got := c.completeReviewEvidenceMerge("o/r", 7, "h2", evidence.MergeEvent{Method: "merge", SHA: "m"}, ReviewEvidenceSettings{}); got != nil {
+	if got := c.completeReviewEvidenceMerge("o/r", 7, "h2", evidence.MergeEvent{Method: "merge", SHA: "m"}, ReviewEvidenceSettings{}, nil); got != nil {
 		t.Fatalf("invalid merge written: %+v", got.Merge)
 	}
 	if mustLoadBundle(t, root, "h2").Merge != nil {

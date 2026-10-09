@@ -386,3 +386,52 @@ func TestSyncerRun(t *testing.T) {
 		t.Fatal("disabled connector was synced")
 	}
 }
+
+type truncFakeConn struct {
+	*fakeConn
+	truncated bool
+}
+
+func (t *truncFakeConn) Truncated() bool { return t.truncated }
+
+func TestSyncerTruncatedSkipsTombstonesAndOnSync(t *testing.T) {
+	c := &truncFakeConn{fakeConn: &fakeConn{typ: "fake"}}
+	c.set([]Page{{ID: "a"}, {ID: "b"}}, "cur-1", nil)
+	var calls []Status
+	var errs []error
+	s, root := newTestSyncer(t, []ConnectorConfig{fakeCfg("x")}, map[string]Connector{"x": c}, func(o *SyncerOptions) {
+		o.OnSync = func(st Status, err error) { calls = append(calls, st); errs = append(errs, err) }
+	})
+	dir := filepath.Join(root, "vault", "project")
+	if _, err := s.SyncNow(context.Background(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	// Reset the cursor so the next sync is a full listing, but cap it.
+	s.update("x", func(st *Status) { st.Cursor = "" })
+	c.set([]Page{{ID: "a"}}, "cur-2", nil)
+	c.truncated = true
+	st, err := s.SyncNow(context.Background(), "x")
+	if err != nil || !st.Truncated || st.Cursor != "cur-2" {
+		t.Fatalf("truncated sync = %+v, %v", st, err)
+	}
+	if got := readFact(t, dir, Slug("fake", "x", "b"))["status"]; got != StatusActive {
+		t.Fatalf("truncated full listing tombstoned b: status %q", got)
+	}
+	// An untruncated full listing tombstones the missing page and clears the flag.
+	s.update("x", func(st *Status) { st.Cursor = "" })
+	c.truncated = false
+	st, err = s.SyncNow(context.Background(), "x")
+	if err != nil || st.Truncated {
+		t.Fatalf("full sync = %+v, %v", st, err)
+	}
+	if got := readFact(t, dir, Slug("fake", "x", "b"))["status"]; got != StatusDeprecated {
+		t.Fatalf("missing page status = %q, want deprecated", got)
+	}
+	c.set(nil, "", errors.New("upstream down"))
+	if _, err := s.SyncNow(context.Background(), "x"); err == nil {
+		t.Fatal("expected sync error")
+	}
+	if len(calls) != 4 || calls[0].Pages != 2 || !calls[1].Truncated || errs[3] == nil || calls[3].LastError != "upstream down" {
+		t.Fatalf("OnSync calls = %+v errs = %v", calls, errs)
+	}
+}

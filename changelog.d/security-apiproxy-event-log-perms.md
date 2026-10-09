@@ -1,1 +1,0 @@
-- The standalone API proxy now opens its event log owner-only (`0600`), and tightens a log that an earlier version left world-readable, so other local users cannot read recorded inference payloads.

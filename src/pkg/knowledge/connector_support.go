@@ -110,3 +110,9 @@ func FetchDocumentFacts(ctx context.Context, cfg DocSourceConfig, knowledgeDir, 
 	}
 	return chunksToFacts(chunks, ds.slug, sourceURL, time.Now().UTC()), title, nil
 }
+
+// BaseDir returns the knowledge data root (/data/knowledge in production)
+// that connector vaults and sync state live under.
+func BaseDir() string {
+	return knowledgeBaseDir
+}

@@ -467,6 +467,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
 	// Registered last so the api-reference citations above do not shift.
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
+	s.registerKnowledgeConnectorRoutes()
 }
 
 var (

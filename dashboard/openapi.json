@@ -11119,6 +11119,225 @@
         }
       }
     },
+    "/api/knowledge/connectors": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List knowledge connectors",
+        "description": "Returns the status of every `knowledge.connectors` entry in config order. `connectors` is empty when none are configured.",
+        "responses": {
+          "200": {
+            "description": "Connector statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "example": "confluence"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string",
+                            "example": "1h0m0s"
+                          },
+                          "last_sync": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_attempt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "pages": {
+                            "type": "integer",
+                            "description": "Pages emitted by the last successful sync"
+                          },
+                          "facts": {
+                            "type": "integer",
+                            "description": "Live facts written by this connector"
+                          },
+                          "deprecated": {
+                            "type": "integer",
+                            "description": "Facts tombstoned (status: deprecated)"
+                          },
+                          "last_error": {
+                            "type": "string"
+                          },
+                          "cursor": {
+                            "type": "string"
+                          },
+                          "running": {
+                            "type": "boolean"
+                          },
+                          "truncated": {
+                            "type": "boolean",
+                            "description": "Last sync stopped at the connector's page cap"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/connectors/{name}/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sync a knowledge connector now",
+        "description": "Owner-only. Starts one sync of the named connector in the background (enabled or not) and returns its status; poll `GET /api/knowledge/connectors` for the outcome.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "example": "confluence"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string",
+                      "example": "1h0m0s"
+                    },
+                    "last_sync": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "last_attempt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "pages": {
+                      "type": "integer",
+                      "description": "Pages emitted by the last successful sync"
+                    },
+                    "facts": {
+                      "type": "integer",
+                      "description": "Live facts written by this connector"
+                    },
+                    "deprecated": {
+                      "type": "integer",
+                      "description": "Facts tombstoned (status: deprecated)"
+                    },
+                    "last_error": {
+                      "type": "string"
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Last sync stopped at the connector's page cap"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, or no connectors configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A sync of this connector is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config/knowledge/connectors": {
       "get": {
         "tags": [
