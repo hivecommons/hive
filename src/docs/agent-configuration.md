@@ -539,6 +539,21 @@ Each agent shows a 📌 pin on its CLI and its model in the dashboard. The seman
 
 Pin a model when reproducibility matters more than the governor's budget optimizations. Leave it unpinned when you want the hive to manage cost for you.
 
+### Disabling a backend spoke-wide
+
+A top-level `backends:` block restricts which backends agents on this spoke may be placed on ([#11310](https://github.com/hivecommons/hive/issues/11310)):
+
+```yaml
+backends:
+  allow: [claude, codex]   # empty or omitted = every backend is allowed
+  deny: [copilot]          # deny wins over allow
+```
+
+Names compare case-insensitively; an empty `backend:` (the hive default) is always allowed. The list is enforced where placements are decided:
+
+- **ACMM pack apply** never places an agent on a disallowed backend. A pack agent whose pack backend is disallowed gets the first allowed `allow` entry instead (or the hive default when `allow` is empty), without the pack's model, so the replacement backend uses its own default model. A pack-owned agent already on a now-disallowed backend is moved the same way on the next apply. Backends an operator explicitly chose (operator-owned) are left alone.
+- **`PUT /api/config/agent/{name}/models`** rejects a placement onto a disallowed backend with `400` and a message naming it.
+
 ### Changing backend and model together: use the atomic endpoint
 
 Three API routes can change an agent's method or model. If you are changing **both**, use the single atomic one:

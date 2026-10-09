@@ -3,7 +3,10 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func acfgServer(t *testing.T) *Server {
@@ -72,6 +75,39 @@ func TestCovACfg_Models(t *testing.T) {
 	}
 	if rec := doPut(s, "/api/config/agent/scanner/models", map[string]any{"backend": "copilot", "model": "gpt-4o"}); rec.Code != http.StatusOK {
 		t.Fatalf("models ok: want 200, got %d", rec.Code)
+	}
+}
+
+func TestCovACfg_ModelsDisallowedBackend(t *testing.T) {
+	tests := []struct {
+		name     string
+		backends config.BackendsConfig
+		backend  string
+		wantCode int
+	}{
+		{"denied", config.BackendsConfig{Deny: []string{"copilot"}}, "copilot", http.StatusBadRequest},
+		{"not in allow", config.BackendsConfig{Allow: []string{"claude"}}, "copilot", http.StatusBadRequest},
+		{"allowed", config.BackendsConfig{Deny: []string{"copilot"}}, "claude", http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := acfgServer(t)
+			s.deps.Config.Backends = tt.backends
+			before := s.deps.Config.Agents["scanner"].Backend
+			rec := doPut(s, "/api/config/agent/scanner/models", map[string]any{"backend": tt.backend})
+			if rec.Code != tt.wantCode {
+				t.Fatalf("want %d, got %d (%s)", tt.wantCode, rec.Code, rec.Body.String())
+			}
+			if tt.wantCode != http.StatusBadRequest {
+				return
+			}
+			if !strings.Contains(rec.Body.String(), tt.backend) {
+				t.Errorf("error %q should name the disallowed backend", rec.Body.String())
+			}
+			if got := s.deps.Config.Agents["scanner"].Backend; got != before {
+				t.Errorf("rejected placement changed backend %q -> %q", before, got)
+			}
+		})
 	}
 }
 
