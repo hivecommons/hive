@@ -69,6 +69,15 @@ project:
 # github:
 #   self_authorization_hold: true
 #
+# Issue lifecycle automation. Defaults shown: after a hive/trusted fix PR
+# merges, Hive posts a close marker and closes the fixed issue as completed
+# itself, because GitHub only auto-closes keyword-linked PRs that target the
+# repository default branch. Issues that still need reporter confirmation,
+# epics, or human follow-up are marked likely-done instead of closed.
+# issues:
+#   close_on_merge: true
+#   close_on_merge_backfill_interval: 1h
+#
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then
 # the live ACMM-level default when the hive-wide setting is also unset.

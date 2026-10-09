@@ -87,10 +87,13 @@ type Config struct {
 	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
 	Hub                         HubConfig           `yaml:"hub"`
-	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID                      string              `yaml:"hive_id"`
-	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables                   VariablesConfig     `yaml:"variables,omitempty"`
+	// Issues tunes issue lifecycle automation. Zero value keeps the safe
+	// defaults: close issues after their fix PR merges, and backfill hourly.
+	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
+	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID     string           `yaml:"hive_id"`
+	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables  VariablesConfig  `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`

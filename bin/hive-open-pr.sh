@@ -23,10 +23,10 @@
 #   # `--body-file` used to be dropped by this parser, so the whole body the
 #   # agent wrote never reached the request).
 #   # --issues declares the originating issue number(s) this PR is for. The
-#   # hive verifies the body actually references each one (Closes #N / Refs #N)
+#   # hive verifies the body actually references each one (Fixes #N / Refs #N)
 #   # and refuses the request otherwise — pass it whenever the run started from
 #   # an issue, so a mangled body cannot open a PR that orphans its issue.
-#   # When the body resolves an issue (Closes/Fixes/Resolves #N), this wrapper
+#   # When the body resolves an issue (Fixes/Closes/Resolves #N), this wrapper
 #   # asks src/scripts/issue-coauthor.sh for the expected Co-authored-by trailer
 #   # and warns if HEAD does not already carry it. Add the trailer before the
 #   # first push (usually with issue-coauthor.sh --amend); this wrapper never
@@ -195,7 +195,7 @@ fi
 # empty one here means the body was lost on the way in (wrong flag, empty file,
 # unset variable), and submitting it would open a PR whose only content is the
 # attribution footer. The floor is deliberately just "non-blank": legitimate
-# minimal bodies like "Closes #12" must still pass.
+# minimal bodies like "Fixes #12" must still pass.
 if [ -z "${BODY//[$' \t\r\n']/}" ]; then
   echo "hive-open-pr: REFUSING to request a PR with an empty body." >&2
   echo "hive-open-pr: pass the body with --body \"<text>\" or --body-file <path>; the file must be non-empty." >&2
@@ -268,8 +268,18 @@ if command -v python3 >/dev/null 2>&1; then
   python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" \
     "$H_WHY" "$H_APPROACH" "$H_REJECTED" "$H_REPRO" "$HANDOFF_FILES" <<'PY'
 import json, sys
+import re
 path, repo, head, base, title, body, agent, issues = sys.argv[1:9]
 why, approach, rejected, repro, files = sys.argv[9:14]
+if issues:
+    text = title + "\n" + body
+    missing = []
+    for raw in issues.split(","):
+        n = int(raw)
+        if not re.search(r"(?i)\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?|references|addresses|part of|towards?)\b[^\n#]{0,80}#%d\b" % n, text):
+            missing.append(n)
+    if missing:
+        body = body.rstrip() + "\n\n" + "\n".join("Fixes #%d" % n for n in missing) + "\n"
 req = {"repo":repo,"head":head,"base":base,"title":title,"body":body,"agent":agent}
 if issues:
     req["issues"] = [int(n) for n in issues.split(",")]
