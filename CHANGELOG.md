@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.149.0)
+
+### Added
+
+- knowledge-connectors: a one-way publish mirror (`knowledge.publish`) now renders curator-promoted facts as pages in an external system, starting with SharePoint folders ([#11076](https://github.com/hivecommons/hive/issues/11076)). Each page carries a `hive_fact_id` marker and a "Maintained by Hive" footer. Upserts are keyed by fact id, unchanged pages are skipped, and deprecated facts get a banner instead of being deleted. The mirror supports `dry_run` and writes one audit report per batch. The personal layer is never published.
+- Compliance posture history, evidence exports and owner attestations ([#11081](https://github.com/hivecommons/hive/issues/11081)): Settings → Compliance now shows a posture-checks panel with per-check sparklines, last result, failing detail and evidence links (`GET /api/compliance/posture/history`), downloads the control-mapping report (JSON/Markdown), posture history (JSON/CSV), audit log slice, redacted config snapshot with sha256, attestations and a combined bundle for a date range (`GET /api/compliance/export`, audited as `compliance_export`), and lets owners record "reviewed <framework> on <date>" attestations with a note (`GET`/`POST /api/compliance/attestations`, audited as `compliance_attestation`). All owner only. See [Compliance controls](src/docs/compliance.md#evidence-exports-and-attestations).
+- Settings → Review Gate gains 'Severity & backlog': `review.severity` (blocking line presets that also drive `classification.review_bots.min_priority` when unset) and `review.backlog` destination settings for the active work source.
+- review-pipeline: event-driven review dispatch ([#11091](https://github.com/hivecommons/hive/issues/11091)). The signed `POST /api/webhook/github` receiver now queues a review for `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `review_requested` deliveries, debounced per PR (`review.event_debounce_s`, default 90 s) so a push burst is reviewed once at its final head; a head that already fired is not dispatched again and the queue is bounded. Firing wakes the governor for an early eval cycle with those PRs first, so every cadence gate still applies and the cadence remains the fallback. `review.event_driven` defaults on when `GITHUB_WEBHOOK_SECRET` is set. `GET /api/review/dispatch/events` lists pending and recent dispatches, and review pipeline cards show an `event` or `cadence` trigger. See [Event-driven dispatch](src/docs/review-swarm.md#event-driven-dispatch).
+- Agents can now suggest knowledge changes that people review before they take effect ([#11105](https://github.com/hivecommons/hive/issues/11105)). `hivectl knowledge suggest` writes an add, update, replace or deprecate suggestion into a repository's `.hive/wiki/` directory and prints the branch, title and body for a pull request. Each suggestion records its source (a PR or issue link), a reason, the proposed lifecycle status, the affected repo, layer and tags, a `supersedes`/`superseded_by` link, and existing entries that may be duplicates. Nothing changes what agents see until a human merges the PR. A dashboard review queue is a planned follow-up.
+
+### Security
+
+- `GET /api/version/release-notes` now bounds its per-(from, to) response cache to 64 pairs (expired-then-oldest eviction) and admits uncached builds through a process-wide cap of 2 in flight and 8 per 10 minutes; past the limit the endpoint keeps its 200 `source: "unavailable"` contract with a retry hint while cached pairs continue to be served, so a viewer session can no longer grow hub memory without bound or burn the hive's GitHub API quota by requesting arbitrary revision pairs ([#11158](https://github.com/hivecommons/hive/issues/11158)).
+
 ## 2026-10-09 (v5.148.0)
 
 ### Added
