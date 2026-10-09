@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.152.0)
+
+### Added
+
+- Review evidence bundles now carry the rest of the record ([#11058](https://github.com/hivecommons/hive/issues/11058)). When a PR merges, Hive adds the head's CI check-run summary (`ci`) and the human approvals, label changes and hold lifts since the bundle was created (`human_actions`, from the PR's reviews and issue events; bot accounts are left out) before it seals the merge event. The sentinel sweep adds its findings to the flagged head's bundle (`sentinel`) and starts the bundle if needed. Every capture is best-effort: a GitHub read failure is logged and never blocks the merge record. `GET /api/review/evidence` and `/api/review/evidence/list` are now listed in the API reference.
+- **Knowledge connectors now run** ([#11069](https://github.com/hivecommons/hive/issues/11069)): `hive` starts the `knowledge.connectors` syncer at boot. It writes facts to `/data/knowledge/connectors/<layer>` (auto-connected as a vault and reindexed after each sync) and persists cursors and status across restarts. `GET /api/knowledge/connectors` reports each connector's status (including whether the last sync was truncated), and owners can trigger an immediate sync with `POST /api/knowledge/connectors/{name}/sync`. Previously `knowledge.connectors` was only parsed and validated.
+- **Confluence knowledge connector** ([#11070](https://github.com/hivecommons/hive/issues/11070)): a `type: confluence` entry under `knowledge.connectors` syncs Confluence Cloud and Data Center spaces (or page trees, optionally filtered by label) into vault facts. Storage-format pages are converted to markdown with code, panel, expand, link and image macros rendered. Syncs are incremental by last-modified date, archived and trashed pages become deprecated facts, and a full listing every `full_sync_every` syncs tombstones deleted pages. The base URL is SSRF-checked, and auth comes only from `auth.env`/`auth.file` (Cloud: email + API token; Data Center: personal access token). See `docs/knowledge-connectors.md`.
+- **Notion knowledge connector** ([#11071](https://github.com/hivecommons/hive/issues/11071)): a `type: notion` entry under `knowledge.connectors` syncs Notion pages and database rows shared with an internal integration into vault facts. Blocks are converted to markdown (headings, lists, toggles, callouts, code, tables, synced blocks, …) and database properties become fact attributes. Syncs are incremental by `last_edited_time`, archived and trashed pages become deprecated facts, and requests carry `Notion-Version` and are paced under Notion's rate limit. Auth comes only from `auth.env`/`auth.file`. See `docs/knowledge-connectors.md`.
+- **Owner-only, audited knowledge lifecycle changes.** New `PUT /api/knowledge/entry/{id}/state` endpoint (body `{state, superseded_by?, reason?}`) and `hivectl knowledge state <id> <state> [--superseded-by <id>] [--reason ...]`. They set a local-channel entry to `draft`, `approved`, `deprecated` or `superseded`, and record a `knowledge_set_state` / `knowledge_supersede` audit entry with the actor, the previous and new state, and the reason. Documented in `docs/knowledge-lifecycle.md`. (#11200, epic #11100)
+
 ## 2026-10-09 (v5.151.0)
 
 ### Added
