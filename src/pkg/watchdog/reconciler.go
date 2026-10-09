@@ -47,6 +47,67 @@ type Fleet interface {
 	SetConditions(name string, conds []Condition)
 }
 
+// QueuedRef identifies one queued work item behind a QueuedWork count, so a
+// not-producing alert can name WHAT is waiting instead of only how much.
+type QueuedRef struct {
+	// Ref is the forge reference, "owner/repo#N" — the form the dashboard's
+	// system-alert banner already turns into a link.
+	Ref string
+	// Kind is "issue" or "pr".
+	Kind string
+	// URL is the item's forge URL, when known.
+	URL string
+}
+
+// QueuedWorkLister is an optional Fleet capability: a fleet that can name the
+// items behind QueuedWork's count implements it, and the reconciler appends
+// those references to the Producing=False message and alert. hiveWide reports
+// that the count is the hive-wide queue rather than this agent's own, so the
+// message does not imply the agent owns the backlog. Fleets without it keep
+// the count-only message.
+type QueuedWorkLister interface {
+	QueuedWorkRefs(name string) (refs []QueuedRef, hiveWide bool)
+}
+
+// MaxQueuedRefs caps how many queued items a not-producing message names; the
+// remainder is summarised as "+N more".
+const MaxQueuedRefs = 3
+
+// queuedRefsSuffix renders the queued-work tail of a not-producing message:
+// " hive-wide" when the count is the hive's queue, then up to MaxQueuedRefs
+// item references and a "+N more" for the rest of the count.
+func queuedRefsSuffix(queued int, refs []QueuedRef, hiveWide bool) string {
+	var b strings.Builder
+	if hiveWide {
+		b.WriteString(" hive-wide")
+	}
+	shown := make([]string, 0, MaxQueuedRefs)
+	for _, ref := range refs {
+		if len(shown) == MaxQueuedRefs {
+			break
+		}
+		if ref.Ref == "" {
+			continue
+		}
+		label := ref.Ref
+		switch ref.Kind {
+		case "issue":
+			label = "issue " + label
+		case "pr":
+			label = "PR " + label
+		}
+		shown = append(shown, label)
+	}
+	if len(shown) > 0 {
+		if more := queued - len(shown); more > 0 {
+			shown = append(shown, fmt.Sprintf("+%d more", more))
+		}
+		b.WriteString(": ")
+		b.WriteString(strings.Join(shown, ", "))
+	}
+	return b.String()
+}
+
 // AuthStatus is the tri-state outcome of one provider credential probe.
 type AuthStatus string
 
@@ -826,6 +887,10 @@ func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.T
 				status = ConditionFalse
 				reason = "NoRecentProduction"
 				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), settings.NoProductionFor, queued)
+				if lister, ok := r.fleet.(QueuedWorkLister); ok {
+					refs, hiveWide := lister.QueuedWorkRefs(name)
+					message += queuedRefsSuffix(queued, refs, hiveWide)
+				}
 			}
 		}
 	}

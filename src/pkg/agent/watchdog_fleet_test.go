@@ -335,6 +335,22 @@ func TestWatchdogQueuedWork(t *testing.T) {
 	})
 }
 
+// TestWatchdogQueuedWorkRefs asserts the fleet names the items behind its
+// hive-wide queue count, and always reports the queue as hive-wide.
+func TestWatchdogQueuedWorkRefs(t *testing.T) {
+	var _ watchdog.QueuedWorkLister = WatchdogFleet{}
+
+	if refs, hiveWide := (WatchdogFleet{}).QueuedWorkRefs("a1"); refs != nil || !hiveWide {
+		t.Fatalf("QueuedWorkRefs without a source = (%v, %v), want (nil, true)", refs, hiveWide)
+	}
+	want := []watchdog.QueuedRef{{Ref: "acme/widgets#7", Kind: "issue", URL: "https://github.com/acme/widgets/issues/7"}}
+	fleet := WatchdogFleet{QueuedRefs: func() []watchdog.QueuedRef { return want }}
+	refs, hiveWide := fleet.QueuedWorkRefs("a1")
+	if !hiveWide || len(refs) != 1 || refs[0] != want[0] {
+		t.Fatalf("QueuedWorkRefs = (%+v, %v), want (%+v, true)", refs, hiveWide, want)
+	}
+}
+
 // TestWatchdogObserveCarriesStartedAt asserts the launch timestamp reaches the
 // classifier, which is what lets boot grace suppress dead verdicts.
 func TestWatchdogObserveCarriesStartedAt(t *testing.T) {

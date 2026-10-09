@@ -21,6 +21,10 @@ type WatchdogFleet struct {
 	// one (manufacturing them). Injected because queue depth lives in the
 	// governor, which pkg/agent does not import.
 	Queued func() (int, bool)
+	// QueuedRefs names the items behind Queued's count (at most
+	// watchdog.MaxQueuedRefs are used), so a not-producing alert can link
+	// them. Nil means the items cannot be named; the alert keeps the count.
+	QueuedRefs func() []watchdog.QueuedRef
 }
 
 // AgentNames lists agents the watchdog should reconcile: agents the manager
@@ -161,6 +165,17 @@ func (f WatchdogFleet) QueuedWork(name string) (int, bool) {
 		return 0, true
 	}
 	return f.Queued()
+}
+
+// QueuedWorkRefs implements watchdog.QueuedWorkLister. The queue behind
+// QueuedWork is the governor's hive-wide one, not a per-agent queue, so
+// hiveWide is always true: two agents alerting on the same single item must
+// not read as each having its own backlog.
+func (f WatchdogFleet) QueuedWorkRefs(string) ([]watchdog.QueuedRef, bool) {
+	if f.QueuedRefs == nil {
+		return nil, true
+	}
+	return f.QueuedRefs(), true
 }
 
 // agentIsAdvisoryOnly reports whether an agent is barred from opening issues

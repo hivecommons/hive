@@ -3424,6 +3424,11 @@ func (b *boot) bootSupervision() {
 				st := b.gov.GetState()
 				return st.QueueIssues + st.QueuePRs, true
 			},
+			// The items behind that count, from the same enumeration the
+			// governor counted, so the not-producing alert can link them.
+			QueuedRefs: func() []watchdog.QueuedRef {
+				return watchdogQueuedRefs(b.lastActionable.Load(), b.cfg.Project.Org, watchdog.MaxQueuedRefs)
+			},
 		}
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
 			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))
