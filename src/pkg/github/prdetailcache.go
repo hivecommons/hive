@@ -77,7 +77,8 @@ func (c *prDetailCache) getLocked(repo string, number int, ttl time.Duration, ma
 		return nil, false
 	}
 	now := c.now()
-	if now.Sub(e.fetchedAt) >= ttl || !match(e) || strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown") {
+	expired := now.Sub(e.fetchedAt) >= ttl && !sharedWebhookTracker.cleanAndHealthy(repo, number)
+	if expired || !match(e) || strings.EqualFold(strings.TrimSpace(e.pr.GetMergeableState()), "unknown") {
 		c.misses.Add(1)
 		return nil, false
 	}
@@ -103,6 +104,44 @@ func (c *prDetailCache) put(repo string, number int, pr *gh.PullRequest) {
 	defer c.mu.Unlock()
 	c.entries[key] = entry
 	c.evictOldestLocked()
+}
+
+// invalidate drops the cached detail for (repo, number) so the next lookup
+// re-fetches it. Used by webhook-driven invalidation (#11177).
+func (c *prDetailCache) invalidate(repo string, number int) bool {
+	if c == nil || number <= 0 {
+		return false
+	}
+	key := prDetailCacheKey{repo: canonicalPRDetailRepo(repo), number: number}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.entries[key]
+	delete(c.entries, key)
+	return ok
+}
+
+// numbersMatching returns the PR numbers cached for any of repos whose head
+// SHA, head ref or base ref satisfy match.
+func (c *prDetailCache) numbersMatching(repos []string, match func(headSHA, headRef, baseRef string) bool) []int {
+	if c == nil {
+		return nil
+	}
+	want := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		want[canonicalPRDetailRepo(r)] = true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []int
+	for k, e := range c.entries {
+		if !want[k.repo] {
+			continue
+		}
+		if match(e.headSHA, e.pr.GetHead().GetRef(), e.pr.GetBase().GetRef()) {
+			out = append(out, k.number)
+		}
+	}
+	return out
 }
 
 func (c *prDetailCache) evictOldestLocked() {

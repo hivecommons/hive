@@ -268,6 +268,9 @@ function showToast(){}
 function fetch(){ return new Promise(function(){}); }
 function setTimeout(){ return 1; }
 function clearTimeout(){}
+let rnChoice = false;
+const rnCalls = [];
+function releaseNotesOpenModal(o){ rnCalls.push(o); return Promise.resolve(rnChoice); }
 ` + jsFunc(t, html, "versionShortSHA") + "\n" +
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
@@ -275,10 +278,18 @@ function clearTimeout(){}
 		jsFunc(t, html, "versionScheduleUpgradePoll") + "\n" +
 		jsFunc(t, html, "selfUpgrade") + `
 selfUpgrade('bbb2222abcdef');
-if (!btn.disabled || btn.textContent !== 'Upgrading…' || btn.attrs['aria-disabled'] !== 'true') throw new Error('button not disabled as upgrading: '+JSON.stringify(btn));
-const stored = JSON.parse(localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || '{}');
-if (stored.target !== 'bbb2222abcdef' || stored.targetShort !== 'bbb2222' || stored.startedFrom !== 'aaa1111abcdef') throw new Error('progress not persisted: '+JSON.stringify(stored));
-if (!_upgradeInProgress || _upgradeTargetHash !== 'bbb2222abcdef') throw new Error('globals not marked in progress');
+setImmediate(function () {
+  if (rnCalls.length !== 1 || rnCalls[0].from !== 'aaa1111abcdef' || rnCalls[0].to !== 'bbb2222abcdef') throw new Error('release-notes modal not opened with from/to: '+JSON.stringify(rnCalls));
+  if (btn.disabled || localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || _upgradeInProgress) throw new Error('cancel must not start the upgrade');
+  rnChoice = true;
+  selfUpgrade('bbb2222abcdef');
+  setImmediate(function () {
+    if (!btn.disabled || btn.textContent !== 'Upgrading…' || btn.attrs['aria-disabled'] !== 'true') throw new Error('button not disabled as upgrading: '+JSON.stringify(btn));
+    const stored = JSON.parse(localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || '{}');
+    if (stored.target !== 'bbb2222abcdef' || stored.targetShort !== 'bbb2222' || stored.startedFrom !== 'aaa1111abcdef') throw new Error('progress not persisted: '+JSON.stringify(stored));
+    if (!_upgradeInProgress || _upgradeTargetHash !== 'bbb2222abcdef') throw new Error('globals not marked in progress');
+  });
+});
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

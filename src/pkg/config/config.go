@@ -2037,6 +2037,7 @@ type GovernorConfig struct {
 	Modes                      map[string]ModeConfig `yaml:"modes"`
 	EvalIntervalS              int                   `yaml:"eval_interval_s"`
 	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
 	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
 	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
@@ -6105,6 +6106,7 @@ const (
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
 	defaultEvalIntervalMaxS       = 1800
+	defaultEvalIntervalWebhookS   = 900
 	defaultConserveIntervalMult   = 2
 	defaultOptionalSweepEveryN    = 1
 	defaultGitHubAPIReserve       = 800
@@ -6224,6 +6226,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalMaxS == 0 {
 		c.Governor.EvalIntervalMaxS = defaultEvalIntervalMaxS
+	}
+	if c.Governor.EvalIntervalWebhookS == 0 {
+		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
 	}
 	if c.Governor.ConserveIntervalMultiplier == 0 {
 		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult
@@ -7729,6 +7734,10 @@ type ReviewConfig struct {
 	// aggregate has no consumer and the reviewer is silent by construction.
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+	// EventDriven and EventDebounceS control webhook-triggered review
+	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
+	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
+	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR
@@ -7896,6 +7905,12 @@ type ReviewConfig struct {
 	// (hivecommons/hive#8317), which scores a PR against the approved plan
 	// wave its Hive-Run / Hive-Plan trailers name.
 	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+	// Severity is the blocking line for review findings
+	// (hivecommons/hive#11088). See ReviewSeverityConfig.
+	Severity ReviewSeverityConfig `yaml:"severity,omitempty" json:"severity,omitempty"`
+	// Backlog is where findings below the blocking line are filed
+	// (hivecommons/hive#11088). See ReviewBacklogConfig.
+	Backlog ReviewBacklogConfig `yaml:"backlog,omitempty" json:"backlog,omitempty"`
 }
 
 // PlanMatchConfig is the switch for the plan_match review perspective

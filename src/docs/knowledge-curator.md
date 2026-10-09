@@ -265,6 +265,7 @@ validation with an error naming the field.
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
 | `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
+| `google-drive` | `folder_ids` and/or `shared_drive_ids` (comma-separated Drive IDs, at least one), `include_mime` (comma-separated `docs`, `sheets`, `md`, `txt`; default `docs,md,txt`) | Lists each folder recursively (`'<folder>' in parents`) and each shared drive through Drive v3 `files.list` with pagination. Google Docs are exported as `text/markdown` (falling back to `text/html`), Sheets as CSV rendered to a markdown table capped at 200 rows, and `.md`/plain-text files are downloaded as-is. PDFs are not supported yet. Trashed files are emitted as archived on incremental syncs. `auth` must supply an OAuth2 bearer token with the `drive.readonly` scope (for a service account, mint the token externally and point `auth.env`/`auth.file` at it) and the folders or drives must be shared with that identity. Cursor: newest `modifiedTime` seen; later syncs emit only files modified after it. |
 | `sharepoint` | `drive_ids` and/or `site_ids` (comma-separated, at least one), `folder_path`, `include_files` (default `.md,.txt,.html,.htm`) | Reads document libraries and OneDrive drives through Microsoft Graph. A site contributes its default library. The first sync enumerates the drive with the `delta` endpoint and later syncs fetch only changes; files are downloaded via `/content` (HTML is converted to markdown) and items deleted upstream are marked deprecated. `auth` (required) supplies a Graph bearer token, for example from a client-credentials app registration with the `Sites.Read.All` / `Files.Read.All` application permission, or `Sites.Selected` granted per site for least privilege. docx/pdf files and modern site pages are not read yet. Cursor: JSON map of per-drive delta links. |
 
 ```yaml
@@ -275,7 +276,14 @@ knowledge:
       layer: project
       scope:
         repos: acme/app, acme/docs
-
+    - name: team-drive
+      type: google-drive
+      layer: org
+      scope:
+        folder_ids: 1AbCdEfGhIjKlMnOp
+        include_mime: docs, sheets
+      auth:
+        env: GOOGLE_DRIVE_TOKEN
     - name: team-sharepoint
       type: sharepoint
       layer: org
@@ -287,8 +295,7 @@ knowledge:
         env: GRAPH_TOKEN
 ```
 
-Notion, Confluence and Google Drive connectors land in #11070, #11071 and
-#11073.
+Notion and Confluence connectors land in #11070 and #11071.
 
 ### Facts written by connectors
 
@@ -411,6 +418,67 @@ without the key** — set it explicitly whenever you write the block.
 Runtime status and toggle: `GET /api/knowledge/bead-synthesizer` and
 `PUT /api/knowledge/bead-synthesizer/enabled` (owner-only) — see
 [api-reference.md](api-reference.md).
+
+## Repository code maps (`knowledge.code_maps`)
+
+A code map is a **generated** knowledge page — never hand-authored — that
+summarizes a checked-out repository so agents get a bounded orientation
+primer for it. The generator lives in `pkg/knowledge/codemap.go` and the
+refresh loop in `pkg/knowledge/codemap_schedule.go`.
+
+```yaml
+knowledge:
+  code_maps:
+    enabled: true                 # opt-in; absent or false does nothing
+    schedule: hourly              # how often HEAD is checked (hourly or daily)
+    vault_path: /data/vaults/code-maps
+    layer: project
+    max_bytes: 16384
+    repos:
+      - name: hivecommons/hive    # used as the repo:<name> scope tag
+        path: /workspace/hive     # an existing checkout...
+      - url: https://github.com/org/other   # ...or an https URL to clone
+        branch: main
+```
+
+Each map has these sections, every one sorted deterministically:
+
+| Section | Contents |
+| --- | --- |
+| Packages | Directories with source files; Go directories show the package name and file/test counts, other languages a per-language file count. |
+| Entry points | Go `main` packages, `cmd/` directories, scripts (`*.sh`, `scripts/`, `bin/`) and build/entry files (`Makefile`, `Dockerfile`, `go.mod`, `package.json`, …). |
+| Ownership hotspots | `CODEOWNERS` rules (repo root, `.github/` or `docs/`) and, for git checkouts, directories ranked by file changes in the last 200 commits. |
+| Public APIs | Exported top-level Go identifiers per non-`main` package (first 15, then `+N more`). Other ecosystems get only the generic directory summary. |
+| Test layout | Test-file counts per directory and test directories (`test/`, `tests/`, `e2e/`, `testdata/`, …). |
+| Extension points | Exported Go interfaces, `Register*` functions, and plugin-style directories (`plugins/`, `hooks/`, `connectors/`, `providers/`, …). |
+
+Dependency and build directories (`vendor/`, `node_modules/`, `dist/`,
+`target/`, dot-directories other than `.github/`) are skipped.
+
+**Size caps.** Each section keeps at most 40 entries and 4 KiB; the whole
+body is capped at `max_bytes` (default 16 KiB, minimum 1 KiB); individual
+entries are clipped to 240 bytes; the walk stops after 20,000 files and the
+map says it is partial. Dropped entries or sections are replaced by a
+`… truncated:` marker line, always at the same point for the same input.
+
+**Storage and scoping.** Maps are written to
+`<vault_path>/codemaps/codemap-<repo>.md` as `type: reference`,
+`state: approved` facts tagged `codemap`, `generated` and `repo:<name>`, so the
+existing repo scoping (for example the knowledge table of contents `repos`
+filter) includes a map only for its own repository. The vault is connected as
+`code-maps` and primed like any other vault.
+
+**Freshness metadata.** Frontmatter records `generator: hive-codemap`,
+`generator_version`, `source_sha` (the checkout's `HEAD`), `content_hash`,
+`generated_at` and `synced` (which feeds the existing freshness signal).
+
+**Regeneration.** Every tick the refresher reads `HEAD` for each repo (URL
+repos are pulled first). A map is regenerated when it is missing, the generator
+version changed, `HEAD` moved, or the revision is unknown (not a git
+checkout). The file is rewritten only when something changed: a new `HEAD`
+whose summary is identical updates `source_sha` but keeps `generated_at`, and
+an identical regeneration leaves the file untouched. Edits made by hand are
+overwritten on the next change, so do not edit these pages.
 
 ## Open questions
 

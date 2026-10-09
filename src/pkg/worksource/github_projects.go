@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -155,12 +156,16 @@ type gqlResponse struct {
 	} `json:"errors"`
 }
 
-func (s *githubProjectsSource) ListIssues(ctx context.Context) ([]Issue, error) {
+func (s *githubProjectsSource) endpoint() string {
 	baseURL := s.cfg.BaseURL
 	if baseURL == "" {
 		baseURL = githubProjectsDefaultBaseURL
 	}
-	endpoint := strings.TrimSuffix(baseURL, "/") + "/graphql"
+	return strings.TrimSuffix(baseURL, "/") + "/graphql"
+}
+
+func (s *githubProjectsSource) ListIssues(ctx context.Context) ([]Issue, error) {
+	endpoint := s.endpoint()
 
 	var issues []Issue
 	var cursor *string
@@ -190,36 +195,151 @@ func (s *githubProjectsSource) queryPage(ctx context.Context, endpoint string, c
 		"number": s.cfg.ProjectNumber,
 		"cursor": cursor,
 	}
+	var resp gqlResponse
+	if err := s.graphql(ctx, endpoint, githubProjectsQuery, vars, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// graphql posts one GraphQL request with the work source's token and decodes
+// the response into out after the HTTP-status and top-level errors checks.
+// Shared by the enumerator and the review backlog column writer.
+func (s *githubProjectsSource) graphql(ctx context.Context, endpoint, query string, vars map[string]any, out any) error {
 	body, err := json.Marshal(map[string]any{
-		"query":     githubProjectsQuery,
+		"query":     query,
 		"variables": vars,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("worksource/github_projects: marshal query: %w", err)
+		return fmt.Errorf("worksource/github_projects: marshal query: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("worksource/github_projects: build request: %w", err)
+		return fmt.Errorf("worksource/github_projects: build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := s.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("worksource/github_projects: request failed: %w", err)
+		return fmt.Errorf("worksource/github_projects: request failed: %w", err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("worksource/github_projects: unexpected status %d", httpResp.StatusCode)
+		return fmt.Errorf("worksource/github_projects: unexpected status %d", httpResp.StatusCode)
 	}
-	var resp gqlResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("worksource/github_projects: decode response: %w", err)
+	raw, err := io.ReadAll(io.LimitReader(httpResp.Body, 16<<20))
+	if err != nil {
+		return fmt.Errorf("worksource/github_projects: decode response: %w", err)
 	}
-	if len(resp.Errors) > 0 {
-		return nil, fmt.Errorf("worksource/github_projects: graphql error: %s", resp.Errors[0].Message)
+	var envelope struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
-	return &resp, nil
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return fmt.Errorf("worksource/github_projects: decode response: %w", err)
+	}
+	if len(envelope.Errors) > 0 {
+		return fmt.Errorf("worksource/github_projects: graphql error: %s", envelope.Errors[0].Message)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("worksource/github_projects: decode response: %w", err)
+	}
+	return nil
+}
+
+// githubProjectsColumnLookupQuery resolves the ids addProjectV2ItemById and
+// updateProjectV2ItemFieldValue need: the project, its Status field and the
+// issue's node id.
+const githubProjectsColumnLookupQuery = `query($org: String!, $number: Int!, $owner: String!, $repo: String!, $issue: Int!) {
+  organization(login: $org) {
+    projectV2(number: $number) {
+      id
+      field(name: "Status") { ... on ProjectV2SingleSelectField { id } }
+    }
+  }
+  repository(owner: $owner, name: $repo) { issue(number: $issue) { id } }
+}`
+
+const githubProjectsAddItemMutation = `mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: { projectId: $project, contentId: $content }) { item { id } }
+}`
+
+const githubProjectsSetStatusMutation = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+  updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) {
+    projectV2Item { id }
+  }
+}`
+
+// AddIssueToColumn adds issue owner/repo#number to the configured project
+// and sets its Status to the single-select option optionID (the column). It
+// returns the project item id. Adding an issue that is already on the
+// project returns the existing item, so a retry is safe.
+func (s *githubProjectsSource) AddIssueToColumn(ctx context.Context, owner, repo string, number int, optionID string) (string, error) {
+	optionID = strings.TrimSpace(optionID)
+	if optionID == "" {
+		return "", fmt.Errorf("worksource/github_projects: project column id is required")
+	}
+	endpoint := s.endpoint()
+	var lookup struct {
+		Data struct {
+			Organization struct {
+				ProjectV2 *struct {
+					ID    string `json:"id"`
+					Field *struct {
+						ID string `json:"id"`
+					} `json:"field"`
+				} `json:"projectV2"`
+			} `json:"organization"`
+			Repository struct {
+				Issue *struct {
+					ID string `json:"id"`
+				} `json:"issue"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := s.graphql(ctx, endpoint, githubProjectsColumnLookupQuery, map[string]any{
+		"org": s.cfg.Org, "number": s.cfg.ProjectNumber, "owner": owner, "repo": repo, "issue": number,
+	}, &lookup); err != nil {
+		return "", err
+	}
+	project := lookup.Data.Organization.ProjectV2
+	if project == nil || project.ID == "" {
+		return "", fmt.Errorf("worksource/github_projects: project %s/%d not found", s.cfg.Org, s.cfg.ProjectNumber)
+	}
+	if project.Field == nil || project.Field.ID == "" {
+		return "", fmt.Errorf("worksource/github_projects: project %s/%d has no single-select Status field", s.cfg.Org, s.cfg.ProjectNumber)
+	}
+	issue := lookup.Data.Repository.Issue
+	if issue == nil || issue.ID == "" {
+		return "", fmt.Errorf("worksource/github_projects: issue %s/%s#%d not found", owner, repo, number)
+	}
+	var added struct {
+		Data struct {
+			AddProjectV2ItemByID struct {
+				Item struct {
+					ID string `json:"id"`
+				} `json:"item"`
+			} `json:"addProjectV2ItemById"`
+		} `json:"data"`
+	}
+	if err := s.graphql(ctx, endpoint, githubProjectsAddItemMutation, map[string]any{"project": project.ID, "content": issue.ID}, &added); err != nil {
+		return "", err
+	}
+	itemID := added.Data.AddProjectV2ItemByID.Item.ID
+	if itemID == "" {
+		return "", fmt.Errorf("worksource/github_projects: addProjectV2ItemById returned no item")
+	}
+	if err := s.graphql(ctx, endpoint, githubProjectsSetStatusMutation, map[string]any{
+		"project": project.ID, "item": itemID, "field": project.Field.ID, "option": optionID,
+	}, nil); err != nil {
+		return "", err
+	}
+	return itemID, nil
 }
 
 // mapItem converts a project item into a normalized Issue. It returns false

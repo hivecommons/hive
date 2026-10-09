@@ -25,6 +25,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
         labels(first: 30) { nodes { name } }
         author { login }
         baseRefName
+        headRefName
         title
         commits(last: 1) {
           nodes {
@@ -89,6 +90,7 @@ type graphQLPRBatchNode struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	BaseRefName string `json:"baseRefName"`
+	HeadRefName string `json:"headRefName"`
 	Title       string `json:"title"`
 	Commits     struct {
 		Nodes []struct {
@@ -142,6 +144,13 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 		}
 		return
 	}
+	// With healthy webhooks and nothing marked dirty since the last batch,
+	// the cached batch still describes every open PR (#11177).
+	if sharedWebhookTracker.repoCleanAndHealthy(fullRepo) && c.hasGraphQLPRBatchRepo(fullRepo) {
+		c.recordGraphQLPRBatchWebhookSkip()
+		return
+	}
+	started := sharedWebhookTracker.now()
 	c.clearGraphQLPRBatchRepo(fullRepo)
 	pageSize := c.graphQLPRBatchPageSizeEffective()
 	var cursor string
@@ -175,6 +184,31 @@ func (c *Client) prefetchOpenPRDetailsGraphQL(ctx context.Context, owner, repoNa
 		}
 	}
 	c.recordGraphQLPRBatchSuccess(repoPRs, pages)
+	sharedWebhookTracker.clearDirtyRepoBefore(fullRepo, started)
+}
+
+func (c *Client) hasGraphQLPRBatchRepo(repo string) bool {
+	c.prBatchMu.Lock()
+	defer c.prBatchMu.Unlock()
+	_, ok := c.prBatchReviews[canonicalPRDetailRepo(repo)]
+	return ok
+}
+
+// invalidateGraphQLPRBatchPR drops the batch check-run and review entries for
+// one PR so its next read misses and re-enriches (#11177).
+func (c *Client) invalidateGraphQLPRBatchPR(repo string, number int) {
+	if c == nil {
+		return
+	}
+	key := canonicalPRDetailRepo(repo)
+	c.prBatchMu.Lock()
+	defer c.prBatchMu.Unlock()
+	delete(c.prBatchReviews[key], number)
+	for k := range c.prBatchCheckRuns {
+		if k.repo == key && k.number == number {
+			delete(c.prBatchCheckRuns, k)
+		}
+	}
 }
 
 func (c *Client) clearGraphQLPRBatchRepo(repo string) {
@@ -205,7 +239,7 @@ func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 		Draft:          gh.Ptr(n.IsDraft),
 		Mergeable:      mergeable,
 		MergeableState: gh.Ptr(state),
-		Head:           &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID)},
+		Head:           &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID), Ref: gh.Ptr(n.HeadRefName)},
 		Base:           &gh.PullRequestBranch{Ref: gh.Ptr(n.BaseRefName)},
 	}
 	for _, l := range n.Labels.Nodes {
@@ -376,6 +410,12 @@ func (c *Client) recordGraphQLPRBatchSuccess(prs, pages int) {
 	c.prBatchStats.Repos++
 	c.prBatchStats.PRs += prs
 	c.prBatchStats.Pages += pages
+	c.prBatchMu.Unlock()
+}
+
+func (c *Client) recordGraphQLPRBatchWebhookSkip() {
+	c.prBatchMu.Lock()
+	c.prBatchStats.WebhookSkips++
 	c.prBatchMu.Unlock()
 }
 

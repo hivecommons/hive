@@ -1,1 +1,0 @@
-- Added a SharePoint / OneDrive knowledge connector that syncs document libraries through Microsoft Graph delta queries, with deleted files marked deprecated (#11072).

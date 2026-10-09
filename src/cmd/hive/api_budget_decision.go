@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -79,4 +80,47 @@ func apiBudgetIntervalForConfig(cfg *config.Config, client *github.Client) time.
 		return apiBudgetEffectiveEvalInterval(300, 1800, 2, apiBudgetModeForClient(client))
 	}
 	return apiBudgetEffectiveEvalInterval(cfg.Governor.EvalIntervalS, cfg.Governor.EvalIntervalMaxS, cfg.Governor.ConserveIntervalMultiplier, apiBudgetModeForClient(client))
+}
+
+// webhookAwareEvalInterval composes the API-budget stretch with the webhook
+// interval (#11177): while webhooks are healthy the base interval rises to
+// governor.eval_interval_webhook_s, and the larger of that and the budget
+// stretch wins. governor.eval_interval_max_s caps the webhook interval too.
+func webhookAwareEvalInterval(budgetInterval time.Duration, webhookSeconds, maxSeconds int, webhooksHealthy bool) time.Duration {
+	if !webhooksHealthy || webhookSeconds <= 0 {
+		return budgetInterval
+	}
+	if maxSeconds > 0 && webhookSeconds > maxSeconds {
+		webhookSeconds = maxSeconds
+	}
+	if webhook := time.Duration(webhookSeconds) * time.Second; webhook > budgetInterval {
+		return webhook
+	}
+	return budgetInterval
+}
+
+// evalIntervalForConfig is the governor loop's effective eval interval: the
+// API-budget stretch composed with the webhook-healthy interval. It also
+// publishes the webhook health window (2 × eval_interval_s) and WARNs once per
+// healthy → stale transition.
+func evalIntervalForConfig(cfg *config.Config, client *github.Client, logger *slog.Logger) time.Duration {
+	budget := apiBudgetIntervalForConfig(cfg, client)
+	base, webhookS, maxS := 300, 900, 1800
+	if cfg != nil {
+		base, webhookS, maxS = cfg.Governor.EvalIntervalS, cfg.Governor.EvalIntervalWebhookS, cfg.Governor.EvalIntervalMaxS
+		if base <= 0 {
+			base = 300
+		}
+	}
+	github.SetWebhookHealthWindow(2 * time.Duration(base) * time.Second)
+	healthy, becameStale := github.ObserveWebhookHealth()
+	if becameStale && logger != nil {
+		snap := github.WebhookHealthSnapshot()
+		args := []any{"window_seconds", 2 * base, "eval_interval_s", base}
+		if snap.LastEventAt != nil {
+			args = append(args, "last_event_at", snap.LastEventAt.Format(time.RFC3339))
+		}
+		logger.Warn("github webhooks went stale; falling back to the configured eval interval and TTL-bound PR cache", args...)
+	}
+	return webhookAwareEvalInterval(budget, webhookS, maxS, healthy)
 }
