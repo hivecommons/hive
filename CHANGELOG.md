@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.150.1)
+
+### Changed
+
+- The reporter-trust "waiting for a maintainer" issue comment now ends with a link to the repository's own `GOVERNANCE.md#reporter-trust-and-escalation` (built from the repo slug), explaining what OWNER / MEMBER / COLLABORATOR mean and how to escalate; `GOVERNANCE.md` gains a "How to become a trusted reporter" subsection ([#11018](https://github.com/hivecommons/hive/issues/11018)).
+
 ## 2026-10-09 (v5.150.0)
 
 ### Added
