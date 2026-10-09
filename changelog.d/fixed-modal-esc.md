@@ -1,0 +1,1 @@
+- Close dashboard and hub modal overlays with a central Escape handler that dismisses the topmost open modal first.

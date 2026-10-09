@@ -566,7 +566,7 @@
              title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/hivecommons/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:var(--sp-4);align-items:center">
-        <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('banner-modal'));loadBannerHiveList()">Send Banner</button>
         <!-- Register-your-own-hive: for a user who self-installed a standalone
              hive and wants to attach it to THIS hub. Points at the self-host
              guide (get-started.html #self-host).
@@ -586,7 +586,7 @@
         <a class="hv-btn btn-primary btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
         <!-- Self-create path, for users who DO have hosted quota. Hidden when the
              user has no quota (the Request-a-hive link above takes over). -->
-        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('create-modal'))">+ Add Hosted Hive</button>
       </div>
     </div>
 
@@ -1528,8 +1528,10 @@
     function hiveDialogWire(overlay, resolve, cancelValue, submit) {
       var done = false;
       function finish(val) { if (done) return; done = true; overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(val); }
+      overlay.hiveDialogClose = function() { finish(cancelValue); };
+      hiveHubRememberModalOpen(overlay);
       function onKey(e) {
-        if (e.key === 'Escape') { e.preventDefault(); finish(cancelValue); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(cancelValue); }
         else if (e.key === 'Enter') { e.preventDefault(); submit(finish); }
         else if (e.key === 'Tab') {
           var nodes = Array.prototype.slice.call(overlay.querySelectorAll('button,input,[href],[tabindex]:not([tabindex="-1"])')).filter(function(el) { return !el.disabled && el.offsetParent !== null; });
@@ -1562,16 +1564,62 @@
       });
     }
 
+    var _hiveHubModalSeq = 0;
+    function hiveHubRememberModalOpen(el) {
+      if (!el) return el;
+      _hiveHubModalSeq++;
+      if (!el.dataset) el.dataset = {};
+      el.dataset.hiveModalSequence = String(_hiveHubModalSeq);
+      return el;
+    }
+    function hiveHubModalVisible(el) {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.classList && el.classList.contains('hidden')) return false;
+      var disp = el.style && el.style.display ? el.style.display : (window.getComputedStyle ? window.getComputedStyle(el).display : '');
+      return disp !== 'none';
+    }
+    function hiveHubModalRank(el, fallback) {
+      var z = parseInt((window.getComputedStyle ? window.getComputedStyle(el).zIndex : '') || '', 10);
+      return isFinite(z) ? z : (fallback || 0);
+    }
+    function hiveHubModalOrder(el, fallback) {
+      var seq = el && el.dataset ? parseInt(el.dataset.hiveModalSequence || '', 10) : NaN;
+      return isFinite(seq) ? seq : (fallback || 0);
+    }
+    function hiveHubDismissTopModal() {
+      var candidates = [];
+      function add(el, close, fallbackRank) {
+        if (!hiveHubModalVisible(el)) return;
+        candidates.push({el: el, close: close, rank: hiveHubModalRank(el, fallbackRank), order: hiveHubModalOrder(el, candidates.length)});
+      }
+      document.querySelectorAll('.hive-confirm-overlay').forEach(function(el) {
+        add(el, function() {
+          if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose();
+          else el.remove();
+        }, 150);
+      });
+      add(document.getElementById('approve-overlay'), closeApproveModal, 2000);
+      add(document.getElementById('assign-overlay'), closeAssignModal, 2000);
+      add(document.getElementById('orf-overlay'), closeOrFundModal, 2000);
+      add(document.getElementById('request-access-modal'), closeRequestAccessModal, 100);
+      add(document.getElementById('banner-modal'), function() { document.getElementById('banner-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('create-modal'), function() { document.getElementById('create-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('timeline-modal'), function() { document.getElementById('timeline-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('access-modal'), function() { document.getElementById('access-modal').style.display = 'none'; }, 100);
+      if (!candidates.length) return false;
+      candidates.sort(function(a, b) { return (b.rank - a.rank) || (b.order - a.order); });
+      candidates[0].close();
+      return true;
+    }
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
-      var createModal = document.getElementById('create-modal');
-      if (createModal && createModal.style.display === 'flex') { createModal.style.display = 'none'; return; }
-      var accessOverlay = document.querySelector('.hive-confirm-overlay');
-      if (accessOverlay) { accessOverlay.remove(); return; }
-      var timelineModal = document.getElementById('timeline-modal');
-      if (timelineModal && timelineModal.style.display === 'flex') { timelineModal.style.display = 'none'; return; }
-      var accessModal = document.getElementById('access-modal');
-      if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
+      if (e.isComposing) return;
+      var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'select') return;
+      if (!hiveHubDismissTopModal()) return;
+      e.preventDefault();
+      e.stopPropagation();
     });
 
     var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Fully Autonomous'};
@@ -6358,6 +6406,7 @@
       var submit = document.getElementById('request-access-submit');
       if (submit) { submit.disabled = false; submit.textContent = 'Send Request'; }
       document.getElementById('request-access-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('request-access-modal'));
       if (ta) ta.focus();
     }
 
@@ -8931,6 +8980,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Approve &amp; assign placeholder</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeApproveModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
       /* No cluster is known yet (auto-pick is the default selection), so the
          "Cluster default" note stays generic until a placeholder is chosen. */
       wireGitHubHostChoice('approve', '');
@@ -11743,6 +11793,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Assign placeholder hive</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeAssignModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
       wireGitHubHostChoice('assign', assignClusterHost);
       /* Retargeting the placeholder can change the cluster, and with it the
          default GitHub instance. Re-resolve so the note never claims the
@@ -11847,6 +11898,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">⚡ Fund with OpenRouter</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeOrFundModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
     }
     function orfModelChange() {
       var sel = document.getElementById('orf-model');
@@ -11925,6 +11977,7 @@
       document.getElementById('f-name').value = btn.dataset.name || '';
       document.getElementById('f-level').value = btn.dataset.level || '1';
       document.getElementById('create-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('create-modal'));
       var dashUrl = (btn.dataset.dashUrl || '').replace(/\/$/, '');
       var dlLink = document.getElementById('yaml-download-link');
       var dlHref = document.getElementById('yaml-download-href');
@@ -12366,6 +12419,7 @@
       document.getElementById('timeline-hive-label').textContent = hiveName || hiveId;
       document.getElementById('timeline-list').innerHTML = '<div class="loading">Loading...</div>';
       document.getElementById('timeline-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('timeline-modal'));
       await loadTimeline();
     }
 
@@ -12425,6 +12479,7 @@
         urlEl.style.display = 'none';
       }
       document.getElementById('access-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('access-modal'));
       updateAccessRoleHint();
       _bulkAccessSel = {};
       updateBulkAccessBar();
@@ -13446,6 +13501,7 @@
     function openBannerForHive(hiveId, hiveName) {
       _bannerTargetHive = hiveId;
       document.getElementById('banner-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('banner-modal'));
       /* Reset message + color to match the global open path's fresh state. */
       document.getElementById('banner-message').value = '';
       document.getElementById('banner-char-count').textContent = '0';
