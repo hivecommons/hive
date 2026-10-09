@@ -115,7 +115,9 @@ normal path is:
    for up to 5 minutes. After that refresh, `stable` resolves to the new commit
    in the hub's release-channel block and in per-hive upgrade targeting. If the
    row cannot resolve, the hub does not guess; check the hub log for
-   `channel resolve:` warnings.
+   `channel resolve:` warnings. For fast-moving branches, the deployable target
+   is the newest recent commit whose per-SHA image is already published on GHCR;
+   the branch head can still display as `building` until its own image lands.
 3. **Your hive's upgrade policy decides when the rollout may start.**
    - **Hub-managed hosted spokes** are controlled by the hub. If upgrades are not
      `paused`, the hub arms the target when the hive is behind and delivers the
@@ -142,7 +144,9 @@ normal path is:
    version badge changes its short SHA only after the pod actually runs the new
    image. If the hive is stuck, `/api/version` also exposes
    `autoUpdate.state`; a retrying or failed upgrade includes the upgrade marker's
-   `attempts` and `lastError`.
+   `attempts` and `lastError`. A dashboard-triggered Upgrade that is accepted
+   but produces no rollout or completion signal is marked failed after 15
+   minutes instead of showing `Upgrading…` forever.
 5. **Need it now?** Once `stable` itself points at the desired build,
    **Upgrade now** skips the automatic-upgrade wait for that hive and arms the
    rollout immediately. It does not promote `stable`; it only follows the channel

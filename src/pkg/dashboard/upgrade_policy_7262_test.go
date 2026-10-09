@@ -475,14 +475,14 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 	stale := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
 		State:     dashboardUpgradeStateStarted,
 		Target:    "990d0b2",
-		StartedAt: now.Add(-31 * time.Minute),
-		UpdatedAt: now.Add(-31 * time.Minute),
+		StartedAt: now.Add(-16 * time.Minute),
+		UpdatedAt: now.Add(-16 * time.Minute),
 	}, "1234567abcdef", now, nil)
-	if stale.State != dashboardUpgradeStateSuperseded {
-		t.Fatalf("stale state = %+v, want superseded", stale)
+	if stale.State != dashboardUpgradeStateFailed {
+		t.Fatalf("stale state = %+v, want failed", stale)
 	}
-	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptSuperseded {
-		t.Fatalf("attempt from stale state = %+v, want superseded", at)
+	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptFailed || !strings.Contains(at.Detail, "no rollout or completion signal") {
+		t.Fatalf("attempt from stale state = %+v, want visible failure", at)
 	}
 }
 

@@ -50,6 +50,7 @@ test('dashboard layout migration ignores the pinned notices slot', () => {
   const source = [
     extractVar('DASHBOARD_LAYOUT_VERSION'),
     extractVar('DASHBOARD_LAYOUT_TEMPLATE'),
+    extractFunction('dashboardAliasSectionId'),
     'function dashboardFeatureSectionHidden(){ return false; }',
     extractFunction('dashboardLayoutAllIds'),
     extractFunction('dashboardLayoutNormalize'),

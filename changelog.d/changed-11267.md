@@ -1,0 +1,1 @@
+- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue (#11267)
