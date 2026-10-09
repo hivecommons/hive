@@ -126,6 +126,7 @@ func resetChannelTargetCache() {
 	channelTargetMu.Lock()
 	channelTargetCache = nil
 	channelTargetCachedAt = time.Time{}
+	channelTargetRefreshInFlight = false
 	channelTargetMu.Unlock()
 }
 
@@ -496,5 +497,44 @@ func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
 	got := getChannelTargets(shas, testChannelLogger())
 	if targetFor(got, ReleaseChannelStable).Branch != "v4" {
 		t.Errorf("an empty resolve poisoned the cache: stable = %+v, want branch v4 once the registry recovered", targetFor(got, ReleaseChannelStable))
+	}
+}
+
+func TestGetChannelTargetsNonBlockingDoesNotWaitOnColdResolve(t *testing.T) {
+	resetChannelTargetCache()
+	orig := ghcrTagDigest
+	block := make(chan struct{})
+	ghcrTagDigest = func(string, string, *slog.Logger) string {
+		<-block
+		return ""
+	}
+	t.Cleanup(func() {
+		close(block)
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			channelTargetMu.RLock()
+			inFlight := channelTargetRefreshInFlight
+			channelTargetMu.RUnlock()
+			if !inFlight {
+				break
+			}
+			<-time.After(10 * time.Millisecond)
+		}
+		ghcrTagDigest = orig
+		resetChannelTargetCache()
+	})
+
+	done := make(chan []ChannelTarget, 1)
+	go func() {
+		done <- getChannelTargetsNonBlocking(map[string]string{"v5": "abc1234"}, testChannelLogger())
+	}()
+
+	select {
+	case got := <-done:
+		if targetFor(got, ReleaseChannelStable).Channel != ReleaseChannelStable {
+			t.Fatalf("cold non-blocking resolve should return channel placeholders, got %+v", got)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("non-blocking channel target lookup waited on the registry refresh")
 	}
 }
