@@ -1,1 +1,0 @@
-- Settings → Knowledge gains a Connectors pane (status table, Sync now, Validate, Add/Edit/Disable/Remove) backed by owner-only `/api/config/knowledge/connectors` endpoints (#11075)
