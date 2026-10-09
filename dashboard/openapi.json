@@ -11338,6 +11338,98 @@
         }
       }
     },
+    "/api/knowledge/publish/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Publish the knowledge mirror now",
+        "description": "Owner-only. Asks the running publish mirror for an immediate batch and returns its status; poll `GET /api/knowledge/connectors` for the outcome.",
+        "responses": {
+          "202": {
+            "description": "Publish batch requested; returns the publish mirror status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connector": {"type": "string"},
+                    "layers": {"type": "array", "items": {"type": "string"}},
+                    "root": {"type": "string"},
+                    "dry_run": {"type": "boolean"},
+                    "active": {"type": "boolean"},
+                    "running": {"type": "boolean"},
+                    "last_run": {"type": "string", "format": "date-time"},
+                    "last_success": {"type": "string", "format": "date-time"},
+                    "pages": {"type": "integer"},
+                    "pages_created": {"type": "integer"},
+                    "pages_updated": {"type": "integer"},
+                    "pages_deprecated": {"type": "integer"},
+                    "pages_unchanged": {"type": "integer"},
+                    "collisions": {"type": "array", "items": {"type": "string"}},
+                    "last_error": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A publish batch is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Publish mirror is not running (configure knowledge.publish and restart the hive)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config/knowledge/connectors": {
       "get": {
         "tags": [
