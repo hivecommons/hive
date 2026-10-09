@@ -318,10 +318,14 @@ func TestGovernorPRModelsNestedSubsectionIsCollapsible(t *testing.T) {
 
 func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
 	html := indexHTML(t)
+	config := jsConstObject(t, html, "const DASHBOARD_SECTION_CARD_CONFIG")
 	for _, id := range []string{"advisory-digest-section", "hive-advice-section", "fleet-report-section", "acmm-reco-section", "lifecycle-section", "pr-throughput-section"} {
 		idx := strings.Index(html, `id="`+id+`"`)
 		if idx < 0 {
 			t.Fatalf("missing advisory subsection %s", id)
+		}
+		if !strings.Contains(config, "'"+id+"':") {
+			t.Fatalf("%s is not registered for shared dashboard card chrome", id)
 		}
 		window := html[idx:]
 		if len(window) > 700 {
@@ -330,7 +334,7 @@ func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
 		if !strings.Contains(window, "advisory-subsection") {
 			t.Fatalf("%s does not use advisory-subsection spacing pattern", id)
 		}
-		if id != "advisory-digest-section" && !strings.Contains(window, "advisory-subsection-card") {
+		if !strings.Contains(window, "advisory-subsection-card") {
 			t.Fatalf("%s body card does not start below its header", id)
 		}
 	}
