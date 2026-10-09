@@ -292,3 +292,44 @@ func (s *sharePointConnector) emitItem(ctx context.Context, token, drive string,
 	return emit(p)
 }
 
+
+// Publish implements Publisher: each page is uploaded as
+// `<root>/<page_key>.md` to the first configured drive (or site library),
+// overwriting the previous upload, so republishing is idempotent.
+func (s *sharePointConnector) Publish(ctx context.Context, root string, pages []Page) error {
+	if len(pages) == 0 {
+		return nil
+	}
+	var segs []string
+	for _, seg := range strings.Split(strings.Trim(root, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("publish root %q: must be a plain folder path", root)
+		}
+		segs = append(segs, url.PathEscape(seg))
+	}
+	token, err := s.cfg.Auth.Secret()
+	if err != nil {
+		return err
+	}
+	drives, err := s.resolveDrives(ctx, token)
+	if err != nil {
+		return err
+	}
+	if len(drives) == 0 {
+		return fmt.Errorf("no drive configured to publish to")
+	}
+	base := graphBaseURL + "/drives/" + url.PathEscape(drives[0]) + "/root:/" + strings.Join(segs, "/") + "/"
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+token)
+	h.Set("Content-Type", "text/markdown; charset=utf-8")
+	for _, p := range pages {
+		key := p.Attrs[PublishKeyAttr]
+		if key == "" {
+			key = PublishKey(p.ID)
+		}
+		if _, err := s.http.Do(ctx, http.MethodPut, base+url.PathEscape(key+".md")+":/content", h, []byte(p.Markdown)); err != nil {
+			return fmt.Errorf("publishing %s: %w", p.ID, err)
+		}
+	}
+	return nil
+}

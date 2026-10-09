@@ -871,6 +871,13 @@ knowledge:
     auto_promote_threshold: 0.9              # Confidence to auto-promote project→org
     # promote_from: project                  # Source layer (default: project)
     # promote_to: org                        # Target layer (default: org)
+  # publish:                                 # One-way mirror of curator-promoted facts
+  #   connector: team-docs                   # A knowledge.connectors entry that can publish (sharepoint)
+  #   layers: [org, project]                 # project | org | community — personal is never published
+  #   root: Hive/Knowledge                   # Folder/page to publish under
+  #   include_types: [decision, gotcha]      # Optional; empty = every type
+  #   dry_run: false                         # true = compute + audit only, write nothing
+  #   propose_via: https://github.com/your-org/knowledge-base   # Shown in each page footer
   git_sources:                               # Remote git repos indexed as knowledge
     # - name: dakota-skills                  # Display name for this source
     #   url: https://github.com/projectbluefin/dakota
