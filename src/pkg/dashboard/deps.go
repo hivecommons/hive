@@ -56,6 +56,9 @@ type Dependencies struct {
 	KnowledgePrimer KnowledgePrimerControl
 	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
 	KnowledgeConnectors KnowledgeConnectorRuntime
+	// KnowledgePublish is the running knowledge.publish mirror; nil when
+	// publishing is not configured or failed to start.
+	KnowledgePublish KnowledgePublishRuntime
 	// RotationMgr is the provider-rotation headroom reporter (RFC #3958). Nil
 	// when rotation is disabled; the headroom endpoint then reports
 	// enabled=false.

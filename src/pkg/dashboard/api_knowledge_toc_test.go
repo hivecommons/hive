@@ -81,7 +81,13 @@ func TestKnowledgeTOCDefaultsToApprovedWithoutBodies(t *testing.T) {
 	if strings.Contains(string(raw), "Current body") || strings.Contains(string(raw), "\"body\"") {
 		t.Fatalf("toc leaked bodies: %s", raw)
 	}
-	first := body["entries"].([]interface{})[0].(map[string]interface{})
+	// Entry order is not guaranteed by the TOC, so locate the entry by id.
+	var first map[string]interface{}
+	for _, e := range body["entries"].([]interface{}) {
+		if m := e.(map[string]interface{}); m["id"] == "current-gotcha" {
+			first = m
+		}
+	}
 	if first["repo"] != "hivecommons/hive" || first["status"] != "approved" || first["source"] != "https://example.com/pr/1" || first["updated"] == nil || first["size_bytes"] == nil {
 		t.Fatalf("entry metadata = %v", first)
 	}
