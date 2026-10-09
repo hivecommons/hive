@@ -344,6 +344,8 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:380` |
 | `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:347` |
 | `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:348` |
+| `GET` | `/api/knowledge/connectors` | Dashboard auth/session | Knowledge connector statuses (`{"connectors": [...]}`, see [knowledge-connectors.md](knowledge-connectors.md)) | `pkg/dashboard/api_knowledge_connectors.go:13` |
+| `POST` | `/api/knowledge/connectors/{name}/sync` | Owner only | Start one connector sync now (202; 404 unknown, 409 running) | `pkg/dashboard/api_knowledge_connectors.go:14` |
 
 ## Contribute
 

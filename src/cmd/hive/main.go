@@ -1469,6 +1469,7 @@ func (b *boot) wireBootClosures() {
 			Activity:              b.activityCollector,
 			RepoCost:              b.repoCostCollector,
 			BeadSynthesizer:       b.beadSynth,
+			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
 			BeadStores:            b.beadStores,
 			BeadStoreLoadFailures: b.beadStoreLoadFailures,
 			AuditLedger:           auditLedger,
@@ -3123,6 +3124,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		b.knowledgeAPIFallback = true
 		b.logger.Info("auto-enabled file-based knowledge API")
 	}
+	b.bootKnowledgeConnectors(deps)
 	if len(b.beadStores) > 0 {
 		synthVaultPath := b.beadSynthVaultPath()
 		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {

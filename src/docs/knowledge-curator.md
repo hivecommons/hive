@@ -264,6 +264,8 @@ validation with an error naming the field.
 |------|------------|-------|
 | `git` | `url` (required), `branch` (default `main`), `subpath` | Runs the existing `git_sources` clone/pull code path (same SSRF validation, redirect suppression and sparse checkout) in a private per-connector directory, then emits every indexed markdown page. Cursor: checked-out commit SHA. |
 | `document` | exactly one of `url`, `file_path`, `context7_id` | Runs the existing `documents` fetch/parse/chunk pipeline; one fact per extracted chunk. `url` is SSRF-checked before the fetch. `auth` optionally supplies the Context7 API key. Cursor: content hash. |
+| `confluence` | `base_url` (required), `spaces` and/or `root_page_ids`, `email` (Cloud), `deployment`, `include_labels`, `exclude_labels`, `include_attachments`, `max_pages`, `full_sync_every` | Confluence Cloud and Data Center via the REST content search API (CQL). Storage-format bodies are converted to markdown with Confluence macros (code, panels, expand, links, images) rendered; archived/trashed pages are deprecated. Cursor: newest `version.when`. See [knowledge-connectors.md](knowledge-connectors.md#confluence-type-confluence). |
+| `notion` | `root_page_ids`, `database_ids`, `include_archived`, `max_pages`, `full_sync_every` | Notion API v1 with an internal integration token; pages must be shared with the integration. Blocks are converted to markdown; database rows carry their properties as attributes; archived/trashed pages are deprecated. Cursor: newest `last_edited_time`. See [knowledge-connectors.md](knowledge-connectors.md#notion-type-notion). |
 | `github-wiki` | `repos` (required, comma-separated `owner/repo`), `branch` (default `master`) | Clones `https://github.com/<owner>/<repo>.wiki.git` through the same git clone/SSRF path as `git`. Emits `Home` first (marked `root: "true"`), then pages in `_Sidebar.md` link order (standard Markdown links to a page name, or `[[text\|page]]` wiki links; headings and nested items become the page path), then the remaining pages alphabetically. `_Sidebar` and `_Footer` are not emitted. `updated_at` comes from the last commit touching each page. A repository without a wiki (404) or one that needs credentials reports a clear "not found" status error. Only public wikis are supported for now. Cursor: per-repo commit SHAs. |
 | `google-drive` | `folder_ids` and/or `shared_drive_ids` (comma-separated Drive IDs, at least one), `include_mime` (comma-separated `docs`, `sheets`, `md`, `txt`; default `docs,md,txt`) | Lists each folder recursively (`'<folder>' in parents`) and each shared drive through Drive v3 `files.list` with pagination. Google Docs are exported as `text/markdown` (falling back to `text/html`), Sheets as CSV rendered to a markdown table capped at 200 rows, and `.md`/plain-text files are downloaded as-is. PDFs are not supported yet. Trashed files are emitted as archived on incremental syncs. `auth` must supply an OAuth2 bearer token with the `drive.readonly` scope (for a service account, mint the token externally and point `auth.env`/`auth.file` at it) and the folders or drives must be shared with that identity. Cursor: newest `modifiedTime` seen; later syncs emit only files modified after it. |
 | `sharepoint` | `drive_ids` and/or `site_ids` (comma-separated, at least one), `folder_path`, `include_files` (default `.md,.txt,.html,.htm`) | Reads document libraries and OneDrive drives through Microsoft Graph. A site contributes its default library. The first sync enumerates the drive with the `delta` endpoint and later syncs fetch only changes; files are downloaded via `/content` (HTML is converted to markdown) and items deleted upstream are marked deprecated. `auth` (required) supplies a Graph bearer token, for example from a client-credentials app registration with the `Sites.Read.All` / `Files.Read.All` application permission, or `Sites.Selected` granted per site for least privilege. docx/pdf files and modern site pages are not read yet. Cursor: JSON map of per-drive delta links. |
@@ -295,8 +297,6 @@ knowledge:
       auth:
         env: GRAPH_TOKEN
 ```
-
-Notion and Confluence connectors land in #11070 and #11071.
 
 ### Repository-carried knowledge
 
@@ -378,8 +378,11 @@ run at 10 minutes, and connector HTTP fetches at 30 seconds and 20 MiB with
 ### Status
 
 The syncer records, per connector: last successful sync, last attempt, pages
-emitted by the last sync, active and deprecated fact counts, last error and
-the incremental cursor.
+emitted by the last sync, active and deprecated fact counts, last error, the
+incremental cursor and whether the last sync was truncated at its page cap.
+`GET /api/knowledge/connectors` returns it and owners can trigger a sync with
+`POST /api/knowledge/connectors/{name}/sync` — see
+[knowledge-connectors.md](knowledge-connectors.md#api).
 
 ### Relationship to `git_sources` and `documents`
 
@@ -387,11 +390,12 @@ the incremental cursor.
 before: same YAML keys, same boot-time behaviour, same
 `/api/knowledge/sources` output. The `git` and `document` connector types
 reuse their code paths for operators who want the connector lifecycle
-(interval, layer-targeted facts, tombstones, status). The connector syncer is
-not yet started by `hive` itself; scheduling, the
-`GET /api/knowledge/connectors` / `POST /api/knowledge/connectors/{name}/sync`
-endpoints and the Settings → Knowledge view are follow-ups tracked in #11069
-and #11068. Until then `knowledge.connectors` is parsed and validated only.
+(interval, layer-targeted facts, tombstones, status). `hive` starts the
+connector syncer at boot: facts land in `/data/knowledge/connectors/<layer>`
+(connected as vault `connectors-<layer>`), and cursors/status persist in
+`/data/knowledge/connector-state/status.json`. Operators manage connectors
+from the **Settings → Knowledge → Connectors** pane (see
+[knowledge-connectors.md](knowledge-connectors.md#dashboard-pane)).
 
 ## Bead synthesizer (`knowledge.bead_synthesizer`)
 

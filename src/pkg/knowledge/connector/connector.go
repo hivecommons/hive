@@ -63,6 +63,14 @@ type FullLister interface {
 	FullListing() bool
 }
 
+// Truncator is optionally implemented by connectors that cap the pages one
+// sync may emit. Truncated is consulted after Sync returns: a truncated sync
+// is never treated as a full listing (nothing is tombstoned) and the syncer
+// reports Status.Truncated.
+type Truncator interface {
+	Truncated() bool
+}
+
 // Auth names where a connector's credential lives. Inline secrets are never
 // accepted; at most one of Env or File may be set.
 type Auth struct {
@@ -191,12 +199,15 @@ func NewRegistry() *Registry {
 }
 
 // DefaultRegistry returns a registry with the built-in connector types
-// (`git`, `document`, `github-wiki` and `repo-wiki`) registered.
+// (`git`, `document`, `github-wiki`, `repo-wiki`, `confluence`, `notion`,
+// `sharepoint` and `google-drive`) registered.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	_ = r.Register(TypeGit, newGitConnector)
 	_ = r.Register(TypeDocument, newDocumentConnector)
 	_ = r.Register(TypeGitHubWiki, newGitHubWikiConnector)
+	_ = r.Register(TypeConfluence, newConfluenceConnector)
+	_ = r.Register(TypeNotion, newNotionConnector)
 	_ = r.Register(TypeGoogleDrive, newGoogleDriveConnector)
 	_ = r.Register(TypeSharePoint, newSharePointConnector)
 	_ = r.Register(TypeRepoWiki, newRepoWikiConnector)

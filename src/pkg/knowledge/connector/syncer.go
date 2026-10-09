@@ -39,6 +39,9 @@ type Status struct {
 	LastError  string `json:"last_error,omitempty"`
 	Cursor     Cursor `json:"cursor,omitempty"`
 	Running    bool   `json:"running"`
+	// Truncated reports that the last successful sync stopped at the
+	// connector's page cap; the remainder is picked up by later syncs.
+	Truncated bool `json:"truncated"`
 }
 
 // SyncerOptions configures NewSyncer.
@@ -55,6 +58,9 @@ type SyncerOptions struct {
 	SyncTimeout  time.Duration
 	MaxPageBytes int
 	Now          func() time.Time
+	// OnSync, when set, is called after every sync attempt with the updated
+	// status and the sync error (nil on success), e.g. to reindex the vault.
+	OnSync func(st Status, err error)
 }
 
 type entry struct {
@@ -177,7 +183,7 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 		cur = st.Cursor
 	})
 
-	pages, next, err := s.runSync(ctx, e, cur)
+	pages, next, truncated, err := s.runSync(ctx, e, cur)
 
 	var counts map[string]string
 	var dir string
@@ -206,8 +212,12 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 		st.LastSync = s.opts.Now().UTC()
 		st.Pages = pages
 		st.Cursor = next
+		st.Truncated = truncated
 	})
 	s.saveState()
+	if s.opts.OnSync != nil {
+		s.opts.OnSync(st, err)
+	}
 	if err != nil {
 		s.logger.Warn("knowledge connector sync failed", "name", name, "type", e.cfg.Type, "error", err)
 	} else {
@@ -216,10 +226,10 @@ func (s *Syncer) SyncNow(ctx context.Context, name string) (Status, error) {
 	return st, err
 }
 
-func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor, error) {
+func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor, bool, error) {
 	dir, err := s.opts.VaultDir(e.cfg.Layer)
 	if err != nil {
-		return 0, cur, fmt.Errorf("resolving vault for layer %q: %w", e.cfg.Layer, err)
+		return 0, cur, false, fmt.Errorf("resolving vault for layer %q: %w", e.cfg.Layer, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.opts.SyncTimeout)
 	defer cancel()
@@ -242,23 +252,28 @@ func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor
 	}
 	next, err := e.conn.Sync(ctx, cur, emit)
 	if err != nil {
-		return pages, cur, err
+		return pages, cur, false, err
+	}
+	truncated := false
+	if t, ok := e.conn.(Truncator); ok && t.Truncated() {
+		// A capped listing is not complete: never tombstone what it missed.
+		truncated, full = true, false
 	}
 	if full {
 		existing, err := w.Existing(e.cfg)
 		if err != nil {
-			return pages, cur, err
+			return pages, cur, truncated, err
 		}
 		for slug, st := range existing {
 			if seen[slug] || st == StatusDeprecated {
 				continue
 			}
 			if _, err := w.Deprecate(slug); err != nil {
-				return pages, cur, err
+				return pages, cur, truncated, err
 			}
 		}
 	}
-	return pages, next, nil
+	return pages, next, truncated, nil
 }
 
 // Run syncs every enabled, valid connector immediately and then on its
@@ -292,6 +307,7 @@ type persistedStatus struct {
 	Facts       int       `json:"facts"`
 	Deprecated  int       `json:"deprecated"`
 	LastError   string    `json:"last_error,omitempty"`
+	Truncated   bool      `json:"truncated,omitempty"`
 }
 
 func (s *Syncer) loadState() map[string]Status {
@@ -315,6 +331,7 @@ func (s *Syncer) loadState() map[string]Status {
 		out[name] = Status{
 			Cursor: p.Cursor, LastSync: p.LastSync, LastAttempt: p.LastAttempt,
 			Pages: p.Pages, Facts: p.Facts, Deprecated: p.Deprecated, LastError: p.LastError,
+			Truncated: p.Truncated,
 		}
 	}
 	return out
@@ -330,6 +347,7 @@ func (s *Syncer) saveState() {
 		raw[name] = persistedStatus{
 			Cursor: st.Cursor, LastSync: st.LastSync, LastAttempt: st.LastAttempt,
 			Pages: st.Pages, Facts: st.Facts, Deprecated: st.Deprecated, LastError: st.LastError,
+			Truncated: st.Truncated,
 		}
 	}
 	s.mu.Unlock()
