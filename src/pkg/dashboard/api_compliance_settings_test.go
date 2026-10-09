@@ -154,7 +154,7 @@ func TestComplianceTabUIContract(t *testing.T) {
 		"await hiveConfirm(",
 		`data-action="switchConfigTab"`,
 		`class="badge-status"`,
-		`class="config-tooltip"`,
+		"settingHelpMark(",
 	} {
 		if !strings.Contains(block, want) {
 			t.Errorf("compliance tab missing %q", want)

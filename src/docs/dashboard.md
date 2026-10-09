@@ -23,6 +23,8 @@ via YAML tags.
 
 Every dashboard section title has a small **?** mark. Hovering or focusing it shows a one-sentence summary; clicking it (or pressing Enter) opens that section's entry in [Dashboard sections explained](dashboard-sections.md), the plain-language help page for operators. The help sentences live in one table in `index.html` (`DASHBOARD_SECTION_HELP`), and `dashboardDocsHref` is the single place that builds every help address: a hive built from the `v6` branch or a `v6.x.y` tag opens the `v6` page, anything else opens `v5`. A guard test fails when a section has no help entry or its sentence drifts from the page.
 
+Settings fields use the same **?** mark, rendered by `settingHelpMark(page, anchor, label, tip)`: hovering or focusing it shows the setting's tooltip, and clicking it opens the guide that explains the setting, or the tab's entry in [Dashboard settings explained](settings.md), through the same `dashboardDocsHref`. Clicking the mark never changes the setting.
+
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
