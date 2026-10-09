@@ -130,9 +130,9 @@ type Client struct {
 	// back to the dispatcher's name-token rule.
 	reviewerAgent func(agent string) bool
 	// confidenceScore gates the Confidence line on review comments.
-	confidenceScore func() bool
-	// reviewBacklog controls review out-of-scope finding filing.
-	reviewBacklog func() (enabled bool, cap int)
+	confidenceScore      func() bool
+	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap
+	reviewBacklogRouting func() ReviewBacklogRouting    // review.severity / review.backlog; see review_backlog_routing.go
 	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
 	// means no bundles are written (see review_evidence.go).
 	reviewEvidence func(repo string) ReviewEvidenceSettings
