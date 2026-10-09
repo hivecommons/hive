@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.151.0)
+
+### Added
+
+- Review evidence bundles can now be read back ([#11061](https://github.com/hivecommons/hive/issues/11061)). `GET /api/review/evidence?repo=&number=[&head=][&format=json|zip]` (owner/merger) returns a PR's bundle exactly as sealed — the latest head by default — or a ZIP adding the matching verdict reports, the PR's review-links slice and a SHA-256 manifest; `GET /api/review/evidence/list` lists every retained bundle and head. A bundle removed by retention answers 404 with an explicit `expired` marker rather than silent absence. `hivectl review evidence <owner/repo#n> [--head] [-o] [--zip]` downloads it and `hivectl review evidence verify <file> [--pubkey]` checks the hash and Ed25519 signature offline.
+- Owners get an **Evidence** action on dashboard review queue rows and review pipeline cards ([#11062](https://github.com/hivecommons/hive/issues/11062)): a modal shows the bundle id, head, hash, signed status, verdict count and merge status with Download JSON / Download ZIP buttons. When Hive merges a PR it now records the merge event in the head's evidence bundle (re-signed) and posts a single `<!-- hive-review-evidence -->` comment with the bundle id and hash, idempotent across sweeps.
+- **Repositories can carry their own knowledge in `.hive/wiki/`** — a new `repo-wiki` knowledge connector (`knowledge.connectors[].type: repo-wiki`, scope `repos`, `branch`, `dir`) ingests the markdown under each repo's `.hive/wiki/` directory from its reviewed history through the shared git clone/SSRF path. Each file becomes a fact in the connector's layer with repo, path, branch and commit provenance, `approved` unless its front matter says `draft` or `deprecated`; deleted files are tombstoned, and files with invalid front matter are skipped and listed in the connector's status error. Documented in `docs/knowledge-curator.md`. (#11104, epic #11100)
+
+### Security
+
+- The standalone API proxy now opens its event log owner-only (`0600`), and tightens a log that an earlier version left world-readable, so other local users cannot read recorded inference payloads.
+
 ## 2026-10-09 (v5.150.1)
 
 ### Changed
