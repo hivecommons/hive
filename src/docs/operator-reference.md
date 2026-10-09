@@ -300,12 +300,16 @@ starve every other GitHub caller, including the agents.
 The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
 (`pkg/sentinel`, `pkg/github.SweepSentinel`). It inspects every open PR in the
 watched repos — human, bot, or agent — and, when a PR matches one of the
-behaviors below, adds the alert label and posts one `<!-- hive-sentinel -->`
-comment per head SHA listing the matched rules and paths. The label is a hard
-hold: while present, Hive will not submit an APPROVE review, apply LGTM/approval
-labels, or merge the PR through any auto-merge lane (dashboard queue,
-self-authored App sweep, trusted bot authors, or trusted authors). A maintainer
-who removes the label keeps the PR clear until the author pushes again.
+behaviors below, posts one `<!-- hive-sentinel -->` comment per head SHA
+listing the matched rules and paths. For untrusted authors, it also adds the
+alert label. The label is a hard hold: while present, Hive will not submit an
+APPROVE review, apply LGTM/approval labels, or merge the PR through any
+auto-merge lane (dashboard queue, self-authored App sweep, trusted bot authors,
+or trusted authors). Trusted authors (the Hive App, configured trusted bots and
+owner/trusted-author allow-list entries) default to an informational notice and
+audit/dashboard finding only; no alert label is added unless the operator opts
+into blocking them. A maintainer who removes the label keeps the PR clear until
+the author pushes again.
 
 | Behavior | Fires when |
 |---|---|
@@ -321,12 +325,13 @@ who removes the label keeps the PR clear until the author pushes again.
 | Key | Default | Meaning |
 |---|---|---|
 | `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
-| `sentinel.label` | `sentinel-alert` | Label added to flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
+| `sentinel.label` | `sentinel-alert` | Label added to untrusted flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
+| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: comment, audit/dashboard record, no label, no approval/merge block. Set `true` to add the blocking label for trusted authors too. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |
 | `sentinel.exempt_logins` | empty | GitHub logins never flagged (e.g. a release bot). Use sparingly. |
 | `sentinel.repos` | empty = all watched repos | Optional `owner/repo` allow-list. |
-| `sentinel.max_actions` | `20` | Caps label+comment actions per pass. |
+| `sentinel.max_actions` | `20` | Caps label/comment/remediation actions per pass. |
 
 Owners edit all of this from **Settings → Security → Suspicious Activity**;
 the dashboard writes the owner-only `/api/config/governor/security` overlay.
