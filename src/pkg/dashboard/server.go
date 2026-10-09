@@ -177,6 +177,10 @@ type Server struct {
 	// (hivecommons/hive#11079). Lazily built like the rings above.
 	postureOnce sync.Once
 	posture     *compliance.PostureRunner
+	// attestations is the compliance owner-attestation store
+	// (hivecommons/hive#11081). Lazily opened like the posture runner.
+	attestOnce   sync.Once
+	attestations *compliance.AttestationStore
 
 	// convergenceModeTrk captures one (mode, generation) pair per enrolled
 	// eval pass and detects transitions (#4263). convergenceSoakTrk records the
