@@ -239,6 +239,12 @@ set_hive_env_var() {
       if (!wrote) { print line }
     }
   ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return 1; }
+  # Writing an unchanged file would still bump its mtime, which the idempotent
+  # paths (reconcile migrate) treat as a change.
+  if as_owner test -f "$file" && cmp -s "$tmp" "$out"; then
+    rm -f "$tmp" "$out"
+    return 0
+  fi
   as_owner install -Dm600 "$out" "$file"
   local rc=$?
   rm -f "$tmp" "$out"
@@ -733,11 +739,18 @@ restart_gateway_onto_new_config() {
 do_migrate() {
   local name mount mode=rootless gid="${HIVE_SETUP_LAUNCH_GID:-1002}"
   local request_dir="${CONF_DIR}/upgrade-requests" changed=0 env_changed=0
-  local tmp out expected ownership mode_bits
+  local tmp out expected ownership mode_bits image tracking before
   local pending="${CONF_DIR}/.upgrade-bridge-migration-pending"
   local mode_arg=--rootless
   [ "$ROOTFUL" -eq 1 ] && mode_arg=--rootful
   [ "$ROOTFUL" -eq 1 ] && mode=rootful
+  # Without a reachable user bus the managed files would be written and the
+  # daemon-reload would then fail, leaving the migration half-applied.
+  if [ "$ROOTFUL" -eq 0 ] && ! sctl show-environment >/dev/null 2>&1; then
+    bad "cannot reach the systemd user bus -- nothing was changed"
+    info "export XDG_RUNTIME_DIR=/run/user/$(id -u), or log in with: machinectl shell hive@"
+    return "$EX_CONFIG"
+  fi
   for name in src/deploy/systemd/hive-upgrade.path src/deploy/systemd/hive-upgrade.service \
       bin/hive-upgrade-request.sh bin/hive-podman-update.sh; do
     if [ ! -f "${SRC_ROOT}/${name}" ]; then
@@ -823,6 +836,18 @@ do_migrate() {
     changed=1
   fi
   rm -f "$tmp" "$out"
+  # The reconcile apply above already reloaded, so this is the effective image
+  # after drop-ins. A digest pin is recorded by the pin path, not here.
+  image="$(unit_image)"
+  if [ -n "$image" ] && [ "${image#*@sha256:}" = "$image" ]; then
+    if autoupdate_on_host; then tracking=registry; else tracking=pinned; fi
+    before="$(as_owner cat "${CONF_DIR}/hive.env")"
+    if ! set_self_image_env "$image" "$tracking"; then
+      bad "could not write self-image metadata to ${CONF_DIR}/hive.env"
+      return "$EX_CONFIG"
+    fi
+    [ "$before" = "$(as_owner cat "${CONF_DIR}/hive.env")" ] || changed=1
+  fi
   if ! sctl is-enabled hive-upgrade.path >/dev/null 2>&1 || \
       ! sctl is-active hive-upgrade.path >/dev/null 2>&1; then
     as_owner touch "$pending" || return "$EX_CONFIG"
