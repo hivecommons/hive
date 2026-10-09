@@ -1,7 +1,7 @@
 # Hive operator reference
 
 This page is a concise operator reference for fields and runtime knobs that are
-easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
+easy to miss in `hive.yaml.example`. It was checked against `pkg/config/`
 and `cmd/hive/main.go` on branch `v4`.
 
 For the full centralized environment variable table, including hub, backup,
@@ -115,6 +115,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `agents` | Agent definitions and behavior metadata. | Per-agent overlays may also live under `data.agents_dir`. |
 | `governor` | Cadences, labels, sensing, health, budgets, inference gateways, trajectory review. | See notable fields below. |
 | `github` | PAT or GitHub App credentials and forge URLs. | Use one auth method. |
+| `classifier` | Keyword or optional Jev smart classifier for lane routing, haiku/sonnet/opus tier selection, and triage. | Defaults to keyword-only with no network calls. See [Jev smart classifier](jev-smart-classifier.md). |
 | `notifications` | ntfy, Slack, and Discord webhooks. | All optional; see [notifications.md](notifications.md). |
 | `dashboard` | Web UI port, snapshots, auth token, frame allowlist, authorized users. | `auth_token` can come from `HIVE_DASHBOARD_TOKEN`. |
 | `agent_sandbox` | Podman-rootless sandbox launcher for hub/pod agents (`pkg/sandbox`). | Opt-in and **two-gate**: this block's own `enabled: true` sandboxes nothing by itself — each agent also needs `sandbox.enabled: true` under `agents.<name>`. The dashboard's Security tab writes only this global flag, so enabling it there alone can leave every agent unconfined — but the tab now shows this: `security.sandboxWarnings` in `GET /api/config/governor` carries `config.AgentSandboxGateWarnings`'s diagnosis (also logged at WARN at boot/reload), rendered both in the page's coherence-warnings box and inline under the toggle, naming the still-unconfined agents and the fixing key (#4918). See [sandbox-isolation.md](sandbox-isolation.md) and the [getting-started confinement section](getting-started.md#where-agents-actually-run-read-this-before-l3). |
@@ -159,6 +160,8 @@ Top-level YAML keys accepted by `config.Config`:
 | `governor.kick_limits.max_issues` / `max_prs` | `100` / `50` | Caps on every issue list and every PR list (actionable, stale drafts, merge-eligible, CI-failing) rendered into a kick prompt; a cut list ends with an explicit "… and N more" line. An absent key or a negative value means the default; an explicit `0` opts out of the cap entirely (`KickListUnlimited` — every item is listed), and anything above `500` is pinned to `500`. Editable without touching this file under **Settings → Repos → Kick prompt list caps**. Truncation drops the *newest, lowest-priority* items: issues are listed oldest first, and PRs in review-priority order (fixes, then refactors/docs, then tests, oldest first within each class), so lowering a cap never hides the most urgent work. Raise `max_prs` only if your agents actually work more than 50 PRs per turn; the tail of a long list costs tokens and delivery time on every kick without changing behaviour (#7368). |
 | `dashboard.snapshot_frame_ancestors` | Empty list means CSP `frame-ancestors 'none'`. | Entries must be exact `https://` origins; paths, wildcards, credentials, query, and fragments are rejected. |
 | `dashboard.authorized_users` | Empty means no per-user direct-route allowlist. | Entries can be `user` or `user:role`; roles are `read`, `read-write`, `merger`, `owner`. |
+| `notifications.discord.allowed_users` / `notifications.slack.allowed_users` | Empty means chat commands are disabled for that surface. | Entries can be `id` or `id:role`; roles are `read`, `read-write`, `merger`, `owner`. For backwards compatibility, entry #0 without a suffix is `owner`; later bare entries are `read`. IDs match the way `dashboard.authorized_users` does — case-insensitively, with a `github:` prefix optional on either side — and the first entry for an ID wins. |
+| `github.mentions.*` | Disabled unless `github.mentions.enabled: true`. | Polls GitHub issue/PR comments for `@<app bot>` summons. Summoners must hold `read-write` (or `min_role`) in `dashboard.authorized_users` or be listed in `summoners`; agents opt in with both `kick` and `mention` channels plus `converse: true` so #5591's dormant-channel guard still fails fast. |
 | `dashboard.public_url` | Empty means OAuth redirect URIs (Linear agent install, OpenRouter funding) fall back to `hub.dashboard_url`, then the request's forwarded/`Host` origin. | Set to this dashboard's externally reachable origin (`https://hive.example.com`, no path/query) on a standalone hive whose callback is published on a different hostname or whose ingress rewrites `Host`. Must be an absolute `http(s)://` origin; a trailing slash is trimmed and anything else fails config load. See [linear-agent.md](linear-agent.md#setup). |
 | `dashboard.strategy_lab` | Off by default. | Hides the Strategy Lab while that surface is being reworked. Set `dashboard.strategy_lab: true` to show the Strategy Lab section, sidebar nav entry, and Nous status controls. |
 | `hub.contribute_announcement` | Empty/off by default. | Operator notice for contributors. Set from Governor → Hub or `/contribute` Management (owner/read-write): `text` is server-sanitised plain text capped at 500 characters and rendered only through text-safe sinks (empty clears), `level` is `info`/`warning`, `expires_at` is optional RFC3339, and the server rotates `id` whenever text changes so dismissed Operations/Profile banners reappear. Active notices show on `/contribute` Operations/Profile, above the Onboarding command block, and in connected relay terminals. |
@@ -168,6 +171,8 @@ Top-level YAML keys accepted by `config.Config`:
 | `hub.nps_enabled` | Unset means on for hosted spokes (`hub.hive_type: hosted`) and off for every other install. `HIVE_NPS_ENABLED` overrides it. | Enables the dashboard NPS feedback prompt, whose responses are forwarded to the hub over the spoke's authenticated hub link, without the user's identity, and are visible only to hub admins. A hive with no hub link sends nothing unless a relay is configured (below). See [nps.md](nps.md). |
 | `hub.nps_relay_url` | Empty (relay disabled). `HIVE_NPS_RELAY_URL` overrides it. | Base URL of the NPS relay. A standalone spoke (NPS enabled, no hub link) self-registers a generated key there and posts signed responses to it (no token to configure); a hub pulls them from it. `https` only, except `http` to a loopback host. See [nps.md](nps.md#standalone-hives-the-nps-relay). |
 | `hub.nps_relay_pull_secret` | Empty. `HIVE_NPS_RELAY_PULL_SECRET` overrides it. | Secret, hub only. The credential the hub uses to pull and ack relay entries. Prefer the env var. |
+| `hub.nps_timing` | Unset (or `0` per field) keeps the default: `min_sessions: 2`, `second_session_engagement_seconds: 300`, `returning_engagement_seconds: 60`, `reprompt_days: 30`, `dismiss_retry_days: 7`, `max_dismissals: 3`. | Overrides the NPS prompt's eligibility timing. Out-of-range values (negative, or above 100 sessions / 86400 seconds / 365 days / 100 dismissals) fail validation. See [nps.md](nps.md#tuning-the-timing). |
+| `hub.nps_detractor_issues` | `enabled: false` | With `enabled: true` and `repo: owner/name`, a user who scores the hive 1 can tick a consent box to have this hive's App open a public issue from their feedback (at least 20 characters, mentions neutralized, no user identity, 1 per user and 3 per hive per 24h). `enabled: true` without a valid repo fails validation. See [nps.md](nps.md#public-issue-for-detractors-optional-off-by-default). |
 | `knowledge.connectors[]` | Empty (no connectors). | Scheduled sync of external knowledge into vault facts; types `git`, `document`, `github-wiki`, `confluence`, `notion`. Credentials only via `auth.env` / `auth.file` (inline secrets fail validation). Facts land in `/data/knowledge/connectors/<layer>`; status at `GET /api/knowledge/connectors`, owner-only `POST /api/knowledge/connectors/{name}/sync`. See [knowledge-connectors.md](knowledge-connectors.md). |
 | `knowledge.connectors[].scope` (`confluence`) | `deployment` auto-detects Cloud for `*.atlassian.net`; `max_pages` `2000`; `full_sync_every` `10`. | `base_url` plus `spaces` and/or `root_page_ids`; Cloud needs `email` (Basic auth with the API token), Data Center uses the token as a bearer PAT. Give the account read-only space permission. |
 | `knowledge.connectors[].scope` (`notion`) | All pages shared with the integration; `max_pages` `2000`; `full_sync_every` `10`. | Optional `root_page_ids` / `database_ids`; `include_archived` fetches bodies of archived pages. Pages must be shared with the internal integration (••• → Connections). Requests are spaced 350 ms apart. |
@@ -185,6 +190,22 @@ agents fix red checks on the open PR and push follow-up commits so the failure
 and repair stay visible in CI history.
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
+
+## Dashboard Runs section
+
+The dashboard's **Runs** section shows the active long-running run projection
+from `GET /api/runs` and the `/api/status` SSE stream. Each card names the run,
+current `spec → plan → implement` stage, who or what it is waiting on, how long
+it has been in that wait state, and any plan/receipt artifacts the run exposed.
+Owner users see inline **Approve** and **Reject** buttons for runs waiting on a
+human plan gate; non-owner users see the same state without mutation controls.
+
+Click **detail** on a run to fetch `GET /api/runs/{key}` and inspect the full
+stage/artifact chain plus matching audit or approval entries. Agent cards also
+show the current run held by that agent, and the Governor/Health surfaces call
+out runs blocked on a human or stalled beyond the default 60-minute wait
+threshold. If an older spoke omits the `runs` field entirely, the dashboard
+renders `runs: unknown` instead of substituting zero.
 
 ## App self-merge sweep (`auto_merge`)
 
@@ -294,6 +315,149 @@ configured repos. Above that, the interval scales so the sweep's list+candidate
 calls stay within 25% of the App's hourly REST allowance — a 45-repo hive on a
 fixed 10s tick used to exceed the whole allowance on list calls alone and
 starve every other GitHub caller, including the agents.
+
+## Per-repo merge strategy (`merge_strategy`)
+
+`merge_strategy` decides **how** Hive merges into a repository, never
+**whether** it does: `auto_merge`, the ACMM gate, holds, pauses and every
+merge path's own checks apply exactly as before. It is set per repository,
+next to the per-repo `auto_merge` switch:
+
+```yaml
+project:
+  repo_policies:
+    - repo: atomic-image-builder
+      merge_strategy: hive-serialized   # or: direct (the default when unset)
+```
+
+| Strategy | Behaviour |
+|---|---|
+| `direct` (default) | Each merge path (the self-merge sweep, the `lgtm` queue, the [`hive-merge`](hive-merge.md) relay) merges an eligible pull request on its own, exactly as Hive always has. Deciding a repository is `direct` needs no GitHub call. |
+| `hive-serialized` | The **serialized lane**: per target branch at most one pull request — the one at the front — is brought up to date, has its required checks run on its exact head, is re-checked live and is merged with its head pinned. Every other eligible pull request waits in order with the reason `deferred: not at the front of the lane`. Meant for personal-account repositories, where GitHub's merge queue is not available. |
+
+An unrecognised value is a configuration error for that repository: Hive does
+not merge there and does not fall back to `direct`. Anyone who may switch a
+repository's auto-merge off (owner or repo write) may switch it to
+`hive-serialized`; only an owner may switch it back to `direct`. The dashboard
+repository card shows the strategy and offers the change to permitted users;
+the same API is `GET`/`POST /api/repos/merge-strategy` (see
+[api-reference.md](api-reference.md)).
+
+`merge_strategy` is unrelated to `knowledge.primer.merge_strategy`, which
+controls how knowledge primers are merged. The two only share a name.
+
+### What the serialized lane guarantees
+
+For every `hive-serialized` repository:
+
+1. At most one pull request per target branch is in final validation, across
+   all merge paths and across restarts (the front record is durable under
+   `/data/mergelane/`; a restart repeats an interrupted validation in full).
+2. No pull request merges unless its head contained the target branch tip the
+   final re-check read.
+3. No pull request merges unless every required check finished successfully on
+   the exact head that merges. Missing, queued or running never counts as
+   passing; an unknown or empty required-check set means no merge.
+
+**Administration: Read-only is optional for `hive-serialized`.** Without it
+the App cannot read classic branch protection (GitHub answers 403); the lane
+then uses the required checks the branch's rulesets list, and GitHub still
+enforces any classic rule itself at merge time. The lane panel and the ACMM
+merge-queue row show the reason when the required-check set is unknown, for
+example a 403 on a branch whose rulesets require no checks.
+4. The merge call pins the validated head.
+5. Immediately before the merge Hive re-reads the head, the branch tip,
+   open/draft state, the target branch, mergeability, the required-check set
+   and its results, hold/do-not-merge/exempt/pause labels, the strategy,
+   auto-merge permission and the calling path's own authorization.
+6. Any change, error or ambiguous answer means no merge (fail closed).
+7. One validation never covers two merges.
+8. No existing gate on any merge path is weakened or skipped, and setting the
+   strategy never turns merging on.
+9. Repositories left on `direct` behave exactly as before.
+10. Hive never rebases, force-pushes or otherwise rewrites a pull request
+    branch; it only merges the target branch into it, pinned to the head it
+    evaluated.
+
+A front pull request whose required check fails on the head the lane is
+evaluating leaves the front at once with that reason (for example
+`required check "test" finished as failure on head 4d9ac7c`), and the next
+one starts. This holds even when a merge path (the self-merge sweep or the
+`lgtm` queue sweep) rejects the front before the lane, for example as not
+mergeable once GitHub reports it `blocked`: the path still hands its current
+front to the lane, which re-evaluates it without merging and lets it leave
+with its own reason. The front timeout (60 minutes by default, restarted on
+every branch update) is the fallback for a front whose checks never finish;
+its reason says what the lane last knew, for example that the head after the
+branch update was never evaluated, or the last recorded waiting reason.
+
+### The remaining window, and GitHub's up-to-date rule
+
+No GitHub merge API can be made conditional on the target branch's tip; they
+pin only the head. Between Hive's final re-read of the tip and the merge call
+there is therefore a window of about one API call. Without GitHub's own
+"Require branches to be up to date before merging" rule on the branch, a commit
+landing in that instant can slip through (guarantee 2 then fails). Hive does
+not hide this: after every merge it checks that the merge landed directly on
+the validated tip and, if it did not, raises an alert naming the merged pull
+request and the unexpected commit (and that commit's pull request, when it has
+one). The alert is logged at error level (`merge lane: merge did not land on
+the validated tip`) and recorded as an `alert` lane decision.
+
+**Recommendation:** turn GitHub's "Require branches to be up to date before
+merging" rule on for every target branch of a `hive-serialized` repository
+(Settings → Rules → Rulesets, "Require status checks to pass" with "Require
+branches to be up to date"). GitHub then closes the window on the server. It
+costs one CI run per merge, because the lane only ever updates the pull request
+at the front.
+
+### Seeing what the lane is doing
+
+On a `hive-serialized` repository card the dashboard shows a serialized lane
+panel per target branch: the pull request at the front and its stage
+(updating, waiting for checks, final re-check, merging), the waiting pull
+requests in order, the last reason a pull request left the front, every
+recorded no-merge or deferral reason, and the guarantee in force:
+
+| Label | Meaning |
+|---|---|
+| server-enforced | A ruleset on the branch requires up-to-date branches; GitHub closes the window. |
+| Hive-checked | Rulesets require checks but not up-to-date branches; only Hive's own check and the post-merge alert apply. |
+| unknown | No ruleset speaks to it. Classic branch protection carries the flag, but reading it needs the Administration permission the App does not hold. |
+
+For Hive-checked and unknown lanes the panel recommends turning the up-to-date
+rule on. The same state is available to scripts, the admin MCP server and
+`hivectl` through `GET /api/repos/merge-lane?repo=<repo>`; a `direct`
+repository returns only its strategy and has no lane panel.
+
+### Fork pull requests
+
+The lane brings a pull request up to date only by merging the target branch
+into its branch, pinned to the evaluated head; it never rebases or
+force-pushes, and never rewrites a contributor's commits. A fork pull request
+that already contains the current tip with passing required checks needs no
+update and merges normally. Fork CI waiting for maintainer approval
+(`action_required`) counts as not passed. When Hive cannot update a fork's
+branch (GitHub refuses the update, for example because "Allow edits by
+maintainers" is off), the pull request does not merge from the front; it
+leaves the front with the recorded reason once the front timeout runs out,
+the next pull request starts, and it stays eligible to merge at a later turn
+once its author has brought it up to date.
+
+### Branches with GitHub's merge queue
+
+A target branch that has GitHub's merge queue is left alone: the serialized
+lane does not run for it and Hive makes no direct merge into it. When Hive
+cannot establish whether the branch has GitHub's merge queue, it does not merge
+(fail closed). The lane panel lists the refusal among its reasons.
+
+### Downgrading
+
+A Hive without the serialized lane ignores the `merge_strategy` key
+(configuration decoding ignores unknown keys), so after a downgrade every
+opted-in repository silently goes back to `direct` merging. Older versions
+cannot be changed to warn about this; check your repositories' strategy before
+downgrading.
 
 ## Suspicious-activity alerts (`sentinel`)
 
