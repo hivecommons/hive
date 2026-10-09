@@ -50,6 +50,9 @@ func TestTrustedAuthorAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 		t.Fatal("default require_github_permission must be true")
 	}
 	labels := cfg.ExcludeLabelSet()
+	if labels[DefaultSentinelLabel] {
+		t.Fatalf("default exclude labels = %v, sentinel label %q should not block trusted authors", labels, DefaultSentinelLabel)
+	}
 	for _, want := range DefaultTrustedAuthorExcludeLabels {
 		if !labels[want] {
 			t.Fatalf("default exclude labels = %v, missing %q", labels, want)
