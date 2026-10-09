@@ -1,1 +1,0 @@
-- GOVERNANCE.md now says where GitHub "collaborator" access sits relative to the contributor ladder and how it is earned, and the hive's reporter-trust wait notice links to that policy ("what these terms mean and how to become a trusted reporter"), so reporters whose issues stall can find out how to become trusted (#11018).

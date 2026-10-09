@@ -1,1 +1,0 @@
-- docs: Bob coin conversion example in operator-reference uses illustrative values; the real conversion comes from your Bob team.

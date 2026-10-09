@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.155.2)
+
+### Changed
+
+- GOVERNANCE.md now says where GitHub "collaborator" access sits relative to the contributor ladder and how it is earned, and the hive's reporter-trust wait notice links to that policy ("what these terms mean and how to become a trusted reporter"), so reporters whose issues stall can find out how to become trusted (#11018).
+- docs: Bob coin conversion example in operator-reference uses illustrative values; the real conversion comes from your Bob team.
+- Link trusted-author auto-merge role guidance to Security tab authorized users and the hub Manage Access screen.
+
+### Fixed
+
+- Agent-filed findings no longer become one issue per variant when they keep hitting the same file ([#11239](https://github.com/hivecommons/hive/issues/11239)). Consolidation from #9376 only folded a finding into an open issue with an *identical* file-reference set, so a stream of bypasses against one module — each citing the shared file plus its own fixture — was filed as dozens of separate issues and PRs. The issue-request watcher now also folds a new finding into the oldest open App-bot-filed issue once at least 3 open ones already cite a path it cites, posting it as a `<!-- hive-finding-folded -->` comment that asks for one structural fix. Manifests and other ubiquitous paths (`README.md`, `go.mod`, `package.json`, lock files) never count as a shared component.
+- Expire stale plan-stall dashboard alerts when their source issue is no longer active or the plan is no longer reasserted as stalled.
+
 ## 2026-10-09 (v5.155.1)
 
 ### Fixed
