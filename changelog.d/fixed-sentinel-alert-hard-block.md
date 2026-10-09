@@ -1,1 +1,0 @@
-- Make the configured sentinel alert label a hard block for Hive approvals and every auto-merge lane.

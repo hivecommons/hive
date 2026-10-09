@@ -11,6 +11,37 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.156.0)
+
+### Added
+
+- Add a dashboard display timezone preference so absolute timestamps can use browser local time, server time, UTC, or an IANA timezone. (#11276)
+- Add an optional per-agent `bob_display_name` reporting label for bob-backed agents, exported as `HIVE_BOB_DISPLAY_NAME`, so operators can tag Bob sessions (for example with a `hive-` prefix) without renaming the agent. (#11273)
+
+### Changed
+
+- Issues now close on fix merge by default while reporter confirmation is opt-in via `hive: needs-confirmation` or `issues.reporter_confirmation` (#11119)
+- Replace the Obsidian setup button with a Knowledge Integrations modal for Obsidian and all connector types. (#11266)
+- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue and matched their inner body padding (#11267, #11280)
+
+### Fixed
+
+- Reviewer, adjudicator and ci-maintainer no longer restart mid-review: the review prompt quoted "fetch failed", which the pane poller reads as a dead network, so no PR ever received a verdict (#11244).
+- changelog-fragment-guard no longer leaves cancelled required check-runs on a PR's head SHA: label events skip the job unless the label is `no-changelog`, and only a new push cancels an in-flight run, so green PRs are no longer reported BLOCKED by GitHub (#11250).
+- Upgrade indicators in the Version details card and the top toolbar now share one bee-orbit animation, so bees are consistently sized (about a third of the hive), circle the hive without overlapping it, and no longer restart or skip on status refreshes (#11253).
+- Render compliance and UI exports in-app instead of triggering native browser download prompts (#11261)
+- Let trusted authors keep sentinel notices (#11305)
+- Fixed self-authored and trusted-author automerge to gate on required branch-protection checks instead of GitHub's aggregate merge state, with per-PR skip reasons.
+- Hive now closes fixed issues itself after merged hive/trusted PRs, and backfills previously merged fixes that GitHub left open.
+- Roll hosted spokes to the newest GHCR-published image on fast-moving branches instead of waiting indefinitely for HEAD. (#11258)
+- Close dashboard and hub modal overlays with a central Escape handler that dismisses the topmost open modal first.
+- Skip incomplete Overview KPI snapshots when recording sparkline history so transient GitHub fetch failures no longer draw false dips.
+- `hive-podman-update.sh reconcile migrate` now records `HIVE_SELF_IMAGE` and `HIVE_SELF_IMAGE_TRACKING` in `hive.env` (skipped for digest-pinned units), so registry-tracked installs no longer get a dashboard upgrade button that fails with "registry tracking is ON", and rootless migrate checks the systemd user bus first, failing before any file is written instead of leaving a half-applied migration (#11296).
+- Rootless Podman: dashboard upgrade requests are now written `0644` so the host `hive-upgrade.service` can read them (it also retries through `podman unshare`), an unreadable request is reported as such instead of a `<missing>` ref, and the dashboard no longer describes a pending Podman upgrade with hub/Deployment wording (#11291).
+- Make the configured sentinel alert label a hard block for Hive approvals and every auto-merge lane.
+- Sentinel now treats trusted Hive authors as notice-only by default, remediates stale trusted-author alert labels, and offers `sentinel.trusted_authors_block` for operators who want the blocking label on trusted PRs too.
+- The upgrade confirmation now says it upgrades the Hive, not the runtime.
+
 ## 2026-10-09 (v5.155.3)
 
 ### Security

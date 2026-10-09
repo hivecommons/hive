@@ -1,1 +1,0 @@
-- Rootless Podman: dashboard upgrade requests are now written `0644` so the host `hive-upgrade.service` can read them (it also retries through `podman unshare`), an unreadable request is reported as such instead of a `<missing>` ref, and the dashboard no longer describes a pending Podman upgrade with hub/Deployment wording (#11291).
