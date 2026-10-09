@@ -132,9 +132,11 @@ func clonePRDetail(pr *gh.PullRequest) *gh.PullRequest {
 	out := &gh.PullRequest{
 		Number:              clonePtr(pr.Number),
 		State:               clonePtr(pr.State),
+		Title:               clonePtr(pr.Title),
 		UpdatedAt:           cloneTimestamp(pr.UpdatedAt),
 		ClosedAt:            cloneTimestamp(pr.ClosedAt),
 		MergedAt:            cloneTimestamp(pr.MergedAt),
+		Labels:              cloneLabels(pr.Labels),
 		User:                cloneUserLogin(pr.User),
 		Draft:               clonePtr(pr.Draft),
 		Merged:              clonePtr(pr.Merged),
@@ -144,6 +146,7 @@ func clonePRDetail(pr *gh.PullRequest) *gh.PullRequest {
 		MergeCommitSHA:      clonePtr(pr.MergeCommitSHA),
 		MaintainerCanModify: clonePtr(pr.MaintainerCanModify),
 		Head:                clonePRBranchSHA(pr.Head),
+		Base:                clonePRBranchRef(pr.Base),
 	}
 	return out
 }
@@ -152,7 +155,14 @@ func clonePRBranchSHA(in *gh.PullRequestBranch) *gh.PullRequestBranch {
 	if in == nil {
 		return nil
 	}
-	return &gh.PullRequestBranch{SHA: clonePtr(in.SHA)}
+	return &gh.PullRequestBranch{SHA: clonePtr(in.SHA), Ref: clonePtr(in.Ref)}
+}
+
+func clonePRBranchRef(in *gh.PullRequestBranch) *gh.PullRequestBranch {
+	if in == nil {
+		return nil
+	}
+	return &gh.PullRequestBranch{Ref: clonePtr(in.Ref), SHA: clonePtr(in.SHA)}
 }
 
 func cloneUserLogin(in *gh.User) *gh.User {
@@ -160,6 +170,17 @@ func cloneUserLogin(in *gh.User) *gh.User {
 		return nil
 	}
 	return &gh.User{Login: clonePtr(in.Login)}
+}
+
+func cloneLabels(in []*gh.Label) []*gh.Label {
+	out := make([]*gh.Label, 0, len(in))
+	for _, l := range in {
+		if l == nil {
+			continue
+		}
+		out = append(out, &gh.Label{Name: clonePtr(l.Name)})
+	}
+	return out
 }
 
 func cloneTimestamp(in *gh.Timestamp) *gh.Timestamp {
