@@ -5,13 +5,9 @@ import (
 	"time"
 )
 
-// SetRequiredChecks installs the config-declared required-status-check set
-// (config.AutoMergeConfig.RequiredCheckSet) consulted by commitGreen before
-// it ever calls GitHub's branch-protection API. nil/empty clears it, meaning
-// "not config-declared" — commitGreen then falls back to the API and, if that
-// also fails, to the isMetaCheck/isIgnorableCICheck allowlist. Safe to call
-// repeatedly (e.g. on every config reload); the sweep goroutine reads the
-// installed value through requiredChecksMu.
+// SetRequiredChecks installs the config-declared fallback required-status-check
+// set (config.AutoMergeConfig.RequiredCheckSet). Branch protection is the
+// authoritative source; this set is used only when protection cannot be read.
 func (c *Client) SetRequiredChecks(set map[string]bool) {
 	if c == nil {
 		return

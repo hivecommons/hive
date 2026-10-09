@@ -8079,7 +8079,7 @@ var KnownBotAuthors = []string{
 	"github-actions[bot]",
 }
 
-var DefaultTrustedAuthorExcludeLabels = []string{"hold", "do-not-merge", "needs-human", DefaultSentinelLabel}
+var DefaultTrustedAuthorExcludeLabels = []string{"hold", "do-not-merge", "needs-human"}
 
 // TrustedBotAuthorSet returns the lower-cased membership set of bot logins the
 // self-authored sweep may merge. nil TrustedBotAuthors → DefaultTrustedBotAuthors;
