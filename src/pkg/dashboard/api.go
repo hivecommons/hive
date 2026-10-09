@@ -473,6 +473,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
 	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
 	s.registerKnowledgeConnectorRoutes()
+	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 }
 
 var (
@@ -1045,6 +1046,7 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 			"busy":       a.Busy,
 			"next_kick":  a.NextKick,
 			"nextKick":   a.NextKick,
+			"nextKickAt": a.NextKickAt,
 			"nextKickIn": a.NextKickIn,
 		})
 	}

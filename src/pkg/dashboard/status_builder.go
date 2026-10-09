@@ -285,39 +285,125 @@ func BuildFrontendStatus(
 
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
+	repos := buildRepos(cfg, actionable, govState)
 	payload := &StatusPayload{
-		Timestamp:           time.Now().UTC().Format(time.RFC3339),
-		TimeZone:            dashboardTimeZoneName(),
-		HiveID:              cfg.HiveID,
-		HiveIDEditable:      !hiveIDLocked,
-		HiveIDLockReason:    hiveIDLockReason,
-		Features:            buildFeatures(cfg),
-		Agents:              agents,
-		HiddenAgents:        hiddenAgents,
-		ConfiguredAgents:    buildConfiguredAgents(cfg),
-		Governor:            buildGovernor(govState, cfg),
-		Tokens:              buildTokens(tokenCollector),
-		Repos:               buildRepos(cfg, actionable, govState),
-		Beads:               BuildBeadsFromConfig(beadStores, cfg),
-		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
-		Health:              health,
-		Budget:              buildBudget(gov, tokenCollector),
-		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
-		GHRateLimits:        ghRateLimits,
-		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
-		AgentMetrics:        agentMetrics,
-		Hold:                buildHold(actionable),
-		IssueToMerge:        issueToMerge,
-		IssuesDisabledRepos: metricsCollector.GetIssuesDisabledRepos(),
-		ACMMLevel:           detectACMMLevel(cfg),
-		ACMMLevelConfigured: cfg.ACMMLevel != nil,
-		ACMMPackAgents:      buildACMMPackAgents(cfg),
-		SystemResources:     collectSystemResources(),
-		Platform:            buildPlatform(cfg),
-		Security:            buildSecurity(cfg),
-		ReleaseLineLag:      buildReleaseLineLag(),
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		TimeZone:              dashboardTimeZoneName(),
+		HiveID:                cfg.HiveID,
+		HiveIDEditable:        !hiveIDLocked,
+		HiveIDLockReason:      hiveIDLockReason,
+		Features:              buildFeatures(cfg),
+		Agents:                agents,
+		HiddenAgents:          hiddenAgents,
+		ConfiguredAgents:      buildConfiguredAgents(cfg),
+		Governor:              buildGovernor(govState, cfg),
+		Tokens:                buildTokens(tokenCollector),
+		Repos:                 repos,
+		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
+		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
+		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
+		Health:                health,
+		Budget:                buildBudget(gov, tokenCollector),
+		CadenceMatrix:         buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
+		GHRateLimits:          ghRateLimits,
+		APIBudget:             apiBudgetFromRateLimits(ghRateLimits),
+		AgentMetrics:          agentMetrics,
+		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
+		Hold:                  buildHold(actionable),
+		IssueToMerge:          issueToMerge,
+		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
+		ACMMLevel:             detectACMMLevel(cfg),
+		ACMMLevelConfigured:   cfg.ACMMLevel != nil,
+		ACMMPackAgents:        buildACMMPackAgents(cfg),
+		SystemResources:       collectSystemResources(),
+		Platform:              buildPlatform(cfg),
+		Security:              buildSecurity(cfg),
+		ReleaseLineLag:        buildReleaseLineLag(),
 	}
+
 	return payload
+}
+
+func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResult) bool {
+	if cfg == nil || len(cfg.Project.Repos) == 0 {
+		return false
+	}
+	if actionable == nil {
+		return true
+	}
+	for _, repoName := range cfg.Project.Repos {
+		if _, paused := cfg.RepoPauseFor(repoName); paused {
+			continue
+		}
+		if actionable.TotalByRepo == nil {
+			return true
+		}
+		if _, ok := actionable.TotalByRepo[repoName]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func buildOverviewCoverage(agentMetrics map[string]any, cfg *config.Config) *FrontendOverviewCoverage {
+	quality, _ := agentMetrics[qualityAgentName].(map[string]any)
+	if quality == nil {
+		return nil
+	}
+	coverage, ok := overviewMetricInt(quality["coverage"])
+	if !ok {
+		return nil
+	}
+	target, ok := overviewMetricInt(quality["coverageTarget"])
+	if !ok || target <= 0 {
+		target = coverageTarget
+	}
+	source, _ := quality["coverageSource"].(string)
+	if strings.TrimSpace(source) == "" {
+		source = qualityCoverageSource
+	}
+	return &FrontendOverviewCoverage{
+		Coverage: coverage,
+		Target:   target,
+		Source:   source,
+		Repo:     overviewCoverageRepo(cfg),
+	}
+}
+
+func overviewMetricInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		if math.Trunc(n) == n {
+			return int(n), true
+		}
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
+}
+
+func overviewCoverageRepo(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	repo := strings.TrimSpace(cfg.Project.PrimaryRepo)
+	if repo == "" && len(cfg.Project.Repos) > 0 {
+		repo = strings.TrimSpace(cfg.Project.Repos[0])
+	}
+	if repo == "" {
+		return ""
+	}
+	if strings.Contains(repo, "/") || strings.TrimSpace(cfg.Project.Org) == "" {
+		return repo
+	}
+	return strings.TrimSpace(cfg.Project.Org) + "/" + repo
 }
 
 func buildFeatures(cfg *config.Config) FrontendFeatures {
@@ -768,11 +854,17 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			cadenceValue = lookupCadenceValue(name, cfg)
 		}
 		cadence := cadenceDisplay(cadenceValue)
-		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
+		nextKick := ""
+		nextKickAt := ""
+		if next, ok := computeNextKickTimeFromCadence(proc.LastKick, cadenceValue); ok {
+			nextKick = formatHumanTime(next)
+			nextKickAt = next.UTC().Format(time.RFC3339)
+		}
 		nextKickIn := computeNextKickETA(proc.LastKick, cadenceValue)
 		continuousState := govState.Continuous[name]
 		if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(currentMode, cadenceValue) && !continuousState.NextKick.IsZero() {
 			nextKick = formatHumanTime(continuousState.NextKick)
+			nextKickAt = continuousState.NextKick.UTC().Format(time.RFC3339)
 			if d := time.Until(continuousState.NextKick); d > 0 {
 				nextKickIn = formatETA(d)
 			} else {
@@ -893,6 +985,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
 			NextKick:        nextKick,
+			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,
 			Continuous:      continuousNow,
 			FrontendAgentContinuous: FrontendAgentContinuous{
@@ -1359,6 +1452,13 @@ func defaultStatsConfig(name string) []any {
 		"ci-maintainer": {
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
 		},
+		// The quality agent drives coverage at ACMM Level 3 (#11150). The key
+		// is "testCoverage", not "coverage", so a saved quality strip never
+		// matches ci-maintainer's and is never pruned as a clone (#7411).
+		qualityAgentName: {
+			map[string]any{"key": "testCoverage", "label": "Test coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": coverageTarget,
+				"desc": "Primary repo test coverage from the " + qualityCoverageSource + "; — when no badge is configured or it is unreadable. ~90% is the ACMM Level 3 → 4 signal."},
+		},
 		"outreach": {
 			map[string]any{"key": "stars", "label": "Stars", "source": "agentMetrics", "field": "stars", "style": "spark", "trendField": "stars"},
 			map[string]any{"key": "forks", "label": "Forks", "source": "agentMetrics", "field": "forks", "style": "number"},
@@ -1625,15 +1725,19 @@ func formatHumanTime(t time.Time) string {
 	return local.Format("1/2 3:04 PM MST")
 }
 
-func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+func computeNextKickTimeFromCadence(lastKick *time.Time, cadence config.Cadence) (time.Time, bool) {
 	if cadence == "" || cadence.IsPaused() {
-		return ""
+		return time.Time{}, false
 	}
 	base := time.Now()
 	if lastKick != nil && cadence.Mode() == config.CadenceModeInterval {
 		base = *lastKick
 	}
-	next, ok := cadence.NextAfter(base)
+	return cadence.NextAfter(base)
+}
+
+func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+	next, ok := computeNextKickTimeFromCadence(lastKick, cadence)
 	if !ok {
 		return ""
 	}
@@ -1938,8 +2042,10 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		issueCount := 0
 		prCount := 0
 		var workBreakdown *github.RepoWorkBreakdown
+		countsPresent := false
 		if actionable != nil && actionable.TotalByRepo != nil {
 			if counts, ok := actionable.TotalByRepo[repoName]; ok {
+				countsPresent = true
 				issueCount = counts.Issues
 				prCount = counts.PRs
 			}
@@ -1975,6 +2081,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			if rp.At != nil && !rp.At.IsZero() {
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
 			}
+		}
+		if actionable != nil && !r.Paused && !countsPresent {
+			r.CountsIncomplete = true
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}

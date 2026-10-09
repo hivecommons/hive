@@ -394,6 +394,28 @@ plain create semantics. An exact or canonical title match still wins and
 reuses the issue without a comment, so a retried create never comments on the
 issue it itself created.
 
+### A stream of findings on one component is folded into a tracker
+
+Exact file-set equality misses a *stream* of variants against one file
+([#11239](https://github.com/hivecommons/hive/issues/11239)): a security lane
+reporting one parser bypass per finding cites the shared file plus that
+variant's own fixture or helper, so no two sets are equal and every variant
+became its own issue and PR.
+
+The same open-issue scan therefore also counts, per path, how many **open**
+App-bot-filed issues cite each path the pending request cites. When at least
+3 of them already cite one path, the finding is posted as a comment on the
+**oldest** of them — the component's de facto tracker — instead of filed. The
+comment starts with a `<!-- hive-finding-folded -->` marker, names the shared
+path and how many open issues cite it, and asks for one structural fix over a
+PR per variant. The result carries `consolidated: true` exactly like an
+exact-set twin, and a failed comment keeps the request queued.
+
+Paths that unrelated findings mention in passing (`README.md`,
+`CHANGELOG.md`, `go.mod`, `package.json`, lock files, and similar manifests)
+never count as a shared component. Below the threshold, overlapping findings
+file normally; an exact file-set twin still takes precedence.
+
 ## Where things live
 
 | Path | What |

@@ -75,6 +75,8 @@ type Client struct {
 	exemptLabels  []string
 	holdLabelsMu  sync.RWMutex
 	holdLabels    []string
+	sentinelMu    sync.RWMutex
+	sentinelLabel string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -88,6 +90,11 @@ type Client struct {
 	// admit everything (pre-existing behavior).
 	issueFilterMu sync.RWMutex
 	issueFilter   IssueAdmitter
+	// reporterConfirmationEnabled restores the legacy close gate for all
+	// human-filed bug-family issues when configured. Nil/false means only
+	// per-issue opt-in markers activate the gate.
+	reporterConfirmationMu      sync.RWMutex
+	reporterConfirmationEnabled func() bool
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -2257,6 +2264,12 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	if headSHA == "" {
 		return errors.New("PR head SHA is required for auto-merge approval")
 	}
+	if blocked := c.sentinelBlockedLabel(labelNames(pr.Labels)); blocked != "" {
+		c.recordWriteAudit(AuditActionSentinelBlockedApproval, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: number},
+			"agent", queuedBy, "label", blocked)
+		return fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
+	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
 		return fmt.Errorf("ensuring %s label: %w", label, err)
@@ -2559,6 +2572,37 @@ func (c *Client) SetHoldLabels(labels []string) {
 	c.holdLabels = append([]string{}, labels...)
 }
 
+func (c *Client) SetSentinelAlertLabel(label string) {
+	if c == nil {
+		return
+	}
+	c.sentinelMu.Lock()
+	defer c.sentinelMu.Unlock()
+	c.sentinelLabel = strings.TrimSpace(label)
+}
+
+func (c *Client) sentinelAlertLabel() string {
+	if c == nil {
+		return ""
+	}
+	c.sentinelMu.RLock()
+	defer c.sentinelMu.RUnlock()
+	return strings.TrimSpace(c.sentinelLabel)
+}
+
+func (c *Client) sentinelBlockedLabel(labels []string) string {
+	sentinelLabel := strings.ToLower(c.sentinelAlertLabel())
+	if sentinelLabel == "" {
+		return ""
+	}
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), sentinelLabel) {
+			return sentinelLabel
+		}
+	}
+	return ""
+}
+
 func (c *Client) isHeld(labels []string) bool {
 	if c == nil {
 		return HasHoldLabel(labels)
@@ -2588,6 +2632,25 @@ func (c *Client) SetIssueFilter(f IssueAdmitter) {
 	c.issueFilterMu.Lock()
 	defer c.issueFilterMu.Unlock()
 	c.issueFilter = f
+}
+
+func (c *Client) SetReporterConfirmationEnabledFunc(fn func() bool) {
+	if c == nil {
+		return
+	}
+	c.reporterConfirmationMu.Lock()
+	defer c.reporterConfirmationMu.Unlock()
+	c.reporterConfirmationEnabled = fn
+}
+
+func (c *Client) reporterConfirmationGateDefaultEnabled() bool {
+	if c == nil {
+		return false
+	}
+	c.reporterConfirmationMu.RLock()
+	fn := c.reporterConfirmationEnabled
+	c.reporterConfirmationMu.RUnlock()
+	return fn != nil && fn()
 }
 
 // getIssueFilter never returns nil: an unset filter admits everything, which

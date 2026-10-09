@@ -87,10 +87,16 @@ type Config struct {
 	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
 	Hub                         HubConfig           `yaml:"hub"`
-	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID                      string              `yaml:"hive_id"`
-	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables                   VariablesConfig     `yaml:"variables,omitempty"`
+	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
+	// at pack apply and by PUT /api/config/agent/{name}/models.
+	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Issues tunes issue lifecycle automation. Zero value keeps the safe
+	// defaults: close issues after their fix PR merges, and backfill hourly.
+	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
+	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID     string           `yaml:"hive_id"`
+	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables  VariablesConfig  `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
@@ -1286,6 +1292,39 @@ func (c *Config) JevAssistEnabled(agent string) bool {
 // the prompt editor), answered with a warning by
 // scheduler.WarnDanglingKickTemplates and shown in the prompt editor
 // (hivecommons/hive#7390).
+// MaxBobSessionLabelLen bounds bob reporting labels:
+// governor.bob.session_prefix + <agent> and agents.<name>.bob.session_label.
+const MaxBobSessionLabelLen = 64
+
+// MaxBobDisplayNameLen bounds the legacy agents.<name>.bob_display_name alias.
+const MaxBobDisplayNameLen = MaxBobSessionLabelLen
+
+// ValidateBobSessionLabel checks an optional bob reporting label component.
+// Empty is valid. Non-empty values must be at most MaxBobSessionLabelLen bytes
+// of ASCII letters, digits, '-', '_' or '.', so the label is safe in env vars,
+// file names, Bob --instance-id, and report keys.
+func ValidateBobSessionLabel(field, v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > MaxBobSessionLabelLen {
+		return fmt.Errorf("%s %q is longer than %d characters", field, v, MaxBobSessionLabelLen)
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("%s %q contains %q (allowed: letters, digits, '-', '_', '.')", field, v, r)
+		}
+	}
+	return nil
+}
+
+// ValidateBobDisplayName checks the legacy flat bob reporting label.
+func ValidateBobDisplayName(v string) error {
+	return ValidateBobSessionLabel("bob_display_name", v)
+}
+
 func ValidateKickTemplateName(v string) error {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -1514,6 +1553,11 @@ type AgentConfig struct {
 	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
 	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string        `yaml:"description" json:"description,omitempty"`
+	// Bob holds bob-backend-only per-agent options. Empty is default-off.
+	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
+	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is
+	// kept for backwards compatibility; new configs should use bob.session_label.
+	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
 	Role           string   `yaml:"role" json:"role,omitempty"`
@@ -3550,6 +3594,17 @@ type BobConfig struct {
 	// is a normal, backwards-compatible state that the dashboard renders as
 	// "(unnamed)" rather than an error.
 	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
+	// SessionPrefix is an optional global prefix for bob --instance-id, used
+	// to make Bob/Bobalytics sessions distinguishable without renaming Hive
+	// agents. Empty is default-off and preserves the exact launch command.
+	SessionPrefix string `yaml:"session_prefix,omitempty" json:"session_prefix,omitempty"`
+}
+
+// AgentBobConfig holds per-agent bob backend options.
+type AgentBobConfig struct {
+	// SessionLabel overrides governor.bob.session_prefix + agent name for Bob
+	// --instance-id. It never changes the Hive agent identity.
+	SessionLabel string `yaml:"session_label,omitempty" json:"session_label,omitempty"`
 }
 
 // ResolveAPIKey returns the bob API key, or "" when none is configured.
@@ -4940,7 +4995,7 @@ type HubConfig struct {
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
 	// ContributeCloseAlreadyDone is a deprecated compatibility key. Verified
 	// already-done PR evidence now runs the normal issue close path; human-filed
-	// bugs still wait for reporter confirmation unless explicitly opted in.
+	// bugs close by default unless they explicitly opted into reporter confirmation.
 	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
 	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
 	// resolved. It is also in the default contribute skip label set, so labelled

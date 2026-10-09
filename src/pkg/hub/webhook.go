@@ -100,6 +100,22 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 // spokeWebhookPath is the spoke dashboard's GitHub webhook receiver.
 const spokeWebhookPath = "/api/webhook/github"
 
+// spokeWebhookRelayGuard refuses relay targets whose host is or resolves to a
+// private/internal address. DashboardURL is self-reported by the spoke over
+// the heartbeat, so without this any enrolled spoke could point the hub at a
+// cluster-internal service or the cloud metadata endpoint and have the hub
+// POST to it on every delivery for that spoke's repos. Same guard and same
+// test seam as the hive config proxy (hiveConfigSSRFGuard).
+var spokeWebhookRelayGuard = isPrivateURL
+
+// spokeWebhookRelayClient never follows redirects: a public DashboardURL that
+// answers 30x to an internal host would otherwise re-open the SSRF the guard
+// above closes. The spoke receiver is a fixed path, so a redirect is never
+// legitimate here.
+var spokeWebhookRelayClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
 // relayWebhookToSpoke forwards a verified PR-shaped delivery, byte for byte
 // and with its original signature, to the hive that manages the repository so
 // the spoke can invalidate its cached PR state (hivecommons/hive#11177). The
@@ -150,13 +166,17 @@ func (s *HubServer) relayWebhookToSpoke(event string, header http.Header, body [
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
 		defer cancel()
+		if spokeWebhookRelayGuard(ctx, dashboardURL) {
+			s.logger.Warn("refusing webhook relay: spoke dashboard URL is private or unresolvable", "hive_id", hiveID, "event", event)
+			return
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, spokeURL, bytes.NewReader(payload))
 		if err != nil {
 			s.logger.Warn("failed to build spoke webhook relay request", "hive_id", hiveID, "error", err)
 			return
 		}
 		req.Header = forward
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := spokeWebhookRelayClient.Do(req)
 		if err != nil {
 			s.logger.Warn("spoke webhook relay failed", "hive_id", hiveID, "event", event, "error", err)
 			return

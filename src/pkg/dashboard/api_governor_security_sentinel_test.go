@@ -15,7 +15,7 @@ func TestGovernorSecuritySentinelDefaultsInResponse(t *testing.T) {
 	if !ok {
 		t.Fatalf("sentinel block missing: %#v", sec["sentinel"])
 	}
-	if sn["enabled"] != true || sn["label"] != "sentinel-alert" || sn["sensitivePathsDefault"] != true {
+	if sn["enabled"] != true || sn["label"] != "sentinel-alert" || sn["sensitivePathsDefault"] != true || sn["trustedAuthorsBlock"] != false {
 		t.Fatalf("sentinel defaults wrong: %#v", sn)
 	}
 	if got := len(sn["sensitivePaths"].([]any)); got != len(config.DefaultSentinelSensitivePaths()) {
@@ -38,10 +38,11 @@ func TestGovernorSecuritySentinelPartialUpdatePreservesOtherFields(t *testing.T)
 
 	rec := doPut(s, "/api/config/governor/security", map[string]any{
 		"sentinel": map[string]any{
-			"sensitivePaths": []string{"OWNERS", "deploy/**"},
-			"exemptLogins":   []string{" clubanderson ", ""},
-			"label":          "needs-security-eyes",
-			"maxActions":     5,
+			"sensitivePaths":      []string{"OWNERS", "deploy/**"},
+			"exemptLogins":        []string{" clubanderson ", ""},
+			"label":               "needs-security-eyes",
+			"maxActions":          5,
+			"trustedAuthorsBlock": true,
 		},
 	})
 	if rec.Code != http.StatusOK {
@@ -49,7 +50,7 @@ func TestGovernorSecuritySentinelPartialUpdatePreservesOtherFields(t *testing.T)
 	}
 	sc := deps.Config.Sentinel
 	if len(sc.SensitivePaths) != 2 || len(sc.ExemptLogins) != 1 || sc.ExemptLogins[0] != "clubanderson" ||
-		sc.Label != "needs-security-eyes" || sc.MaxActions != 5 {
+		sc.Label != "needs-security-eyes" || sc.MaxActions != 5 || !sc.TrustedAuthorsBlock {
 		t.Fatalf("sentinel not persisted: %+v", sc)
 	}
 
@@ -62,7 +63,7 @@ func TestGovernorSecuritySentinelPartialUpdatePreservesOtherFields(t *testing.T)
 		t.Fatalf("PUT = %d: %s", rec.Code, rec.Body.String())
 	}
 	sc = deps.Config.Sentinel
-	if len(sc.SensitivePaths) != 2 || sc.Label != "needs-security-eyes" || sc.IsEnabled() ||
+	if len(sc.SensitivePaths) != 2 || sc.Label != "needs-security-eyes" || sc.IsEnabled() || !sc.TrustedAuthorsBlock ||
 		len(sc.DisabledBehaviors) != 1 {
 		t.Fatalf("partial update clobbered fields: %+v", sc)
 	}
@@ -83,7 +84,7 @@ func TestGovernorSecuritySentinelPartialUpdatePreservesOtherFields(t *testing.T)
 
 	body := decodeJSON(t, doGet(s, "/api/config/governor"))
 	sn := body["security"].(map[string]any)["sentinel"].(map[string]any)
-	if sn["enabled"] != false || sn["sensitivePathsDefault"] != false || sn["maxActions"].(float64) != 5 {
+	if sn["enabled"] != false || sn["sensitivePathsDefault"] != false || sn["maxActions"].(float64) != 5 || sn["trustedAuthorsBlock"] != true {
 		t.Fatalf("response wrong after update: %#v", sn)
 	}
 	for _, b := range sn["behaviors"].([]any) {

@@ -144,7 +144,7 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 		{name: "pr gone", fx: trustedSweepFixture{getStatus: http.StatusNotFound}, wantReason: "gone"},
 		{name: "fetch error", fx: trustedSweepFixture{getStatus: http.StatusInternalServerError}, wantReason: "fetch-pr", wantErr: true},
 		{name: "reviews error", fx: trustedSweepFixture{reviewsStatus: http.StatusInternalServerError}, wantReason: "review-state-check", wantErr: true},
-		{name: "not mergeable", fx: trustedSweepFixture{mergeableState: "dirty"}, wantReason: "not-mergeable"},
+		{name: "not mergeable", fx: trustedSweepFixture{mergeableState: "dirty"}, wantReason: "conflicting"},
 		{
 			name: "fork permission api error", fx: trustedSweepFixture{headRepo: "alice/widget", permStatus: http.StatusInternalServerError},
 			wantReason: "author-permission-check", wantErr: true,
@@ -303,12 +303,35 @@ func TestPrefilterTrustedAuthorPRHeldLabel(t *testing.T) {
 		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
 		Labels: []*gh.Label{{Name: gh.Ptr("hold")}},
 	}
-	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "held" {
-		t.Fatalf("prefilterTrustedAuthorPR = %q, want held", got)
+	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "label:hold" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want label:hold", got)
 	}
 	pr.Labels = nil
 	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "untrusted-author-role" {
 		t.Fatalf("prefilterTrustedAuthorPR without authorizer = %q, want untrusted-author-role", got)
+	}
+}
+
+func TestPrefilterTrustedAuthorPRIgnoresSentinelExcludedLabel(t *testing.T) {
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	engine := New(client, Options{
+		SentinelLabel: func() string { return "sentinel-alert" },
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			return TrustedAuthorDecision{Allowed: true, Role: requireRole}
+		},
+	})
+	policy := TrustedAuthorPolicy{
+		RequireRole:   "merger",
+		ExcludeLabels: map[string]bool{"sentinel-alert": true},
+	}
+	pr := &gh.PullRequest{
+		State:  gh.Ptr("open"),
+		User:   &gh.User{Login: gh.Ptr("alice")},
+		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
+		Labels: []*gh.Label{{Name: gh.Ptr("sentinel-alert")}},
+	}
+	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want eligible", got)
 	}
 }
 

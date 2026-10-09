@@ -402,6 +402,82 @@ func (b *recordingBoundary) Execute(ctx context.Context, claim effects.Claim, ef
 	return effect(ctx)
 }
 
+func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":           7,
+			"merged":           false,
+			"merge_commit_sha": "ignored-for-open-pr",
+		})
+	}))
+	defer api.Close()
+
+	boundary := &reconcilingBoundary{needsReconciliationOnce: true}
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	engine := New(client, Options{MutationBoundary: boundary})
+	claim := effects.Claim{
+		Repo:   "acme/widget",
+		Kind:   effects.KindPullRequestMerge,
+		Target: "7",
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
+	}
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+		return effects.Result{Provenance: "merge-sha"}, nil
+	})
+	if err != nil {
+		t.Fatalf("executeMergeEffect returned error: %v", err)
+	}
+	if out.Provenance != "merge-sha" {
+		t.Fatalf("provenance = %q, want merge-sha", out.Provenance)
+	}
+	if boundary.executes != 2 {
+		t.Fatalf("execute count = %d, want retry after reconciliation", boundary.executes)
+	}
+	if len(boundary.reconciled) != 1 || boundary.reconciled[0].Applied || boundary.reconciled[0].Provenance != "" {
+		t.Fatalf("reconciled states = %#v, want one NotApplied state", boundary.reconciled)
+	}
+}
+
+func TestReconcileOpenPRMergeEffectMarksNotApplied(t *testing.T) {
+	boundary := &reconcilingBoundary{}
+	engine := New(nil, Options{MutationBoundary: boundary})
+	claim := effects.Claim{
+		Repo:   "acme/widget",
+		Kind:   effects.KindPullRequestMerge,
+		Target: "7",
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "trusted-author"},
+	}
+	engine.reconcileOpenPRMergeEffect(context.Background(), claim, "acme", "widget", 7)
+	if len(boundary.reconciled) != 1 || boundary.reconciled[0].Applied || boundary.reconciled[0].Provenance != "" {
+		t.Fatalf("reconciled states = %#v, want one NotApplied state", boundary.reconciled)
+	}
+}
+
+type reconcilingBoundary struct {
+	needsReconciliationOnce bool
+	executes                int
+	reconciled              []effects.ExternalState
+}
+
+func (b *reconcilingBoundary) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	b.executes++
+	if b.needsReconciliationOnce {
+		b.needsReconciliationOnce = false
+		return effects.Result{}, effects.ErrNeedsReconciliation
+	}
+	return effect(ctx)
+}
+
+func (b *reconcilingBoundary) Reconcile(ctx context.Context, claim effects.Claim, state effects.ExternalState) error {
+	b.reconciled = append(b.reconciled, state)
+	return nil
+}
+
 func TestSweepQueuedAutoMergesIgnoresForgedNonAppQueueApproval(t *testing.T) {
 	var merged []int
 	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{{
@@ -647,7 +723,7 @@ func TestSweepQueuedAutoMergesSkipsHeldIssueWithoutPRFetch(t *testing.T) {
 	if pullsGet != 0 || result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 {
 		t.Fatalf("pullsGet=%d result=%+v, want held queued issue skipped before PR fetch", pullsGet, result)
 	}
-	if !strings.Contains(logs.String(), "reason=held") {
+	if !strings.Contains(logs.String(), "reason=label:hold") {
 		t.Fatalf("logs = %q, want debug held skip", logs.String())
 	}
 }
@@ -1107,7 +1183,7 @@ func TestCommitGreenRequiredChecksOnly(t *testing.T) {
 			checks: []struct{ name, status, conclusion string }{
 				{"build-gate", "in_progress", ""},
 			},
-			wantReason: "check-pending",
+			wantReason: "required-check-pending:build-gate",
 		},
 		{
 			name:             "required check failure blocks",
@@ -1115,7 +1191,7 @@ func TestCommitGreenRequiredChecksOnly(t *testing.T) {
 			checks: []struct{ name, status, conclusion string }{
 				{"build-gate", "completed", "failure"},
 			},
-			wantReason: "check-failure",
+			wantReason: "required-check-failing:build-gate",
 		},
 		{
 			name:             "non-required failing status context never blocks",
@@ -1134,7 +1210,7 @@ func TestCommitGreenRequiredChecksOnly(t *testing.T) {
 			statuses: []struct{ context, state string }{
 				{"ci/build", "failure"},
 			},
-			wantReason: "status-failure",
+			wantReason: "required-check-failing:ci/build",
 		},
 	}
 	for _, tt := range tests {
@@ -1255,14 +1331,10 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 	}
 }
 
-// TestCommitGreenConfigRequiredChecksTakesPrecedence locks in that a
-// config-declared required-checks set (SetRequiredChecks, mirroring
-// config.AutoMergeConfig.RequiredCheckSet) is consulted BEFORE the
-// branch-protection API — the primary path now that the Hive App token
-// lacks administration:read. The mock server's protection endpoint is left
-// unregistered (any request to it fails the test) to prove commitGreen never
-// even calls it when a config set is installed.
-func TestCommitGreenConfigRequiredChecksTakesPrecedence(t *testing.T) {
+// TestCommitGreenConfigRequiredChecksFallback locks in that branch protection
+// is authoritative and config-declared required checks are only the fallback
+// when protection cannot be read.
+func TestCommitGreenConfigRequiredChecksFallback(t *testing.T) {
 	tests := []struct {
 		name           string
 		requiredChecks map[string]bool
@@ -1285,7 +1357,7 @@ func TestCommitGreenConfigRequiredChecksTakesPrecedence(t *testing.T) {
 			checks: []struct{ name, status, conclusion string }{
 				{"build-gate", "completed", "failure"},
 			},
-			wantReason: "check-failure",
+			wantReason: "required-check-failing:build-gate",
 		},
 		{
 			name:           "non-required CodeQL failure never blocks",
@@ -1302,7 +1374,7 @@ func TestCommitGreenConfigRequiredChecksTakesPrecedence(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
-					t.Fatalf("commitGreen must not call the branch-protection API when a config required-checks set is installed")
+					http.Error(w, "forbidden", http.StatusForbidden)
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
 					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
@@ -1515,6 +1587,9 @@ type selfAuthoredPR struct {
 	statusState     string
 	checkStatus     string
 	checkConclusion string
+	omitStatus      bool
+	extraStatuses   []map[string]string
+	extraChecks     []map[string]string
 	updateCount     *int
 	updateStatus    int
 	// headSHAOverride, when set, is returned by the SECOND PR fetch (the
@@ -1564,28 +1639,44 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
 				"head":            map[string]string{"sha": headSHA},
+				"base":            map[string]string{"ref": "main"},
 				"labels":          issueLabels("", pr.extraLabels),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+			json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"sha": "basesha"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			json.NewEncoder(w).Encode(map[string]any{
+				"strict":   true,
+				"contexts": []string{"ci/build"},
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
 			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/basesha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []map[string]string{}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
+			statuses := append([]map[string]string{}, pr.extraStatuses...)
+			if !pr.omitStatus {
+				statuses = append(statuses, map[string]string{"context": "ci/build", "state": pr.statusState})
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"state":       pr.statusState,
-				"total_count": 1,
-				"statuses":    []map[string]string{{"context": "ci/build", "state": pr.statusState}},
+				"total_count": len(statuses),
+				"statuses":    statuses,
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
+			runs := []map[string]string{{
+				"name":       "build",
+				"status":     pr.checkStatus,
+				"conclusion": pr.checkConclusion,
+			}}
+			runs = append(runs, pr.extraChecks...)
 			json.NewEncoder(w).Encode(map[string]any{
-				"total_count": 1,
-				"check_runs": []map[string]string{{
-					"name":       "build",
-					"status":     pr.checkStatus,
-					"conclusion": pr.checkConclusion,
-				}},
+				"total_count": len(runs),
+				"check_runs":  runs,
 			})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/merge")
@@ -1629,6 +1720,104 @@ func TestSweepSelfAuthoredAutoMergesMergesGreenAppPRWithoutHumanReview(t *testin
 	}
 	if len(audits) != 1 || audits[0].Number != 11 || audits[0].Author != testHiveAppBotLogin || audits[0].QueuedBy != "" {
 		t.Fatalf("audit events = %#v, want App-authored PR 11 with no queuer", audits)
+	}
+}
+
+func TestTrySweepSelfAuthoredPRRequiredChecksDecision(t *testing.T) {
+	tests := []struct {
+		name       string
+		pr         selfAuthoredPR
+		wantReason string
+		wantMerge  bool
+	}{
+		{
+			name: "required green with tide pending is eligible",
+			pr: selfAuthoredPR{
+				number: 21, author: testHiveAppBotLogin, mergeableState: "blocked",
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+				extraStatuses: []map[string]string{{"context": "tide", "state": "pending"}},
+			},
+			wantMerge: true,
+		},
+		{
+			name: "required green with optional cancelled run is eligible",
+			pr: selfAuthoredPR{
+				number: 22, author: testHiveAppBotLogin, mergeableState: "unstable",
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+				extraChecks: []map[string]string{{"name": "old shard", "status": "completed", "conclusion": "cancelled"}},
+			},
+			wantMerge: true,
+		},
+		{
+			name: "required check missing blocks with named reason",
+			pr: selfAuthoredPR{
+				number: 23, author: testHiveAppBotLogin, mergeableState: "blocked",
+				omitStatus: true, statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantReason: "required-check-missing:ci/build",
+		},
+		{
+			name: "conflicting blocks before CI",
+			pr: selfAuthoredPR{
+				number: 24, author: testHiveAppBotLogin, mergeableState: "dirty",
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantReason: "conflicting",
+		},
+		{
+			name: "hold label blocks",
+			pr: selfAuthoredPR{
+				number: 25, author: testHiveAppBotLogin, mergeableState: "clean", extraLabels: []string{"hold"},
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantReason: "label:hold",
+		},
+		{
+			name: "sentinel label on trusted self-authored PR is eligible",
+			pr: selfAuthoredPR{
+				number: 26, author: testHiveAppBotLogin, mergeableState: "clean", extraLabels: []string{"sentinel-alert"},
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantMerge: true,
+		},
+		{
+			name: "sentinel label on untrusted author is blocked by trust predicate first",
+			pr: selfAuthoredPR{
+				number: 27, author: "mallory", mergeableState: "clean", extraLabels: []string{"sentinel-alert"},
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantReason: "not-app-authored",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var merged []int
+			api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{tt.pr}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			if tt.wantReason == "not-app-authored" {
+				pr := &gh.PullRequest{
+					State:  gh.Ptr("open"),
+					User:   &gh.User{Login: gh.Ptr(tt.pr.author)},
+					Labels: []*gh.Label{{Name: gh.Ptr("sentinel-alert")}},
+					Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
+				}
+				if got := c.prefilterSelfAuthoredPR(pr); got != tt.wantReason {
+					t.Fatalf("prefilterSelfAuthoredPR = %q, want %q", got, tt.wantReason)
+				}
+				return
+			}
+			_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", tt.pr.number, true)
+			if err != nil {
+				t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+			}
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if gotMerge := len(merged) == 1; gotMerge != tt.wantMerge {
+				t.Fatalf("merged=%v, wantMerge=%v", merged, tt.wantMerge)
+			}
+		})
 	}
 }
 
@@ -2292,7 +2481,7 @@ func TestAutoMergeSweepPrefilterHelpers(t *testing.T) {
 		{name: "closed", pr: &gh.PullRequest{State: gh.Ptr("closed")}, want: "closed"},
 		{name: "draft", pr: &gh.PullRequest{State: gh.Ptr("open"), Draft: gh.Ptr(true)}, want: "draft"},
 		{name: "other-author", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr("alice")}}, want: "not-app-authored"},
-		{name: "held", pr: appPR("hold/review"), want: "held"},
+		{name: "held", pr: appPR("hold/review"), want: "label:hold"},
 		{name: "exempt", pr: appPR("skip-merge"), want: "exempt-label"},
 		{name: "missing-head", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}, want: "missing-head-sha"},
 		{name: "candidate", pr: appPR("ready"), want: ""},
@@ -2320,7 +2509,7 @@ func TestAutoMergeSweepPrefilterHelpers(t *testing.T) {
 		{name: "nil", want: "not-pull-request"},
 		{name: "plain-issue", issue: &gh.Issue{Number: gh.Ptr(7)}, want: "not-pull-request"},
 		{name: "label-removed", issue: queuedIssue("other"), want: "label-removed"},
-		{name: "held", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "hold"), want: "held"},
+		{name: "held", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "hold"), want: "label:hold"},
 		{name: "exempt", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "skip-merge"), want: "exempt-label"},
 		{name: "candidate", issue: queuedIssue(hgithub.AutoMergeQueuedLabel), want: ""},
 	}

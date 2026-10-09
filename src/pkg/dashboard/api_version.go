@@ -244,7 +244,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 const dashboardHeartbeatStaleAfter = 6 * time.Minute
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
-const dashboardUpgradeInProgressMaxAge = 30 * time.Minute
+const dashboardUpgradeInProgressMaxAge = 15 * time.Minute
 
 // upgradeTargetSource labels where /api/version's target came from (#7262).
 const (
@@ -513,7 +513,11 @@ func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runni
 		startedAt = st.UpdatedAt
 	}
 	if !startedAt.IsZero() && now.Sub(startedAt) >= dashboardUpgradeInProgressMaxAge {
-		return markSuperseded("no completion signal arrived within " + dashboardUpgradeInProgressMaxAge.String())
+		next.State = dashboardUpgradeStateFailed
+		next.UpdatedAt = now
+		next.Reason = "no rollout or completion signal arrived within " + dashboardUpgradeInProgressMaxAge.String()
+		s.rememberDashboardUpgradeState(next)
+		return &next
 	}
 	return st
 }
@@ -703,6 +707,7 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 			StartedFrom: versionHash,
 			StartedAt:   time.Now().UTC(),
 			UpdatedAt:   time.Now().UTC(),
+			Action:      deployment.UpgradeAction,
 		})
 		s.auditFromRequest(r, "self_upgrade", deployment.Runtime, "")
 		if deployment.UpgradeAction == "podman-quadlet-request" {

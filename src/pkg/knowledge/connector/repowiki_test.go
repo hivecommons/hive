@@ -170,6 +170,9 @@ func TestRepoWikiSyncReportsInvalidFiles(t *testing.T) {
 	if cur != "acme/app@abc" || len(ids) != 1 || ids[0] != "acme/app/good" {
 		t.Fatalf("cur=%q ids=%v", cur, ids)
 	}
+	if !IsPartial(err) {
+		t.Fatalf("err = %v, want PartialError so the syncer still tombstones and advances", err)
+	}
 	for _, want := range []string{"3 invalid", "kb/unclosed.md", "not closed", "kb/badline.md", "key: value", "kb/badstatus.md", `"bogus"`} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want %q", err, want)

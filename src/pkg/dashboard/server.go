@@ -397,11 +397,16 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
-	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
-	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
-	Timestamp      string                 `json:"timestamp"`
-	TimeZone       string                 `json:"timeZone,omitempty"`
+	OverviewBands    *OverviewBands            `json:"overview_bands,omitempty"`
+	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
+	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
+	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
+	// OverviewKPIIncomplete means at least one configured repo did not produce
+	// forge totals for this status snapshot, so Overview KPI history must not
+	// record it as a real point.
+	OverviewKPIIncomplete bool   `json:"overviewKPIIncomplete"`
+	Timestamp             string `json:"timestamp"`
+	TimeZone              string `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -498,6 +503,13 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+type FrontendOverviewCoverage struct {
+	Coverage int    `json:"coverage"`
+	Target   int    `json:"target"`
+	Source   string `json:"source"`
+	Repo     string `json:"repo,omitempty"`
 }
 
 type FrontendOverviewTotals struct {
@@ -658,6 +670,7 @@ type FrontendAgent struct {
 	LastKick          string `json:"lastKick,omitempty"`
 	LastKickAt        string `json:"lastKickAt,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
+	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
@@ -885,12 +898,13 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name          string                    `json:"name"`
-	Full          string                    `json:"full"`
-	Issues        int                       `json:"issues"`
-	PRs           int                       `json:"prs"`
-	Mode          string                    `json:"mode,omitempty"`
-	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	Name             string                    `json:"name"`
+	Full             string                    `json:"full"`
+	Issues           int                       `json:"issues"`
+	PRs              int                       `json:"prs"`
+	Mode             string                    `json:"mode,omitempty"`
+	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
+	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the
@@ -1141,6 +1155,8 @@ type TrendHistoryEntry struct {
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      int  `json:"overviewOutside,omitempty"`
+	OverviewCoverageOK   bool `json:"overviewCoverageOK,omitempty"`
+	OverviewCoverage     int  `json:"overviewCoverage,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -2371,6 +2387,24 @@ func (s *Server) ClearSystemAlert(id string) {
 	}
 }
 
+// ClearSystemAlertsExcept removes alerts under prefix except the IDs present in
+// keep. Level-triggered alert producers use this to expire banners they did not
+// reassert in the current reconciliation pass.
+func (s *Server) ClearSystemAlertsExcept(prefix string, keep map[string]struct{}) {
+	s.systemAlertsMu.Lock()
+	defer s.systemAlertsMu.Unlock()
+	filtered := s.systemAlerts[:0]
+	for _, a := range s.systemAlerts {
+		if strings.HasPrefix(a.ID, prefix) {
+			if _, ok := keep[a.ID]; !ok {
+				continue
+			}
+		}
+		filtered = append(filtered, a)
+	}
+	s.systemAlerts = filtered
+}
+
 // SetHubBanner sets the hub admin banner displayed on the spoke dashboard. It is
 // called on every heartbeat that carries a banner, so it logs the first display
 // only when the banner ID actually changes (a new banner became active), not on
@@ -2438,6 +2472,32 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 
 	if s.logger != nil {
 		s.logger.Info("hub banner dismissed", "banner_id", body.ID, "by", username, "role", role)
+	}
+	jsonResponse(w, map[string]bool{"ok": true})
+}
+
+// handleSystemAlertDismiss lets an owner acknowledge a plan-stall/needs-human
+// banner after they have reviewed it. The replan lane remains level-triggered:
+// if the plan is still truly stalled on a later reconciliation pass, it can
+// reassert the alert; if the source issue disappeared, the pass clears it.
+func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		jsonError(w, "missing alert id", http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(body.ID, planning.ReplanAlertPrefix) {
+		jsonError(w, "only plan-stall alerts are dismissible", http.StatusBadRequest)
+		return
+	}
+	s.ClearSystemAlert(body.ID)
+	if s.logger != nil {
+		s.logger.Info("system alert dismissed", "alert_id", body.ID)
 	}
 	jsonResponse(w, map[string]bool{"ok": true})
 }
@@ -3512,7 +3572,9 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
 	}
-	s.attachOverviewKPI(&entry, status, at)
+	if overviewKPISnapshotComplete(status) {
+		s.attachOverviewKPI(&entry, status, at)
+	}
 	if len(status.Repos) > 0 {
 		repos := make(map[string]TrendRepoSnap, len(status.Repos))
 		for _, r := range status.Repos {
@@ -3532,6 +3594,18 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 	if len(s.trendHistory) > trendHistoryMaxEntries {
 		s.trendHistory = s.trendHistory[len(s.trendHistory)-trendHistoryMaxEntries:]
 	}
+}
+
+func overviewKPISnapshotComplete(status *StatusPayload) bool {
+	if status == nil || status.OverviewKPIIncomplete {
+		return false
+	}
+	for _, repo := range status.Repos {
+		if repo.CountsIncomplete {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {
@@ -3583,6 +3657,10 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
 	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
 	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
+	if status.OverviewCoverage != nil {
+		e.OverviewCoverageOK = true
+		e.OverviewCoverage = status.OverviewCoverage.Coverage
+	}
 }
 
 func overviewKPIExcludedBand(band string) bool {
@@ -3614,6 +3692,7 @@ type OverviewKPIHistoryEntry struct {
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
+	OverviewCoverage     *int  `json:"overviewCoverage,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3633,6 +3712,9 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
 			row.OverviewOutside = intPtr(e.OverviewOutside)
+		}
+		if e.OverviewCoverageOK {
+			row.OverviewCoverage = intPtr(e.OverviewCoverage)
 		}
 		out = append(out, row)
 	}

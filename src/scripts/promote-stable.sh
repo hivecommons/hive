@@ -326,6 +326,26 @@ docker_success_runs() {
   } | awk -F '\t' 'NF >= 3 && !seen[$1]++ { print }' | sort -t $'\t' -k1,1nr
 }
 
+# duplicate_run_owns_tag <sha> <generation> <runs-tsv>: true when <generation>
+# is another successful docker.yml run on the same commit.
+duplicate_run_owns_tag() {
+  local sha=$1 generation=$2 runs=$3
+  awk -F '\t' -v g="$generation" -v s="$sha" '$1 == g && $2 == s { found = 1 } END { exit !found }' <<<"$runs"
+}
+
+# tag_consistent_for <prefix> <sha> <generation> <image>...: true when every
+# image's short-SHA tag resolves to <sha> and carries <generation>.
+tag_consistent_for() {
+  local prefix=$1 sha=$2 generation=$3 image digest revision
+  shift 3
+  for image in "$@"; do
+    digest=$(manifest_digest "${prefix}/${image}:${sha:0:7}" 2>/dev/null) || return 1
+    revision=$(revision_for_ref "${prefix}/${image}@${digest}" 2>/dev/null || true)
+    [[ $revision == "$sha" || $revision == "${sha:0:7}" ]] || return 1
+    [[ $(generation_for_ref "${prefix}/${image}@${digest}" 2>/dev/null || echo 0) == "$generation" ]] || return 1
+  done
+}
+
 blocker_count() {
   unset GITHUB_TOKEN && gh issue list -R "$1" --state open --label "${BLOCKER_LABEL:-$BLOCKER_LABEL_DEFAULT}" --json number --limit 100 --jq 'length'
 }
@@ -511,6 +531,8 @@ promote() {
     fi
   fi
 
+  local docker_runs
+  docker_runs=$(docker_success_runs "$repo")
   while IFS=$'\t' read -r run_number run_sha run_completed; do
     [[ $run_number =~ ^[0-9]+$ ]] || continue
     (( run_number > max_stable_generation )) || continue
@@ -557,6 +579,18 @@ PYEOF
         same=false
       fi
     done
+    # Two successful docker.yml runs on the same commit (a concurrent push pair,
+    # or push + workflow_dispatch) publish the same short-SHA tag; it can only
+    # carry one run's generation. When the tag consistently belongs to a sibling
+    # successful run of this SHA, this run is a superseded duplicate, not an
+    # integrity failure: skip it so the sibling is evaluated as its own build
+    # (#11196).
+    if [[ $missing != true && $same != true && $first_generation =~ ^[0-9]+$ ]] && (( first_generation != run_number )) \
+      && duplicate_run_owns_tag "$run_sha" "$first_generation" "$docker_runs" \
+      && tag_consistent_for "$image_prefix" "$run_sha" "$first_generation" "${images[@]}"; then
+      echo "::notice::docker.yml run ${run_number} on ${run_sha:0:7} is a duplicate; its short-SHA tags carry sibling run ${first_generation}, which is evaluated as its own build" >&2
+      continue
+    fi
     if [[ $missing == true || $same != true ]]; then
       best_reason="digest integrity gate is holding build ${run_sha:0:7} generation ${run_number}: image digests are missing or metadata does not match"
       break
@@ -595,7 +629,7 @@ PYEOF
     best_smoke=$smoke
     best_evidence=$evidence_text
     break
-  done < <(docker_success_runs "$repo")
+  done <<< "$docker_runs"
 
   if [[ -z $best_digest ]]; then
     if [[ -n $best_reason ]]; then

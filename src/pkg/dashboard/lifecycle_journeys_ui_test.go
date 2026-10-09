@@ -103,6 +103,10 @@ func TestLifecycleTimelineRendersNonZeroBars(t *testing.T) {
 	global.ResizeObserver = class { observe() {} };
 	global.requestAnimationFrame = (fn) => { fn(); return 1; };
 	function escapeHtml(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+	function selectedDashboardTimeZone() { return 'UTC'; }
+	function dashboardDateFormatter(options) { const opts = Object.assign({}, options || {}); opts.timeZone = selectedDashboardTimeZone(); return new Intl.DateTimeFormat([], opts); }
+	function formatDashboardDateTime(value, options, fallback) { const d = value instanceof Date ? value : new Date(value); if (isNaN(d.getTime())) return fallback !== undefined ? fallback : String(value || ''); try { return dashboardDateFormatter(options || { month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' }).format(d); } catch (e) { return d.toISOString(); } }
+	function formatDashboardTime(value, options, fallback) { return formatDashboardDateTime(value, options || { hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' }, fallback); }
 	function refreshSectionCardShell() {}
 	function setSectionSummary() {}
 	function applySectionCollapse() {}

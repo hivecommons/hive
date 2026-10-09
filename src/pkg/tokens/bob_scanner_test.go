@@ -223,6 +223,56 @@ func TestScanBobSessions_AttributesTrustedFolderAgent(t *testing.T) {
 	}
 }
 
+func TestScanBobSessions_AttributesBobAliasToRealAgent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "agents")
+	realPath := filepath.Join(root, "sec-check")
+	aliasRoot := filepath.Join(root, ".bob-alias")
+	aliasPath := filepath.Join(aliasRoot, "hive-sec-check")
+	if err := os.MkdirAll(realPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(aliasRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realPath, aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	projectHash := sha256.Sum256([]byte(aliasPath))
+	hash := hexLower(projectHash[:])
+
+	trusted, _ := json.Marshal(map[string]string{aliasPath: "TRUST_FOLDER"})
+	if err := os.WriteFile(filepath.Join(dir, "trustedFolders.json"), trusted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chatDir := filepath.Join(dir, "tmp", hash, "chats")
+	if err := os.MkdirAll(chatDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sess := bobChatSession{
+		SessionID:   "agent-session",
+		ProjectHash: hash,
+		Messages: []bobChatMessage{
+			{Type: "bob-shell", Content: "done", Model: "premium", Tokens: &bobTokens{Input: 10, Output: 5}},
+		},
+	}
+	data, _ := json.Marshal(sess)
+	if err := os.WriteFile(filepath.Join(chatDir, "session.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.ByAgent["sec-check"] != 15 {
+		t.Fatalf("ByAgent[sec-check] = %d, want 15 (alias must map back to real agent)", agg.ByAgent["sec-check"])
+	}
+	if _, ok := agg.ByAgent["hive-sec-check"]; ok {
+		t.Fatalf("unexpected alias bucket: %+v", agg.ByAgent)
+	}
+}
+
 // TestBobSessionFirstActive verifies FirstActive prefers the recorded
 // StartTime and falls back to LastUpdated, mirroring bobSessionLastActive.
 func TestBobSessionFirstActive(t *testing.T) {

@@ -295,9 +295,21 @@ func bobTrustedAgentsByProjectHash(bobHomeDir string) map[string]string {
 		if folder == "" {
 			continue
 		}
-		sum := sha256.Sum256([]byte(folder))
-		if agent := strings.TrimSpace(filepath.Base(folder)); agent != "" && agent != "." && agent != string(filepath.Separator) {
+		agent := strings.TrimSpace(filepath.Base(folder))
+		realFolder := ""
+		if resolved, err := filepath.EvalSymlinks(folder); err == nil && strings.TrimSpace(resolved) != "" && resolved != folder {
+			realFolder = resolved
+			if realAgent := strings.TrimSpace(filepath.Base(resolved)); realAgent != "" && realAgent != "." && realAgent != string(filepath.Separator) {
+				agent = realAgent
+			}
+		}
+		if agent != "" && agent != "." && agent != string(filepath.Separator) {
+			sum := sha256.Sum256([]byte(folder))
 			out[hexLower(sum[:])] = agent
+			if realFolder != "" {
+				realSum := sha256.Sum256([]byte(realFolder))
+				out[hexLower(realSum[:])] = agent
+			}
 		}
 	}
 	return out

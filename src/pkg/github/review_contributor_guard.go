@@ -101,3 +101,21 @@ func contributorCommentBody(body string) string {
 	}
 	return contributorCommentOnlyFallbackBody
 }
+
+func (c *Client) sentinelReviewBlockReason(ctx context.Context, repo string, number int) (string, error) {
+	if strings.TrimSpace(c.sentinelAlertLabel()) == "" {
+		return "", nil
+	}
+	if c == nil || c.client == nil {
+		return "", ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:sentinel_review_block"), owner, repoName, number)
+	if err != nil {
+		return "", err
+	}
+	if blocked := c.sentinelBlockedLabel(labelNames(pr.Labels)); blocked != "" {
+		return blocked, nil
+	}
+	return "", nil
+}

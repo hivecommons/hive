@@ -266,6 +266,31 @@ Metered sources today are the scanner and sink implementations in `pkg/tokens`:
 | `bob_scanner.go` | Bob CLI chat recordings | Uses Bob's explicit token fields, falling back to content-size estimates only when a recording lacks token data. |
 | `inference_sink.go` | vLLM, llm-d, LiteLLM, live Copilot proxy usage | Hive-written JSONL under the metrics directory. |
 
+### Tagging Bob sessions for Bobalytics
+
+Some adopters (for example Enrico) run Hive through Bob and want those Bob
+sessions to stand out in Bobalytics without renaming Hive agents. Use the Bob
+session-label controls instead:
+
+```yaml
+governor:
+  bob:
+    session_prefix: hive-
+
+agents:
+  scanner:
+    backend: bob
+    # Optional override; otherwise this reports as hive-scanner.
+    bob:
+      session_label: hive-triage
+```
+
+When a label is set, Hive passes it to Bob as `--instance-id` and exports
+`HIVE_BOB_SESSION_LABEL` for prompts/scripts. The Hive identity remains
+`scanner`: tmux, workdir, HOME, beads, claims, token buckets, and local token
+attribution do not move. If both fields are unset, Bob's launch command and env
+stay on the legacy path.
+
 Policy: a backend without token/cost coverage **cannot run under a
 budget-gated hive unless the operator explicitly marks it unmetered**, and the
 dashboard must display that backend as `unmetered` rather than folding it into

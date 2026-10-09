@@ -126,6 +126,9 @@ Top-level YAML keys accepted by `config.Config`:
 | `quality` | Optional quality-lane capabilities. | `formal: true` enables agent-authored Spin models only at ACMM L5/L6; see [Formal verification](formal-verification.md). |
 | `runs` | Long-running run settings: `runs.external.flue`, the report-only external-execution binding pilot, and `runs.external.omp`, the OMP workbench host behind the same adapter. | Both default OFF and independent. `enabled: true` with no `mode` runs in `shadow` (persists admissions, observes, never starts external work); `mode: report-only` dispatches. Flue dispatches to a runtime at `endpoint` pinned to `workflow_version` and needs a build with the `extwork_flue` tag; OMP offers work over the contributor relay to a workbench peer declaring `ext-exec/omp` whose declared version matches `workflow_version`, and needs the `extwork_omp` tag. Neither host receives a repository credential, dashboard token, or publication tool; OMP (tier T3) is additionally refused any write-capable stage. See [External workflow admission](design/external-workflow-admission.md). |
 | `auto_merge` | The App self-merge sweep: whether and how the Forge App merges its **own** CI-green PRs. | Default ON, but inert below `acmm_level: 6`. See [App self-merge sweep](#app-self-merge-sweep-auto_merge) below. |
+| `issues.close_on_merge` | `true`. | When a hive-authored or trusted-author PR merges and closing keywords or Hive claim metadata show it fixed an open issue, Hive comments `Fixed by #<pr> (merged <sha>). Closing. Reply /reopen if the problem persists.` and closes the issue as `completed`. Issues labelled `needs-reporter-confirmation`, `epic`, or `needs-human` stay open: Hive comments that the fix merged, adds `hive/likely-done`, and waits for `/fixed` or more instructions. |
+| `issues.close_on_merge_backfill_interval` | `1h`. | How often Hive scans open issues carrying Hive PR-linkage signals (`hive/covered-by-pr`, `hive/likely-done`, claim/covered comments, or timeline PR references) and applies the same close-on-merge policy to PRs that merged before the current process saw them. |
+| `issues.reporter_confirmation` | `false`. | Legacy opt-in switch for hives that want every human-filed bug-family issue to wait for reporter verification before close. Leave false for the default close-on-merge policy; add `hive: needs-confirmation` to an individual issue when only that issue needs the gate. `hive: reporter-confirmed` and `hive: close-on-merge` remain accepted legacy bypasses. |
 | `contribute.help_links` | Defaults to Hive contributor docs and the Hive issue tracker. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
@@ -300,12 +303,16 @@ starve every other GitHub caller, including the agents.
 The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
 (`pkg/sentinel`, `pkg/github.SweepSentinel`). It inspects every open PR in the
 watched repos — human, bot, or agent — and, when a PR matches one of the
-behaviors below, adds the alert label and posts one `<!-- hive-sentinel -->`
-comment per head SHA listing the matched rules and paths. It never merges,
-holds, closes, or removes labels; the point is to make the PR impossible for a
-reviewer to miss. Agents reading the reviewer-queue policy treat the label as
-"route to a human, never approve". A maintainer who removes the label keeps
-the PR clear until the author pushes again.
+behaviors below, posts one `<!-- hive-sentinel -->` comment per head SHA
+listing the matched rules and paths. For untrusted authors, it also adds the
+alert label. The label is a hard hold: while present, Hive will not submit an
+APPROVE review, apply LGTM/approval labels, or merge the PR through any
+auto-merge lane (dashboard queue, self-authored App sweep, trusted bot authors,
+or trusted authors). Trusted authors (the Hive App, configured trusted bots and
+owner/trusted-author allow-list entries) default to an informational notice and
+audit/dashboard finding only; no alert label is added unless the operator opts
+into blocking them. A maintainer who removes the label keeps the PR clear until
+the author pushes again.
 
 | Behavior | Fires when |
 |---|---|
@@ -321,12 +328,13 @@ the PR clear until the author pushes again.
 | Key | Default | Meaning |
 |---|---|---|
 | `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
-| `sentinel.label` | `sentinel-alert` | Label added to flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". |
+| `sentinel.label` | `sentinel-alert` | Label added to untrusted flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
+| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: comment, audit/dashboard record, no label, no approval/merge block. Set `true` to add the blocking label for trusted authors too. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |
 | `sentinel.exempt_logins` | empty | GitHub logins never flagged (e.g. a release bot). Use sparingly. |
 | `sentinel.repos` | empty = all watched repos | Optional `owner/repo` allow-list. |
-| `sentinel.max_actions` | `20` | Caps label+comment actions per pass. |
+| `sentinel.max_actions` | `20` | Caps label/comment/remediation actions per pass. |
 
 Owners edit all of this from **Settings → Security → Suspicious Activity**;
 the dashboard writes the owner-only `/api/config/governor/security` overlay.
@@ -406,7 +414,7 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 - Manual dashboard/API kicks that rely on Hive's generated work list wait for the first governor scan after boot. Until that scan populates the scheduler snapshot, `POST /api/kick/{agent}` returns `202` with `status: "deferred"` and Hive delivers one deduplicated kick for that agent as soon as the first scan completes.
 - Kick-visibility conditions surfaced on the dashboard include `copilot-question-form`, which means the Copilot CLI asked an unattached human for clarification; Hive dismisses that form with Escape and retries delivery instead of dropping the kick.
 - The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
-- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are example placeholders that match Hive's built-in defaults, not public Bob pricing guidance:
+- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are illustrative only (they are not Hive's built-in defaults and not public Bob pricing guidance) — always set them to the conversion your Bob team gives you:
 
 ```yaml
 governor:
@@ -414,13 +422,13 @@ governor:
     usd: 25.00                    # optional period cap in Bob-equivalent USD
     coins:
       bob:
-        tokens_per_coin: 500000   # example placeholder; confirm with your Bob team
-        usd_per_coin: 0.50        # example placeholder; confirm with your Bob team
+        tokens_per_coin: 1000000  # illustrative only; use the conversion your Bob team gives you
+        usd_per_coin: 1.00        # illustrative only; use the conversion your Bob team gives you
         label: "BC"
         budget: 50                # optional period cap in Bob coins
 ```
 
-  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; confirm them with your Bob team before relying on the defaults.
+  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; always confirm the conversion with your Bob team rather than relying on Hive's built-in fallback values.
 
 ### What consumes tokens while agents are paused
 

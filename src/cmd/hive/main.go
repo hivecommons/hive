@@ -2091,6 +2091,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PRsAllowed:       b.cfg.Project.PRsAllowed(),
 		PolicyDir:        b.policyDirPath,
 		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		BobSessionPrefix: b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
 }
@@ -2298,6 +2299,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		MergerAuthorizer:    trustedMergerFunc(b.cfg),
 		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
 		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
+		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2508,6 +2510,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 				b.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -5462,6 +5465,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
+				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 
@@ -5832,6 +5836,8 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		// It is synchronous and adds no goroutine; kicks go through the same
 		// out-of-band SendKick path as the eval cycle above.
 		if b.replanLane != nil && b.replanLane.Due(time.Now()) {
+			refs, coveredRepos := activeIssueRefsFromLastActionable(b.lastActionable.Load())
+			b.replanLane.SetActiveIssueRefs(refs, coveredRepos)
 			if n := b.replanLane.Run(b.ctx); n > 0 {
 				b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
 			}
@@ -5948,6 +5954,32 @@ func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 
 func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 	spokealerts.ApplyModeUnscheduled(gov, dashSrv)
+}
+
+func activeIssueRefsFromLastActionable(actionable *github.ActionableResult) (map[string]struct{}, map[string]struct{}) {
+	if actionable == nil {
+		return nil, nil
+	}
+	refs := make(map[string]struct{})
+	coveredRepos := make(map[string]struct{})
+	for repo := range actionable.TotalByRepo {
+		coveredRepos[repo] = struct{}{}
+	}
+	for _, issue := range actionable.Issues.Items {
+		if ref := planning.IssueRef(issue); ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	for _, held := range actionable.Hold.Items {
+		if held.Type != "issue" || held.Repo == "" || held.Number <= 0 {
+			continue
+		}
+		ref := planning.IssueRef(github.Issue{Repo: held.Repo, Number: held.Number, Title: held.Title})
+		if ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	return refs, coveredRepos
 }
 
 // agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
@@ -8398,6 +8430,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
 	}
 	if cfg != nil {
+		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
@@ -8634,12 +8667,14 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	}
 	sc := cfg.Sentinel
 	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
-		Label:            sc.LabelOrDefault(),
-		LabelColor:       config.DefaultSentinelLabelColor,
-		LabelDescription: config.DefaultSentinelLabelDescription,
-		Evaluator:        sc.EvaluatorConfig(),
-		RepoAllowed:      sc.RepoAllowed,
-		MaxActions:       sc.MaxActionsOrDefault(),
+		Label:               sc.LabelOrDefault(),
+		LabelColor:          config.DefaultSentinelLabelColor,
+		LabelDescription:    config.DefaultSentinelLabelDescription,
+		Evaluator:           sc.EvaluatorConfig(),
+		TrustedAuthor:       sentinelTrustedAuthorFunc(cfg, ghClient),
+		TrustedAuthorsBlock: sc.TrustedAuthorsBlock,
+		RepoAllowed:         sc.RepoAllowed,
+		MaxActions:          sc.MaxActionsOrDefault(),
 		Audit: func(event github.SentinelSweepEvent) {
 			if dashSrv == nil {
 				return
@@ -8659,16 +8694,24 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	for _, ev := range result.Flagged {
 		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
 	}
-	if len(result.Flagged) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "skipped", result.Skipped, "errors", len(result.Errors))
+	for _, ev := range result.Notified {
+		logger.Info("sentinel notice", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "rules", strings.Join(ev.Rules(), ","))
+	}
+	for _, ev := range result.Remediated {
+		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
+	}
+	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors))
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
 		Reason:     "sentinel sweep complete",
 		Attrs: map[string]string{
-			"seen":    strconv.Itoa(result.Seen),
-			"flagged": strconv.Itoa(len(result.Flagged)),
-			"skipped": strconv.Itoa(result.Skipped),
+			"seen":       strconv.Itoa(result.Seen),
+			"flagged":    strconv.Itoa(len(result.Flagged)),
+			"notified":   strconv.Itoa(len(result.Notified)),
+			"remediated": strconv.Itoa(len(result.Remediated)),
+			"skipped":    strconv.Itoa(result.Skipped),
 		},
 	})
 }
@@ -8739,6 +8782,8 @@ var (
 	claimLedger       *github.ClaimLedger
 	claimLedgerPath   = github.ClaimLedgerPath
 	claimLedgerLoader = github.LoadClaimLedger
+	closeOnMergeMu    sync.Mutex
+	closeOnMergeLast  time.Time
 )
 
 // hiveIdentity determines which PR authors count as "this hive", so only our
@@ -8778,6 +8823,58 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
+}
+
+func runCloseOnMergeSweep(ctx context.Context, cfg *config.Config, ghClient *github.Client, ledger *github.ClaimLedger, logger *slog.Logger) {
+	if cfg == nil || ghClient == nil || ledger == nil || !cfg.Issues.CloseOnMergeEnabled() {
+		return
+	}
+	opts := github.CloseOnMergeOptions{
+		Identity: hiveIdentity(cfg),
+		Logger:   logger,
+		TrustedAuthor: func(repo, login string) bool {
+			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
+			return decision.Allowed
+		},
+	}
+	results := ghClient.CloseOnMergeForLedger(ctx, ledger, opts)
+	logCloseOnMergeResults(logger, "close-on-merge ledger sweep", results)
+
+	interval := cfg.Issues.EffectiveCloseOnMergeBackfillInterval()
+	closeOnMergeMu.Lock()
+	due := closeOnMergeLast.IsZero() || time.Since(closeOnMergeLast) >= interval
+	if due {
+		closeOnMergeLast = time.Now()
+	}
+	closeOnMergeMu.Unlock()
+	if !due {
+		return
+	}
+	backfill := ghClient.CloseOnMergeBackfill(ctx, opts)
+	logCloseOnMergeResults(logger, "close-on-merge backfill sweep", backfill)
+}
+
+func logCloseOnMergeResults(logger *slog.Logger, msg string, results []github.CloseOnMergeResult) {
+	if logger == nil || len(results) == 0 {
+		return
+	}
+	var closed, awaiting, skipped, noop int
+	for _, r := range results {
+		switch r.Action {
+		case github.CloseOnMergeClosed:
+			closed++
+		case github.CloseOnMergeAwaiting:
+			awaiting++
+		case github.CloseOnMergeSkipped:
+			skipped++
+		default:
+			noop++
+		}
+	}
+	if closed > 0 || awaiting > 0 || skipped > 0 {
+		logger.Info(msg, "closed", closed, "awaiting_confirmation", awaiting, "skipped", skipped, "noop", noop)
+	}
 }
 
 // getClaimLedger lazily loads the persisted claim ledger on first use (and

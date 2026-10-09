@@ -11,6 +11,84 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.156.1)
+
+### Changed
+
+- Review Pipeline and Queue now render as separately collapsible tiles inside the Review dashboard section.
+- Align dashboard section settings gears with the section help mark instead of far-right header actions.
+
+## 2026-10-09 (v5.156.0)
+
+### Added
+
+- Add a dashboard display timezone preference so absolute timestamps can use browser local time, server time, UTC, or an IANA timezone. (#11276)
+- Add an optional per-agent `bob_display_name` reporting label for bob-backed agents, exported as `HIVE_BOB_DISPLAY_NAME`, so operators can tag Bob sessions (for example with a `hive-` prefix) without renaming the agent. (#11273)
+
+### Changed
+
+- Issues now close on fix merge by default while reporter confirmation is opt-in via `hive: needs-confirmation` or `issues.reporter_confirmation` (#11119)
+- Replace the Obsidian setup button with a Knowledge Integrations modal for Obsidian and all connector types. (#11266)
+- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue and matched their inner body padding (#11267, #11280)
+
+### Fixed
+
+- Reviewer, adjudicator and ci-maintainer no longer restart mid-review: the review prompt quoted "fetch failed", which the pane poller reads as a dead network, so no PR ever received a verdict (#11244).
+- changelog-fragment-guard no longer leaves cancelled required check-runs on a PR's head SHA: label events skip the job unless the label is `no-changelog`, and only a new push cancels an in-flight run, so green PRs are no longer reported BLOCKED by GitHub (#11250).
+- Upgrade indicators in the Version details card and the top toolbar now share one bee-orbit animation, so bees are consistently sized (about a third of the hive), circle the hive without overlapping it, and no longer restart or skip on status refreshes (#11253).
+- Render compliance and UI exports in-app instead of triggering native browser download prompts (#11261)
+- Let trusted authors keep sentinel notices (#11305)
+- Fixed self-authored and trusted-author automerge to gate on required branch-protection checks instead of GitHub's aggregate merge state, with per-PR skip reasons.
+- Hive now closes fixed issues itself after merged hive/trusted PRs, and backfills previously merged fixes that GitHub left open.
+- Roll hosted spokes to the newest GHCR-published image on fast-moving branches instead of waiting indefinitely for HEAD. (#11258)
+- Close dashboard and hub modal overlays with a central Escape handler that dismisses the topmost open modal first.
+- Skip incomplete Overview KPI snapshots when recording sparkline history so transient GitHub fetch failures no longer draw false dips.
+- `hive-podman-update.sh reconcile migrate` now records `HIVE_SELF_IMAGE` and `HIVE_SELF_IMAGE_TRACKING` in `hive.env` (skipped for digest-pinned units), so registry-tracked installs no longer get a dashboard upgrade button that fails with "registry tracking is ON", and rootless migrate checks the systemd user bus first, failing before any file is written instead of leaving a half-applied migration (#11296).
+- Rootless Podman: dashboard upgrade requests are now written `0644` so the host `hive-upgrade.service` can read them (it also retries through `podman unshare`), an unreadable request is reported as such instead of a `<missing>` ref, and the dashboard no longer describes a pending Podman upgrade with hub/Deployment wording (#11291).
+- Make the configured sentinel alert label a hard block for Hive approvals and every auto-merge lane.
+- Sentinel now treats trusted Hive authors as notice-only by default, remediates stale trusted-author alert labels, and offers `sentinel.trusted_authors_block` for operators who want the blocking label on trusted PRs too.
+- The upgrade confirmation now says it upgrades the Hive, not the runtime.
+
+## 2026-10-09 (v5.155.3)
+
+### Security
+
+- The hub's webhook relay to spokes now refuses private, link-local and loopback dashboard URLs and no longer follows redirects ([#11248](https://github.com/hivecommons/hive/issues/11248)). A spoke's `dashboard_url` is self-reported over the heartbeat; the relay added for webhook-driven PR cache invalidation posted every delivery to it with the default HTTP client, so an enrolled spoke could aim the hub at an internal service or the cloud metadata endpoint. The relay now applies the same `isPrivateURL` guard and no-redirect client the hive config proxy already uses; an in-cluster spoke that reports a private dashboard URL is logged and skipped rather than relayed to.
+
+## 2026-10-09 (v5.155.2)
+
+### Changed
+
+- GOVERNANCE.md now says where GitHub "collaborator" access sits relative to the contributor ladder and how it is earned, and the hive's reporter-trust wait notice links to that policy ("what these terms mean and how to become a trusted reporter"), so reporters whose issues stall can find out how to become trusted (#11018).
+- docs: Bob coin conversion example in operator-reference uses illustrative values; the real conversion comes from your Bob team.
+- Link trusted-author auto-merge role guidance to Security tab authorized users and the hub Manage Access screen.
+
+### Fixed
+
+- Agent-filed findings no longer become one issue per variant when they keep hitting the same file ([#11239](https://github.com/hivecommons/hive/issues/11239)). Consolidation from #9376 only folded a finding into an open issue with an *identical* file-reference set, so a stream of bypasses against one module — each citing the shared file plus its own fixture — was filed as dozens of separate issues and PRs. The issue-request watcher now also folds a new finding into the oldest open App-bot-filed issue once at least 3 open ones already cite a path it cites, posting it as a `<!-- hive-finding-folded -->` comment that asks for one structural fix. Manifests and other ubiquitous paths (`README.md`, `go.mod`, `package.json`, lock files) never count as a shared component.
+- Expire stale plan-stall dashboard alerts when their source issue is no longer active or the plan is no longer reasserted as stalled.
+
+## 2026-10-09 (v5.155.1)
+
+### Fixed
+
+- `stable` no longer stalls behind the 24h soak line on a busy `v5` ([#11196](https://github.com/hivecommons/hive/issues/11196)). When two successful `docker.yml` runs built the same commit, the promoter evaluated the duplicate whose generation the shared short-SHA tag did not carry and held the digest integrity gate indefinitely; it now skips the duplicate and evaluates the run that owns the tag. The promote-stable `gate` de-dup also now counts only runs whose `promote` job actually ran, so chains of skip-only runs can no longer suppress promotion for hours.
+
+## 2026-10-09 (v5.155.0)
+
+### Added
+
+- The quality agent's stats card now shows the primary repo's test coverage percentage against the 91% goal ([#11150](https://github.com/hivecommons/hive/issues/11150)). At ACMM Level 3 the quality agent drives coverage toward ~90%, the signal to move to Level 4, but the figure was only visible on the ci-maintainer card. The value comes from the existing coverage badge (`HIVE_COVERAGE_BADGE_URL`), the tooltip names that source, and the card shows "—" rather than 0% when no badge is configured or it cannot be read.
+
+### Changed
+
+- The Governor card's settings (⚙️) button now sits next to the card title instead of being pushed to the far right of the header, so it is easy to find on large monitors. (#11190)
+
+### Fixed
+
+- **`repo-wiki` connector: one invalid file no longer stalls the whole connector** — a markdown file with invalid front matter used to make every sync count as failed, so deleted files were never tombstoned and the cursor never advanced while any configured repo carried one bad `.md`. The connector now reports skipped files as a partial sync: the syncer still tombstones removed files and advances the cursor, and lists the offending files in the connector's `last_error`. (#11153 review follow-up)
+- The dashboard no longer reports two different versions for a hive whose last spoke-side upgrade was later superseded by a hub roll or floating image tag ([#11194](https://github.com/hivecommons/hive/issues/11194)). The release-status row now headlines the commit actually running (matching the "Version & upgrade details" menu) and labels the old upgrade target as superseded, instead of showing it as "✅ Last upgrade <old SHA>".
+
 ## 2026-10-09 (v5.154.0)
 
 ### Added
