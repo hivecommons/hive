@@ -2940,6 +2940,12 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
 	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
 	deps.startContributeMetrics(b.ctx, b.dashSrv)
+	// Compliance posture checks (#11079): a pass every
+	// compliance.posture_checks.interval while a framework is selected, with
+	// the history persisted on the /data PVC.
+	if deps.startCompliancePosture != nil {
+		deps.startCompliancePosture(b.ctx, b.dashSrv)
+	}
 	b.refreshDashboard = func() {
 		// Capture the mutation epoch BEFORE reading any state: if a mutation
 		// (e.g. a restart-count or budget-window reset) lands while this
@@ -3173,6 +3179,10 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			)
 		}
 	}
+
+	// Generated repository code maps (#11106); opt-in, connects its vault
+	// before stores are registered with the primer below.
+	b.startCodeMaps()
 
 	// Register everything connected above with the boot-time primer. With
 	// knowledge.enabled false there is none, and the stores are only primed
@@ -4717,6 +4727,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
 				ComponentReach: tracing.ReachSnapshot(),
+				// Compliance profile + latest posture pass/fail (#11083); an
+				// empty block when compliance is not configured.
+				Compliance: b.dashSrv.ComplianceHeartbeat(),
 			}
 
 		}, heartbeatSendInterval, b.logger,
@@ -5664,7 +5677,7 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	initialEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
 	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
 	lastEvalInterval := initialEvalInterval
 	ticker := deps.newTicker(initialEvalInterval)
@@ -5825,7 +5838,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				}
 			}
 			deps.persist(b)
-			effectiveEvalInterval := apiBudgetIntervalForConfig(b.cfg, b.ghClient)
+			effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
 			if effectiveEvalInterval != lastEvalInterval {
 				b.logger.Info("eval interval changed, resetting ticker",
 					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))

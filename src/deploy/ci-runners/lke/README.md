@@ -138,7 +138,11 @@ takes a node-wide `flock`, the first one downloads Go `GO_VERSION` and Node
 `NODE_VERSION` into the cache layout setup-* expect (`<tool>/<ver>/x64` +
 `x64.complete`), and the rest skip. Bump those two env values when `src/go.mod`
 or the `node-version: '22'` resolution moves; a stale value only forfeits the
-protection for that tool.
+protection for that tool. The workflows also run
+`.github/scripts/go-toolcache-guard.sh` right before every `actions/setup-go`
+step: it takes the same `.warm.lock` and atomically populates the Go version
+`src/go.mod` pins if the cache lacks it, so a Go bump no longer depends on a
+`helm upgrade` of this file to stay green (hivecommons/hive#11175).
 
 A half-written node entry can also have `bin/node` but no `bin/npm`
 (hivecommons/hive#10505). The canary now checks npm/npx (and `gofmt`) too and

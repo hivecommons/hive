@@ -66,8 +66,8 @@ func TestQuadrantColumnWiring(t *testing.T) {
 func TestQuadrantColumnCountConsistent(t *testing.T) {
 	html := dashScript(t)
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 13;",
-		"var TOTAL_COLUMNS_HEADER = 13;",
+		"var TOTAL_COLUMNS = 14;",
+		"var TOTAL_COLUMNS_HEADER = 14;",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("dashboardHTML is missing %q — adding the Quadrant column requires bumping both counts", snippet)
