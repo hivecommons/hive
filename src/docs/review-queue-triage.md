@@ -56,7 +56,7 @@ from the duplicate sweep's head-SHA cache, so ranking never costs a GitHub
 call; a head the sweep has not fingerprinted simply has no path signal. PRs
 with a lane label classify exactly as before.
 
-> The same queue is also shown by review stage on the dashboard **Review Pipeline** board; see [dashboard.md](dashboard.md#review-pipeline-board).
+> The same queue is also shown by review stage in the dashboard **Review** section's Pipeline board; see [dashboard.md](dashboard.md#review-pipeline-board).
 
 ## PR review queue
 

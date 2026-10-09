@@ -4058,6 +4058,11 @@
     @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
     @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
     /* Review queue (#9607) */
+    .review-subsection { display: grid; gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
+    .review-subsection + .review-subsection { margin-top: var(--sp-7); }
+    .review-subsection-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+    .review-subsection-title { font-size: var(--fs-md); font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+    .review-subsection-title .config-info { text-transform: none; letter-spacing: 0; margin-left: var(--sp-2); }
     .review-queue-count { font-size: var(--fs-xs); color: var(--muted); margin-left: var(--sp-4); }
     .review-queue-desc { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); }
     .review-queue-panel { padding: var(--sp-4); max-height: 520px; overflow-y: auto; }
@@ -4516,8 +4521,7 @@
       <div class="oc-nav-label">Admin</div>
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
-      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review Queue</span></a>
-      <a class="oc-nav-item" data-section="review-pipeline-section" data-action="ocNavigate" data-arg0="review-pipeline-section"><span class="oc-nav-emoji">🗂️</span><span class="oc-nav-text">Review Pipeline</span></a>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
       <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
       <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Agent activity</span></a>
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
@@ -4841,30 +4845,38 @@
   </div>
 
   <div class="mt-6 mb-8" id="review-queue-section" data-dashboard-section="review-queue-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review Queue section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔎 Review Queue <span id="review-queue-count" class="review-queue-count"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-queue-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔎 Review <span id="review-pipeline-count" class="review-queue-count"></span><span id="review-queue-count" class="review-queue-count"></span></h2>
     <div class="section-body">
-      <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position. See also the <a href="#review-pipeline-section" data-action="ocNavigate" data-arg0="review-pipeline-section">Review pipeline board</a>.</div>
-      <div id="review-queue-panel" class="review-queue-panel">
-        <div class="loading">Loading review queue…</div>
-      </div>
-      <div id="review-queue-paging" class="review-queue-paging">
-        <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
-        <span id="review-queue-range" class="review-queue-range"></span>
-        <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="mt-6 mb-8" id="review-pipeline-section" data-dashboard-section="review-pipeline-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="review-pipeline-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Review Pipeline section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🗂️ Review Pipeline <span id="review-pipeline-count" class="review-queue-count"></span></h2>
-    <div class="section-body">
-      <div class="review-pipeline-desc">Each open PR in the stage the review pipeline derived for it (<code>GET /api/review/pipeline</code>), with reviewers, P0–P3 findings, the fix-loop counter and the next action.</div>
-      <div class="review-pipeline-filters">
-        <select id="review-pipeline-repo" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="repo" data-arg-types="s,v" title="Filter by repo"><option value="">All repos</option></select>
-        <select id="review-pipeline-author" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="author" data-arg-types="s,v" title="Filter by author kind"><option value="">All authors</option><option value="agent">Agent</option><option value="contributor">Contributor</option></select>
-        <select id="review-pipeline-stage" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="stage" data-arg-types="s,v" title="Filter by stage"><option value="">All stages</option></select>
-      </div>
-      <div id="review-pipeline-panel"><div class="loading">Loading review pipeline…</div></div>
+      <section class="review-subsection" id="review-pipeline-subsection" aria-labelledby="review-pipeline-heading">
+        <div class="review-subsection-head">
+          <div>
+            <div class="review-subsection-title" id="review-pipeline-heading">Pipeline <span data-section-help="review-pipeline-subsection"></span></div>
+            <div class="review-pipeline-desc">Each open PR in the stage the review pipeline derived for it (<code>GET /api/review/pipeline</code>), with reviewers, P0–P3 findings, the fix-loop counter and the next action.</div>
+          </div>
+        </div>
+        <div class="review-pipeline-filters">
+          <select id="review-pipeline-repo" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="repo" data-arg-types="s,v" title="Filter by repo"><option value="">All repos</option></select>
+          <select id="review-pipeline-author" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="author" data-arg-types="s,v" title="Filter by author kind"><option value="">All authors</option><option value="agent">Agent</option><option value="contributor">Contributor</option></select>
+          <select id="review-pipeline-stage" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="stage" data-arg-types="s,v" title="Filter by stage"><option value="">All stages</option></select>
+        </div>
+        <div id="review-pipeline-panel"><div class="loading">Loading review pipeline…</div></div>
+      </section>
+      <section class="review-subsection" id="review-queue-subsection" aria-labelledby="review-queue-heading">
+        <div class="review-subsection-head">
+          <div>
+            <div class="review-subsection-title" id="review-queue-heading">Queue</div>
+            <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
+          </div>
+        </div>
+        <div id="review-queue-panel" class="review-queue-panel">
+          <div class="loading">Loading review queue…</div>
+        </div>
+        <div id="review-queue-paging" class="review-queue-paging">
+          <button class="hv-btn btn-secondary btn-sm" id="review-queue-prev" data-action="reviewQueuePrevPage" title="Previous page">← Prev</button>
+          <span id="review-queue-range" class="review-queue-range"></span>
+          <button class="hv-btn btn-secondary btn-sm" id="review-queue-next" data-action="reviewQueueNextPage" title="Next page">Next →</button>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -5699,8 +5711,7 @@
       'acmm-eval-section': { title: '🎯 ACMM Eval', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
-      'review-queue-section': { title: '🔎 Review Queue', summary: '0 PRs' },
-      'review-pipeline-section': { title: '🗂️ Review Pipeline', summary: '0 PRs' },
+      'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
       'nous-section': { title: '🧪 Strategy Lab', summary: '—' },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
@@ -5735,8 +5746,8 @@
       'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
       'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first.' },
-      'review-queue-section': { heading: 'Review Queue', help: 'Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.' },
-      'review-pipeline-section': { heading: 'Review Pipeline', help: 'The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.' },
+      'review-queue-section': { heading: 'Review', help: 'Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive\'s suggested review order.' },
+      'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.' },
       'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
@@ -5849,7 +5860,7 @@
       const badges = newHeader.querySelector('.dash-card-badges');
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
-      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #nous-mode-badge, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-mode-badge, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -6117,7 +6128,7 @@
       if (!Object.prototype.hasOwnProperty.call(REVIEW_QUEUE_WINDOWS, win)) return;
       _reviewQueueWindow = win;
       try { localStorage.setItem(REVIEW_QUEUE_WINDOW_KEY, win); } catch {}
-      setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
+      updateReviewSectionSummary();
     }
     window.setReviewQueueWindow = setReviewQueueWindow;
     function miniAvatarDots(contributors, total, label) {
@@ -6898,8 +6909,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const auditSummaryToday = Number(window._auditSummary && window._auditSummary.today);
       const auditToday = (Number.isFinite(auditSummaryToday) ? auditSummaryToday : (Number(data.auditEventsToday || 0) || document.querySelectorAll('#audit-panel .audit-entry').length || 0));
       setSectionSummary('audit-section', `${auditToday} events today`);
-      const rq = document.getElementById('review-queue-count');
-      setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent));
+      if (typeof updateReviewSectionSummary === 'function') updateReviewSectionSummary();
+      else { const rq = document.getElementById('review-queue-count'); setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent)); }
       const nous = document.getElementById('nous-mode-badge');
       setSectionSummary('nous-section', textOrDash(nous && nous.textContent));
       setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(window._kbCache || _kbCache || {})));
@@ -6919,11 +6930,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     /** Check whether a dashboard section is collapsed in localStorage */
     function isSectionCollapsed(sectionId) {
+      sectionId = dashboardAliasSectionId(sectionId);
       if (sectionId === 'cost-panel' && localStorage.getItem('hive-cost-collapsed') === '1') return true;
       return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1';
     }
     /** Persist section collapsed state */
     function setSectionCollapsed(sectionId, collapsed) {
+      sectionId = dashboardAliasSectionId(sectionId);
       if (collapsed) {
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
       } else {
@@ -7120,12 +7133,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_SNAPSHOT_VERSION=1;
     var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
     var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
+    var DASHBOARD_REVIEW_MIGRATION_KEY='hive.dashboard.reviewSectionMigrated';
+    function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
+    function dashboardMigrateReviewSectionStorage(){try{if(localStorage.getItem(DASHBOARD_REVIEW_MIGRATION_KEY)==='1')return;['hive-section-collapsed-review-queue-section','hive-section-collapsed-review-pipeline-section'].forEach(function(k){localStorage.removeItem(k);});var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY);if(raw){var arr=JSON.parse(raw);if(Array.isArray(arr)){arr=arr.map(dashboardAliasSectionId).filter(function(id,i,a){return id!=='review-queue-section'&&dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(arr.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(arr));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}}var layoutRaw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);if(layoutRaw){var layout=JSON.parse(layoutRaw);if(layout&&Array.isArray(layout.main)){layout.main=layout.main.map(dashboardAliasSectionId).filter(function(id,i,a){return a.indexOf(id)===i;});localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(layout));}}localStorage.setItem(DASHBOARD_REVIEW_MIGRATION_KEY,'1');}catch(e){}}
+    dashboardMigrateReviewSectionStorage();
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
-    function dashboardFeatureSectionHidden(id){return id==='nous-section'&&!strategyLabEnabled();}
-    function dashboardCanHideSection(id){return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
+    function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
     function dashboardSectionHidden(id){return dashboardHiddenSectionsRead().indexOf(id)>=0;}
@@ -7144,7 +7161,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Sections missing from a saved layout (added after the layout was
     // saved) slot in next to their template neighbour instead of being
     // appended after the trailing FAQ section (#9426).
-    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
+    function dashboardLayoutNormalize(saved){var valid=dashboardLayoutAllIds(),seen={},out={v:DASHBOARD_LAYOUT_VERSION,main:[]};var arr=saved&&Array.isArray(saved.main)?saved.main:[];arr.forEach(function(id){id=dashboardAliasSectionId(id);if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out.main.push(id);});var tpl=valid;tpl.forEach(function(id,i){if(seen[id])return;seen[id]=true;var at=-1;for(var j=i-1;j>=0&&at<0;j--){at=out.main.indexOf(tpl[j]);}if(at>=0){out.main.splice(at+1,0,id);return;}var before=out.main.length;for(var k=i+1;k<tpl.length;k++){var idx=out.main.indexOf(tpl[k]);if(idx>=0){before=idx;break;}}out.main.splice(before,0,id);});return out;}
     function dashboardLayoutEquals(a,b){a=dashboardLayoutNormalize(a);b=dashboardLayoutNormalize(b);if(a.main.length!==b.main.length)return false;for(var i=0;i<a.main.length;i++){if(a.main[i]!==b.main[i])return false;}return true;}
     function dashboardLayoutExtraKeys(){var keys=[];try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i)||'';if(k.indexOf('hive-repos-pill-filter:')===0||k.indexOf('hive-repo-card-widths:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY||k.indexOf('hive-agent-card-layout:')===0||k.indexOf('hive.repo.tile.order')===0||k.indexOf('hive.repo-tile.order')===0||k.indexOf('hive.repoTile.order')===0||k.indexOf('hive.dashboard.repoTileOrder')===0)keys.push(k);}}catch(e){}keys.sort();return keys;}
     function dashboardLayoutSnapshot(){var collapsed={},hidden={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardHiddenSectionsRead().forEach(function(id){hidden[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,hidden:hidden,extras:extras};}
@@ -7424,13 +7441,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function _ocSectionFromHash() {
       const h = location.hash.replace('#', '');
       if (h === 'throughput') return 'pr-throughput-section';
+      if (h === 'review-pipeline' || h === 'section-review-pipeline-section' || h === 'review-pipeline-section') return 'review-queue-section';
+      if (h === 'review-queue') return 'review-queue-section';
       const route = h.split('?')[0];
       if (route === 'projects') {
         const key = overviewProjectFilterKeyFromURL();
         if (key) _overviewProjectFilterKey = key;
         return 'repos-section';
       }
-      return route && route.startsWith('section-') ? route.replace('section-', '') : null;
+      return route && route.startsWith('section-') ? dashboardAliasSectionId(route.replace('section-', '')) : null;
     }
     let _ocSelectedAgent = _ocAgentFromHash();
     let _ocPaneTimer = null;
@@ -7649,6 +7668,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return affected;
     }
     function ocNavigate(section, skipScroll) {
+      section = dashboardAliasSectionId(section);
       if (dashboardFeatureSectionHidden(section)) return;
       if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);
       _ocSelectedAgent = null;
@@ -22665,7 +22685,7 @@ function burnAreaChart() {
       window._reviewQueueHistory = capDashboardArray((data && Array.isArray(data.history)) ? data.history : window._reviewQueueHistory, DASHBOARD_SERVER_HISTORY_CAP);
       var countEl = document.getElementById('review-queue-count');
       if (countEl) countEl.textContent = _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '';
-      setSectionSummary('review-queue-section', _reviewQueueTotal ? _reviewQueueTotal + ' PR' + (_reviewQueueTotal === 1 ? '' : 's') : '0 PRs');
+      updateReviewSectionSummary();
       if (!items.length) {
         panel.innerHTML = '<div class="review-queue-empty">Review queue is empty — no open PRs to rank.</div>';
       } else {
@@ -22724,6 +22744,7 @@ function burnAreaChart() {
       ['merged', 'Merged'], ['abandoned', 'Abandoned']
     ];
     let _reviewPipelineCards = [];
+    let _reviewPipelineTotal = 0;
     let _reviewPipelineFilters = { repo: '', author: '', stage: '' };
     let _reviewPipelineSig = '';
 
@@ -22895,6 +22916,13 @@ function burnAreaChart() {
       }
     }
 
+    function updateReviewSectionSummary() {
+      var parts = [];
+      if (Number.isFinite(Number(_reviewPipelineTotal))) parts.push(Number(_reviewPipelineTotal) + ' pipeline');
+      if (Number.isFinite(Number(_reviewQueueTotal))) parts.push(Number(_reviewQueueTotal) + ' queue');
+      setSectionSummary('review-queue-section', parts.length ? parts.join(' · ') : '0 PRs');
+    }
+
     function renderReviewPipelineBoard() {
       var panel = document.getElementById('review-pipeline-panel');
       if (!panel) return;
@@ -22902,7 +22930,8 @@ function burnAreaChart() {
       var total = cols.reduce(function(n, c) { return n + c.cards.length; }, 0);
       var countEl = document.getElementById('review-pipeline-count');
       if (countEl) countEl.textContent = total ? total + ' PR' + (total === 1 ? '' : 's') : '';
-      setSectionSummary('review-pipeline-section', total + ' PR' + (total === 1 ? '' : 's'));
+      _reviewPipelineTotal = total;
+      updateReviewSectionSummary();
       if (!_reviewPipelineCards.length) {
         panel.innerHTML = '<div class="review-pipeline-empty">No open PRs in the review pipeline.</div>';
         return;
