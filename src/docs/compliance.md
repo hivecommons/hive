@@ -88,9 +88,11 @@ structs to prove each one exists), plus two documented namespaces:
 ## The Settings → Compliance tab
 
 The framework and controls panels ship in
-[#11080](https://github.com/hivecommons/hive/issues/11080) — see
-[Using the Compliance tab](#using-the-compliance-tab). As designed, the tab
-has four panels:
+[#11080](https://github.com/hivecommons/hive/issues/11080); posture history,
+evidence exports and attestations ship in
+[#11081](https://github.com/hivecommons/hive/issues/11081) — see
+[Using the Compliance tab](#using-the-compliance-tab). The tab has four
+panels:
 
 1. **Framework profile** — select one or more frameworks (SOC 2 Type II,
    FedRAMP Moderate, ISO 27001 Annex A; or none). The selection is
@@ -325,26 +327,55 @@ control, and it is not a certification.
 
 ## Evidence exports and attestations
 
-Exports and attestations land in
-[#11081](https://github.com/hivecommons/hive/issues/11081). As designed:
+Exports and attestations shipped in
+[#11081](https://github.com/hivecommons/hive/issues/11081). Every endpoint
+below is owner only (verified owner session), because the evidence names
+owners, PRs and config locations.
 
-- **Control-mapping report** — the evaluated status above, as Markdown, JSON
-  or PDF, stamped with the hive id, the generation time and the profile
-  version.
-- **Posture history** — check results for a date range.
-- **Audit log slice** — the [audit log](audit-log.md) entries for a date
-  range. Note that rotation is size-triggered, so a report must state the
-  window it actually covered.
-- **Review evidence bundles** — the per-PR bundles from #11058, in bulk.
-- **Config snapshot** — the effective config with secrets redacted, plus its
-  hash, so an auditor can tie a report to an exact configuration.
+**Exports.** `GET /api/compliance/export?kind=&format=&since=&until=`
+returns a download (`Content-Disposition: attachment`, never cached) for the
+range `[since, until)`. `since` takes an RFC 3339 time, a `YYYY-MM-DD` date
+or a look-back such as `720h`; `until` takes an RFC 3339 time or a
+`YYYY-MM-DD` date meaning the end of that day. Without them the range is
+the last 30 days. Every export is written to the
+[audit log](audit-log.md) as `compliance_export` with its kind, format and
+range.
+
+| `kind` | Formats | Contents |
+|---|---|---|
+| `controls` | `json` (default), `md` | The control-mapping report: the evaluated status above, stamped with the hive id, generation time and each profile's name and version |
+| `posture` | `json` (default), `csv` | Every posture run in the range, plus per-check series in JSON. The CSV has one row per check result |
+| `audit` | `json` | The audit log entries in the range, from the current file and rotated backups. Rotation is size-triggered, so `covered_from` reports the oldest entry actually found. If it is later than `since`, the log no longer holds the start of the range |
+| `config` | `json` | The effective config with secrets redacted (the same redaction as the config export) and the `sha256` of exactly the `effective` bytes. Use the hash to tie a report to one configuration |
+| `attestations` | `json` (default), `csv` | Attestations recorded in the range |
+| `bundle` | `json` | All of the above in one file |
+
+JSON exports carry a `meta` object (`kind`, `disclaimer`, `hive_id`,
+`generated_at`, `since`, `until`). CSV cells that start with `=`, `+`, `-`
+or `@` are prefixed with `'` so a spreadsheet does not run them as formulas.
+PDF output is not offered. Bulk review-evidence bundles depend on the
+per-PR bundles from #11058 and will join the exports when that lands.
+
+**Posture history.** `GET /api/compliance/posture/history?since=&until=`
+returns the posture history for the range as one series per check:
+`points` (`at`, `status`), status counts, `last_fail_at` and the latest
+result with its detail and evidence refs. It covers at most the 1000 most
+recent runs, with `truncated: true` when more matched. The Compliance tab
+draws each series as a sparkline.
 
 **Attestation workflow.** An owner reviews the Controls panel for a
-framework and records "reviewed on <date> by <login>". The attestation is
-written to the audit log like every other owner action, so it is part of the
-same record the exports draw from. An attestation records that
-a person looked; it is not a pass/fail verdict and does not change any
-status.
+framework and records "reviewed <framework> on <date>" with an optional
+note. `POST /api/compliance/attestations` takes
+`{"framework", "reviewed_on", "note"}`. The framework must be a shipped
+profile id. `reviewed_on` must be a `YYYY-MM-DD` date that is not in the
+future. The note can be at most 2000 characters. The attesting login comes
+from the session, never from the body. Each attestation is written to the
+audit log as `compliance_attestation`, so it is part of the same record the
+exports draw from. A copy goes to `/data/compliance-attestations.jsonl`,
+where it outlives audit-log rotation (the newest 5000 are kept).
+`GET /api/compliance/attestations` (`?framework=` filters) lists them newest
+first. An attestation records that a person looked. It is not a pass/fail
+verdict and does not change any status.
 
 ## Your organisation's policy must authorise automated review
 
@@ -439,3 +470,17 @@ owning section (Features, Security or Health). Nothing is written until
 endpoint — exactly as if you had edited it on that tab. Statuses are
 re-evaluated from the saved config the next time the tab opens. Non-owners
 see the same panels read-only.
+
+**Posture checks** (owners only). One row per check: its control ids, a
+sparkline of up to the last 60 results in the selected range (7, 30, 90 or
+365 days), pass/fail/skip/error counts, the last result and when it ran, the
+failing detail, the last failure time and links to the evidence (PRs, config
+files, docs). **Run checks now** runs one pass through
+`POST /api/compliance/posture/run` and refreshes the panel.
+
+**Evidence & attestations** (owners only). Pick an optional date range and
+download any export in the table above. Each button saves the file under the
+server's filename. To attest, choose a framework, the review date (default
+today) and a note, then **Record attestation**. A confirmation dialog shows
+what will be written to the audit log under your login. Recorded
+attestations are listed below the form, newest first.

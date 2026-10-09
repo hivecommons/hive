@@ -212,6 +212,24 @@ func (h *PostureHistory) Since(t time.Time, limit int) ([]PostureRun, bool) {
 	return append([]PostureRun(nil), out...), truncated
 }
 
+// Between returns runs in [since, until), oldest first, at most limit of the
+// most recent (limit <= 0 means all), and whether older matching runs were
+// cut. A zero until means no upper bound.
+func (h *PostureHistory) Between(since, until time.Time, limit int) ([]PostureRun, bool) {
+	runs, _ := h.Since(since, 0)
+	if !until.IsZero() {
+		n := len(runs)
+		for n > 0 && !runs[n-1].At.Before(until) {
+			n--
+		}
+		runs = runs[:n]
+	}
+	if limit > 0 && len(runs) > limit {
+		return runs[len(runs)-limit:], true
+	}
+	return runs, false
+}
+
 // Len reports how many runs are retained.
 func (h *PostureHistory) Len() int {
 	h.mu.Lock()

@@ -19471,6 +19471,312 @@
         }
       }
     },
+    "/api/compliance/posture/history": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture history as per-check time series",
+        "description": "Settings \u2192 Compliance posture panel (#11081). Returns the posture-check history in [since, until) grouped into one series per check: points (at, status), status counts, the last failure time and the latest result with its detail and evidence refs. At most the 1000 most recent runs are included (truncated: true when more matched). Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureHistoryResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "until": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "runs": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureSeries: check_id, title, control_ids[], points[] (at, status pass|fail|skip|error), summary {pass, fail, skip, error}, last_fail_at, last (compliance.Result)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Download compliance evidence",
+        "description": "Settings \u2192 Compliance evidence exports (#11081). Downloads (Content-Disposition: attachment) one evidence kind for [since, until): controls = control-mapping report (json|md); posture = posture history (json|csv); audit = audit log slice with covered_from, the oldest entry found, because the log rotates by size (json); config = redacted effective config with the sha256 of its exact embedded bytes (json); attestations = owner attestations (json|csv); bundle = all of the above (json). JSON exports carry meta {kind, disclaimer, hive_id, generated_at, since, until}. Every export is audited as compliance_export. Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "controls",
+                "posture",
+                "audit",
+                "config",
+                "attestations",
+                "bundle"
+              ]
+            },
+            "description": "Evidence kind"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "md",
+                "csv"
+              ]
+            },
+            "description": "Output format; defaults to json. md is valid for controls, csv for posture and attestations"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown kind, unsupported format, or invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "500": {
+            "description": "Export could not be built"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/attestations": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List compliance owner attestations",
+        "description": "Settings \u2192 Compliance attestations (#11081). Every recorded attestation (\"reviewed <framework> on <date> by <login>\"), newest first, persisted under /data. ?framework= filters to one profile id. Requires owner role. An attestation records that a person reviewed the controls; it is not a pass/fail verdict.",
+        "parameters": [
+          {
+            "name": "framework",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Profile id to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.complianceAttestationsResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "attestations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "framework": {
+                            "type": "string"
+                          },
+                          "reviewed_on": {
+                            "type": "string",
+                            "description": "YYYY-MM-DD"
+                          },
+                          "by": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record a compliance owner attestation",
+        "description": "Settings \u2192 Compliance attestations (#11081). The signed-in owner records that they reviewed a framework's controls on reviewed_on (YYYY-MM-DD, not in the future) with an optional note (at most 2000 characters). The attesting login comes from the session, not the body. Written to the audit log as compliance_attestation and to the attestation store. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "framework",
+                  "reviewed_on"
+                ],
+                "properties": {
+                  "framework": {
+                    "type": "string",
+                    "description": "Shipped profile id, e.g. soc2-type2"
+                  },
+                  "reviewed_on": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "compliance.Attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "framework": {
+                      "type": "string"
+                    },
+                    "reviewed_on": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD"
+                    },
+                    "by": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown framework, bad or future date, or note too long"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
     "/api/config/governor/compliance": {
       "put": {
         "tags": [

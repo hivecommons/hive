@@ -2806,6 +2806,19 @@
     .cmp-setting { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
     .cmp-staged { color: var(--yellow); }
     .cmp-error { color: var(--red); font-size: var(--fs-sm); }
+    /* Compliance posture history, exports and attestations (#11081). */
+    .cmp-toolbar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; margin: var(--sp-3) var(--sp-0); }
+    .cmp-toolbar input, .cmp-toolbar select { width: auto; }
+    .cmp-spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 14px; }
+    .cmp-spark-bar { display: inline-block; width: 4px; height: 100%; border-radius: var(--r-sm); background: var(--muted); opacity: 0.5; }
+    .cmp-spark-pass { background: var(--green); opacity: 1; height: 60%; }
+    .cmp-spark-fail { background: var(--red); opacity: 1; }
+    .cmp-spark-error { background: var(--yellow); opacity: 1; height: 80%; }
+    .cmp-evidence { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-2); font-size: var(--fs-xs); }
+    .cmp-attest-form { display: flex; align-items: flex-end; gap: var(--sp-4); flex-wrap: wrap; margin: var(--sp-3) var(--sp-0) var(--sp-5); }
+    .cmp-attest-form label { display: flex; flex-direction: column; gap: var(--sp-1); }
+    .cmp-attest-form select, .cmp-attest-form input { width: auto; }
+    .cmp-attest-note { flex: 1 1 15rem; }
 
     .config-stat-row { padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); }
     .config-stat-row .config-field-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
@@ -37485,6 +37498,7 @@ function burnAreaChart() {
         _complianceState = { loading: false, loaded: true, forbidden: false, error: err && err.message ? err.message : String(err), report: null };
       }
       complianceRepaint();
+      if (viewerIsOwner() && !_complianceState.forbidden && !_complianceState.error) loadComplianceEvidence();
     }
 
     function complianceRepaint() {
@@ -37518,7 +37532,8 @@ function burnAreaChart() {
       }
       const owner = viewerIsOwner();
       const readOnly = owner ? '' : '<p class="cmp-note">Read-only — only owners can change these settings.</p>';
-      return banner + readOnly + renderComplianceFrameworks(st.report || {}, owner) + renderComplianceControls(st.report || {}, owner);
+      return banner + readOnly + renderComplianceFrameworks(st.report || {}, owner) + renderComplianceControls(st.report || {}, owner) +
+        renderCompliancePosture(owner) + renderComplianceEvidence(st.report || {}, owner);
     }
 
     function renderComplianceFrameworks(report, owner) {
@@ -37694,6 +37709,269 @@ function burnAreaChart() {
       });
       showToast('Staged ' + changes.length + ' change' + (changes.length === 1 ? '' : 's') + ' — Save & close to apply', 'success');
       complianceRepaint();
+    }
+
+    // ── Compliance posture history, evidence exports and attestations (#11081) ──
+    // Owner only. Panel 3 draws GET /api/compliance/posture/history as one
+    // sparkline per check; panel 4 downloads GET /api/compliance/export and
+    // lists / records owner attestations (GET/POST /api/compliance/attestations).
+    const COMPLIANCE_POSTURE_PILLS = {
+      pass: ['ok', 'Pass'],
+      fail: ['error', 'Fail'],
+      skip: ['neutral', 'Skip'],
+      error: ['warn', 'Error'],
+    };
+    const COMPLIANCE_EXPORTS = [
+      { kind: 'controls', format: 'md', label: 'Control mapping (Markdown)' },
+      { kind: 'controls', format: 'json', label: 'Control mapping (JSON)' },
+      { kind: 'posture', format: 'csv', label: 'Posture history (CSV)' },
+      { kind: 'posture', format: 'json', label: 'Posture history (JSON)' },
+      { kind: 'audit', format: 'json', label: 'Audit log slice (JSON)' },
+      { kind: 'config', format: 'json', label: 'Config snapshot + sha256 (JSON)' },
+      { kind: 'attestations', format: 'csv', label: 'Attestations (CSV)' },
+      { kind: 'bundle', format: 'json', label: 'Evidence bundle (JSON)' },
+    ];
+    const COMPLIANCE_HISTORY_RANGES = [7, 30, 90, 365];
+    const COMPLIANCE_SPARK_MAX = 60;
+    let _complianceEvidence = { loaded: false, error: '', history: null, attestations: [], days: 30, since: '', until: '', running: false, busy: false, draft: { framework: '', reviewed_on: '', note: '' } };
+    let _complianceEvidenceSeq = 0;
+
+    function complianceTime(at) {
+      const d = new Date(at);
+      return isNaN(d.getTime()) ? String(at || '') : d.toLocaleString();
+    }
+
+    function complianceTodayISO() {
+      const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    async function loadComplianceEvidence() {
+      if (!viewerIsOwner()) return;
+      const seq = ++_complianceEvidenceSeq;
+      try {
+        const [hist, att] = await Promise.all([
+          fetch('/api/compliance/posture/history?since=' + encodeURIComponent(_complianceEvidence.days * 24 + 'h')),
+          fetch('/api/compliance/attestations'),
+        ]);
+        if (seq !== _complianceEvidenceSeq) return;
+        if (!hist.ok) throw new Error(await saveErrorMessage(hist));
+        if (!att.ok) throw new Error(await saveErrorMessage(att));
+        const history = await hist.json();
+        const attBody = await att.json();
+        if (seq !== _complianceEvidenceSeq) return;
+        _complianceEvidence = Object.assign({}, _complianceEvidence, { loaded: true, error: '', history, attestations: attBody.attestations || [] });
+      } catch (err) {
+        if (seq !== _complianceEvidenceSeq) return;
+        _complianceEvidence = Object.assign({}, _complianceEvidence, { loaded: true, error: err && err.message ? err.message : String(err) });
+      }
+      complianceRepaint();
+    }
+
+    function complianceSetHistoryDays(value) {
+      const n = Number(value);
+      if (!n) return;
+      _complianceEvidence.days = n;
+      loadComplianceEvidence();
+    }
+
+    function complianceSparkline(points) {
+      const pts = (points || []).slice(-COMPLIANCE_SPARK_MAX);
+      if (!pts.length) return '<span class="cmp-note">No runs in range</span>';
+      const bars = pts.map(p => {
+        const status = String(p.status || '');
+        return '<span class="cmp-spark-bar cmp-spark-' + esc(status) + '" title="' + esc(complianceTime(p.at) + ' — ' + status) + '"></span>';
+      }).join('');
+      return '<span class="cmp-spark" role="img" aria-label="' + esc('Last ' + pts.length + ' results') + '">' + bars + '</span>';
+    }
+
+    function complianceEvidenceLinks(refs) {
+      if (!(refs || []).length) return '';
+      return '<div class="cmp-evidence">' + refs.map(ref => {
+        const r = String(ref || '');
+        return /^https?:\/\//i.test(r)
+          ? '<a href="' + esc(r) + '" target="_blank" rel="noopener noreferrer">' + esc(r.replace(/^https?:\/\/(www\.)?github\.com\//i, '')) + '</a>'
+          : '<code>' + esc(r) + '</code>';
+      }).join(' ') + '</div>';
+    }
+
+    function renderCompliancePosture(owner) {
+      const head = '<div class="config-section"><h3>Posture checks</h3>';
+      if (!owner) return head + '<p class="cmp-note">Posture history is visible to owners only.</p></div>';
+      const ev = _complianceEvidence;
+      if (!ev.loaded) return head + '<p class="cmp-note">Loading posture history…</p></div>';
+      if (ev.error) {
+        return head + '<p class="cmp-error">Could not load posture history and attestations: ' + esc(ev.error) + '</p>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="loadComplianceEvidence">Retry</button></div>';
+      }
+      const h = ev.history || {};
+      const options = COMPLIANCE_HISTORY_RANGES.map(d => '<option value="' + d + '"' + (d === ev.days ? ' selected' : '') + '>Last ' + d + ' days</option>').join('');
+      const toolbar = '<div class="cmp-toolbar">' +
+        '<select data-change-action="complianceSetHistoryDays" data-arg-types="v" aria-label="Posture history range">' + options + '</select>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="complianceRunPosture"' + (ev.running ? ' disabled' : '') + '>' + (ev.running ? 'Running…' : 'Run checks now') + '</button>' +
+        '<span class="cmp-note">' + Number(h.runs || 0) + ' run' + (Number(h.runs) === 1 ? '' : 's') + ' in range' + (h.truncated ? ' (most recent 1000 shown)' : '') + '</span>' +
+      '</div>';
+      const rows = (h.checks || []).map(c => {
+        const last = c.last || null;
+        const pill = last ? (COMPLIANCE_POSTURE_PILLS[last.status] || ['neutral', String(last.status || '')]) : ['neutral', 'No runs'];
+        const s = c.summary || {};
+        return '<tr>' +
+          '<td>' + esc(String(c.title || c.check_id || '')) + '<div class="cmp-note"><code>' + esc(String(c.check_id || '')) + '</code> · ' + esc((c.control_ids || []).join(', ')) + '</div></td>' +
+          '<td>' + complianceSparkline(c.points) + '<div class="cmp-note">' + Number(s.pass || 0) + ' pass · ' + Number(s.fail || 0) + ' fail · ' + Number(s.skip || 0) + ' skip · ' + Number(s.error || 0) + ' error</div></td>' +
+          '<td><span class="badge-status" data-status="' + pill[0] + '">' + esc(pill[1]) + '</span>' + (last ? '<div class="cmp-note">' + esc(complianceTime(last.at)) + '</div>' : '') + '</td>' +
+          '<td>' + (last && last.detail ? esc(String(last.detail)) : '') +
+            (c.last_fail_at ? '<div class="cmp-note">Last failure: ' + esc(complianceTime(c.last_fail_at)) + '</div>' : '') +
+            complianceEvidenceLinks(last ? last.evidence_refs : []) + '</td>' +
+        '</tr>';
+      }).join('');
+      return head +
+        '<p class="cmp-note">Continuous checks the hive runs against itself every <code>compliance.posture_checks.interval</code> while a framework is selected. A pass is evidence the hive behaved as configured, not a certification.</p>' +
+        toolbar +
+        '<table class="cmp-table"><thead><tr><th>Check</th><th>History</th><th>Last result</th><th>Detail &amp; evidence</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '</div>';
+    }
+
+    async function complianceRunPosture() {
+      if (!viewerIsOwner() || _complianceEvidence.running) return;
+      _complianceEvidence.running = true;
+      complianceRepaint();
+      try {
+        const res = await fetch('/api/compliance/posture/run', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const run = await res.json();
+        const s = run.summary || {};
+        showToast('Posture checks: ' + Number(s.pass || 0) + ' pass, ' + Number(s.fail || 0) + ' fail, ' + Number(s.skip || 0) + ' skip, ' + Number(s.error || 0) + ' error', Number(s.fail || 0) ? 'error' : 'success');
+      } catch (err) {
+        showToast('Could not run posture checks: ' + (err && err.message ? err.message : String(err)), 'error');
+      }
+      _complianceEvidence.running = false;
+      loadComplianceEvidence();
+    }
+
+    function complianceSetExportRange(which, value) {
+      if (which !== 'since' && which !== 'until') return;
+      _complianceEvidence[which] = String(value || '').trim();
+    }
+
+    async function complianceDownload(kind, format) {
+      if (!viewerIsOwner()) return;
+      const qs = new URLSearchParams({ kind: String(kind || ''), format: String(format || '') });
+      if (_complianceEvidence.since) qs.set('since', _complianceEvidence.since);
+      if (_complianceEvidence.until) qs.set('until', _complianceEvidence.until);
+      try {
+        const res = await fetch('/api/compliance/export?' + qs.toString(), { cache: 'no-store' });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+        const name = match ? match[1] : 'hive-compliance-' + kind + '.' + format;
+        const url = URL.createObjectURL(await res.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        showToast('Downloaded ' + name, 'success');
+      } catch (err) {
+        showToast('Export failed: ' + (err && err.message ? err.message : String(err)), 'error');
+      }
+    }
+
+    function complianceSetAttestDraft(field, value) {
+      if (!Object.prototype.hasOwnProperty.call(_complianceEvidence.draft, field)) return;
+      _complianceEvidence.draft[field] = String(value || '');
+    }
+
+    function complianceAttestFrameworks(report) {
+      const selected = report.frameworks || [];
+      const available = report.available || [];
+      const ids = selected.length ? selected : available.map(f => String(f.id || ''));
+      return ids.filter(Boolean).map(id => {
+        const info = available.find(f => f.id === id);
+        return { id, name: info && info.name ? info.name : id };
+      });
+    }
+
+    async function complianceRecordAttestation() {
+      if (!viewerIsOwner() || _complianceEvidence.busy) return;
+      const draft = _complianceEvidence.draft;
+      const fwEl = document.getElementById('cmp-attest-framework');
+      const dayEl = document.getElementById('cmp-attest-date');
+      const noteEl = document.getElementById('cmp-attest-note');
+      const body = {
+        framework: fwEl ? fwEl.value : draft.framework,
+        reviewed_on: dayEl ? dayEl.value : (draft.reviewed_on || complianceTodayISO()),
+        note: (noteEl ? noteEl.value : draft.note).trim(),
+      };
+      if (!body.framework || !body.reviewed_on) { showToast('Choose a framework and review date', 'error'); return; }
+      const ok = await hiveConfirm({
+        title: 'Record attestation',
+        message: 'Record that you reviewed ' + body.framework + ' on ' + body.reviewed_on + '?\n\nThe attestation is written to the audit log under your login and cannot be edited. It records that a person looked; it does not change any control status.',
+        confirmLabel: 'Record attestation',
+        danger: false,
+      });
+      if (!ok) return;
+      _complianceEvidence.busy = true;
+      complianceRepaint();
+      try {
+        const res = await fetch('/api/compliance/attestations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        _complianceEvidence.draft = { framework: body.framework, reviewed_on: '', note: '' };
+        showToast('Attestation recorded', 'success');
+      } catch (err) {
+        showToast('Could not record attestation: ' + (err && err.message ? err.message : String(err)), 'error');
+      }
+      _complianceEvidence.busy = false;
+      loadComplianceEvidence();
+    }
+
+    function renderComplianceEvidence(report, owner) {
+      const head = '<div class="config-section"><h3>Evidence &amp; attestations</h3>';
+      if (!owner) return head + '<p class="cmp-note">Exports and attestations are available to owners only.</p></div>';
+      const ev = _complianceEvidence;
+      const range = '<div class="cmp-toolbar">' +
+        '<label class="cmp-note">From <input type="date" value="' + esc(ev.since) + '" data-change-action="complianceSetExportRange" data-arg0="since" data-arg-types="s,v"></label>' +
+        '<label class="cmp-note">To <input type="date" value="' + esc(ev.until) + '" data-change-action="complianceSetExportRange" data-arg0="until" data-arg-types="s,v"></label>' +
+        '<span class="cmp-note">Empty means the last 30 days.</span>' +
+      '</div>';
+      const buttons = '<div class="cmp-toolbar">' + COMPLIANCE_EXPORTS.map(x =>
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="complianceDownload" data-arg0="' + esc(x.kind) + '" data-arg1="' + esc(x.format) + '">' + esc(x.label) + '</button>'
+      ).join('') + '</div>';
+      const exportsHtml = '<h4>Exports</h4>' +
+        '<p class="cmp-note">Downloads for the date range below; each export is audited as <code>compliance_export</code>. The audit slice reports the oldest entry it found because the audit log rotates by size. The config snapshot is the redacted effective config with the sha256 of its exact bytes. Bulk review-evidence bundles arrive with #11058.</p>' +
+        range + buttons;
+
+      const frameworks = complianceAttestFrameworks(report);
+      const draft = ev.draft;
+      const chosen = draft.framework || (frameworks[0] ? frameworks[0].id : '');
+      const fwOptions = frameworks.map(f => '<option value="' + esc(f.id) + '"' + (f.id === chosen ? ' selected' : '') + '>' + esc(f.name) + '</option>').join('');
+      const form = frameworks.length
+        ? '<div class="cmp-attest-form">' +
+            '<label class="cmp-note">Framework <select id="cmp-attest-framework" data-change-action="complianceSetAttestDraft" data-arg0="framework" data-arg-types="s,v">' + fwOptions + '</select></label>' +
+            '<label class="cmp-note">Reviewed on <input id="cmp-attest-date" type="date" max="' + esc(complianceTodayISO()) + '" value="' + esc(draft.reviewed_on || complianceTodayISO()) + '" data-change-action="complianceSetAttestDraft" data-arg0="reviewed_on" data-arg-types="s,v"></label>' +
+            '<label class="cmp-note cmp-attest-note">Note <textarea id="cmp-attest-note" rows="2" maxlength="2000" placeholder="Scope, evidence reviewed, follow-ups" data-change-action="complianceSetAttestDraft" data-arg0="note" data-arg-types="s,v">' + esc(draft.note) + '</textarea></label>' +
+            '<button type="button" class="hv-btn btn-primary btn-sm" data-action="complianceRecordAttestation"' + (ev.busy ? ' disabled' : '') + '>' + (ev.busy ? 'Recording…' : 'Record attestation') + '</button>' +
+          '</div>'
+        : '<p class="cmp-note">No framework profiles are available to attest.</p>';
+      const names = {};
+      frameworks.forEach(f => { names[f.id] = f.name; });
+      const items = ev.attestations || [];
+      const rows = items.map(a => '<tr>' +
+        '<td>' + esc(names[a.framework] || String(a.framework || '')) + '</td>' +
+        '<td>' + esc(String(a.reviewed_on || '')) + '</td>' +
+        '<td>' + esc(String(a.by || '')) + '</td>' +
+        '<td>' + esc(complianceTime(a.at)) + '</td>' +
+        '<td>' + esc(String(a.note || '')) + '</td>' +
+      '</tr>').join('');
+      const table = !ev.loaded
+        ? '<p class="cmp-note">Loading attestations…</p>'
+        : (items.length
+          ? '<table class="cmp-table"><thead><tr><th>Framework</th><th>Reviewed on</th><th>By</th><th>Recorded</th><th>Note</th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<p class="cmp-note">No attestations recorded yet.</p>');
+      const attestHtml = '<h4>Attestations</h4>' +
+        '<p class="cmp-note">Record that you reviewed a framework\'s controls. Attestations are kept in the audit log (<code>compliance_attestation</code>) with your login; they record that a person looked and do not change any status.</p>' +
+        form + table;
+      return head + exportsHtml + attestHtml + '</div>';
     }
 
     function addSensingItem(key, inputId) {
