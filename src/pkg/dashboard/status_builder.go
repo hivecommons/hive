@@ -308,6 +308,7 @@ func BuildFrontendStatus(
 		GHRateLimits:          ghRateLimits,
 		APIBudget:             apiBudgetFromRateLimits(ghRateLimits),
 		AgentMetrics:          agentMetrics,
+		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
 		Hold:                  buildHold(actionable),
 		IssueToMerge:          issueToMerge,
 		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
@@ -342,6 +343,67 @@ func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResu
 		}
 	}
 	return false
+}
+
+func buildOverviewCoverage(agentMetrics map[string]any, cfg *config.Config) *FrontendOverviewCoverage {
+	quality, _ := agentMetrics[qualityAgentName].(map[string]any)
+	if quality == nil {
+		return nil
+	}
+	coverage, ok := overviewMetricInt(quality["coverage"])
+	if !ok {
+		return nil
+	}
+	target, ok := overviewMetricInt(quality["coverageTarget"])
+	if !ok || target <= 0 {
+		target = coverageTarget
+	}
+	source, _ := quality["coverageSource"].(string)
+	if strings.TrimSpace(source) == "" {
+		source = qualityCoverageSource
+	}
+	return &FrontendOverviewCoverage{
+		Coverage: coverage,
+		Target:   target,
+		Source:   source,
+		Repo:     overviewCoverageRepo(cfg),
+	}
+}
+
+func overviewMetricInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		if math.Trunc(n) == n {
+			return int(n), true
+		}
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
+}
+
+func overviewCoverageRepo(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	repo := strings.TrimSpace(cfg.Project.PrimaryRepo)
+	if repo == "" && len(cfg.Project.Repos) > 0 {
+		repo = strings.TrimSpace(cfg.Project.Repos[0])
+	}
+	if repo == "" {
+		return ""
+	}
+	if strings.Contains(repo, "/") || strings.TrimSpace(cfg.Project.Org) == "" {
+		return repo
+	}
+	return strings.TrimSpace(cfg.Project.Org) + "/" + repo
 }
 
 func buildFeatures(cfg *config.Config) FrontendFeatures {

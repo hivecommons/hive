@@ -1825,9 +1825,10 @@
     .overview-repo-filter { display: grid; gap: var(--sp-2); max-height: min(16rem, 32vh); overflow: auto; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); }
     .overview-settings-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .overview-headline { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .overview-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
+    .overview-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) auto) minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--sp-3); align-items: stretch; }
     .overview-kpi-operator { display: inline-flex; align-items: center; justify-content: center; align-self: start; padding-top: var(--sp-3); color: var(--muted); font-size: var(--fs-lg); font-weight: 800; line-height: 1; }
-    @media (max-width: 1399px) { .overview-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .overview-kpi-operator { display: none; } }
+    .overview-kpi-coverage-spacer { width: 1px; min-height: 100%; background: var(--border); opacity: 0.8; }
+    @media (max-width: 1399px) { .overview-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .overview-kpi-operator, .overview-kpi-coverage-spacer { display: none; } }
     @media (max-width: 720px) { .overview-kpis { grid-template-columns: minmax(0, 1fr); } }
     .overview-kpi-range { display: inline-flex; gap: var(--sp-1); }
     .overview-kpi-range-btn { min-width: 2rem; height: 1.25rem; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; cursor: pointer; }
@@ -1840,6 +1841,13 @@
     .overview-kpi-spark { min-height: 24px; display: flex; align-items: end; margin-top: var(--sp-1); }
     .overview-kpi-spark .sparkline { width: 100%; }
     .overview-kpi-spark svg { width: 100%; height: 24px; }
+    .overview-kpi-coverage[data-coverage-state="success"] { --overview-coverage-color: var(--green); }
+    .overview-kpi-coverage[data-coverage-state="warn"] { --overview-coverage-color: var(--yellow); }
+    .overview-kpi-coverage[data-coverage-state="danger"] { --overview-coverage-color: var(--red); }
+    .overview-kpi-coverage .overview-kpi-value { color: var(--overview-coverage-color); }
+    .overview-coverage-bar { display: grid; gap: var(--sp-1); margin-top: var(--sp-1); }
+    .overview-coverage-progress { width: 100%; height: 0.42rem; accent-color: var(--overview-coverage-color); }
+    .overview-coverage-bar-caption { color: var(--muted); font-size: var(--fs-2xs); }
     .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5); align-items: stretch; }
     .overview-chart-card { --overview-chart-card-min-height: 16rem; position: relative; display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); align-items: center; gap: var(--sp-5); min-width: 0; min-height: var(--overview-chart-card-min-height); overflow: hidden; }
     .overview-chart-card + .overview-chart-card { border-left: 1px solid var(--border); padding-left: var(--sp-5); }
@@ -14535,6 +14543,72 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         wrapperClass: 'sparkline--flush', wrapperTitle: title,
       })}</span>`;
     }
+
+    function overviewCoverageInfo() {
+      const info = window._lastStatus?.overviewCoverage;
+      const coverage = Number(info?.coverage);
+      if (!Number.isFinite(coverage)) return null;
+      const target = Number(info?.target);
+      return {
+        coverage,
+        target: Number.isFinite(target) && target > 0 ? target : 100,
+        source: String(info?.source || 'coverage badge'),
+        repo: String(info?.repo || '').trim()
+      };
+    }
+
+    function overviewCoverageState(info) {
+      if (!info) return 'danger';
+      if (info.coverage >= info.target) return 'success';
+      return info.coverage >= info.target - 5 ? 'warn' : 'danger';
+    }
+
+    function overviewCoverageColor(state) {
+      if (state === 'success') return 'var(--green)';
+      if (state === 'warn') return 'var(--yellow)';
+      return 'var(--red)';
+    }
+
+    function overviewCoverageInfoHTML(info) {
+      const source = info?.source || 'coverage badge';
+      const repo = info?.repo ? ` for ${info.repo}` : '';
+      const tip = `${source}${repo}. Coverage at or above goal is an ACMM Level 3→4 readiness signal.`;
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="overview-coverage-tip" aria-label="Test coverage details">ⓘ<span id="overview-coverage-tip" class="config-tooltip" role="tooltip">${esc(tip)}</span></span>`;
+    }
+
+    function overviewCoverageBar(info) {
+      return `<span class="overview-coverage-bar" aria-hidden="true"><progress class="overview-coverage-progress" value="${esc(String(Math.max(0, info.coverage)))}" max="${esc(String(Math.max(1, info.target)))}"></progress><span class="overview-coverage-bar-caption">${esc(String(info.coverage))}% / ${esc(String(info.target))}%</span></span>`;
+    }
+
+    function overviewCoverageCard() {
+      const info = overviewCoverageInfo();
+      if (!info) return null;
+      const state = overviewCoverageState(info);
+      const repo = info.repo || 'primary repo';
+      return {
+        key: 'test-coverage',
+        field: 'overviewCoverage',
+        label: 'Test coverage',
+        value: `${info.coverage}%`,
+        rawValue: info.coverage,
+        color: overviewCoverageColor(state),
+        state,
+        tip: `${info.source} for ${repo}. Click to open the quality agent card.`,
+        subline: `goal ${esc(String(info.target))}% · ${esc(repo)}`,
+        infoHTML: overviewCoverageInfoHTML(info),
+        barHTML: overviewCoverageBar(info)
+      };
+    }
+
+    function renderOverviewCoverageKPI(card, useServerHistory) {
+      if (!card) return '';
+      const n = Number(card.rawValue);
+      const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(card.value ?? '—'))}"` : '';
+      const coverageSeries = overviewKPIHistoryEntries(useServerHistory).map(e => Number(e[card.field])).filter(Number.isFinite);
+      const spark = coverageSeries.length >= 2 ? overviewKPISpark(card, useServerHistory) : '';
+      return `<div class="overview-kpi overview-kpi-coverage" role="button" tabindex="0" data-action="openAgentCollapsedTile" data-keydown-action="openAgentCollapsedTile" data-keys="Enter, " data-prevent="1" data-agent="quality" data-stop="1" data-coverage-state="${esc(card.state)}" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(card.value ?? '—'))}</span><span class="overview-kpi-label">${esc(card.label)}${card.infoHTML || ''}</span><span class="overview-kpi-subline">${card.subline}</span>${spark || card.barHTML || ''}</div>`;
+    }
+
     function overviewKPIWindowControls() {
       return `<div class="gov-pr-models-toggle window-pills-toolbar overview-window-toolbar" aria-label="Overview KPI history range" data-stop="1">${Object.keys(OVERVIEW_KPI_WINDOWS).map(win => `<button type="button" class="${win === _overviewKPIWindow ? 'active' : ''}" data-action="setOverviewKPIWindow" data-arg0="${esc(win)}" data-stop="1" aria-pressed="${win === _overviewKPIWindow ? 'true' : 'false'}" title="Show ${esc(win)} KPI history">${esc(win)}</button>`).join('')}</div>`;
     }
@@ -15113,8 +15187,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         { key: 'blocked-needs-human', field: 'overviewBlockedHuman', label: 'Blocked / needs-human', value: blockedNeedsHuman, rawValue: blockedNeedsHuman, color: 'var(--red)', tip: `${blockedNeedsHuman} blocked/needs-human = ${blockedIssues} issues + ${blockedPRs} PRs. Waiting, blocked, confirm/close, or escalated work needing a person or dependency. Click to filter Projects.`, subline: renderOverviewSplitSubline(blockedNeedsHuman, blockedIssues, blockedPRs, 'blocked') },
         { key: 'outside', field: 'overviewOutside', label: 'Outside', value: outside, rawValue: outside, color: 'var(--muted)', tip: `${outside} outside = ${outsideIssues} issues + ${outsidePRs} PRs. Open items excluded before they enter Overview bands by this hive's scanner settings. Click to filter Projects.`, subline: renderOverviewSplitSubline(outside, outsideIssues, outsidePRs, 'outside'), infoHTML: outsideInfo }
       ];
+      const coverageCard = overviewCoverageCard();
       const snapshotComplete = !(repos || []).some(r => r && r.countsIncomplete) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
-      if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(cards));
+      if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+'];
       const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${held} held + ${blockedNeedsHuman} blocked or needs-human + ${outside} outside`;
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
@@ -15125,7 +15200,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const label = `<span class="overview-kpi-label">${esc(card.label)}${card.infoHTML || ''}</span>`;
         const tile = `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span>${label}${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
         return tile + (ops[i] ? `<span class="overview-kpi-operator" aria-hidden="true">${ops[i]}</span>` : '');
-      }).join('')}</div></div>`;
+      }).join('')}${coverageCard ? `<span class="overview-kpi-coverage-spacer" aria-hidden="true"></span>${renderOverviewCoverageKPI(coverageCard, useServerHistory)}` : ''}</div></div>`;
     }
 
     function overviewRepoFilterHTML(repos) {

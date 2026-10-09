@@ -397,9 +397,10 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
-	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
-	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	OverviewBands    *OverviewBands            `json:"overview_bands,omitempty"`
+	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
+	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
+	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
 	// OverviewKPIIncomplete means at least one configured repo did not produce
 	// forge totals for this status snapshot, so Overview KPI history must not
 	// record it as a real point.
@@ -502,6 +503,13 @@ type StatusPayload struct {
 	// (#6960). Always present: an unknown lag renders as "unknown", never a
 	// healthy zero.
 	ReleaseLineLag *FrontendReleaseLineLag `json:"releaseLineLag,omitempty"`
+}
+
+type FrontendOverviewCoverage struct {
+	Coverage int    `json:"coverage"`
+	Target   int    `json:"target"`
+	Source   string `json:"source"`
+	Repo     string `json:"repo,omitempty"`
 }
 
 type FrontendOverviewTotals struct {
@@ -1147,6 +1155,8 @@ type TrendHistoryEntry struct {
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      int  `json:"overviewOutside,omitempty"`
+	OverviewCoverageOK   bool `json:"overviewCoverageOK,omitempty"`
+	OverviewCoverage     int  `json:"overviewCoverage,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -3647,6 +3657,10 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
 	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
 	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
+	if status.OverviewCoverage != nil {
+		e.OverviewCoverageOK = true
+		e.OverviewCoverage = status.OverviewCoverage.Coverage
+	}
 }
 
 func overviewKPIExcludedBand(band string) bool {
@@ -3678,6 +3692,7 @@ type OverviewKPIHistoryEntry struct {
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
+	OverviewCoverage     *int  `json:"overviewCoverage,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3697,6 +3712,9 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
 			row.OverviewOutside = intPtr(e.OverviewOutside)
+		}
+		if e.OverviewCoverageOK {
+			row.OverviewCoverage = intPtr(e.OverviewCoverage)
 		}
 		out = append(out, row)
 	}

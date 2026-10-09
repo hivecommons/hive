@@ -40,7 +40,7 @@ let _overviewProjectFilterCount = null;
 function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l => String(l).toLowerCase() === 'needs-human'); }
 const localStorage = { data: {}, getItem(k){ return Object.prototype.hasOwnProperty.call(this.data,k) ? this.data[k] : null; }, setItem(k,v){ this.data[k]=String(v); }, removeItem(k){ delete this.data[k]; } };
 function fmtSparkVal(v){ return String(v); }
-function renderSparkline(){ return '<svg></svg>'; }
+function renderSparkline(_, __, opts){ return '<svg data-id="' + ((opts && opts.id) || '') + '"></svg>'; }
 const OVERVIEW_ISSUE_BREAKDOWN_LABELS = { needs_human: 'needs-human', needs_direction: 'needs-direction', needs_decision: 'needs-decision', needs_spec: 'needs-spec', exempt: 'exempt', filtered: 'filtered', reporter_triage: 'reporter triage', hive_advisory: 'hive advisory', dependency_dashboard: 'dependency dashboard', other: 'other' };
 const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: 'filtered', other: 'other' };
 ` + jsFunc(t, html, "esc") + `
@@ -78,6 +78,13 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewKPIWindowControls") + `
 ` + jsFunc(t, html, "overviewKPISparkTitle") + `
 ` + jsFunc(t, html, "overviewKPISpark") + `
+` + jsFunc(t, html, "overviewCoverageInfo") + `
+` + jsFunc(t, html, "overviewCoverageState") + `
+` + jsFunc(t, html, "overviewCoverageColor") + `
+` + jsFunc(t, html, "overviewCoverageInfoHTML") + `
+` + jsFunc(t, html, "overviewCoverageBar") + `
+` + jsFunc(t, html, "overviewCoverageCard") + `
+` + jsFunc(t, html, "renderOverviewCoverageKPI") + `
 ` + jsFunc(t, html, "overviewRepoName") + `
 ` + jsFunc(t, html, "overviewRepoNumber") + `
 ` + jsFunc(t, html, "overviewRepoOpenIssueCount") + `
@@ -149,6 +156,21 @@ assert.equal(rawValues['Total open issues'], '123');
 assert.equal(rawValues['Total open PRs'], '45');
 assert.equal(rawValues['Outside'], '61');
 assert.doesNotMatch(out, /Median actionable age/);
+
+window._lastStatus.overviewCoverage = { coverage: 87, target: 91, source: 'coverage badge (HIVE_COVERAGE_BADGE_URL)', repo: 'hivecommons/hive' };
+_overviewKPIHistory = [{ t: Date.now() - 600000, overviewCoverage: 86 }, { t: Date.now(), overviewCoverage: 87 }];
+const coverageOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
+assert.equal((coverageOut.match(/class="overview-kpi(?:\s|")/g) || []).length, 7);
+assert.match(coverageOut, />87%<\/span><span class="overview-kpi-label">Test coverage/);
+assert.match(coverageOut, /goal 91% · hivecommons\/hive/);
+assert.match(coverageOut, /data-action="openAgentCollapsedTile"[^>]*data-agent="quality"/);
+assert.match(coverageOut, /overview-kpi-coverage-spacer/);
+assert.match(coverageOut, /overview-kpi:test-coverage/);
+assert.match(coverageOut, /ACMM Level 3→4 readiness signal/);
+_overviewKPIHistory = [];
+localStorage.data = {};
+const coverageBarOut = renderOverviewKPIs(repos, issueSlices, prSlices, state);
+assert.match(coverageBarOut, /overview-coverage-bar/);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
