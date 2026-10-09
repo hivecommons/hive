@@ -40,6 +40,9 @@ Remote wiki layers only carry a `status`, which is mapped the same way.
   or `include_states=all`.
 - **Public knowledge MCP** (`/mcp/knowledge`) only ever publishes approved
   facts.
+- **`GET /api/knowledge/toc`** and **`GET /api/knowledge/entry/{id}`** apply
+  the same default and `include_states` opt-in; see
+  [Scoped knowledge table of contents](knowledge-toc.md).
 - `GET /api/knowledge` (the dashboard inventory) still lists every fact, and
   vault facts report their `state`, so operators can review and restore them.
 

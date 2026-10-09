@@ -641,12 +641,18 @@ func (p filePage) effectiveLayer() LayerType {
 	return LayerPersonal
 }
 
-// applyLifecycle copies the page's lifecycle metadata onto f, defaulting
+// applyLifecycle copies the page's lifecycle and TOC metadata onto f, defaulting
 // legacy pages without a recorded state to approved.
 func (p filePage) applyLifecycle(f *Fact) {
 	f.Supersedes = p.Supersedes
 	f.SupersededBy = p.SupersededBy
 	f.State = resolveLifecycleState(p.State, p.Status, p.SupersededBy)
+	f.Updated = p.ModTime
+	f.BodySize = len(p.Body)
+	f.Origin = p.SourceURL
+	if f.Origin == "" {
+		f.Origin = p.Source
+	}
 }
 
 func (p filePage) confidenceInput(accesses int) confidenceInput {
