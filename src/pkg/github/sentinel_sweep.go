@@ -260,7 +260,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 }
 
 func prHasLabel(pr *gh.PullRequest, label string) bool {
-	for _, l := range pr.GetLabels() {
+	for _, l := range pr.Labels {
 		if strings.EqualFold(l.GetName(), label) {
 			return true
 		}
