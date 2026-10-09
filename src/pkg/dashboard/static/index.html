@@ -28962,10 +28962,12 @@ function burnAreaChart() {
         } else if (v.behind && !manualUpgradeActive) {
           statusText = versionStatusText(v, offeredUpgradeShort);
           compactStatusHTML = commitsBehindText || `<span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
-          if (upgradeSupported && v.autoUpgrade && !um) {
+          if (!upgradeSupported) {
+            // manualUpdateHTML (reason pill) is rendered above for every disabled-upgrade state.
+          } else if (v.autoUpgrade && !um) {
             compactStatusHTML += ` <span style="color:var(--muted);font-size:var(--fs-xs);margin-left:var(--sp-3);white-space:nowrap;padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → ${escapeHtml(offeredUpgradeLabel)}: ${escapeHtml(offeredUpgradeShort)}">Queued for auto-upgrade</span>`;
             upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeHash || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade this Hive${escapeHtml(runtimeDeploymentSuffix)} to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now instead of waiting for auto-upgrade">Upgrade now</button>`;
-          } else if (upgradeSupported) {
+          } else {
             upgradeHTML = `<button id="spoke-upgrade-btn" data-action="gh27" class="hv-btn btn-primary btn-sm" data-arg0="${escapeHtml(offeredUpgradeRef || '')}" data-mouseover-action="gh28" data-mouseout-action="gh29" title="Upgrade this Hive${escapeHtml(runtimeDeploymentSuffix)} to ${escapeHtml(offeredUpgradeLabel)} ${escapeHtml(offeredUpgradeShort)} now">↑ Upgrade → ${escapeHtml(offeredUpgradeShort)}</button>`;
           }
         } else if (v.latestHash) {

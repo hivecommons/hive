@@ -268,7 +268,7 @@ async function render(overrides = {}) {
   assert.ok(out.menu.includes('deployment runtime is not explicitly configured (unknown)'));
   assert.ok(out.menu.includes('class="oc-version-upgrade-note"'), 'disabled upgrade reason must be visible text, not only a title');
   assert.ok(out.menu.includes('manual update required (unknown)'));
-  assert.ok(out.menu.includes('>deployment runtime is not explicitly configured</div>'));
+  assert.ok(out.menu.includes('</span> deployment runtime is not explicitly configured</div>'));
   assert.ok(out.menu.includes('disabled aria-disabled="true"'));
   assert.ok(!out.menu.includes('data-action="gh27"'));
   out = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });
