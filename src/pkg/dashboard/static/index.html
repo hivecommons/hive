@@ -3397,9 +3397,6 @@
     .collapse-chevron.collapsed {
       transform: rotate(-90deg);
     }
-    .advisory-collapse-header:hover {
-      opacity: 0.8;
-    }
     .advisory-agent-body {
       overflow: hidden;
       transition: max-height 0.2s ease;
@@ -3408,25 +3405,7 @@
       max-height: 0 !important;
       padding: var(--sp-0);
     }
-    #advisory-digest {
-      background: var(--card-bg); border: 1px solid var(--border);
-      border-radius: 8px; padding: var(--sp-6);
-    }
-    /* When the main digest is collapsed, the empty card shell must not
-       linger: children are hidden and a muted hint invites expanding.
-       (No !important needed here — the card carries no inline styles.) */
-    #advisory-digest.card-collapsed {
-      border: none;
-      padding: var(--sp-1) var(--sp-0);
-      background: transparent;
-    }
-    #advisory-digest.card-collapsed > * { display: none; }
-    #advisory-digest.card-collapsed::before {
-      content: 'Expand to see advisory findings.';
-      color: var(--muted);
-      font-size: 0.8rem;
-      font-style: italic;
-    }
+    #advisory-digest { text-align: left; }
 
     /* ── Collapsible sections (#1533) ── */
     .section-header-toggle {
@@ -4724,11 +4703,11 @@
     <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Advisory section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Advisory</h2>
     <div class="section-body section-group-body">
     <div class="advisory-subsection" id="advisory-digest-section">
-      <h2 class="section-label advisory-collapse-header section-header-toggle" style="margin-bottom: var(--sp-4); cursor: pointer; user-select: none;" data-action="toggleAdvisorySection" data-arg0="advisory-digest-main">
-        <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest<span data-section-help="advisory-digest-section"></span>
+      <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-digest-section">
+        <span class="section-chevron">▼</span> 📋 Advisory Digest<span data-section-help="advisory-digest-section"></span>
       </h2>
       <div class="section-body">
-        <div id="advisory-digest"></div>
+        <div id="advisory-digest" class="advisory-subsection-card"></div>
       </div>
     </div>
 
@@ -5725,6 +5704,7 @@
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'] },
       'governor': { title: '📊 Governor', summary: 'idle' },
       'advisory-section': { title: '📋 Advisory', summary: '0 advisories' },
+      'advisory-digest-section': { title: '📋 Advisory Digest', summary: '0 findings' },
       'hive-advice-section': { title: '🧭 Hive Advice', summary: '0 recommendations', badgeHtml: '<span class="dash-card-badge">weekly</span>' },
       'fleet-report-section': { title: '📡 Fleet Report Preview', summary: '0 reports', badgeHtml: '<span class="dash-card-badge">dry-run</span>' },
       'acmm-reco-section': { title: '⬆️ Ready to level up?', summary: 'L— · stay', badgeHtml: '<span class="dash-card-badge">advisory</span>' },
@@ -6960,6 +6940,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
       if (sectionId === 'cost-panel' && localStorage.getItem('hive-cost-collapsed') === '1') return true;
+      if (sectionId === 'advisory-digest-section' && localStorage.getItem('hive-collapse-advisory-digest-main') === 'true') return true;
       return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1';
     }
     /** Persist section collapsed state */
@@ -6974,6 +6955,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (collapsed) localStorage.setItem('hive-cost-collapsed', '1');
         else localStorage.removeItem('hive-cost-collapsed');
       }
+      if (sectionId === 'advisory-digest-section') localStorage.removeItem('hive-collapse-advisory-digest-main');
       dashboardUpdateLayoutMenuState();
     }
     /** Remove the expanded max-height cap after the max-height transition finishes. */
@@ -12673,8 +12655,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     /* --- Collapsible advisory sections (persisted in localStorage) --- */
     const ADVISORY_COLLAPSE_PREFIX = 'hive-collapse-'; /* localStorage key prefix */
-    const ADVISORY_COLLAPSE_MAIN_KEY = ADVISORY_COLLAPSE_PREFIX + 'advisory-digest-main';
-    const ADVISORY_AGENT_KEY_PREFIX = ADVISORY_COLLAPSE_PREFIX + 'advisory-agent-';
     const COLLAPSE_TRANSITION_MS = 200; /* match CSS transition duration */
 
     function isAdvisoryCollapsed(key) {
@@ -12703,23 +12683,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body.classList.add('collapsed');
         chevron.classList.add('collapsed');
       }
-      if (sectionId === 'advisory-digest-main') {
-        const card = document.getElementById('advisory-digest');
-        if (card) card.classList.toggle('card-collapsed', !isCollapsed);
-      }
       setAdvisoryCollapsed(sectionId, !isCollapsed);
-    }
-
-    function applyAdvisoryCollapseState() {
-      /* Restore main digest collapse state */
-      if (isAdvisoryCollapsed('advisory-digest-main')) {
-        const body = document.getElementById('advisory-digest-main-body');
-        const chevron = document.getElementById('advisory-digest-main-chevron');
-        const card = document.getElementById('advisory-digest');
-        if (body) body.classList.add('collapsed');
-        if (chevron) chevron.classList.add('collapsed');
-        if (card) card.classList.add('card-collapsed');
-      }
     }
 
     function advisoryFindingTime(iso) {
@@ -12756,18 +12720,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderAdvisoryDigest(digest) {
+      refreshSectionCardShell('advisory-digest-section');
       const el = document.getElementById('advisory-digest');
       if (!el) return;
-      el.classList.toggle('card-collapsed', isAdvisoryCollapsed('advisory-digest-main'));
       if (!digest || !digest.total_count) {
-        const emptyCollapsed = isAdvisoryCollapsed('advisory-digest-main');
-        setIfChanged(el, `<div id="advisory-digest-main-body" class="advisory-agent-body${emptyCollapsed ? ' collapsed' : ''}" style="color:var(--muted);font-size:var(--fs-base);text-align:center;${emptyCollapsed ? 'max-height:0;padding:0' : 'padding:20px'}">No advisory findings yet. Agents will post findings here as they analyze the codebase.</div>`);
+        setSectionSummary('advisory-digest-section', '0 findings');
+        setIfChanged(el, `<div id="advisory-digest-main-body" class="advisory-agent-body muted" style="font-size:var(--fs-base);text-align:left">No advisory findings yet. Agents will post findings here as they analyze the codebase.</div>`);
+        applySectionCollapse('advisory-digest-section');
         return;
       }
+      setSectionSummary('advisory-digest-section', `${digest.total_count} finding${digest.total_count === 1 ? '' : 's'}`);
       const sevIcon = s => ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[s] || '⚪');
       const agents = Object.keys(digest.by_agent || {}).sort();
-      const mainCollapsed = isAdvisoryCollapsed('advisory-digest-main');
-      let html = `<div id="advisory-digest-main-body" class="advisory-agent-body${mainCollapsed ? ' collapsed' : ''}" style="${mainCollapsed ? 'max-height:0' : 'max-height:none'}">`;
+      let html = `<div id="advisory-digest-main-body" class="advisory-agent-body" style="max-height:none">`;
       html += `<div style="font-size:0.78rem;color:var(--muted);margin-bottom:var(--sp-5)">
         <strong>Mode:</strong> ${escapeHtml(digest.mode)} | <strong>Findings:</strong> ${digest.total_count} | <strong>Updated:</strong> ${formatDashboardDateTime(digest.generated_at)}
       </div>`;
@@ -12793,6 +12758,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       html += '</div>';
       setIfChanged(el, html);
+      applySectionCollapse('advisory-digest-section');
     }
 
     // Planning (⧉ Plan button + `plan`-label trigger) requires ACMM L5+: the
@@ -24180,7 +24146,7 @@ function burnAreaChart() {
       initializeDashboardSectionCards();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
-        'advisory-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
+        'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
@@ -25243,11 +25209,7 @@ function burnAreaChart() {
     const _origOcNavigate = typeof ocNavigate === 'function' ? ocNavigate : null;
     document.addEventListener('DOMContentLoaded', () => {
       loadInceptionState();
-      /* Restore main advisory digest collapse state on page load */
-      if (isAdvisoryCollapsed('advisory-digest-main')) {
-        const chevron = document.getElementById('advisory-digest-main-chevron');
-        if (chevron) chevron.classList.add('collapsed');
-      }
+      applySectionCollapse('advisory-digest-section');
       /* OpenRouter scan-to-fund return: show the result and clear the flag so a
          reload doesn't re-toast. */
       try {
