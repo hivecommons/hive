@@ -11119,6 +11119,418 @@
         }
       }
     },
+    "/api/config/knowledge/connectors": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List configured knowledge connectors",
+        "description": "Returns knowledge.connectors plus the registered connector types. Credentials are never stored here, only an env var name or secret file path.",
+        "responses": {
+          "200": {
+            "description": "Configured connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Replace knowledge connectors",
+        "description": "Replaces knowledge.connectors with the posted list after validating every entry (names, layer, interval, scope keys, auth). Inline secrets are rejected. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "interval": {
+                          "type": "string"
+                        },
+                        "layer": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "auth": {
+                          "type": "object",
+                          "description": "Env var name or secret file path only; inline secrets are rejected.",
+                          "properties": {
+                            "env": {
+                              "type": "string"
+                            },
+                            "file": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "type",
+                        "layer"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "connectors"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/status": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Knowledge connector status",
+        "description": "Per-connector status pill (ok, syncing, error, disabled, pending), last sync, pages, facts and last error. Configuration only when the connector syncer is not running.",
+        "responses": {
+          "200": {
+            "description": "Connector status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runtime": {
+                      "type": "boolean"
+                    },
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "last_sync": {
+                            "type": "string"
+                          },
+                          "pages": {
+                            "type": "integer"
+                          },
+                          "facts": {
+                            "type": "integer"
+                          },
+                          "last_error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/validate": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Validate a knowledge connector entry",
+        "description": "Dry-run validation: config rules, the connector's own scope/auth checks, and that the named credential source resolves locally. No network access; the credential is never echoed. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "interval": {
+                    "type": "string"
+                  },
+                  "layer": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "auth": {
+                    "type": "object",
+                    "description": "Env var name or secret file path only; inline secrets are rejected.",
+                    "properties": {
+                      "env": {
+                        "type": "string"
+                      },
+                      "file": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "layer"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/{name}/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sync a knowledge connector now",
+        "description": "Starts an immediate background sync of the named connector. Poll the status endpoint for progress. Requires owner role.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync started"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown connector"
+          },
+          "409": {
+            "description": "Sync already in progress"
+          },
+          "503": {
+            "description": "Connector syncer is not running"
+          }
+        }
+      }
+    },
     "/api/knowledge/git-sources": {
       "get": {
         "tags": [

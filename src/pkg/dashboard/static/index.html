@@ -3214,6 +3214,18 @@
     .public-knowledge-pill[data-enabled="false"] { background: var(--muted); color: var(--bg); }
     .public-knowledge-switch { display: inline-flex; align-items: center; gap: var(--sp-2); border: var(--line-width) solid var(--border); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); padding: var(--sp-1) var(--sp-2); cursor: pointer; font-size: var(--fs-xs); font-weight: 700; }
     .public-knowledge-switch[aria-checked="true"] { border-color: var(--green); color: var(--green); }
+    .kc-toolbar { display: flex; justify-content: flex-end; margin-bottom: var(--sp-3); }
+    .kc-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .kc-table th, .kc-table td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: var(--line-width) solid var(--border); vertical-align: middle; }
+    .kc-table th { color: var(--muted); font-weight: 700; }
+    .kc-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .kc-error-cell { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .kc-error { color: var(--red); }
+    .kc-pill { border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 800; color: var(--bg); background: var(--muted); }
+    .kc-pill[data-status="ok"] { background: var(--green); }
+    .kc-pill[data-status="syncing"] { background: var(--blue); }
+    .kc-pill[data-status="error"] { background: var(--red); }
+    .hive-dialog-error[data-ok="true"] { color: var(--green); }
     .public-knowledge-switch-knob { display: inline-block; inline-size: 1.1em; block-size: 1.1em; border-radius: var(--r-pill); background: currentColor; }
     .public-knowledge-url { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
     .public-knowledge-url code { overflow-wrap: anywhere; }
@@ -29495,7 +29507,7 @@ function burnAreaChart() {
         // configured" when upstream_watch is off.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
-        if (tabId === 'Knowledge') renderPublicKnowledgeControls();
+        if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); }
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -29697,7 +29709,208 @@ function burnAreaChart() {
         '<h3>Knowledge sharing</h3>' +
         '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials.</p>' +
         '<div id="public-knowledge-settings-control" data-public-knowledge-control="settings">' + renderPublicKnowledgeControl('settings') + '</div>' +
-      '</div>';
+      '</div>' +
+        renderKnowledgeConnectorsSection();
+    }
+
+    // ---- Settings → Knowledge → Connectors (#11075) ----
+    const KC_SCOPE_FIELDS = {
+      'git': [['url', 'Repository URL', 'https://github.com/org/repo'], ['branch', 'Branch', 'main'], ['subpath', 'Subpath', 'docs/']],
+      'document': [['url', 'Document URL', 'https://example.org/guide.html'], ['file_path', 'File path', '/data/knowledge/guide.pdf'], ['context7_id', 'Context7 ID', '/org/project']],
+      'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']]
+    };
+    let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false };
+
+    async function loadKnowledgeConnectors() {
+      try {
+        const [cfgRes, stRes] = await Promise.all([fetch('/api/config/knowledge/connectors'), fetch('/api/config/knowledge/connectors/status')]);
+        const cfg = await cfgRes.json().catch(() => ({}));
+        if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
+        const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime });
+      } catch (e) {
+        _kcState.loaded = true;
+        _kcState.error = e.message;
+      }
+      renderKnowledgeConnectorsInto();
+    }
+
+    function renderKnowledgeConnectorsInto() {
+      const el = document.getElementById('kc-connectors-root');
+      if (el) el.innerHTML = renderKnowledgeConnectorsBody();
+    }
+
+    function kcAgo(iso) {
+      if (!iso) return '—';
+      const t = Date.parse(iso);
+      if (isNaN(t)) return '—';
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return s + 's ago';
+      if (s < 3600) return Math.round(s / 60) + 'm ago';
+      if (s < 86400) return Math.round(s / 3600) + 'h ago';
+      return Math.round(s / 86400) + 'd ago';
+    }
+
+    function renderKnowledgeConnectorsBody() {
+      if (!_kcState.loaded) return '<p class="text-muted fs-base">Loading connectors…</p>';
+      if (_kcState.error) return '<p class="kc-error">Failed to load connectors: ' + esc(_kcState.error) + '</p>';
+      const owner = viewerIsOwner();
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      let html = '';
+      if (owner) html += '<div class="kc-toolbar"><button type="button" class="hv-btn btn-primary btn-sm" data-action="kcOpenEditor" data-arg0="">Add connector</button></div>';
+      if (!_kcState.connectors.length) {
+        return html + '<p class="text-muted fs-base">No connectors configured.' + (owner ? '' : ' Only the hive owner can add connectors.') + '</p>';
+      }
+      html += '<table class="kc-table"><thead><tr><th>Name</th><th>Type</th><th>Layer</th><th>Status</th><th>Last sync</th><th>Pages / facts</th><th>Last error</th>' + (owner ? '<th>Actions</th>' : '') + '</tr></thead><tbody>';
+      _kcState.connectors.forEach(c => {
+        const r = byName[c.name] || {};
+        const status = r.status || (c.enabled ? 'pending' : 'disabled');
+        const err = r.last_error || '';
+        const n = esc(c.name);
+        html += '<tr data-connector="' + n + '"><td><code>' + n + '</code></td><td>' + esc(c.type) + '</td><td>' + esc(c.layer) + '</td>'
+          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span></td>'
+          + '<td title="' + esc(r.last_sync || '') + '">' + esc(kcAgo(r.last_sync)) + '</td>'
+          + '<td>' + (r.pages || 0) + ' / ' + (r.facts || 0) + '</td>'
+          + '<td class="kc-error-cell" title="' + esc(err) + '">' + (err ? esc(err.length > 80 ? err.slice(0, 80) + '…' : err) : '—') + '</td>';
+        if (owner) {
+          html += '<td class="kc-actions">'
+            + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kcSyncNow" data-arg0="' + n + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>'
+            + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kcOpenEditor" data-arg0="' + n + '">Edit</button>'
+            + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kcToggleEnabled" data-arg0="' + n + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>'
+            + '<button type="button" class="hv-btn btn-danger btn-sm" data-action="kcRemove" data-arg0="' + n + '">Remove</button></td>';
+        }
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      if (!_kcState.runtime) html += '<p class="text-muted fs-base">The connector syncer is not running, so status and Sync now are unavailable until the hive restarts with these connectors.</p>';
+      return html;
+    }
+
+    function renderKnowledgeConnectorsSection() {
+      return '<div class="config-section" data-section="knowledge-connectors">'
+        + '<h3>Connectors</h3>'
+        + '<p class="text-muted fs-base">External knowledge systems synced into the vault. Credentials are referenced by environment variable name or secret file path, never stored here.</p>'
+        + '<div id="kc-connectors-root">' + renderKnowledgeConnectorsBody() + '</div></div>';
+    }
+
+    async function kcSave(list) {
+      const r = await fetch('/api/config/knowledge/connectors', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({connectors: list})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      _kcState.connectors = data.connectors || [];
+      await loadKnowledgeConnectors();
+    }
+
+    function kcFind(name) { return _kcState.connectors.find(c => c.name === name); }
+
+    function kcToggleEnabled(name) {
+      const list = _kcState.connectors.map(c => c.name === name ? Object.assign({}, c, { enabled: !c.enabled }) : c);
+      kcSave(list).then(() => showToast('Connector ' + name + ' updated', 'success')).catch(e => showToast('Connector update failed: ' + e.message, 'error'));
+    }
+
+    async function kcRemove(name) {
+      const ok = await hiveConfirm({ title: 'Remove connector?', message: 'Remove connector "' + name + '"? Facts it already synced stay in the vault.', confirmLabel: 'Remove', danger: true });
+      if (!ok) return;
+      kcSave(_kcState.connectors.filter(c => c.name !== name)).then(() => showToast('Connector ' + name + ' removed', 'success')).catch(e => showToast('Connector removal failed: ' + e.message, 'error'));
+    }
+
+    async function kcSyncNow(name) {
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/' + encodeURIComponent(name) + '/sync', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast('Sync started for ' + name, 'success');
+        setTimeout(loadKnowledgeConnectors, 1500);
+      } catch (e) {
+        showToast('Sync failed to start: ' + e.message, 'error');
+      }
+    }
+
+    function kcScopeFieldsHTML(type, scope) {
+      const known = KC_SCOPE_FIELDS[type];
+      scope = scope || {};
+      if (known) {
+        return known.map(f => '<label class="hive-dialog-label">' + esc(f[1]) + '<input class="hive-dialog-input" type="text" data-kc-scope="' + esc(f[0]) + '" value="' + esc(scope[f[0]] || '') + '" placeholder="' + esc(f[2]) + '" autocomplete="off"></label>').join('');
+      }
+      const lines = Object.keys(scope).map(k => k + '=' + scope[k]).join('\n');
+      return '<label class="hive-dialog-label">Scope (key=value per line)<textarea class="hive-dialog-input" rows="4" data-kc-scope-raw>' + esc(lines) + '</textarea></label>';
+    }
+
+    function kcReadForm(overlay) {
+      const val = sel => { const el = overlay.querySelector(sel); return el ? el.value.trim() : ''; };
+      const scope = {};
+      overlay.querySelectorAll('[data-kc-scope]').forEach(el => { if (el.value.trim()) scope[el.dataset.kcScope] = el.value.trim(); });
+      const raw = overlay.querySelector('[data-kc-scope-raw]');
+      if (raw) raw.value.split('\n').forEach(line => { const i = line.indexOf('='); if (i > 0 && line.slice(i + 1).trim()) scope[line.slice(0, i).trim()] = line.slice(i + 1).trim(); });
+      const authKind = val('[data-kc-auth-kind]');
+      const authVal = val('[data-kc-auth-value]');
+      return {
+        name: val('[data-kc-name]'),
+        type: val('[data-kc-type]'),
+        enabled: !overlay.querySelector('[data-kc-enabled]') || overlay.querySelector('[data-kc-enabled]').checked,
+        layer: val('[data-kc-layer]'),
+        interval: val('[data-kc-interval]'),
+        scope: scope,
+        auth: authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {}
+      };
+    }
+
+    function kcOpenEditor(name) {
+      const existing = name ? kcFind(name) : null;
+      const c = existing || { name: '', type: (_kcState.types[0] || 'git'), enabled: true, layer: 'project', interval: '', scope: {}, auth: {} };
+      const authKind = c.auth && c.auth.env ? 'env' : (c.auth && c.auth.file ? 'file' : '');
+      const authVal = (c.auth && (c.auth.env || c.auth.file)) || '';
+      const opts = (arr, sel) => arr.map(v => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(v) + '</option>').join('');
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      overlay.innerHTML = '<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="kc-dialog-title">'
+        + '<div id="kc-dialog-title" class="hive-dialog-title">' + (existing ? 'Edit connector' : 'Add connector') + '</div>'
+        + '<label class="hive-dialog-label">Name<input class="hive-dialog-input" type="text" data-kc-name data-initial-focus value="' + esc(c.name) + '"' + (existing ? ' readonly' : '') + ' placeholder="team-wiki" autocomplete="off"></label>'
+        + '<label class="hive-dialog-label">Type<select class="hive-dialog-input" data-kc-type' + (existing ? ' disabled' : '') + '>' + opts(_kcState.types, c.type) + '</select></label>'
+        + '<label class="hive-dialog-label">Layer<select class="hive-dialog-input" data-kc-layer>' + opts(_kcState.layers, c.layer) + '</select></label>'
+        + '<div data-kc-scope-box>' + kcScopeFieldsHTML(c.type, c.scope) + '</div>'
+        + '<label class="hive-dialog-label">Credential source (name or path only, never the secret)<select class="hive-dialog-input" data-kc-auth-kind>'
+        + '<option value=""' + (authKind === '' ? ' selected' : '') + '>None</option><option value="env"' + (authKind === 'env' ? ' selected' : '') + '>Environment variable name</option><option value="file"' + (authKind === 'file' ? ' selected' : '') + '>Secret file path</option></select></label>'
+        + '<input class="hive-dialog-input" type="text" data-kc-auth-value value="' + esc(authVal) + '" placeholder="CONFLUENCE_TOKEN or /run/secrets/token" autocomplete="off">'
+        + '<label class="hive-dialog-label">Sync interval (blank = 15m)<input class="hive-dialog-input" type="text" data-kc-interval value="' + esc(c.interval || '') + '" placeholder="15m" autocomplete="off"></label>'
+        + '<label class="hive-dialog-label"><input type="checkbox" data-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>'
+        + '<div class="hive-dialog-error" role="alert" data-kc-msg></div>'
+        + '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
+        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-kc-validate>Validate</button>'
+        + '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary">' + (existing ? 'Save' : 'Add') + '</button></div></div>';
+      document.body.appendChild(overlay);
+      const msg = overlay.querySelector('[data-kc-msg]');
+      const setMsg = (text, ok) => { msg.textContent = text; msg.dataset.ok = ok ? 'true' : 'false'; };
+      overlay.querySelector('[data-kc-type]').addEventListener('change', e => {
+        overlay.querySelector('[data-kc-scope-box]').innerHTML = kcScopeFieldsHTML(e.target.value, {});
+      });
+      overlay.querySelector('[data-kc-validate]').addEventListener('click', async () => {
+        setMsg('Validating…', true);
+        try {
+          const r = await fetch('/api/config/knowledge/connectors/validate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(kcReadForm(overlay)) });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          setMsg(data.ok ? 'Configuration is valid.' : (data.error || 'Invalid configuration'), !!data.ok);
+        } catch (e) {
+          setMsg('Validation failed: ' + e.message, false);
+        }
+      });
+      hiveWireDialog(overlay, () => {}, null, '.primary', '.cancel', async close => {
+        const next = kcReadForm(overlay);
+        const list = existing ? _kcState.connectors.map(x => x.name === existing.name ? next : x) : _kcState.connectors.concat([next]);
+        try {
+          await kcSave(list);
+          showToast('Connector ' + next.name + ' saved', 'success');
+          close(true);
+        } catch (e) {
+          setMsg(e.message, false);
+        }
+      });
     }
 
     var _themeState = { loaded:false, theme:'hive', theme_overrides:{}, catalog:[], effective:null };

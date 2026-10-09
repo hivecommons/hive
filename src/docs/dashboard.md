@@ -143,6 +143,10 @@ for **Closed**, it covers PRs closed without merging plus issue closes. The
 previous percent compares against the immediately preceding window of the same
 length (for example, previous 24 hours for the 24h window).
 
+## Settings → Knowledge → Connectors
+
+The **Knowledge** tab of the governor config dialog has a **Connectors** section listing every `knowledge.connectors` entry: name, type, layer, a status pill (`ok`, `syncing`, `error`, `disabled`, or `pending` before the first sync), last sync, pages/facts, and the last error (truncated, full text on hover). Owners also get **Sync now**, **Edit**, **Disable/Enable** and **Remove** per row plus **Add connector**; everyone else sees a read-only table. Add/Edit uses the styled hive dialog with type-specific scope fields and a **Validate** button; credentials are referenced by environment variable name or secret file path only. Saves go through the owner-only `PUT /api/config/knowledge/connectors`. See [Knowledge connectors](knowledge-connectors.md).
+
 ## Project Inception and Knowledge
 
 Project Inception is branded as powered by Spektacular with a linked header pill and body note. Knowledge Base collapsed summaries show the total fact count (the same source as the sidebar badge); layer health stays inside the body with a short explanation that layers are knowledge-source scopes for facts.
