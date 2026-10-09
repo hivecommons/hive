@@ -6,7 +6,7 @@
 
 Hive produces **evidence**: a per-PR [review evidence bundle](review-evidence.md) plus existing artifacts. Whether an automated review counts as peer review, change authorisation or any other control is decided by **your organisation's own change-management policy**, your control owners and your auditor. Hive cannot decide that for you.
 
-> **Status.** The bundle schema exists today. The writer, API, dashboard and CLI surfaces are landing in follow-up issues #11060/#11061/#11062 ([epic #11058](https://github.com/hivecommons/hive/issues/11058)). Until they land, the "bundle field" answers below describe what the bundle will hold.
+> **Status.** The bundle and every surface named below exist today: the relay, sentinel sweep and merge paths write it, and the API, dashboard and CLI read it ([epic #11058](https://github.com/hivecommons/hive/issues/11058)).
 
 ## Auditor questions and where the evidence is
 

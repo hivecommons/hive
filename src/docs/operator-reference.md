@@ -146,7 +146,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
-| `evidence.enabled` | On by default. | The review relay writes one [review evidence bundle](review-evidence.md) per PR head to `/data/evidence/<owner>/<repo>/<number>/<head>.json` when it records a verdict or posts a review. Set `false` to stop writing new bundles; existing ones are left in place. |
+| `evidence.enabled` | On by default. | The review relay writes one [review evidence bundle](review-evidence.md) per PR head to `/data/evidence/<owner>/<repo>/<number>/<head>.json` when it records a verdict or posts a review; the sentinel sweep adds its findings to the flagged head's bundle; and every merge path adds the head's CI check-run summary, the human approvals and label changes, and the merge event. Owners and mergers read bundles through `GET /api/review/evidence` and `GET /api/review/evidence/list` (see the [API reference](api-reference.md)). Set `false` to stop writing new bundles; existing ones are left in place. |
 | `evidence.signing_key_file` | Unset (bundles unsigned). | Path to an Ed25519 private key (32-byte seed or 64-byte key, hex or base64). When set and readable, bundles are signed; when empty, absent or unusable they are written with `"signed": false` and a warning is logged for an unusable key. Keep the key off shared hosts. |
 | `review.all_authors` | Off by default. | Makes every open PR eligible for review, not only agent-authored ones. It only widens what is reviewed; it never lets an agent push to those PRs (see the next row). Features -> Review Gate -> Reviewers. |
 | `review.fix_human_prs` | Off by default; owner-only. | Lets the review-fix kick push commits onto PRs the hive's own agents did not open (a contributor's fork via "allow edits by maintainers", a maintainer's branch, another bot's PR). Off, a `changes_requested` verdict on such a PR stops at the published review, with the proposed fix as a suggestion or patch block in the comment, and the refusal is audited as `review_fix_withheld`. Upgrade rule: a hive that already had `all_authors: true` with this never set is stored as `true` so its behaviour does not change; an explicit `false` is never overwritten. See [review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs). |
@@ -326,7 +326,9 @@ the PR clear until the author pushes again.
 
 Owners edit all of this from **Settings → Security → Suspicious Activity**;
 the dashboard writes the owner-only `/api/config/governor/security` overlay.
-Every alert is also written to the dashboard audit log as `sentinel-alert`.
+Every alert is also written to the dashboard audit log as `sentinel-alert`,
+and, when `evidence.enabled` is on, recorded under `sentinel` in the flagged
+head's [review evidence bundle](review-evidence.md).
 
 ## Image provenance and tags
 
