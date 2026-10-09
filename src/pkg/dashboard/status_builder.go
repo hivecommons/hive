@@ -1359,6 +1359,13 @@ func defaultStatsConfig(name string) []any {
 		"ci-maintainer": {
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
 		},
+		// The quality agent drives coverage at ACMM Level 3 (#11150). The key
+		// is "testCoverage", not "coverage", so a saved quality strip never
+		// matches ci-maintainer's and is never pruned as a clone (#7411).
+		qualityAgentName: {
+			map[string]any{"key": "testCoverage", "label": "Test coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": coverageTarget,
+				"desc": "Primary repo test coverage from the " + qualityCoverageSource + "; — when no badge is configured or it is unreadable. ~90% is the ACMM Level 3 → 4 signal."},
+		},
 		"outreach": {
 			map[string]any{"key": "stars", "label": "Stars", "source": "agentMetrics", "field": "stars", "style": "spark", "trendField": "stars"},
 			map[string]any{"key": "forks", "label": "Forks", "source": "agentMetrics", "field": "forks", "style": "number"},
