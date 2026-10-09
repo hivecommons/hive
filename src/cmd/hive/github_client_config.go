@@ -98,6 +98,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
 	client.SetPRDetailTTLFunc(func() time.Duration { return b.cfg.GitHub.PRDetailTTL() })
+	client.SetGraphQLPRBatchConfig(
+		func() bool { return b.cfg.GitHub.GraphQLPRBatchEnabled() },
+		func() int { return b.cfg.GitHub.EffectiveGraphQLPRBatchPageSize() },
+	)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 		client.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))

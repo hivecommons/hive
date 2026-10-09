@@ -42,12 +42,34 @@ func TestComplianceConfigSelectedFrameworksNormalizes(t *testing.T) {
 	}
 }
 
+func TestCompliancePostureWindowAndHistoryDefaults(t *testing.T) {
+	var c ComplianceConfig
+	if got := c.PostureWindowOrDefault(); got != DefaultCompliancePostureWindowDays*24*time.Hour {
+		t.Fatalf("window = %s", got)
+	}
+	if got := c.PostureHistoryRetentionOrDefault(); got != DefaultCompliancePostureHistoryDays*24*time.Hour {
+		t.Fatalf("history = %s", got)
+	}
+	c.PostureChecks = CompliancePostureChecksConfig{WindowDays: 7, HistoryDays: 90}
+	if got := c.PostureWindowOrDefault(); got != 7*24*time.Hour {
+		t.Fatalf("window = %s", got)
+	}
+	if got := c.PostureHistoryRetentionOrDefault(); got != 90*24*time.Hour {
+		t.Fatalf("history = %s", got)
+	}
+}
+
 func TestIsKnownComplianceFramework(t *testing.T) {
 	if !IsKnownComplianceFramework(" SOC2-TYPE2 ") {
 		t.Fatal("soc2-type2 must be known regardless of case/space")
 	}
-	if IsKnownComplianceFramework("fedramp-moderate") {
-		t.Fatal("fedramp-moderate is not shipped yet")
+	if IsKnownComplianceFramework("fedramp-high") {
+		t.Fatal("fedramp-high is not shipped")
+	}
+	for _, id := range []string{"fedramp-moderate", "iso27001-annex-a"} {
+		if !IsKnownComplianceFramework(id) {
+			t.Fatalf("%s must be known", id)
+		}
 	}
 }
 
@@ -57,17 +79,23 @@ func TestComplianceConfigValidate(t *testing.T) {
 		cfg     ComplianceConfig
 		wantErr string
 	}{
+		{name: "fedramp and iso", cfg: ComplianceConfig{Frameworks: []string{"fedramp-moderate", "iso27001-annex-a"}}},
 		{name: "soc2", cfg: ComplianceConfig{Frameworks: []string{"soc2-type2"}}},
 		{name: "case and space tolerated", cfg: ComplianceConfig{Frameworks: []string{" SOC2-Type2 "}}},
 		{name: "min interval", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: MinCompliancePostureInterval}}},
 		{name: "max interval", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: MaxCompliancePostureInterval}}},
 		{name: "blank", cfg: ComplianceConfig{Frameworks: []string{" "}}, wantErr: "must not be blank"},
 		{name: "malformed", cfg: ComplianceConfig{Frameworks: []string{"soc2_type2"}}, wantErr: "not a valid profile id"},
-		{name: "unknown", cfg: ComplianceConfig{Frameworks: []string{"fedramp-moderate"}}, wantErr: "unknown framework"},
+		{name: "unknown", cfg: ComplianceConfig{Frameworks: []string{"fedramp-high"}}, wantErr: "unknown framework"},
 		{name: "duplicate", cfg: ComplianceConfig{Frameworks: []string{"soc2-type2", "SOC2-TYPE2"}}, wantErr: "duplicate framework"},
 		{name: "negative interval", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: -time.Minute}}, wantErr: "must not be negative"},
 		{name: "too short", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: time.Second}}, wantErr: "at least"},
 		{name: "too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{Interval: MaxCompliancePostureInterval + time.Hour}}, wantErr: "at most"},
+		{name: "window bounds", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: MaxCompliancePostureWindowDays, HistoryDays: MinCompliancePostureHistoryDays}}},
+		{name: "negative window", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: -1}}, wantErr: "window_days"},
+		{name: "window too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{WindowDays: MaxCompliancePostureWindowDays + 1}}, wantErr: "window_days"},
+		{name: "history too short", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{HistoryDays: MinCompliancePostureHistoryDays - 1}}, wantErr: "history_days"},
+		{name: "history too long", cfg: ComplianceConfig{PostureChecks: CompliancePostureChecksConfig{HistoryDays: MaxCompliancePostureHistoryDays + 1}}, wantErr: "history_days"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

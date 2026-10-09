@@ -198,6 +198,7 @@ func DefaultRegistry() *Registry {
 	_ = r.Register(TypeDocument, newDocumentConnector)
 	_ = r.Register(TypeGitHubWiki, newGitHubWikiConnector)
 	_ = r.Register(TypeGoogleDrive, newGoogleDriveConnector)
+	_ = r.Register(TypeSharePoint, newSharePointConnector)
 	return r
 }
 
