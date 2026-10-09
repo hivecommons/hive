@@ -87,7 +87,7 @@ or the same files, comment on it instead of opening another.
 
 Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
-must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Closes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
+must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Fixes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
 
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
@@ -118,7 +118,7 @@ of opening a second issue. Treat the issue it names as yours for this finding.
 
 ## Opening Hold-Gated PRs
 
-If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree cut from the branch the PR will target — the base this repository requires (its AGENTS.md, CONTRIBUTING or pull-request template may name one, and a repository on a promotion model takes PRs on an integration branch rather than on its released default), falling back to its default branch only when nothing names one, and never whatever branch the checkout happens to be on: `git worktree add /tmp/scanner-fix-<slug> -b scanner/fix-<slug> origin/<target-branch>`
 2. Implement the fix
@@ -133,7 +133,7 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 hive-open-pr --repo "$HIVE_REPO" \
   --base "<target-branch>" \
   --title "fix: <short description>" \
-  --body "## Fix\n\n<what this changes>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Fix\n\n<what this changes>\n\nFixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use Refs #<issue-number> only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by scanner agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "hold"
 ```
