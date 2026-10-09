@@ -2848,6 +2848,13 @@
       vertical-align: middle; flex-shrink: 0;
     }
     .config-info:hover { background: var(--blue); border-color: var(--blue); color: var(--bg); }
+    .section-settings-gear {
+      padding: var(--sp-0); margin-left: var(--sp-0); text-decoration: none;
+      cursor: pointer; font-family: var(--font-ui); opacity: 1;
+    }
+    .section-settings-gear:hover, .section-settings-gear:focus-visible {
+      background: var(--blue); border-color: var(--blue); color: var(--bg); outline: none;
+    }
 
     .theme-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:var(--sp-5); margin:12px 0 18px; }
     .theme-card { border:1px solid var(--border); border-radius:10px; padding:var(--sp-5); background:var(--surface); transition:border-color .15s, transform .15s, box-shadow .15s; }
@@ -3480,7 +3487,6 @@
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
     .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
-    .governor-card .dash-card-actions { margin-left: 0; }
     .dash-card.collapsed.has-collapsed-headline .dash-card-summary { display: none; }
     .mini-summary-strip { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); width: min(320px, 36vw); max-width: 320px; height: 26px; overflow: hidden; color: var(--muted); }
     .mini-summary-strip svg { flex: 0 0 auto; display: block; overflow: visible; }
@@ -4695,7 +4701,7 @@
   <div class="dashboard-layout-live" id="dashboard-layout-live" aria-live="polite" aria-atomic="true"></div>
 
   <div class="repos" id="overview-section" data-dashboard-section="overview-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview <button type="button" class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings" data-stop="1" title="Configure Overview chart types, carousel timing, and transitions" aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings">⚙️</button></span></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="overview-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Overview section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> <span class="overview-header">Overview</span></h2>
     <div class="config-overlay hidden" id="overview-chart-settings-overlay">
       <div class="config-modal overview-settings-modal" id="overview-chart-settings" role="dialog" aria-modal="true" aria-labelledby="overview-chart-settings-title">
         <div class="config-header">
@@ -4768,7 +4774,7 @@
   <div class="cost-usage mb-8" id="cost-panel" data-dashboard-section="cost-panel"></div>
 
   <div class="repos" id="repos-section" data-dashboard-section="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: a human-only gate or exhausted fix attempts requires operator review"></span> <button class="hv-btn config-gear btn-sm" data-action="gh1" data-stop="1" title="Manage monitored projects">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Projects section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> Projects <span id="repos-host-badge" title="Every project in this hive is on this provider host" style="font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3)"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: a human-only gate or exhausted fix attempts requires operator review"></span></h2>
     <div class="section-body">
       <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
         <span id="repos-overview-filter-chip" class="repo-filtered-chip" hidden></span>
@@ -4903,7 +4909,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span> <button class="hv-btn btn-danger btn-sm" data-action="openNousConfig" data-stop="1" title="Strategy Lab Configuration">⚙️</button></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -5720,10 +5726,13 @@
       const tip = title ? ` title="${esc(title)}"` : '';
       return `<span class="badge-status status-badge${cls}" data-status="${meta.status}"${tip}>${esc(label || meta.label)}</span>`;
     }
+    function sectionSettingsGear(label, action, title, extraAttrs) {
+      return `<button type="button" class="config-info section-settings-gear" data-section-settings="1" data-action="${esc(action)}" data-stop="1"${extraAttrs || ''} title="${esc(title || (label + ' settings'))}" aria-label="${esc(label)} settings">⚙</button>`;
+    }
 
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
-      'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'] },
-      'governor': { title: '📊 Governor', summary: 'idle' },
+      'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
+      'governor': { title: '📊 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
       'advisory-section': { title: '📋 Advisory', summary: '0 advisories' },
       'hive-advice-section': { title: '🧭 Hive Advice', summary: '0 recommendations', badgeHtml: '<span class="dash-card-badge">weekly</span>' },
       'fleet-report-section': { title: '📡 Fleet Report Preview', summary: '0 reports', badgeHtml: '<span class="dash-card-badge">dry-run</span>' },
@@ -5732,12 +5741,12 @@
       'pr-throughput-section': { title: '📊 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' },
       'token-panel': { title: '🪙 Tokens', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
-      'repos-section': { title: '📦 Projects', summary: '0 repos' },
+      'repos-section': { title: '📦 Projects', summary: '0 repos', settingsHtml: sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects') },
       'acmm-eval-section': { title: '🎯 ACMM Eval', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
-      'nous-section': { title: '🧪 Strategy Lab', summary: '—' },
+      'nous-section': { title: '🧪 Strategy Lab', summary: '—', settingsHtml: sectionSettingsGear('Strategy Lab', 'openNousConfig', 'Strategy Lab Configuration') },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
@@ -5836,12 +5845,13 @@
       const gripLabel = (opts.gripLabel || String(opts.title || id || 'section').replace(/^[^A-Za-z0-9]+/, '').trim() || id || 'section');
       const grip = opts.grip === false ? '' : `<button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move ${esc(gripLabel)} section" aria-pressed="false">⠿</button>`;
       const subtitle = opts.subtitleHtml ? `<span class="dash-card-subtitle">${opts.subtitleHtml}</span>` : '';
+      const settings = opts.settingsHtml || '';
       const badges = opts.badgeHtml ? `<span class="dash-card-badges">${opts.badgeHtml}</span>` : '<span class="dash-card-badges"></span>';
       const actions = opts.actionsHtml ? `<span class="dash-card-actions">${opts.actionsHtml}</span>` : '<span class="dash-card-actions"></span>';
       const summaryText = textOrDash(opts.summaryHtml || opts.summary || '');
       const summary = `<span class="dash-card-summary ${opts.summaryClass || ''}" id="${esc(opts.summaryId || (id + '-summary'))}" title="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}" aria-label="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}">${visualSectionSummary(id, summaryText, opts.summaryTitle)}</span>`;
       const cls = ['dash-card-header','section-header-toggle',opts.headerClass || ''].filter(Boolean).join(' ');
-      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${subtitle}</span>${badges}${actions}${summary}</div>`;
+      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${settings}${subtitle}</span>${badges}${actions}${summary}</div>`;
     }
     function sectionCardShell(opts, bodyHtml) {
       opts = opts || {};
@@ -5879,7 +5889,7 @@
       if (!body) return;
       const bodyId = sectionId + '-body';
       const template = document.createElement('template');
-      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml }, '');
+      template.innerHTML = sectionCardShell({ id: sectionId, title: cfg.title, summaryHtml: cfg.summary, bodyId: bodyId, badgeHtml: cfg.badgeHtml, subtitleHtml: cfg.subtitleHtml, settingsHtml: cfg.settingsHtml }, '');
       const card = template.content.firstElementChild;
       const newHeader = card.querySelector('.dash-card-header');
       const badges = newHeader.querySelector('.dash-card-badges');
@@ -12521,7 +12531,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       loadReviewerAccuracy(false);
 
       const governorBody = `
-        <div class="gov-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Governor section" aria-pressed="false">⠿</button>Governor <button class="config-gear" data-action="openConfigDialog" data-arg0="governor" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
+        <div class="gov-title"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Governor section" aria-pressed="false">⠿</button>Governor</div>
         <div class="gov-grid sec-headline" data-collapsed-keep>
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
           <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: The mode comes from the governor's latest queue evaluation; the gauge uses the shared Overview Actionable now total so the Governor split and Overview KPI agree. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
@@ -12577,7 +12587,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${renderGovernorPRModelsTile()}
         ${renderReviewerAccuracyTile()}
         ${renderCadenceMatrix(cadenceMatrix, currentMode, modes)}`;
-      el.innerHTML = sectionCardShell({ id: 'governor', title: '📊 Governor', gripLabel: 'Governor', panelClass: 'governor-card', actionsHtml: '<button class="config-gear" data-action="openConfigDialog" data-arg0="governor" data-stop="1" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button>', summaryHtml: `${esc(currentMode)} · ${govPressure} pressure`, summaryTitle: 'Governor mode and queue pressure' }, governorBody.replace(/<div class="gov-title"[\s\S]*?<\/div>\n?/, ''));
+      el.innerHTML = sectionCardShell({ id: 'governor', title: '📊 Governor', gripLabel: 'Governor', panelClass: 'governor-card', settingsHtml: DASHBOARD_SECTION_CARD_CONFIG.governor.settingsHtml, summaryHtml: `${esc(currentMode)} · ${govPressure} pressure`, summaryTitle: 'Governor mode and queue pressure' }, governorBody.replace(/<div class="gov-title"[\s\S]*?<\/div>\n?/, ''));
       applySectionCollapse('governor');
       applySectionCollapse('governor-pr-models-section');
     }
