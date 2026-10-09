@@ -364,6 +364,6 @@ func commitMessageForSHA(sha string, logger *slog.Logger) string {
 // channelCommitMessage is the network read behind commitMessageForSHA; a var
 // so tests can stub it.
 var channelCommitMessage = func(sha string, logger *slog.Logger) string {
-	client := &http.Client{Timeout: channelResolveTimeout}
+	client := hubGitHubHTTPClient()
 	return fetchCommitMessage(client, sha, logger)
 }

@@ -98,6 +98,10 @@ func LowValueRESTWorkAllowed() bool {
 	return !ok || remaining > lowValueRESTBudgetFloor
 }
 
+func CoreRateLimitSnapshot() (remaining int, reset time.Time, ok bool) {
+	return sharedRESTAccounting.coreSnapshot()
+}
+
 func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

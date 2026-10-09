@@ -12,6 +12,11 @@ import (
 
 const promoteRequestTimeout = 15 * time.Second
 
+// PromotedSourcePrefix starts the provenance (`source`) of every fact written
+// by Promoter.Promote. The knowledge publish mirror uses it to recognise
+// curator-promoted facts.
+const PromotedSourcePrefix = "promoted from "
+
 // PromoteRequest describes a fact to promote from one wiki layer to another.
 type PromoteRequest struct {
 	Slug      string    `json:"slug"`
@@ -97,7 +102,7 @@ func (p *Promoter) Promote(ctx context.Context, req PromoteRequest) PromoteResul
 		Type:       FactType(page.Type),
 		Confidence: page.Confidence,
 		Tags:       page.Tags,
-		SourcePR:   fmt.Sprintf("promoted from %s by %s: %s", req.FromLayer, req.Promoter, req.Reason),
+		SourcePR:   fmt.Sprintf("%s%s by %s: %s", PromotedSourcePrefix, req.FromLayer, req.Promoter, req.Reason),
 		SourceDate: time.Now(),
 	}
 

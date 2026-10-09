@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1329,5 +1330,12 @@ func TestHumanMergePathsFor(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateGitHubAPIBudgetThresholds(t *testing.T) {
+	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "github.api_critical") {
+		t.Fatalf("Validate() error = %v, want github.api_critical", err)
 	}
 }

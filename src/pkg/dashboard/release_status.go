@@ -219,8 +219,10 @@ func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any, r
 		if runningSHA != "" && outcome.TargetSHA != "" && !sameCommitDashboard(runningSHA, outcome.TargetSHA) {
 			st.Superseded = true
 			st.RunningCommit = shortSHADashboard(runningSHA)
-			st.Detail = fmt.Sprintf("Last spoke-side upgrade to %s SUCCEEDED%s; the hive has since moved to %s (rolled by the hub or a floating image tag, not by a spoke-side upgrade).",
-				orUnknownSHA(outcome.TargetSHA), landed, st.RunningCommit)
+			// Lead with the running commit so this line cannot be read as a
+			// second, conflicting "current version" next to the version menu.
+			st.Detail = fmt.Sprintf("The hive is running %s. The last spoke-side upgrade (to %s%s) has since been superseded — the hive was rolled by the hub or a floating image tag, not by a spoke-side upgrade.",
+				st.RunningCommit, orUnknownSHA(outcome.TargetSHA), landed)
 			return st
 		}
 		st.Detail = fmt.Sprintf("Last upgrade to %s SUCCEEDED — the hive is running the target image%s.",

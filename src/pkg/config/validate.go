@@ -126,6 +126,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.TaskMCP.LaunchTokenTTL < 0 {
 		return fmt.Errorf("task_mcp.launch_token_ttl must be >= 0")
 	}
+	if c.GitHub.GraphQLPRBatchPageSize < 0 || c.GitHub.GraphQLPRBatchPageSize > 100 {
+		return fmt.Errorf("github.graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
 	if _, err := HeartbeatOmitClasses(c.Hub.HeartbeatOmit); err != nil {
 		return err
 	}
@@ -153,6 +156,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Hub.ValidateNPS(); err != nil {
 		return err
 	}
+	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -165,7 +171,25 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.ValidateRecheckDiscovery(); err != nil {
 		return err
 	}
+	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
+		return err
+	}
+	if err := ValidateKnowledgePublish(c.Knowledge.Publish); err != nil {
+		return err
+	}
+	if err := ValidateKnowledgeAgentScopes(c.Knowledge.AgentScopes); err != nil {
+		return err
+	}
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
+		return err
+	}
+	if err := c.Compliance.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Severity.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
@@ -192,6 +216,29 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
+	}
+	apiReserve := c.GitHub.APIReserve
+	if apiReserve == 0 {
+		apiReserve = defaultGitHubAPIReserve
+	}
+	apiCritical := c.GitHub.APICritical
+	if apiCritical == 0 {
+		apiCritical = defaultGitHubAPICritical
+	}
+	if apiCritical >= apiReserve {
+		return fmt.Errorf("github.api_critical must be less than github.api_reserve")
+	}
+	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
+		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
+	}
+	if c.Governor.EvalIntervalWebhookS < 0 {
+		return fmt.Errorf("governor.eval_interval_webhook_s must be at least 0")
+	}
+	if c.Governor.ConserveIntervalMultiplier < 0 {
+		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
+	}
+	if c.Governor.OptionalSweepEveryNCycles < 0 {
+		return fmt.Errorf("governor.optional_sweep_every_n_cycles must be at least 1")
 	}
 	if c.Governor.Budget.USD < 0 {
 		return fmt.Errorf("governor.budget.usd must be non-negative")

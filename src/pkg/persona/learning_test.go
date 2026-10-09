@@ -221,6 +221,9 @@ func TestLearningStateNormalizeClonesInsteadOfAliasing(t *testing.T) {
 // key may share a name with ACMM or agent-mode configuration.
 func TestLearningSchemaSeparateFromAutonomyFields(t *testing.T) {
 	autonomyFields := jsonFields(reflect.TypeOf(config.Config{}))
+	// Top-level review evidence configuration is not an ACMM/agent-mode control;
+	// persona suggestions also carry human-readable signal evidence.
+	delete(autonomyFields, "evidence")
 	for field := range jsonFields(reflect.TypeOf(config.AgentConfig{})) {
 		autonomyFields[field] = struct{}{}
 	}

@@ -205,6 +205,18 @@ func (f IssueFilterConfig) ReporterTrustTrusts(login, association string) bool {
 	return f.ReporterTrust.Trusted(login, association)
 }
 
+// NeedsDecisionLabel is the label the issue relay applies when an agent files
+// an issue that needs a maintainer decision (hivecommons/hive#11215): the
+// first configured needs-decision label, else the built-in default.
+func (f IssueFilterConfig) NeedsDecisionLabel() string {
+	for _, label := range f.HardSuppressLabels.EffectiveNeedsDecision() {
+		if label = strings.TrimSpace(label); label != "" {
+			return label
+		}
+	}
+	return DefaultNeedsDecisionLabel
+}
+
 func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 	for _, actual := range labels {
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsHuman() {

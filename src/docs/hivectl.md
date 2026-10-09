@@ -154,6 +154,44 @@ from `--file` or `--stdin` (`--format` defaults to `markdown`, `--layer` to
 `project`) and, like the other knowledge writes, needs the layer's wiki `url`
 configured — see [Running against a local Hive](#running-against-a-local-hive).
 
+`state` changes an entry's lifecycle state (`draft`, `approved`, `deprecated`
+or `superseded`) in the local channel that holds it, via
+`PUT /api/knowledge/entry/{id}/state`. It is owner-only, and the change is
+recorded in the audit log together with `--reason`. `superseded` requires
+`--superseded-by`, which names the replacement entry in the same channel. See
+[Knowledge lifecycle states](knowledge-lifecycle.md#changing-state-over-the-api).
+
+```bash
+hivectl knowledge state old-relay deprecated --reason "relay removed"
+hivectl knowledge state old-relay superseded --superseded-by relay-v2 --reason "relay rewritten"
+```
+
+`suggest` lets an agent propose a knowledge change without changing what other
+agents see. It runs locally against a repository checkout (no dashboard call):
+it writes the change under `.hive/wiki/` (`--dir`, `--repo-root`) and prints
+the branch, PR title and PR body to open a pull request with. The suggestion
+becomes approved knowledge only when a human merges that PR; closing the PR
+rejects it.
+
+```bash
+hivectl knowledge suggest --title "Retry relay uploads" --body-file note.md \
+  --source https://github.com/acme/app/pull/12 --reason "learned while fixing #12" \
+  --type gotcha --repo acme/app --layer project --tags relay,ops --pr-body-file pr.md
+hivectl knowledge suggest --action replace --target old-relay --title "Relay v2" --stdin \
+  --source acme/app#40 --reason "relay rewritten"
+hivectl knowledge suggest --action deprecate --target old-relay --source acme/app#41 --reason "relay removed"
+```
+
+`--action` is `add` (default), `update` (rewrite `--target` in place),
+`replace` (new entry; `--target` is marked `status: superseded` with
+`superseded_by`, and the new entry records `supersedes`) or `deprecate`
+(`--target` is marked `status: deprecated`). `--source` (PR/issue URL or
+`owner/repo#N`) and `--reason` are always required. `--status` is the proposed
+lifecycle status once merged (`draft`, `approved` — the default — or
+`deprecated`). Existing entries with a similar title are written to the
+entry's `related` front matter and listed in the PR body as possible
+duplicates, and every entry carries a `dedupe_key`.
+
 ### bead — work items
 
 ```bash
@@ -195,6 +233,23 @@ own (default 4h for a person, 2h for an agent kick, 30m for a relay task — con
 `hive.yaml`) and a relay's claim is released the moment its task finishes or is revoked. The hive mirrors each
 transition onto the GitHub issue as a `🔒`/`🔁`/`🔓` comment with a machine-readable `<!-- hive:claim … -->`
 marker and a `claimed` label, so a human, a script or another hive can see the hold without asking the API.
+
+### review — review evidence
+
+```bash
+hivectl review evidence hivecommons/hive#11061                  # newest bundle as JSON on stdout
+hivectl review evidence hivecommons/hive#11061 --head 1a2b3c4   # a specific head (unique 7+ char prefix)
+hivectl review evidence hivecommons/hive#11061 -o bundle.json   # save the bundle
+hivectl review evidence hivecommons/hive#11061 --zip -o ev.zip  # bundle + verdict reports + review links
+hivectl review evidence verify bundle.json --pubkey <hex>       # offline: hash + Ed25519 signature
+hivectl review evidence verify ev.zip                           # uses the public key carried in the zip
+```
+
+`review evidence` reads `GET /api/review/evidence` and needs owner or merger role. A bundle removed by retention
+fails with `evidence expired`, not a generic not-found. `verify` needs no hive access: it recomputes the canonical
+hash, then checks the signature with `--pubkey` (hex, base64, or a file holding either) or, when omitted, the public
+key embedded in the file (a zip manifest's `public_key`). Unsigned bundles, hash mismatches and bad signatures exit
+non-zero. See [Review evidence bundle](review-evidence.md).
 
 ### observe — read-only metrics
 

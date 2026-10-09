@@ -439,6 +439,9 @@ func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	if resp.CountWindowStart != window.UnixMilli() || resp.CountUpdatedAt != "2026-08-18T00:00:00Z" {
 		t.Errorf("count window metadata = (%d,%q), want (%d,updated)", resp.CountWindowStart, resp.CountUpdatedAt, window.UnixMilli())
 	}
+	if !resp.CountAvailable {
+		t.Error("CountAvailable = false with live count snapshot")
+	}
 }
 
 func TestCov_HandleCost_NoPRIssueCounts(t *testing.T) {
@@ -450,6 +453,12 @@ func TestCov_HandleCost_NoPRIssueCounts(t *testing.T) {
 	}
 	if resp.MergedPRs != 0 || resp.ClosedIssues != 0 {
 		t.Errorf("expected zero counts with no MetricsCollector, got merged=%d closed=%d", resp.MergedPRs, resp.ClosedIssues)
+	}
+	if resp.CountAvailable {
+		t.Fatalf("CountAvailable = true with no live or persisted counts: %+v", resp)
+	}
+	if resp.CountStatus != "counts unavailable (GitHub rate-limited)" {
+		t.Fatalf("CountStatus = %q", resp.CountStatus)
 	}
 }
 

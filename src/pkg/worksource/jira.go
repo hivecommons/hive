@@ -423,6 +423,104 @@ func (s *jiraSource) transitionIssue(ctx context.Context, key, transitionID stri
 	return nil
 }
 
+// jiraCreatedIssue is the create-issue response.
+type jiraCreatedIssue struct {
+	ID   string `json:"id"`
+	Key  string `json:"key"`
+	Self string `json:"self"`
+}
+
+// jiraBacklogIssueType is the issue type review backlog items are filed as.
+const jiraBacklogIssueType = "Task"
+
+// createIssue files a Task in projectKey. Labels are sanitised to Jira's
+// no-whitespace form.
+func (s *jiraSource) createIssue(ctx context.Context, projectKey, summary, description string, labels []string) (*jiraCreatedIssue, error) {
+	projectKey = strings.TrimSpace(projectKey)
+	if projectKey == "" {
+		return nil, fmt.Errorf("worksource/jira: project key is required")
+	}
+	fields := map[string]any{
+		"project":   map[string]string{"key": projectKey},
+		"summary":   summary,
+		"issuetype": map[string]string{"name": jiraBacklogIssueType},
+	}
+	if s.isDataCenter() {
+		fields["description"] = description
+	} else {
+		fields["description"] = jiraADFParagraphs(description)
+	}
+	var jl []string
+	for _, l := range labels {
+		if l = strings.Join(strings.Fields(l), "-"); l != "" {
+			jl = append(jl, l)
+		}
+	}
+	if len(jl) > 0 {
+		fields["labels"] = jl
+	}
+	var created jiraCreatedIssue
+	if err := s.doJSON(ctx, http.MethodPost, s.restURL("issue"), map[string]any{"fields": fields}, http.StatusCreated, &created); err != nil {
+		return nil, fmt.Errorf("worksource/jira: create issue in %s: %w", projectKey, err)
+	}
+	if created.Key == "" {
+		return nil, fmt.Errorf("worksource/jira: create issue in %s returned no key", projectKey)
+	}
+	return &created, nil
+}
+
+// transitionToStatus moves key to the status named status through whichever
+// available transition leads there (matched on the target status name, then
+// the transition name). No matching transition is an error naming status.
+func (s *jiraSource) transitionToStatus(ctx context.Context, key, status string) error {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return nil
+	}
+	var resp struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name string `json:"name"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := s.doJSON(ctx, http.MethodGet, s.restURL("issue/"+url.PathEscape(key)+"/transitions"), nil, http.StatusOK, &resp); err != nil {
+		return fmt.Errorf("worksource/jira: list transitions for %s: %w", key, err)
+	}
+	for _, match := range []func(name, to string) bool{
+		func(_, to string) bool { return strings.EqualFold(to, status) },
+		func(name, _ string) bool { return strings.EqualFold(name, status) },
+	} {
+		for _, t := range resp.Transitions {
+			if match(t.Name, t.To.Name) {
+				return s.transitionIssue(ctx, key, t.ID)
+			}
+		}
+	}
+	return fmt.Errorf("worksource/jira: no transition to status %q for %s", status, key)
+}
+
+// jiraADFParagraphs is jiraADFDocument with one paragraph per non-empty
+// line, so a multi-line Markdown body keeps its line structure in Jira Cloud.
+func jiraADFParagraphs(text string) map[string]any {
+	var content []map[string]any
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		content = append(content, map[string]any{
+			"type":    "paragraph",
+			"content": []map[string]string{{"type": "text", "text": line}},
+		})
+	}
+	if len(content) == 0 {
+		return jiraADFDocument(text)
+	}
+	return map[string]any{"type": "doc", "version": 1, "content": content}
+}
+
 func jiraADFDocument(text string) map[string]any {
 	return map[string]any{
 		"type":    "doc",

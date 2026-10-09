@@ -480,7 +480,7 @@ func (s *Server) resolveViewerUsername(r *http.Request) string {
 	if token == "" {
 		return ""
 	}
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	user, err := github.ValidateTokenCached(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		return ""
 	}

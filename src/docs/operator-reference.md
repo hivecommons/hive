@@ -43,11 +43,66 @@ project:
   repos: [my-repo]
 github:
   token: ${HIVE_GITHUB_TOKEN}
+  pr_detail_ttl_s: 1800
 agents:
   scanner:
     backend: copilot
     model: claude-sonnet-4-6
 ```
+
+## GitHub API quota — who is spending it?
+
+Every hive exposes `GET /api/gh-rate-limits` behind dashboard auth. The payload
+contains GitHub's core/search/GraphQL rate-limit windows, ETag cache counters,
+and a one-hour REST top-consumer list grouped by caller, method, and normalized
+endpoint. Operators can collect a hosted fleet view with:
+
+```bash
+make quota-report
+# or:
+bash src/scripts/gh-quota-report.sh --context hive-oke --top 3
+```
+
+For a single dashboard, use `--local <url> --token <dashboard-token>`; for saved
+fixtures or CI-free formatting checks, use `--from-file <json>`. The command
+prints one row per spoke plus the hub when available. The hub endpoint may lag a
+spoke rollout; a 404 or other unavailable hub response is reported as
+`endpoint-missing` without hiding spoke data. If none of the mounted/configured
+dashboard-token candidates authenticates, the row reports `auth-required`; the
+script does not forge `X-Hive-User` for localhost because the dashboard
+middleware strips unproved identity headers unless the hub proxy proof is valid.
+
+Interpret the top-consumer columns this way:
+
+- `charged` counts REST requests that consumed core quota in the last hour.
+- `not_modified` counts conditional `GET` requests answered from GitHub as
+  `304 Not Modified` and replayed by Hive's ETag cache; these are useful signal
+  but did not spend quota.
+- `requests` is `charged + not_modified` plus any other observed responses.
+- Any `rate_limited` entry, or any spoke below 10% remaining core quota, makes
+  the script exit non-zero so it can be used as a smoke check.
+
+The known hot endpoint in hosted fleets is
+`/repos/{owner}/{repo}/pulls/{number}`. It should be watched first when charged
+usage climbs, because repeated PR detail refreshes can dominate the one-hour
+window even when list endpoints are mostly free ETag revalidations.
+
+Hosted spokes authenticate as their GitHub App installation and normally show a
+5,000 requests/hour `core.limit` (`app/token` in the report). A 60/hour limit is
+anonymous and means credentials were not applied. The hub must use the App or
+installation identity too; do not configure a personal access token on the hub,
+because one operator's PAT would become a shared fleet bottleneck and audit
+liability.
+
+Before reference, captured 2026-10-08 from the hosted fleet:
+
+| Metric | Value |
+|---|---:|
+| Total charged REST requests/hour | 12995 |
+| Hub endpoint | `endpoint-missing` |
+| Top fleet consumer | `hive GET /repos/{owner}/{repo}/pulls/{number} 4259/9505` |
+| Second fleet consumer | `hive GET /repos/{owner}/{repo}/issues/{number}/comments 1819/3298` |
+| Third fleet consumer | `hive:enrich_pr_ci GET /repos/{owner}/{repo}/pulls/{number} 1157/2325` |
 
 ## Configuration blocks
 
@@ -65,7 +120,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `dashboard` | Web UI port, snapshots, auth token, frame allowlist, authorized users. | `auth_token` can come from `HIVE_DASHBOARD_TOKEN`. |
 | `agent_sandbox` | Podman-rootless sandbox launcher for hub/pod agents (`pkg/sandbox`). | Opt-in and **two-gate**: this block's own `enabled: true` sandboxes nothing by itself — each agent also needs `sandbox.enabled: true` under `agents.<name>`. The dashboard's Security tab writes only this global flag, so enabling it there alone can leave every agent unconfined — but the tab now shows this: `security.sandboxWarnings` in `GET /api/config/governor` carries `config.AgentSandboxGateWarnings`'s diagnosis (also logged at WARN at boot/reload), rendered both in the page's coherence-warnings box and inline under the toggle, naming the still-unconfined agents and the fixing key (#4918). See [sandbox-isolation.md](sandbox-isolation.md) and the [getting-started confinement section](getting-started.md#where-agents-actually-run-read-this-before-l3). |
 | `data` | Metrics, logs, session, and agent overlay directories. | Defaults are `/data/...` in containers. |
-| `knowledge` | Wiki layers, vaults, git/document sources, primer, curator, bead synthesizer. | Disabled unless `enabled: true`. |
+| `knowledge` | Wiki layers, vaults, git/document sources, connectors (`knowledge.connectors`, see [knowledge-connectors.md](knowledge-connectors.md)), primer, curator, bead synthesizer. | Disabled unless `enabled: true`. |
 | `hub` | Hub/spoke hosted-hive metadata. | Usually provisioner-owned. |
 | `hive_id` | Stable spoke identifier. | Usually provisioner-owned. |
 | `acmm_level` | Current ACMM pack level. | May be set by hub/dashboard. |
@@ -83,14 +138,23 @@ Top-level YAML keys accepted by `config.Config`:
 
 | Field | Default / behavior | Operator note |
 |---|---|---|
+| `github.pr_detail_ttl_s` | `1800` seconds. `HIVE_GITHUB_PR_DETAIL_TTL` overrides for tests/experiments. | Reuses `GET /pulls/{number}` detail responses while the cheap PR list still reports the same `head.sha` and `updated_at`, and GitHub has resolved `mergeable_state`. |
+| `github.graphql_pr_batch` | `true` | Uses one paginated GraphQL query per repository scan to populate the PR detail cache and CI rollup cache, replacing most per-PR `GET /pulls/{number}` and `check-runs` reads. Set `false` to return to the REST-only scan path. |
+| `github.graphql_pr_batch_page_size` | `50` | Page size for the GraphQL `pullRequests(first:)` batch. Values above GitHub's `100` maximum are rejected. |
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `project.repo_policies[].auto_merge` | effective `false` below L6; unset = `true` at L6 | Per-repo off switch. Switching to L6 turns this on for every active repo; owners can toggle repos afterward. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card switch persists this key and takes effect without restart. |
 | `project.repo_policies[].label_driven` | Off (unset) for every repo. | Opt-in for repos whose maintainers accept and park issues with labels and their own bots (for example `needs-triage` → `triage/accepted`). On such a repo the un-park sweep posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction`; `/hive approve`, `/hive decision` and `/hive help` get a one-line reply pointing at the labels. Hive still filters parked issues and may still add `needs-decision` with a question. Config-file key only; see [maintainer-commands.md](maintainer-commands.md#label-driven-repositories). |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
+| `evidence.enabled` | On by default. | The review relay writes one [review evidence bundle](review-evidence.md) per PR head to `/data/evidence/<owner>/<repo>/<number>/<head>.json` when it records a verdict or posts a review; the sentinel sweep adds its findings to the flagged head's bundle; and every merge path adds the head's CI check-run summary, the human approvals and label changes, and the merge event. Owners and mergers read bundles through `GET /api/review/evidence` and `GET /api/review/evidence/list` (see the [API reference](api-reference.md)). Set `false` to stop writing new bundles; existing ones are left in place. |
+| `evidence.signing_key_file` | Unset (bundles unsigned). | Path to an Ed25519 private key (32-byte seed or 64-byte key, hex or base64). When set and readable, bundles are signed; when empty, absent or unusable they are written with `"signed": false` and a warning is logged for an unusable key. Keep the key off shared hosts. |
 | `review.all_authors` | Off by default. | Makes every open PR eligible for review, not only agent-authored ones. It only widens what is reviewed; it never lets an agent push to those PRs (see the next row). Features -> Review Gate -> Reviewers. |
 | `review.fix_human_prs` | Off by default; owner-only. | Lets the review-fix kick push commits onto PRs the hive's own agents did not open (a contributor's fork via "allow edits by maintainers", a maintainer's branch, another bot's PR). Off, a `changes_requested` verdict on such a PR stops at the published review, with the proposed fix as a suggestion or patch block in the comment, and the refusal is audited as `review_fix_withheld`. Upgrade rule: a hive that already had `all_authors: true` with this never set is stored as `true` so its behaviour does not change; an explicit `false` is never overwritten. See [review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs). |
+| `review.severity.block_at` | Unset; owner-only. | Lowest finding priority that blocks merge: `P1` (ship fast, P0–P1 block), `P2` (strict, P0–P2 block) or `P3` (everything blocks). Also drives `classification.review_bots.min_priority` when that key is not set in `hive.yaml` or `hive-project.yaml`. Any other value fails load naming the field. Features -> Review Gate -> Severity & backlog. See [review-swarm.md](review-swarm.md#blocking-line-reviewseverity-reviewbacklog). |
+| `review.severity.comment_below` / `backlog_below` | `true` / `true`; owner-only. | Whether findings below the blocking line are posted as non-blocking comments and filed to `review.backlog`. |
+| `review.backlog.destination` | `github_issue`; owner-only. | `github_issue`, `github_project`, `linear` or `jira`. The last three need the matching `governor.work_source.type` (`github_projects`, `linear`, `jira`); on a mismatch the hive falls back to `github_issue`. Destination fields: `project_column_id` (required for `github_project`), `linear_state`, `jira_status`. |
+| `review.backlog.labels` / `max_per_pr_per_day` | `[from-review]` / `10`; owner-only. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). |
 | `review.contributor_prs.base_sync` | Off by default; owner-only. | Lets PR follow-up use GitHub's update-branch API on hive-authored lane PRs whose head is in a contributor fork, whose `mergeable_state` is `behind`/`dirty`, and whose author enabled "allow edits by maintainers". `behind` PRs get a GitHub-authored merge commit; `dirty`/422 falls back to the `hive-base-moved` repair note and kick. This requires an agent/proxy mode with `ISSUES_PRS_MERGE` because `PUT /pulls/{n}/update-branch` is merge-scoped. It does not rewrite history and does not add a human/bot-authored DCO commit; the repository's "Sign-off survives the squash" check examines the PR's own commits, not GitHub's update-branch merge commit. |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
 | `governor.kick_limits.max_issues` / `max_prs` | `100` / `50` | Caps on every issue list and every PR list (actionable, stale drafts, merge-eligible, CI-failing) rendered into a kick prompt; a cut list ends with an explicit "… and N more" line. An absent key or a negative value means the default; an explicit `0` opts out of the cap entirely (`KickListUnlimited` — every item is listed), and anything above `500` is pinned to `500`. Editable without touching this file under **Settings → Repos → Kick prompt list caps**. Truncation drops the *newest, lowest-priority* items: issues are listed oldest first, and PRs in review-priority order (fixes, then refactors/docs, then tests, oldest first within each class), so lowering a cap never hides the most urgent work. Raise `max_prs` only if your agents actually work more than 50 PRs per turn; the tail of a long list costs tokens and delivery time on every kick without changing behaviour (#7368). |
@@ -109,6 +173,10 @@ Top-level YAML keys accepted by `config.Config`:
 | `hub.nps_relay_pull_secret` | Empty. `HIVE_NPS_RELAY_PULL_SECRET` overrides it. | Secret, hub only. The credential the hub uses to pull and ack relay entries. Prefer the env var. |
 | `hub.nps_timing` | Unset (or `0` per field) keeps the default: `min_sessions: 2`, `second_session_engagement_seconds: 300`, `returning_engagement_seconds: 60`, `reprompt_days: 30`, `dismiss_retry_days: 7`, `max_dismissals: 3`. | Overrides the NPS prompt's eligibility timing. Out-of-range values (negative, or above 100 sessions / 86400 seconds / 365 days / 100 dismissals) fail validation. See [nps.md](nps.md#tuning-the-timing). |
 | `hub.nps_detractor_issues` | `enabled: false` | With `enabled: true` and `repo: owner/name`, a user who scores the hive 1 can tick a consent box to have this hive's App open a public issue from their feedback (at least 20 characters, mentions neutralized, no user identity, 1 per user and 3 per hive per 24h). `enabled: true` without a valid repo fails validation. See [nps.md](nps.md#public-issue-for-detractors-optional-off-by-default). |
+| `knowledge.connectors[]` | Empty (no connectors). | Scheduled sync of external knowledge into vault facts; types `git`, `document`, `github-wiki`, `confluence`, `notion`. Credentials only via `auth.env` / `auth.file` (inline secrets fail validation). Facts land in `/data/knowledge/connectors/<layer>`; status at `GET /api/knowledge/connectors`, owner-only `POST /api/knowledge/connectors/{name}/sync`. See [knowledge-connectors.md](knowledge-connectors.md). |
+| `knowledge.connectors[].scope` (`confluence`) | `deployment` auto-detects Cloud for `*.atlassian.net`; `max_pages` `2000`; `full_sync_every` `10`. | `base_url` plus `spaces` and/or `root_page_ids`; Cloud needs `email` (Basic auth with the API token), Data Center uses the token as a bearer PAT. Give the account read-only space permission. |
+| `knowledge.connectors[].scope` (`notion`) | All pages shared with the integration; `max_pages` `2000`; `full_sync_every` `10`. | Optional `root_page_ids` / `database_ids`; `include_archived` fetches bodies of archived pages. Pages must be shared with the internal integration (••• → Connections). Requests are spaced 350 ms apart. |
+| `knowledge.publish` | Unset (`connector` empty): publishing off. | One-way mirror of curator-promoted facts into one connector target: `connector` (a `knowledge.connectors` name whose type can publish), `layers` (`project`/`org`/`community`; personal is never published), `root`, optional `include_types`, `dry_run`, `propose_via`. Facts are read from each layer's `knowledge.layers[].path`. Started at boot (a bad connector logs `knowledge publish mirror disabled` and leaves publishing off); state in `/data/knowledge/connector-state/_publish`. Status in the `publish` object of `GET /api/knowledge/connectors`; owner-only `POST /api/knowledge/publish/sync`. See [knowledge-connectors.md](knowledge-connectors.md#publish-mirror). |
 | `variables.security.*` | Deny by default. | `allow_exec`, `allow_http`, and GitHub prompt-source allowlists are honored only from the trusted seed, not dashboard overlays. |
 | `data.claude_sessions_dir` | `/data/home/.claude/projects` | Where the dashboard reads Claude Code session JSONL for per-agent token/cost accounting. Point it at the agents' real session directory if you relocate `HOME`. |
 | `data.copilot_sessions_dir` | `/data/home/.copilot/session-state` | Same, for the Copilot CLI backend's session state. |
@@ -426,7 +494,9 @@ the PR clear until the author pushes again.
 
 Owners edit all of this from **Settings → Security → Suspicious Activity**;
 the dashboard writes the owner-only `/api/config/governor/security` overlay.
-Every alert is also written to the dashboard audit log as `sentinel-alert`.
+Every alert is also written to the dashboard audit log as `sentinel-alert`,
+and, when `evidence.enabled` is on, recorded under `sentinel` in the flagged
+head's [review evidence bundle](review-evidence.md).
 
 ## Image provenance and tags
 
@@ -500,7 +570,7 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 - Manual dashboard/API kicks that rely on Hive's generated work list wait for the first governor scan after boot. Until that scan populates the scheduler snapshot, `POST /api/kick/{agent}` returns `202` with `status: "deferred"` and Hive delivers one deduplicated kick for that agent as soon as the first scan completes.
 - Kick-visibility conditions surfaced on the dashboard include `copilot-question-form`, which means the Copilot CLI asked an unattached human for clarification; Hive dismisses that form with Escape and retries delivery instead of dropping the kick.
 - The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
-- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are example placeholders that match Hive's built-in defaults, not public Bob pricing guidance:
+- Bob coin budgets are configured under the same governor budget window. The coin conversion comes from your Bob account/team; the values below are illustrative only (they are not Hive's built-in defaults and not public Bob pricing guidance) — always set them to the conversion your Bob team gives you:
 
 ```yaml
 governor:
@@ -508,19 +578,31 @@ governor:
     usd: 25.00                    # optional period cap in Bob-equivalent USD
     coins:
       bob:
-        tokens_per_coin: 500000   # example placeholder; confirm with your Bob team
-        usd_per_coin: 0.50        # example placeholder; confirm with your Bob team
+        tokens_per_coin: 1000000  # illustrative only; use the conversion your Bob team gives you
+        usd_per_coin: 1.00        # illustrative only; use the conversion your Bob team gives you
         label: "BC"
         budget: 50                # optional period cap in Bob coins
 ```
 
-  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; confirm them with your Bob team before relying on the defaults.
+  `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; always confirm the conversion with your Bob team rather than relying on Hive's built-in fallback values.
 
 ### What consumes tokens while agents are paused
 
 Pausing agents (including the navbar fleet breaker) does not take the Hive instance down: the dashboard, governor scans, GitHub polling, token scanners, repo-cost collectors, telemetry/heartbeats, and provider-headroom probes can keep running. Those components should not make model calls by themselves. Model usage is expected from agent sessions reached through governor/manual/CEL/resume kicks; those kick paths share the same pause and budget gates. Knowledge priming reads configured knowledge stores and attaches facts to kicks; it does not independently call the model while every agent is paused. Provider-budget probes are the exception by design: after a provider spend-limit rebuff, Hive may release one kick after `governor.provider_budget.probe_interval_s` to test recovery.
 - The Governor dashboard **PRs by model** panel includes rework evidence for 7d/30d/all windows: first-pass merge rate, average/worst review rounds, fix attempts, follow-up commits after first review, human change requests, median time to merge, and a top-10 **Most reworked PRs** list. The data is served by `/api/governor/pr-models` from the same cached PR snapshot as the model outcome counts.
 - The **provider** spending limit is a separate signal from the token budget above ([#4294](https://github.com/hivecommons/hive/issues/4294)): the token budget counts what the hive spends, while this is the inference gateway refusing to spend more money — a LiteLLM key past its daily dollar cap, a project out of quota, an account out of credit. It is detected from the gateway's own error body (never from a bare 429, which stays on the ordinary retry path), raises an error-level dashboard alert naming the limit that was hit, and withholds every agent kick while it is in force. It does **not** pause agents: pause state stays a human decision.
+### GitHub API budget governor
+
+Spoke GitHub App installations share one core REST bucket across the scan loop and all agent-requested writes. Hive now derives an API budget mode from the observed core rate-limit window:
+
+| Mode | Condition | Default behavior |
+| --- | --- | --- |
+| `normal` | `remaining >= github.api_reserve` | Full eval fan-out. Optional sweeps run every `governor.optional_sweep_every_n_cycles` cycles (default `1`). |
+| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths continue; optional advisory/recommendation/duplicate/escalation/review-thread/SHA/supersession/collector sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
+| `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve, with the eval interval stretched by `4x`. |
+
+Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, and `skipped_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.
+
 - Recovery from a provider spending limit is automatic, via a probe. Withholding kicks also withholds the inference calls that would reveal the provider is serving again, so the hive suppresses only while the last refusal is recent and then lets a single kick through to test the gateway; the probe re-arms suppression the moment it is released, so at most one probe run flies per interval. A still-clipped key refuses the probe and suppression resumes for another interval; once the provider's window resets the probe succeeds, normal kicking resumes with no operator action, and a one-time recovery notification is sent (the entering notification is likewise sent once per clip, not once per cycle). Tune with `governor.provider_budget.probe_interval_s` (default 1800 — 30 minutes):
 
 ```yaml
@@ -538,6 +620,87 @@ The dashboard top bar includes a fleet breaker: a circular pause/play control pl
 Engage pauses every agent that is currently running and is not `on_demand`. Agents already paused before engage are skipped and keep their original pause reason. Release resumes only the exact agents the breaker paused and still owns (`PausedTrigger == fleet-breaker`); if an operator manually re-pauses an agent while the breaker is engaged, release leaves it paused. The breaker state is persisted so a crash/restart can still release the same captured set.
 
 Fixes #2953.
+
+## GitHub API quota
+
+Agents reach `api.github.com` through the Hive GitHub proxy, which injects the
+agent-scoped App installation token and records charged requests. The App
+installation quota is shared with the daemon's scan, merge, and maintenance
+loops, so the proxy enforces two safeguards:
+
+- `agents.github_api_hourly_cap` (default `300`) limits each agent to that many
+  charged GitHub API responses in a sliding one-hour window. A charged response
+  is any proxied response other than `304 Not Modified`; the proxy's own token
+  minting is not agent-attributed and is not counted. Set the value to `0` to
+  disable the fleet default, or set `agents.<name>.github_api_hourly_cap` to
+  override one agent (`0` disables that agent's cap).
+- `github.agent_reserve_floor` (default `400`) protects the shared core bucket.
+  When the latest rate-limit reading shows `core.remaining` below the floor,
+  agent read requests receive the same proxy `429` even if the agent has not
+  reached its personal cap. This keeps daemon merge/scan work from being
+  starved by agent polling.
+
+The proxy returns JSON shaped for the GitHub CLI:
+
+```json
+{"message":"hive: agent GitHub API hourly cap reached (N/cap); stop polling and continue with local work","documentation_url":"…docs/operator-reference.md#github-api-quota"}
+```
+
+It also sets `Retry-After` to when the one-hour window (or observed reset) can
+make progress, logs once at 80% of each agent window, and sends one
+stop-polling nudge per agent window. Hive-authored write relays are not
+agent-attributed and are not capped by this path.
+
+Open-PR scans use `github.graphql_pr_batch` by default to move mergeability,
+review-decision, linked-issue and CI-rollup reads into GitHub's separate
+GraphQL bucket. `/api/gh-rate-limits` reports these calls as caller
+`hive:pr_batch` on endpoint `/graphql` and exposes `graphql_pr_batch` counters
+for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
+query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
+GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
+
+### Webhook-driven PR cache invalidation
+
+A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
+either delivered directly by GitHub or relayed by the hub (the hub forwards the
+original signed body to the hive that manages the repository). The receiver
+fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
+the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
+body exactly as the hub does. Deliveries for repositories the hive does not
+manage are ignored.
+
+- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
+  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
+  the GraphQL batch check-run/review entries for the affected PR and mark it
+  dirty. Check and status events are matched by PR number and head SHA (fork
+  PRs arrive without a PR list); `push` invalidates every open PR whose base or
+  head branch is the pushed branch.
+- Webhooks are **healthy** while the last delivery for a managed repository is
+  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
+  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
+  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
+  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
+  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
+  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
+  the next cycle.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
+  Hive logs one WARN per healthy → stale transition and falls back to the
+  configured interval and TTL-bound caching.
+- `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
+  `review_requested` deliveries also queue an early review dispatch when
+  `review.event_driven` is on; see
+  [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+
+`/api/status` and `/api/gh-rate-limits` expose
+`webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
+changed.
+
+```yaml
+governor:
+  eval_interval_s: 300
+  eval_interval_webhook_s: 900
+```
 
 ## `HIVE_GITHUB_TOKEN` permissions
 

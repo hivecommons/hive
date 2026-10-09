@@ -28,8 +28,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// lane record listing the /api/advisor routes serve (hivecommons/hive#9722),
 	// plus pkg/upstreamwatch for the divergence view and /api/upstream-watch route
 	// (hivecommons/hive#10361), plus pkg/mergelane for the serialized lane state view
-	// (hivecommons/hive#10892).
-	const maxDashboardInternalImports = 51
+	// (hivecommons/hive#10892), plus pkg/releasenotes for the release-notes endpoint,
+	// plus pkg/compliance for the control registry and /api/compliance routes.
+	const maxDashboardInternalImports = 53
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

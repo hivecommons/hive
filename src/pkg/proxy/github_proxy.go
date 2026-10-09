@@ -260,6 +260,12 @@ type GitHubProxy struct {
 	// otherwise. May be nil (Record is a safe no-op on a nil sink).
 	tokenSink *tokens.InferenceSink
 
+	githubBudget          *agentGitHubBudget
+	githubBudgetCap       func(agentName string) int
+	githubReserveFloor    func() int
+	githubReserveSnapshot func() (remaining int, reset time.Time, ok bool)
+	githubBudgetNudge     func(agentName, message string)
+
 	// copilotDial, when set, overrides how the Copilot-sniff MITM path dials the
 	// upstream Copilot host (default: tls.Dial to host:443). It exists solely as
 	// a test seam so the CONNECT handler can be driven against a local fake
@@ -371,6 +377,19 @@ func (p *GitHubProxy) SetAgentTokenSource(source func(agentName string) (string,
 	p.agentTokenSource = source
 }
 
+func (p *GitHubProxy) SetAgentGitHubBudgetConfig(capForAgent func(agentName string) int, reserveFloor func() int) {
+	if capForAgent != nil {
+		p.githubBudgetCap = capForAgent
+	}
+	if reserveFloor != nil {
+		p.githubReserveFloor = reserveFloor
+	}
+}
+
+func (p *GitHubProxy) SetAgentGitHubBudgetNudgeFunc(fn func(agentName, message string)) {
+	p.githubBudgetNudge = fn
+}
+
 // hostNeedsMITM decides whether a GitHub-family host must be TLS-intercepted
 // rather than opaquely tunneled.
 //
@@ -461,21 +480,25 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 	}
 
 	p := &GitHubProxy{
-		listenAddr:      fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
-		caCert:          caCert,
-		caX509:          caX509,
-		logger:          logger,
-		uidMap:          uidMap,
-		proxyAdvisoryOK: advisoryOK,
-		injectGHAuth:    injectGHAuth,
-		allowedRepos:    allowed,
-		violations:      make(map[string]int),
-		certCache:       make(map[string]cachedCert),
-		inference:       newInferenceRouter(),
-		entitlements:    newEntitlementStore(),
-		inferenceAuth:   &inferenceAuthState{},
-		inferenceBudget: &inferenceBudgetState{},
-		gatewayHealth:   inferencehealth.NewStore(),
+		listenAddr:            fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
+		caCert:                caCert,
+		caX509:                caX509,
+		logger:                logger,
+		uidMap:                uidMap,
+		proxyAdvisoryOK:       advisoryOK,
+		injectGHAuth:          injectGHAuth,
+		allowedRepos:          allowed,
+		violations:            make(map[string]int),
+		certCache:             make(map[string]cachedCert),
+		inference:             newInferenceRouter(),
+		entitlements:          newEntitlementStore(),
+		inferenceAuth:         &inferenceAuthState{},
+		inferenceBudget:       &inferenceBudgetState{},
+		gatewayHealth:         inferencehealth.NewStore(),
+		githubBudget:          newAgentGitHubBudget(time.Now),
+		githubBudgetCap:       func(string) int { return config.DefaultAgentsGitHubAPIHourlyCap },
+		githubReserveFloor:    func() int { return config.DefaultGitHubAgentReserveFloor },
+		githubReserveSnapshot: hgithub.CoreRateLimitSnapshot,
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -1288,6 +1311,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// Pause is checked first, so a repo the operator has frozen is refused
 		// as paused even when the agent is also out of scope for it.
 		blockJSON := false
+		graphQLMutation := false
 		// A direct write from a lane under write_surface.enforce (#9772) is
 		// refused and audited as agent_write_refused. Checked after pause and
 		// scope so their more specific reasons win when both apply.
@@ -1353,6 +1377,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				}
 			}
 			allowed, isMutation := GraphQLAllowedCaps(autonomyGraphQLMode(agentName, body, mode), caps, body)
+			graphQLMutation = isMutation
 			if !blocked && !allowed {
 				blocked = true
 				if isMutation {
@@ -1466,6 +1491,18 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			continue
 		}
 
+		if !isLinear {
+			if refusal := p.githubBudgetRefusal(agentName, req.Method, req.URL.Path, agentGitHubRequestIsRead(req.Method, req.URL.Path, graphQLMutation)); refusal != nil {
+				_ = p.writeAgentGitHubBudget429(client, *refusal)
+				if req.Body != nil {
+					_, _ = io.Copy(io.Discard, req.Body)
+					_ = req.Body.Close()
+				}
+				_ = client.SetReadDeadline(time.Time{})
+				continue
+			}
+		}
+
 		// #1861: with injection enabled, the upstream credential is decided
 		// HERE — after the ACMM/repo/canary gates, immediately before either
 		// forwarding branch — so every byte that reaches GitHub has passed
@@ -1535,6 +1572,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			return
 		}
 		hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		p.recordAgentGitHubBudget(agentName, req.URL.Path, resp.StatusCode, p.agentGitHubCap(agentName))
 
 		// Bound the BODY relay too, not just the header read above. The
 		// deadline was cleared once headers arrived, so a "reachable but slow"

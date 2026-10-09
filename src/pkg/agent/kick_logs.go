@@ -233,6 +233,7 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 // scrollback (kickLogPending), archive it and clear the history so the new
 // kick starts a fresh, cleanly-delimited log. Callers must hold m.mu.
 func (m *Manager) rotateKickLogOnKickLocked(agent *AgentProcess) {
+	m.ensureScrollbackWindowOptions(agent)
 	if !agent.kickLogPending {
 		return
 	}
@@ -240,6 +241,24 @@ func (m *Manager) rotateKickLogOnKickLocked(agent *AgentProcess) {
 		m.clearScrollbackForAgent(agent)
 	}
 	agent.kickLogPending = false
+}
+
+// alternateScreenOffArgs is the tmux invocation that turns alternate-screen off
+// for one existing session's window.
+func alternateScreenOffArgs(session string) []string {
+	return []string{"set-window-option", "-t", session, "alternate-screen", "off"}
+}
+
+// ensureScrollbackWindowOptions re-applies alternate-screen off to the agent's
+// live window. newSessionCommands sets it globally, but a window only inherits
+// globals at creation: a session created before that fix shipped (agent tmux
+// sessions outlive hive upgrades) keeps rendering on the alternate screen, so
+// its archives stay a single-frame tail (#9579). Best effort and idempotent.
+func (m *Manager) ensureScrollbackWindowOptions(agent *AgentProcess) {
+	if agent.tmuxSession == "" {
+		return
+	}
+	_ = m.tmuxCmd(agent, alternateScreenOffArgs(agent.tmuxSession)...).Run()
 }
 
 // ArchiveAllKickLogs snapshots every agent whose session holds un-archived

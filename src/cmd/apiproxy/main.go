@@ -13,12 +13,31 @@ import (
 	"github.com/hivecommons/hive/pkg/apiproxy"
 )
 
-const defaultProxyHost = "127.0.0.1"
+const (
+	defaultProxyHost = "127.0.0.1"
+	eventLogMode     = 0o600
+)
 
 // errMissingClientAuthToken reports the fail-closed startup contract: without a
 // client auth token any co-resident loopback process could have its requests
 // fulfilled with the host upstream key, so the proxy refuses to start.
 var errMissingClientAuthToken = errors.New("PROXY_AUTH_TOKEN is required: without it the proxy would accept unauthenticated callers and grant them the host upstream key")
+
+// openEventLog opens the event log for appending, owner-only. The log records
+// inference payloads, so it must not be readable by other local users. The
+// mode passed to OpenFile only applies when the file is created, so a log left
+// world-readable by an earlier version is tightened with an explicit Chmod.
+func openEventLog(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, eventLogMode)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.Chmod(eventLogMode); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
 
 // clientAuthTokenFromEnv returns the token callers must present to the proxy,
 // or an error when it is unset so the caller can fail closed.
@@ -45,7 +64,7 @@ func main() {
 
 	var logWriter *json.Encoder
 	if *logFile != "" {
-		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := openEventLog(*logFile)
 		if err != nil {
 			log.Fatalf("failed to open log file: %v", err)
 		}

@@ -40,9 +40,11 @@ func newKnowledgeCommand(env *commandEnv) *cobra.Command {
 	knowledge.AddCommand(knowledgeWriteCommand(env, "create"))
 	knowledge.AddCommand(knowledgeWriteCommand(env, "update"))
 	knowledge.AddCommand(knowledgeDeleteCommand(env))
+	knowledge.AddCommand(knowledgeStateCommand(env))
 	knowledge.AddCommand(knowledgeImportCommand(env))
 	knowledge.AddCommand(knowledgeExportCommand(env))
 	knowledge.AddCommand(knowledgeGraphCommand(env))
+	knowledge.AddCommand(knowledgeSuggestCommand(env))
 	return knowledge
 }
 
@@ -194,6 +196,33 @@ func knowledgeDeleteCommand(env *commandEnv) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&yes, "yes", false, "confirm deletion without an interactive prompt")
+	return command
+}
+
+func knowledgeStateCommand(env *commandEnv) *cobra.Command {
+	var supersededBy, reason string
+	command := &cobra.Command{
+		Use:   "state <id> <state>",
+		Short: "Change a knowledge entry's lifecycle state (owner only, audited)",
+		Long: "Sets an entry's lifecycle state to draft, approved, deprecated or superseded.\n" +
+			"Superseded requires --superseded-by naming the replacement entry in the same channel.\n" +
+			"The change and --reason are recorded in the audit log.",
+		Args: argsExact(2),
+		Example: "  hivectl knowledge state old-relay deprecated --reason \"relay removed\"\n" +
+			"  hivectl knowledge state old-relay superseded --superseded-by relay-v2 --reason \"relay rewritten\"",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := map[string]any{"state": args[1]}
+			if supersededBy != "" {
+				body["superseded_by"] = supersededBy
+			}
+			if reason != "" {
+				body["reason"] = reason
+			}
+			return env.do(cmd, http.MethodPut, "/api/knowledge/entry/"+url.PathEscape(args[0])+"/state", body)
+		},
+	}
+	command.Flags().StringVar(&supersededBy, "superseded-by", "", "replacement entry id (required for state superseded)")
+	command.Flags().StringVar(&reason, "reason", "", "why the state is changing, recorded in the audit log")
 	return command
 }
 

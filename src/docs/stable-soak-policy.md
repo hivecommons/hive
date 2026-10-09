@@ -34,7 +34,11 @@ The workflow moves `stable` to that build only when these hard gates pass:
 
 1. **Digest integrity:** all three image digests for the chosen generation still
    exist in GHCR and carry matching `org.opencontainers.image.revision` and
-   `io.kubestellar.hive.github-actions-run-number` labels.
+   `io.kubestellar.hive.github-actions-run-number` labels. When two successful
+   `docker.yml` runs built the same commit (a concurrent push pair, or push plus
+   `workflow_dispatch`), the shared short-SHA tag carries only one run's
+   generation; the other run is skipped as a duplicate rather than held, and the
+   run that owns the tag is evaluated as its own build (#11196).
 2. **Green release evidence:** build, lint, unit tests, changelog/release guards,
    and non-flaky required checks are passing or skipped by policy for the chosen
    build's commit.
@@ -72,7 +76,9 @@ a GitHub Actions `concurrency` group (`stable-promotion-v5`,
 for any in-progress run to finish before it starts. Because repository-wide
 `schedule:` delivery is starved, the workflow also triggers on completion of
 `Tagged Release` (`workflow_run`, v5 only); a `gate` job skips the run when
-another ran within the last 30 minutes. GitHub serialises the
+another run's `promote` job ran (or is running) within the last 30 minutes. Runs
+whose own gate skipped `promote` do not count, so skip-only runs cannot chain
+and starve promotion on a busy `v5` (#11196). GitHub serialises the
 runs; the workflow itself does not need an atomic primitive. As a second,
 independent guard, immediately before publishing the run re-reads each image's
 current `stable` generation and requires it to be unchanged from the decision

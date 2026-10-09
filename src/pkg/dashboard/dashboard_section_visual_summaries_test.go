@@ -209,8 +209,8 @@ assert.equal(div0.title, 'no hive-attributed closed issues yet');
 let unavailable = costPerUnitDisplay(5.48, 0, 'hive-attributed closed issues', false, 'counts unavailable (GitHub rate-limited)');
 assert.equal(unavailable.value, '—');
 assert.equal(unavailable.title, 'counts unavailable (GitHub rate-limited)');
-assert.equal(costCountLabel({count_available:false}, 0, 'hive-attributed merged PRs'), 'counts unavailable (GitHub rate-limited)');
-assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'persisted'}, 937, 'hive-attributed merged PRs'), '937 hive-attributed merged PRs · persisted');
+assert.equal(costCountLabel({count_available:false}, 0, 'hive-attributed merged PRs', 'since Jul 24'), 'counts unavailable (GitHub rate-limited)');
+assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'persisted'}, 937, 'hive-attributed merged PRs', 'since Jul 24'), '937 hive-attributed merged PRs since Jul 24 · persisted');
 `
 
 	cmd := exec.Command(node, "-e", script)

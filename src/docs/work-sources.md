@@ -193,8 +193,8 @@ Config fields (`GitHubProjectsSourceConfig`, `pkg/config/work_sources.go:92-99`)
 | `project_number` | `ProjectNumber` | Yes | The project's number, visible in its URL (`.../projects/7`). |
 | `org` | `Org` | No | Defaults to `project.org` if empty (`factory.go:23`). |
 | `states` | `States` | No | Filters on the project's `Status` single-select field. Empty means no filtering. |
-| `priority_field` | `PriorityField` | No | Name of a single-select field to map to normalized priority (`urgent`/`high`/`medium`/`low`/`none`; see `normalizePriority`, `github_projects.go:318-331`). Empty means every issue gets priority `none`. |
-| `iteration_field` | `IterationField` | No | Name of an iteration field. When set, only items whose iteration window covers "now" are returned (`inCurrentIteration`, `github_projects.go:299-315`). |
+| `priority_field` | `PriorityField` | No | Name of a single-select field to map to normalized priority (`urgent`/`high`/`medium`/`low`/`none`; see `normalizePriority`, `github_projects.go:438-451`). Empty means every issue gets priority `none`. |
+| `iteration_field` | `IterationField` | No | Name of an iteration field. When set, only items whose iteration window covers "now" are returned (`inCurrentIteration`, `github_projects.go:419-435`). |
 | `default_repo` | `DefaultRepo` | No | `owner/repo` used when the project item's own repository can't be read from the GraphQL response. |
 
 **Credentials.** The adapter authenticates with the same GitHub token the
@@ -205,7 +205,7 @@ separate `token` field in `github_projects:`. That token needs the
 a classic PAT with only `repo` cannot read a Projects v2 board and the
 GraphQL call fails with a GraphQL-level authorization error surfaced as
 `worksource/github_projects: graphql error: ...`
-(`github_projects.go:219-221`).
+(`github_projects.go:243-245`).
 
 **Failure mode.** A wrong `project_number` or an org the token can't see
 returns a GraphQL error on every governor cycle, logged but not fatal — the
@@ -472,6 +472,18 @@ Returned work items use `SourceType: "<name>"`, `Number: 0`, and
 `your-org/app!ACME-123`. The full wire contract, the validation rules, and the
 stable-identifier warning are in
 [Work source providers](integrations/work-source-providers.md#external-provider).
+## Review backlog routing (`review.backlog`)
+
+Review findings below the blocking line (`review.severity.block_at`), and cited out-of-scope findings, are filed as follow-up items in the tracker named by `review.backlog.destination`. The destination must match the active work source. The item is written with this page's work-source client and credentials (`src/pkg/worksource/review_backlog_sink.go`):
+
+| `review.backlog.destination` | Needs `type:` | What is filed |
+|---|---|---|
+| `github_issue` (default) | any | An issue in the reviewed PR's repo. |
+| `github_project` | `github_projects` | The same issue, added to the project and set to the Status option `project_column_id` via `addProjectV2ItemById` + `updateProjectV2ItemFieldValue`. The token also needs the `project` write scope. |
+| `linear` | `linear` | An issue on the team mapped to the PR's repo (`teams[].repo`), in `linear_state` when set. Labels that already exist on the team are applied. |
+| `jira` | `jira` | A Task in the first `project_keys` project, moved to `jira_status` when set. Labels have their whitespace replaced with `-`. |
+
+If the destination's work source is not active, or cannot be built (for example a missing `api_key`), the hive files a GitHub issue with the `from-review` label and logs why. Items are de-duplicated per repo by finding fingerprint. When another PR raises the same finding, the hive comments on the existing item instead of filing a new one. At most `max_per_pr_per_day` items are filed or updated per PR per day. See [review-swarm.md](review-swarm.md#backlog-routing) for the fingerprint, item body and audit entries.
 
 ## Open questions
 

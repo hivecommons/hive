@@ -15,6 +15,12 @@ const (
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
+	defaultEvalIntervalMaxS       = 1800
+	defaultEvalIntervalWebhookS   = 900
+	defaultConserveIntervalMult   = 2
+	defaultOptionalSweepEveryN    = 1
+	defaultGitHubAPIReserve       = 800
+	defaultGitHubAPICritical      = 250
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeEngine        = "llm-wiki"
@@ -87,6 +93,18 @@ func (c *Config) applyCoinBudgetDefaults() {
 }
 
 func (c *Config) applyDefaults() {
+	if c.AgentsGitHubAPIHourlyCap == 0 && !c.agentsGitHubAPIHourlyCapSet {
+		c.AgentsGitHubAPIHourlyCap = DefaultAgentsGitHubAPIHourlyCap
+	}
+	if c.GitHub.AgentReserveFloor == 0 {
+		c.GitHub.AgentReserveFloor = DefaultGitHubAgentReserveFloor
+	}
+	if c.GitHub.APIReserve == 0 {
+		c.GitHub.APIReserve = defaultGitHubAPIReserve
+	}
+	if c.GitHub.APICritical == 0 {
+		c.GitHub.APICritical = defaultGitHubAPICritical
+	}
 	// Runs before any review default so the pointer is settled on every load
 	// path (boot, reload, dashboard save) and Save() persists the explicit
 	// value, after which this is a no-op for the life of the hive.
@@ -121,6 +139,18 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
+	}
+	if c.Governor.EvalIntervalMaxS == 0 {
+		c.Governor.EvalIntervalMaxS = defaultEvalIntervalMaxS
+	}
+	if c.Governor.EvalIntervalWebhookS == 0 {
+		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
+	}
+	if c.Governor.ConserveIntervalMultiplier == 0 {
+		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult
+	}
+	if c.Governor.OptionalSweepEveryNCycles == 0 {
+		c.Governor.OptionalSweepEveryNCycles = defaultOptionalSweepEveryN
 	}
 	if c.Governor.Trajectory.IsEnabled() {
 		if c.Governor.Trajectory.OnDivergence == "" {

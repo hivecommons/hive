@@ -23,6 +23,8 @@ via YAML tags.
 
 Every dashboard section title has a small **?** mark. Hovering or focusing it shows a one-sentence summary; clicking it (or pressing Enter) opens that section's entry in [Dashboard sections explained](dashboard-sections.md), the plain-language help page for operators. The help sentences live in one table in `index.html` (`DASHBOARD_SECTION_HELP`), and `dashboardDocsHref` is the single place that builds every help address: a hive built from the `v6` branch or a `v6.x.y` tag opens the `v6` page, anything else opens `v5`. A guard test fails when a section has no help entry or its sentence drifts from the page.
 
+Settings fields use the same **?** mark, rendered by `settingHelpMark(page, anchor, label, tip)`: hovering or focusing it shows the setting's tooltip, and clicking it opens the guide that explains the setting, or the tab's entry in [Dashboard settings explained](settings.md), through the same `dashboardDocsHref`. Clicking the mark never changes the setting.
+
 ## Design system
 
 Dashboard UI changes should follow the shared [dashboard design system](dashboard-design-system.md), [dashboard glossary and sidebar IA](dashboard-glossary.md), and [ADR-0018](adr/0018-dashboard-design-tokens.md). The token layer is the theme contract for future user theme/background work and the migration path away from static inline styles; `go test ./pkg/dashboard/... -run StyleRatchet -v` ratchets inline styles and raw CSS values so the debt only goes down.
@@ -142,6 +144,10 @@ unknown actors. For **Merged**, the share covers PR merges plus issue closes;
 for **Closed**, it covers PRs closed without merging plus issue closes. The
 previous percent compares against the immediately preceding window of the same
 length (for example, previous 24 hours for the 24h window).
+
+## Settings → Knowledge → Connectors
+
+The **Knowledge** tab of the governor config dialog has a **Connectors** section listing every `knowledge.connectors` entry: name, type, layer, a status pill (`ok`, `syncing`, `error`, `disabled`, or `pending` before the first sync), last sync, pages/facts, and the last error (truncated, full text on hover). Owners also get **Sync now**, **Edit**, **Disable/Enable** and **Remove** per row plus **Add connector**; everyone else sees a read-only table. Add/Edit uses the styled hive dialog with type-specific scope fields and a **Validate** button; credentials are referenced by environment variable name or secret file path only. Saves go through the owner-only `PUT /api/config/knowledge/connectors`. See [Knowledge connectors](knowledge-connectors.md).
 
 ## Project Inception and Knowledge
 
@@ -381,6 +387,10 @@ queueing.
 
 Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `hive/covered-by-pr`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
 
+## Review pipeline board
+
+The **Review Pipeline** section (next to Review Queue) shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position.
+
 ## PR review and link signals
 
 PR pills also carry GitHub's own review state and conversation evidence
@@ -498,3 +508,23 @@ quotes, or bundled proprietary fonts.
 ## UI conventions: no native browser dialogs
 
 Hive hub and spoke UI code must not call browser-native dialog APIs such as `prompt()`, `alert()`, `confirm()`, `showModalDialog()`, or native-styled `<dialog>.showModal()`. Use the themed in-app helpers instead (`hivePrompt`, `hiveConfirm`, `hiveAlert`/toast, or the contribute admin modal) so dialogs match the dashboard, are accessible, and do not block the whole tab. The ratchet tests `TestNoNativeBrowserDialogsRatchet` in `pkg/dashboard` and `pkg/hub` scan shipped UI sources and should be updated only to make the rule stricter.
+
+## Settings → Compliance
+
+The **Compliance** tab in Settings (merger or owner) shows how this hive's
+configuration lines up with the selected compliance framework profiles. It
+opens with a banner: Hive is not certified; the tab maps your configuration
+to control requirements.
+
+- **Framework profile** — tick the frameworks to evaluate
+  (`compliance.frameworks`); saved by the footer **Save & close** through the
+  owner-only `PUT /api/config/governor/compliance`.
+- **Controls** — every control grouped by domain with its implementing
+  setting(s), current → recommended value and a status pill. Owners get an
+  inline toggle for boolean settings and **Apply recommended** per domain
+  (a themed confirmation lists each change); other settings link to their
+  owning tab with **Open setting**. Changes are staged in the owning section
+  and written only on Save. Mergers see the tab read-only.
+
+Details, including which settings can be toggled inline, are in
+[Compliance controls](compliance.md#using-the-compliance-tab).

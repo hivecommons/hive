@@ -57,6 +57,7 @@ func TestComputePRIssueCounts(t *testing.T) {
 }
 
 func TestComputePRIssueCountsForReposAggregates(t *testing.T) {
+	since := time.Date(2026, 7, 31, 9, 17, 0, 0, time.UTC)
 	seen := map[string]bool{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
@@ -78,18 +79,27 @@ func TestComputePRIssueCountsForReposAggregates(t *testing.T) {
 		if !strings.Contains(q, "author:app/hive-bot") {
 			t.Fatalf("bot authors must use app search syntax first: %q", q)
 		}
+		if strings.Contains(q, "type:pr") && !strings.Contains(q, "merged:>=2026-07-31") {
+			t.Fatalf("merged PR query missing window: %q", q)
+		}
+		if strings.Contains(q, "type:issue") && !strings.Contains(q, "closed:>=2026-07-31") {
+			t.Fatalf("closed issue query missing window: %q", q)
+		}
 		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	c := newTestClient(t, server, "org", []string{"repo1"})
-	counts, err := c.ComputePRIssueCountsForRepos(context.Background(), []string{"repo1", "other/repo2", "repo1"}, "hive-bot[bot]")
+	counts, err := c.ComputePRIssueCountsForReposSince(context.Background(), []string{"repo1", "other/repo2", "repo1"}, "hive-bot[bot]", since)
 	if err != nil {
-		t.Fatalf("ComputePRIssueCountsForRepos: %v", err)
+		t.Fatalf("ComputePRIssueCountsForReposSince: %v", err)
 	}
 	if counts.MergedPRs != 7 || counts.ClosedIssues != 10 {
 		t.Fatalf("counts = %+v, want merged 7 closed 10", counts)
+	}
+	if counts.WindowStart != since.Format(time.RFC3339) {
+		t.Fatalf("WindowStart = %q, want %q", counts.WindowStart, since.Format(time.RFC3339))
 	}
 	if len(seen) != 4 {
 		t.Fatalf("queries = %d, want 4 unique repo/type searches: %#v", len(seen), seen)

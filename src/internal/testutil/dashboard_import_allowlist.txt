@@ -17,6 +17,7 @@ github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims
 github.com/hivecommons/hive/pkg/classify
 github.com/hivecommons/hive/pkg/claude
+github.com/hivecommons/hive/pkg/compliance
 github.com/hivecommons/hive/pkg/config
 github.com/hivecommons/hive/pkg/convergence
 github.com/hivecommons/hive/pkg/dashboard
@@ -40,6 +41,7 @@ github.com/hivecommons/hive/pkg/outputschema
 github.com/hivecommons/hive/pkg/planning
 github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
+github.com/hivecommons/hive/pkg/releasenotes
 github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
 github.com/hivecommons/hive/pkg/review

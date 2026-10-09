@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
@@ -53,6 +54,7 @@ type KickRecorder interface {
 type Sink interface {
 	Audit(actor, action, detail, agent string)
 	Alert(id, severity, message string)
+	ClearAlertsExcept(prefix string, keep map[string]struct{})
 	Notify(title, message string)
 }
 
@@ -71,8 +73,10 @@ type ReplanLaneConfig struct {
 // it runs far less often than the governor tick.
 const DefaultReplanIntervalS = 30 * 60
 
-// replanAlertPrefix namespaces the lane's dashboard system alerts by epic.
-const replanAlertPrefix = "plan-stall-"
+// ReplanAlertPrefix namespaces the lane's dashboard system alerts by epic.
+const ReplanAlertPrefix = "plan-stall-"
+
+const replanAlertPrefix = ReplanAlertPrefix
 
 // ReplanLane runs periodic stall detection + bounded replanning over every bead
 // store. It mirrors trajectory.Lane's shape: a Due()-gated, synchronous Run the
@@ -86,6 +90,13 @@ type ReplanLane struct {
 	interval time.Duration
 	stallCfg StallConfig
 	lastRun  time.Time
+	// activeIssueRefs, when known, contains issue-sourced plan refs that were
+	// still present in the current work snapshot (for example
+	// "gh-owner/repo#123"). Closed/superseded/untracked issues are absent, so
+	// their plan-stall banners are not reasserted.
+	activeIssueRefs      map[string]struct{}
+	activeIssueRepos     map[string]struct{}
+	activeIssueRefsKnown bool
 }
 
 // NewReplanLane builds the lane. stores is the same per-agent store map the
@@ -112,6 +123,19 @@ func NewReplanLane(stores map[string]*beads.Store, kicker Kicker, recorder KickR
 	}
 }
 
+// SetActiveIssueRefs gives the lane the current source-issue snapshot. The
+// governor calls this immediately before Run from the same eval tick that
+// enumerated GitHub/work-source issues, so stale issue-sourced plans can stop
+// reasserting "needs human" banners without adding per-plan GitHub calls.
+func (l *ReplanLane) SetActiveIssueRefs(refs, coveredRepos map[string]struct{}) {
+	if l == nil {
+		return
+	}
+	l.activeIssueRefs = refs
+	l.activeIssueRepos = coveredRepos
+	l.activeIssueRefsKnown = refs != nil && coveredRepos != nil
+}
+
 // Due reports whether enough time has elapsed since the last run for the lane to
 // run again at time now. The governor tick gates on this so the lane's cadence
 // is independent of, but floored by, the governor interval — exactly like
@@ -128,6 +152,7 @@ func (l *ReplanLane) Run(ctx context.Context) int {
 	l.lastRun = time.Now()
 	now := l.lastRun
 	replans := 0
+	activeAlerts := make(map[string]struct{})
 	for storeName, store := range l.stores {
 		snap := SnapshotFromStore(store)
 		stalled := DetectStalledPlans(snap, now, l.stallCfg)
@@ -135,12 +160,45 @@ func (l *ReplanLane) Run(ctx context.Context) int {
 			if ctx.Err() != nil {
 				return replans // shutting down; stop cleanly
 			}
+			if l.issueSourceInactive(sp) {
+				l.logger.Info("replan: suppressing stale plan-stall alert for inactive source issue",
+					"store", storeName, "epic", sp.EpicID, "ref", sp.EpicExternalRef)
+				continue
+			}
+			activeAlerts[replanAlertPrefix+sp.EpicID] = struct{}{}
 			if l.handleStall(store, storeName, sp, now) {
 				replans++
 			}
 		}
 	}
+	if l.sink != nil {
+		l.sink.ClearAlertsExcept(replanAlertPrefix, activeAlerts)
+	}
 	return replans
+}
+
+func (l *ReplanLane) issueSourceInactive(sp StalledPlan) bool {
+	if !l.activeIssueRefsKnown || !strings.HasPrefix(sp.EpicExternalRef, externalRefPrefix) {
+		return false
+	}
+	repo := issueRepoFromRef(sp.EpicExternalRef)
+	if repo == "" {
+		return false
+	}
+	if _, covered := l.activeIssueRepos[repo]; !covered {
+		return false
+	}
+	_, ok := l.activeIssueRefs[sp.EpicExternalRef]
+	return !ok
+}
+
+func issueRepoFromRef(ref string) string {
+	trimmed := strings.TrimPrefix(ref, externalRefPrefix)
+	idx := strings.LastIndex(trimmed, "#")
+	if idx <= 0 {
+		return ""
+	}
+	return trimmed[:idx]
 }
 
 // handleStall applies the bounded-replan decision to one stalled plan. Returns

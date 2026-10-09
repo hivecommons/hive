@@ -407,3 +407,26 @@ func TestGitHubTransportChain_AppClientIsPacedAndCached(t *testing.T) {
 		t.Error("accounting transport does not wrap the given transport")
 	}
 }
+
+func TestNewHTTPTransportWrapsSharedChain(t *testing.T) {
+	chain := NewHTTPTransport(http.DefaultTransport)
+	ss, ok := chain.(*slowStartTransport)
+	if !ok {
+		t.Fatalf("chain outermost = %T, want *slowStartTransport", chain)
+	}
+	ec, ok := ss.inner.(*etagCacheTransport)
+	if !ok {
+		t.Fatalf("chain inner = %T, want *etagCacheTransport", ss.inner)
+	}
+	neg, ok := ec.inner.(*rest404NegativeCacheTransport)
+	if !ok {
+		t.Fatalf("etag inner = %T, want *rest404NegativeCacheTransport", ec.inner)
+	}
+	acct, ok := neg.inner.(*restAccountingTransport)
+	if !ok {
+		t.Fatalf("negative-cache inner = %T, want *restAccountingTransport", neg.inner)
+	}
+	if acct.inner != http.DefaultTransport {
+		t.Error("accounting transport does not wrap the given transport")
+	}
+}

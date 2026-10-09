@@ -277,6 +277,7 @@ func BuildFrontendStatus(
 	}
 
 	issueToMerge := buildIssueToMerge(metricsCollector)
+	ghRateLimits := buildGHRateLimits(ghClient, ctx, cfg)
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	health := buildHealth(ghClient, ctx)
@@ -302,7 +303,8 @@ func BuildFrontendStatus(
 		Health:              health,
 		Budget:              buildBudget(gov, tokenCollector),
 		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
-		GHRateLimits:        buildGHRateLimits(ghClient, ctx, cfg),
+		GHRateLimits:        ghRateLimits,
+		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
 		AgentMetrics:        agentMetrics,
 		Hold:                buildHold(actionable),
 		IssueToMerge:        issueToMerge,
@@ -1356,6 +1358,13 @@ func defaultStatsConfig(name string) []any {
 		},
 		"ci-maintainer": {
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
+		},
+		// The quality agent drives coverage at ACMM Level 3 (#11150). The key
+		// is "testCoverage", not "coverage", so a saved quality strip never
+		// matches ci-maintainer's and is never pruned as a clone (#7411).
+		qualityAgentName: {
+			map[string]any{"key": "testCoverage", "label": "Test coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": coverageTarget,
+				"desc": "Primary repo test coverage from the " + qualityCoverageSource + "; — when no badge is configured or it is unreadable. ~90% is the ACMM Level 3 → 4 signal."},
 		},
 		"outreach": {
 			map[string]any{"key": "stars", "label": "Stars", "source": "agentMetrics", "field": "stars", "style": "spark", "trendField": "stars"},
@@ -2532,9 +2541,10 @@ func normalizeGHRateLimitForDisplay(entry github.RateLimitEntry, now time.Time) 
 
 func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config.Config) map[string]any {
 	result := map[string]any{
-		"core":      map[string]any{},
-		"alerts":    []any{},
-		"pullbacks": []any{},
+		"core":       map[string]any{},
+		"alerts":     []any{},
+		"pullbacks":  []any{},
+		"api_budget": map[string]any{"mode": "normal", "skipped_steps": []string{}},
 	}
 
 	authType := "token"
@@ -2557,6 +2567,7 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 	if ghClient != nil && ctx != nil {
 		limits, err := ghClient.RateLimits(ctx)
 		if err == nil && limits != nil {
+			result["api_budget"] = apiBudgetMap(limits.APIBudget)
 			now := time.Now()
 			coreEntry := normalizeGHRateLimitForDisplay(limits.Core, now)
 			core := map[string]any{
@@ -2579,6 +2590,24 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 				core["observed_at"] = coreEntry.ObservedAt.Format(time.RFC3339)
 			}
 			result["core"] = core
+			result["etag_cache"] = map[string]any{
+				"hits":    limits.ETagCache.Hits,
+				"misses":  limits.ETagCache.Misses,
+				"entries": limits.ETagCache.Entries,
+			}
+			top := make([]map[string]any, 0, len(limits.TopConsumers))
+			for _, c := range limits.TopConsumers {
+				top = append(top, map[string]any{
+					"caller":       c.Caller,
+					"endpoint":     c.Endpoint,
+					"method":       c.Method,
+					"requests":     c.Requests,
+					"charged":      c.Charged,
+					"not_modified": c.NotModified,
+					"rate_limited": c.RateLimited,
+				})
+			}
+			result["top_consumers"] = top
 		}
 	}
 
@@ -2950,4 +2979,34 @@ func buildReleaseLineLag() *FrontendReleaseLineLag {
 		}
 	}
 	return fn()
+}
+
+func apiBudgetMap(snapshot github.APIBudgetSnapshot) map[string]any {
+	mode := snapshot.Mode
+	if mode == "" {
+		mode = "normal"
+	}
+	out := map[string]any{
+		"mode":          mode,
+		"remaining":     snapshot.Remaining,
+		"limit":         snapshot.Limit,
+		"skipped_steps": append([]string(nil), snapshot.SkippedSteps...),
+	}
+	if !snapshot.Reset.IsZero() {
+		out["reset"] = snapshot.Reset.Format(time.RFC3339)
+	}
+	if !snapshot.Since.IsZero() {
+		out["since"] = snapshot.Since.Format(time.RFC3339)
+	}
+	return out
+}
+
+func apiBudgetFromRateLimits(rateLimits map[string]any) map[string]any {
+	if rateLimits == nil {
+		return map[string]any{"mode": "normal", "skipped_steps": []string{}}
+	}
+	if budget, ok := rateLimits["api_budget"].(map[string]any); ok {
+		return budget
+	}
+	return map[string]any{"mode": "normal", "skipped_steps": []string{}}
 }

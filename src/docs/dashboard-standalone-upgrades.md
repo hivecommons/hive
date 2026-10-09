@@ -286,3 +286,24 @@ see [podman-auto-update.md](podman-auto-update.md) and gap 3 of
   `rollback` after one requires `unpin` was never run and a prior pin exists);
   Compose keeps the old image available for an operator/helper to run with
   Docker if a post-swap rollback is needed.
+
+## Release notes before and after an upgrade
+
+The dashboard Upgrade button does not start the upgrade immediately. It opens a
+"What's new" modal headed `Upgrade <runtime>: <current> → <target>` (channel
+targets keep the caveat that the channel may advance before the host pulls it).
+The body is read from `GET /api/version/release-notes`: one collapsible block
+per release, newest first with the first expanded, grouped Added / Changed /
+Fixed / Security / Deprecated, `#NNNN` references linked to the repository, and
+unreleased changelog fragments last under "Also in this build". If the notes
+cannot be fetched the modal shows one muted "Release notes unavailable
+(<reason>)" line and **Upgrade** stays enabled. **Upgrade** runs the normal
+`POST /api/self-upgrade` flow; **Cancel** (or Esc) closes the modal without
+upgrading. Focus is trapped in the modal and returns to the Upgrade button.
+
+After the dashboard notices the running build changed, owners and mergers see a
+dismissible banner at the top of the overview, "Upgraded <old> → <new>: N
+releases. What changed ▸". Expanding it opens the same modal read-only (no
+Upgrade button). The last-seen SHA is stored per browser, so the banner shows
+once per upgrade, never on a first visit, and covers upgrades whose modal the
+operator never opened.

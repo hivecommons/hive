@@ -2530,8 +2530,12 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deps.Config.Project.Org != prevOrg {
 		s.deps.Config.ClearRepoPolicies()
+		s.deps.Config.ClearUpstreamWatchRepos()
 	} else if len(body.Repos) > 0 {
 		s.deps.Config.PruneRepoPoliciesToWatched()
+		// A removed repo must leave upstream_watch too, or the next load
+		// rejects the persisted config (hivecommons/hive#11211).
+		s.deps.Config.PruneUpstreamWatchToWatched()
 	}
 	if body.SelfAuthorizationHold != nil {
 		v := *body.SelfAuthorizationHold

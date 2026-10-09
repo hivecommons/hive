@@ -45,23 +45,28 @@ func notifySaveObserver() {
 var dashboardAuthTokenFile = "/secrets/dashboard-token"
 
 type Config struct {
-	Project       ProjectConfig          `yaml:"project"`
-	Policies      PoliciesConfig         `yaml:"policies"`
-	Agents        map[string]AgentConfig `yaml:"agents"`
-	Governor      GovernorConfig         `yaml:"governor"`
-	GitHub        GitHubConfig           `yaml:"github"`
-	GitLab        GitLabConfig           `yaml:"gitlab,omitempty"`
-	Gitea         GiteaConfig            `yaml:"gitea,omitempty"`
-	Notifications NotificationsConfig    `yaml:"notifications"`
-	Dashboard     DashboardConfig        `yaml:"dashboard"`
-	Data          DataConfig             `yaml:"data"`
-	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
-	Hub           HubConfig              `yaml:"hub"`
-	Fleet         FleetConfig            `yaml:"fleet,omitempty" json:"fleet,omitempty"`
-	Contribute    ContributeConfig       `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID        string                 `yaml:"hive_id"`
-	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Project  ProjectConfig          `yaml:"project"`
+	Policies PoliciesConfig         `yaml:"policies"`
+	Agents   map[string]AgentConfig `yaml:"agents"`
+	// AgentsGitHubAPIHourlyCap is the fleet default for per-agent GitHub API
+	// reads through the proxy. It is encoded under agents.github_api_hourly_cap
+	// by Config's YAML hooks so existing agent-name keys remain unchanged.
+	AgentsGitHubAPIHourlyCap    int `yaml:"-" json:"-"`
+	agentsGitHubAPIHourlyCapSet bool
+	Governor                    GovernorConfig      `yaml:"governor"`
+	GitHub                      GitHubConfig        `yaml:"github"`
+	GitLab                      GitLabConfig        `yaml:"gitlab,omitempty"`
+	Gitea                       GiteaConfig         `yaml:"gitea,omitempty"`
+	Notifications               NotificationsConfig `yaml:"notifications"`
+	Dashboard                   DashboardConfig     `yaml:"dashboard"`
+	Data                        DataConfig          `yaml:"data"`
+	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
+	Hub                         HubConfig           `yaml:"hub"`
+	Fleet                       FleetConfig         `yaml:"fleet,omitempty" json:"fleet,omitempty"`
+	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID                      string              `yaml:"hive_id"`
+	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	// ModelRoles is the named model-roles map (#9722): a small set of names,
 	// each naming a backend, a model and a reasoning effort, referenced as
 	// "@<role>" wherever hive asks for a model (today: agents' model and the
@@ -107,6 +112,7 @@ type Config struct {
 	// SentinelConfig.
 	Sentinel   SentinelConfig   `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Evidence   EvidenceConfig   `yaml:"evidence,omitempty" json:"evidence,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client
 	// that agents with jev_mode: assist reach through the hive's local decision
 	// endpoint (hivecommons/hive#8939). Zero value: OpenRouter-hosted
@@ -115,12 +121,13 @@ type Config struct {
 	Jev JevConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
-	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
-	Retro     RetroConfig     `yaml:"retro,omitempty" json:"retro,omitempty"`
-	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
-	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
-	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	Runs       RunsConfig       `yaml:"runs,omitempty" json:"runs,omitempty"`
+	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
+	Swarm      SwarmConfig      `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	Autonomy   AutonomyConfig   `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
+	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
+	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
+	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
@@ -309,7 +316,7 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			out.Agents[name] = agent
 		}
 	}
-	return out, nil
+	return marshalConfigYAMLWithAgentCap(c, out)
 }
 
 func (c *Config) EnabledAgents() map[string]AgentConfig {

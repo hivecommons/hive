@@ -34,7 +34,7 @@ func TestNoLabelHasBothNativeAndCustomTooltip(t *testing.T) {
 		if end := strings.Index(rest, "</label>"); end >= 0 {
 			rest = rest[:end]
 		}
-		if strings.Contains(rest, "config-info") || strings.Contains(rest, "config-tooltip") {
+		if strings.Contains(rest, "config-info") || strings.Contains(rest, "config-tooltip") || strings.Contains(rest, "settingHelpMark(") {
 			snippet := rest
 			if len(snippet) > 120 {
 				snippet = snippet[:120] + "..."
@@ -59,8 +59,8 @@ func TestNoLabelHasBothNativeAndCustomTooltip(t *testing.T) {
 // keep -- is still widely in use.
 func TestConfigInfoTooltipsStillPresent(t *testing.T) {
 	html := indexHTML(t)
-	if got := strings.Count(html, `class="config-info"`); got < 100 {
-		t.Errorf("only %d .config-info tooltip icons remain, want >= 100 — "+
+	if got := strings.Count(html, "settingHelpMark("); got < 100 {
+		t.Errorf("only %d settingHelpMark tooltip marks remain, want >= 100 — "+
 			"the custom tooltip mechanism appears to have been removed rather than deduplicated (#7248)", got)
 	}
 }
@@ -71,8 +71,8 @@ func TestConfigInfoTooltipsStillPresent(t *testing.T) {
 func TestDedupedTooltipLabelsKeepTheirExplanation(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"<label>Cadence mode scope <span class=\"config-info\">i<span class=\"config-tooltip\">",
-		"<label>Multi-repo threshold scaling <span class=\"config-info\">i<span class=\"config-tooltip\">",
+		"<label>Cadence mode scope ${settingHelpMark(",
+		"<label>Multi-repo threshold scaling ${settingHelpMark(",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html is missing %q — the deduplicated label lost its remaining tooltip (#7248)", want)
