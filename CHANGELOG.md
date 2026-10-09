@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.155.0)
+
+### Added
+
+- The quality agent's stats card now shows the primary repo's test coverage percentage against the 91% goal ([#11150](https://github.com/hivecommons/hive/issues/11150)). At ACMM Level 3 the quality agent drives coverage toward ~90%, the signal to move to Level 4, but the figure was only visible on the ci-maintainer card. The value comes from the existing coverage badge (`HIVE_COVERAGE_BADGE_URL`), the tooltip names that source, and the card shows "—" rather than 0% when no badge is configured or it cannot be read.
+
+### Changed
+
+- The Governor card's settings (⚙️) button now sits next to the card title instead of being pushed to the far right of the header, so it is easy to find on large monitors. (#11190)
+
+### Fixed
+
+- **`repo-wiki` connector: one invalid file no longer stalls the whole connector** — a markdown file with invalid front matter used to make every sync count as failed, so deleted files were never tombstoned and the cursor never advanced while any configured repo carried one bad `.md`. The connector now reports skipped files as a partial sync: the syncer still tombstones removed files and advances the cursor, and lists the offending files in the connector's `last_error`. (#11153 review follow-up)
+- The dashboard no longer reports two different versions for a hive whose last spoke-side upgrade was later superseded by a hub roll or floating image tag ([#11194](https://github.com/hivecommons/hive/issues/11194)). The release-status row now headlines the commit actually running (matching the "Version & upgrade details" menu) and labels the old upgrade target as superseded, instead of showing it as "✅ Last upgrade <old SHA>".
+
 ## 2026-10-09 (v5.154.0)
 
 ### Added
