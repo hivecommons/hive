@@ -15,7 +15,7 @@ func TestSidebarVersionChipHasExplicitAffordance(t *testing.T) {
 		`title="Version & upgrade details"`,
 		`class="oc-version-chip-chevron"`,
 		`.oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron`,
-		`.oc-version-bee-chip`,
+		`.oc-version-hive`,
 		`.oc-version-menu:empty { display: none; }`,
 	} {
 		if !strings.Contains(html, want) {

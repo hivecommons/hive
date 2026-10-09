@@ -401,53 +401,47 @@
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
     .oc-version-muted-action { color: var(--muted); font-size: var(--fs-xs); line-height: 1.35; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: color-mix(in srgb, var(--panel) 72%, transparent); }
-    .oc-version-upgrade-progress { --oc-version-bee-lane: 46px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--amber) 10%, var(--panel)); min-width: 0; overflow: visible; }
-    .oc-version-hive { --oc-version-hive-size: 28px; --oc-version-bee-size: calc(var(--oc-version-hive-size) / 3); --oc-version-bee-radius: calc(var(--oc-version-hive-size) / 2 + var(--oc-version-bee-size) / 2 + 3px); --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: relative; z-index: 2; width: var(--oc-version-bee-lane, 42px); height: 42px; display: grid; place-items: center; color: var(--amber); overflow: visible; }
-    .oc-version-hive svg { width: var(--oc-version-hive-size); height: var(--oc-version-hive-size); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--amber) 30%, transparent)); }
-    .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
-    .oc-version-orbit { position: absolute; z-index: 3; left: 50%; top: 50%; width: 0; height: 0; transform-origin: 0 0; will-change: transform; animation: ocBeeOrbit var(--oc-version-bee-duration) linear infinite; }
-    .oc-version-orbit--phase-a { animation-delay: 0s; }
-    .oc-version-orbit--phase-b { animation-delay: calc(var(--oc-version-bee-duration) / -3); }
-    .oc-version-orbit--phase-c { animation-delay: calc(var(--oc-version-bee-duration) / -1.5); }
-    .oc-version-bee { position: absolute; left: 0; top: 0; display: grid; place-items: center; color: var(--amber); transform: translateX(var(--oc-version-bee-radius)); contain: layout paint style; }
-    /* Theme guard: built-in themes must not resize bees per site. */
-    .oc-version-hive .oc-version-bee { width: var(--oc-version-bee-size) !important; height: var(--oc-version-bee-size) !important; margin: calc(var(--oc-version-bee-size) / -2) 0 0 calc(var(--oc-version-bee-size) / -2) !important; }
-    .oc-version-bee-glyph { width: 100%; height: 100%; display: block; overflow: visible; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--amber) 24%, transparent)); transform: translateZ(0); transform-box: fill-box; transform-origin: 50% 50%; }
+    .oc-version-upgrade-progress { --oc-version-bee-lane: 56px; display: grid; grid-template-columns: var(--oc-version-bee-lane) minmax(0, 1fr); gap: var(--sp-3); align-items: center; padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: var(--r); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); min-width: 0; overflow: visible; }
+    .oc-version-hive { --oc-version-hive-size: 28px; --oc-version-bee-size: 16px; --oc-version-bee-radius: 9px; --oc-version-bee-orbit-offset-x: 8px; --oc-version-bee-orbit-offset-y: -7px; position: relative; z-index: 2; width: var(--oc-version-bee-lane, 56px); height: 44px; display: grid; place-items: center; color: var(--accent); overflow: visible; }
+    .oc-version-hive > svg { width: var(--oc-version-hive-size); height: var(--oc-version-hive-size); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 30%, transparent)); }
+    .oc-version-bee-orbit, .oc-version-bee, .oc-version-hive > svg { transform: translateZ(0); backface-visibility: hidden; }
+    .oc-version-bee-orbit { --oc-version-bee-duration: var(--bee-orbit-duration, 11s); position: absolute; z-index: 3; left: 50%; top: 50%; width: var(--oc-version-hive-size); height: var(--oc-version-hive-size); transform-origin: 50% 50%; transform-box: border-box; will-change: transform; overflow: visible; contain: layout style; animation-name: ocBeeOrbit; animation-duration: var(--oc-version-bee-duration); animation-timing-function: linear; animation-iteration-count: infinite; animation-fill-mode: both; }
+    .oc-version-bee { position: absolute; left: 50%; top: 50%; width: var(--oc-version-bee-size); height: calc(var(--oc-version-bee-size) * 0.667); display: grid; place-items: center; color: var(--accent); transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-radius, 9px), 0, 0) rotate(90deg); transform-origin: 50% 50%; transform-box: border-box; }
+    .oc-version-bee--phase-a { animation-delay: 0s; }
+    .oc-version-bee--phase-b { animation-delay: -3.666s; }
+    .oc-version-bee--phase-c { animation-delay: -7.333s; }
+    .oc-version-bee-glyph { width: var(--oc-version-bee-size); height: auto; display: block; overflow: visible; filter: drop-shadow(0 0 1px color-mix(in srgb, var(--accent) 28%, transparent)); transform: translateZ(0); transform-box: fill-box; transform-origin: 50% 50%; }
     .oc-version-bee-glyph * { transform-box: fill-box; transform-origin: 50% 50%; }
-    .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--terminal-bg); stroke-width: 1.7; }
-    .oc-version-bee-body { fill: var(--amber); stroke: var(--terminal-bg); stroke-width: 1.5; }
-    .oc-version-bee-stripe, .oc-version-bee-head, .oc-version-bee-stinger { fill: none; stroke: var(--terminal-bg); stroke-width: 2; stroke-linecap: round; }
-    .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
+    .oc-version-bee-wing { fill: color-mix(in srgb, var(--panel) 70%, transparent); stroke: var(--terminal-bg); stroke-width: 0.7; opacity: 0.82; }
+    .oc-version-bee-body { fill: var(--accent); stroke: var(--terminal-bg); stroke-width: 0.8; }
+    .oc-version-bee-stripe { fill: none; stroke: var(--terminal-bg); stroke-width: 0.8; stroke-linecap: round; }
+    .oc-version-bee-head { fill: var(--terminal-bg); stroke: none; }
+    .oc-version-honey-dot { position: absolute; width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); animation: ocHoneyPulse 1.2s ease-in-out infinite; }
     .oc-version-progress-copy { position: relative; z-index: 1; min-width: 0; font-size: var(--fs-xs); line-height: 1.35; }
     .oc-version-progress-title { color: var(--text); font-weight: 700; }
     .oc-version-progress-status { color: var(--muted); margin-top: var(--sp-1); overflow-wrap: anywhere; }
     .oc-version-progress-status a { color: var(--accent); }
-    .oc-version-bee-chip { flex: 0 0 auto; animation: ocBeeWaggle 1s ease-in-out infinite; }
-    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--amber) 52%, var(--border)); background: color-mix(in srgb, var(--amber) 12%, var(--panel)); overflow: visible; }
-    .oc-navbar-upgrade { --oc-version-bee-lane: 44px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw); border-color: color-mix(in srgb, var(--amber) 48%, var(--border)); background: color-mix(in srgb, var(--amber) 11%, var(--panel)); overflow: visible; }
+    .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); overflow: visible; }
+    .oc-navbar-upgrade { --oc-version-bee-lane: 56px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw); border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 11%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade[hidden] { display: none; }
-    .oc-version-navbar-upgrade { --oc-version-bee-lane: 44px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
-    .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: var(--oc-version-bee-lane); height: 34px; --oc-version-hive-size: 18px; }
+    .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
+    .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
     .oc-version-navbar-upgrade .oc-version-progress-copy { min-width: 0; padding-left: var(--oc-version-bee-lane); line-height: 1.1; overflow: hidden; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-title, .oc-version-navbar-upgrade .oc-version-progress-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-navbar-upgrade .oc-version-progress-status { margin-top: 0; }
     @keyframes ocBeeOrbit {
-      from { transform: rotate(0turn); }
-      to { transform: rotate(1turn); }
-    }
-    @keyframes ocBeeWaggle {
-      0%, 100% { transform: translateY(0) rotate(-8deg); }
-      50% { transform: translateY(-2px) rotate(8deg); }
+      0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn); }
+      100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn); }
     }
     @keyframes ocHoneyPulse {
       0%, 100% { opacity: 0.55; transform: scale(0.85); }
       50% { opacity: 1; transform: scale(1.12); }
     }
     @media (prefers-reduced-motion: reduce) {
-      .oc-version-orbit, .oc-version-bee-chip, .oc-version-honey-dot { animation: none; }
-      .oc-version-hive .oc-version-orbit { display: none; }
-      .oc-version-hive .oc-version-orbit--phase-a { display: block; }
+      .oc-version-bee-orbit, .oc-version-honey-dot { animation: none; }
+      .oc-version-hive .oc-version-bee-orbit { display: none; }
+      .oc-version-hive .oc-version-bee-orbit:first-of-type { display: block; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0); }
       .oc-version-honey-dot { opacity: 0.75; transform: none; }
     }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
@@ -28620,19 +28614,20 @@ function burnAreaChart() {
     }
 
     function versionBeeGlyphHTML() {
-      return '<svg class="oc-version-bee-glyph" viewBox="0 0 32 32" focusable="false" aria-hidden="true">' +
-        '<path class="oc-version-bee-wing" d="M12 9C9 4 4 3 3 7c1 4 5 5 9 4M20 9c3-5 8-6 9-2-1 4-5 5-9 4"/>' +
-        '<path class="oc-version-bee-body" d="M6 17c0-5.2 4.1-9 10-9s10 3.8 10 9-4.1 9-10 9S6 22.2 6 17Z"/>' +
-        '<path class="oc-version-bee-stripe" d="M12 9.4c-1.9 4.4-1.9 10.8 0 15.2M17 8.2c1.2 4.8 1.2 12.8 0 17.6M21 10c2.1 4.1 2.1 9.9 0 14"/>' +
-        '<path class="oc-version-bee-head" d="M24 15h3M24.5 19h2"/><path class="oc-version-bee-stinger" d="M5.6 17 3 15.6 3 18.4Z"/>' +
+      return '<svg class="oc-version-bee-glyph" viewBox="0 0 18 12" focusable="false" aria-hidden="true">' +
+        '<ellipse class="oc-version-bee-wing" cx="7" cy="3.6" rx="3" ry="1.5" transform="rotate(-18 7 3.6)"/>' +
+        '<ellipse class="oc-version-bee-wing" cx="11" cy="3.4" rx="3" ry="1.5" transform="rotate(18 11 3.4)"/>' +
+        '<ellipse class="oc-version-bee-body" cx="9.2" cy="7" rx="5.8" ry="3.3"/>' +
+        '<path class="oc-version-bee-stripe" d="M7.2 4.2v5.6M10 3.8v6.4"/>' +
+        '<circle class="oc-version-bee-head" cx="15" cy="7" r="1.7"/>' +
         '</svg>';
     }
 
     function versionUpgradeHiveHTML(key) {
       const keyAttr = key ? ' data-upgrade-hive-key="' + escapeHtml(key) + '"' : '';
-      const beeA = '<span class="oc-version-orbit oc-version-orbit--phase-a"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
-      const beeB = '<span class="oc-version-orbit oc-version-orbit--phase-b"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
-      const beeC = '<span class="oc-version-orbit oc-version-orbit--phase-c"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
+      const beeA = '<span class="oc-version-bee-orbit oc-version-bee--phase-a" aria-hidden="true"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
+      const beeB = '<span class="oc-version-bee-orbit oc-version-bee--phase-b" aria-hidden="true"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
+      const beeC = '<span class="oc-version-bee-orbit oc-version-bee--phase-c" aria-hidden="true"><span class="oc-version-bee">' + versionBeeGlyphHTML() + '</span></span>';
       return '<span class="oc-version-hive"' + keyAttr + ' aria-hidden="true">' +
         '<svg viewBox="0 0 64 64" focusable="false"><path d="M32 4 56 18v28L32 60 8 46V18Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 4v56M8 18l48 28M56 18 8 46" fill="none" stroke="currentColor" stroke-width="2" opacity="0.38"/></svg>' +
         beeA + beeB + beeC + '<span class="oc-version-honey-dot"></span>' +
@@ -28671,13 +28666,13 @@ function burnAreaChart() {
         el.innerHTML = html;
         return false;
       }
-      if (currentProgress.parentNode === el) {
-        const currentTitle = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-title]');
-        const currentStatus = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-status]');
-        const nextTitle = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-title]');
-        const nextStatus = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-status]');
-        if (currentTitle && nextTitle) currentTitle.innerHTML = nextTitle.innerHTML;
-        if (currentStatus && nextStatus) currentStatus.innerHTML = nextStatus.innerHTML;
+      const currentTitle = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-title]');
+      const currentStatus = currentProgress.querySelector && currentProgress.querySelector('[data-upgrade-status]');
+      const nextTitle = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-title]');
+      const nextStatus = nextProgress.querySelector && nextProgress.querySelector('[data-upgrade-status]');
+      if (currentTitle && nextTitle) currentTitle.innerHTML = nextTitle.innerHTML;
+      if (currentStatus && nextStatus) currentStatus.innerHTML = nextStatus.innerHTML;
+      if (currentProgress.parentNode === el || currentProgress.parentNode) {
         return true;
       }
       const nextHive = nextProgress.querySelector && nextProgress.querySelector('.oc-version-hive');
@@ -32713,7 +32708,7 @@ function burnAreaChart() {
         </div>
         <div class="config-field">
           <label>Snapshot frame allowlist ${settingHelpMark('snapshots', '', 'Snapshot frame allowlist', `Exact HTTPS origins allowed to embed the public read-only /snapshot page. Empty keeps frame-ancestors 'none' and X-Frame-Options: DENY. X-Frame-Options is omitted for /snapshot only when this allowlist is non-empty because XFO cannot express allowlists.`)}</label>
-          <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)">${frameAncestors.map(function(o) { return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:0.72rem;background:rgba(96,165,250,0.15);color:var(--blue);border:1px solid rgba(96,165,250,0.3)">' + esc(o) + ' <span data-action="removeHubFilter" data-arg0="snapshot_frame_ancestors" data-arg1="' + esc(o) + '" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('') || '<span style="font-size:0.72rem;color:var(--muted)">No origins allowed — /snapshot cannot be framed.</span>'}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)">${frameAncestors.map(function(o) { return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:0.72rem;background:rgba(96,165,250,0.15);color:var(--blue);border:1px solid rgba(96,165,250,0.3)">' + esc(o) + ' <span data-action="removeHubFilter" data-arg0="snapshot_frame_ancestors" data-arg1="' + esc(o) + '" style="cursor:pointer;opacity:0.7">✕</span></span>';}).join('') || '<span style="font-size:0.72rem;color:var(--muted)">No origins allowed — /snapshot cannot be framed.</span>'}</div>
           <textarea rows="3" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="https://docs.projectbluefin.io" data-change-action="setSnapshotFrameAncestorsFromText" data-arg-types="v">${esc(frameAncestors.join('\n'))}</textarea>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">One exact origin per line: <code>https://host</code> or <code>https://host:port</code>. Paths, http://, credentials, and wildcards are rejected.</span>
         </div>
@@ -32788,7 +32783,7 @@ function burnAreaChart() {
 
         <div class="config-field">
           <label>Allowed Models ${settingHelpMark('contributor-relay', '', 'Allowed Models', `Models matching these patterns are accepted. Supports wildcards (*) and regex (/pattern/). Empty = allow all.`)}</label>
-          <div id="hub-allow-models" style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-2)">${allowModels.map(function(m) { return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:0.72rem;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3)">' + esc(m) + ' <span data-action="removeHubFilter" data-arg0="contribute_allow_models" data-arg1="' + esc(m) + '" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
+          <div id="hub-allow-models" style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-2)">${allowModels.map(function(m) { return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:0.72rem;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3)">' + esc(m) + ' <span data-action="removeHubFilter" data-arg0="contribute_allow_models" data-arg1="' + esc(m) + '" style="cursor:pointer;opacity:0.7">✕</span></span>';}).join('')}</div>
           <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)">
             <button class="hv-btn btn-danger btn-sm" data-action="addModelPreset" data-arg0="claude-opus*">+ opus</button>
             <button class="hv-btn btn-danger btn-sm" data-action="addModelPreset" data-arg0="claude-sonnet*">+ sonnet</button>
