@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -465,5 +466,126 @@ func TestConfluenceScopeHelpers(t *testing.T) {
 	}
 	if got := confluenceCursor(time.Time{}, "keep"); got != "keep" {
 		t.Fatalf("zero cursor = %q", got)
+	}
+}
+
+func TestConfluencePublish(t *testing.T) {
+	t.Setenv(confluenceTokenEnv, "tok")
+	type write struct{ method, path, auth, body string }
+	var mu sync.Mutex
+	var writes []write
+	var fail atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/100":
+			fmt.Fprint(w, `{"id":"100","space":{"key":"ENG"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/200":
+			fmt.Fprint(w, `{"id":"200"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			if r.URL.Query().Get("spaceKey") != "ENG" || r.URL.Query().Get("type") != "page" {
+				http.Error(w, "bad lookup", http.StatusBadRequest)
+				return
+			}
+			if r.URL.Query().Get("title") == "hive-org-a" {
+				fmt.Fprint(w, `{"results":[{"id":"7","title":"hive-org-a","version":{"number":3}}]}`)
+				return
+			}
+			fmt.Fprint(w, `{"results":[]}`)
+		case (r.Method == http.MethodPost || r.Method == http.MethodPut) && !fail.Load():
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			writes = append(writes, write{r.Method, r.URL.Path, r.Header.Get("Authorization"), string(b)})
+			mu.Unlock()
+			fmt.Fprint(w, `{"id":"8"}`)
+		default:
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	client, _ := testHTTPClient(HTTPOptions{MaxRetries: -1})
+	cfg := confluenceCfg(map[string]string{"base_url": srv.URL, "deployment": "datacenter", "spaces": "ENG"})
+	p, err := NewPublisher(nil, cfg, Deps{HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := []Page{
+		{ID: "org/a", Markdown: "<!-- hive_fact_id: org/a -->\n\n# A\n\nbody **bold**", Attrs: map[string]string{PublishKeyAttr: "hive-org-a"}},
+		{ID: "org/b", Markdown: "# B"},
+	}
+	if err := p.Publish(context.Background(), "/100/", pages); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := append([]write(nil), writes...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("writes %+v", got)
+	}
+	upd, cre := got[0], got[1]
+	if upd.method != http.MethodPut || upd.path != "/rest/api/content/7" || upd.auth != "Bearer tok" ||
+		!strings.Contains(upd.body, `"number":4`) || !strings.Contains(upd.body, `"title":"hive-org-a"`) ||
+		!strings.Contains(upd.body, `"ancestors":[{"id":"100"}]`) || !strings.Contains(upd.body, `hive_fact_id: org/a`) ||
+		!strings.Contains(upd.body, `\u003cstrong\u003ebold\u003c/strong\u003e`) {
+		t.Fatalf("update %+v", upd)
+	}
+	if cre.method != http.MethodPost || cre.path != "/rest/api/content" || strings.Contains(cre.body, `"version"`) ||
+		!strings.Contains(cre.body, `"title":"`+PublishKey("org/b")+`"`) || !strings.Contains(cre.body, `"space":{"key":"ENG"}`) ||
+		!strings.Contains(cre.body, `"representation":"storage"`) {
+		t.Fatalf("create %+v", cre)
+	}
+
+	conn := p.(*confluenceConnector)
+	tests := []struct {
+		name    string
+		conn    *confluenceConnector
+		root    string
+		pages   []Page
+		fail    bool
+		wantErr string
+	}{
+		{"no pages is a no-op", conn, "", nil, false, ""},
+		{"non-numeric root", conn, "Hive/Knowledge", pages, false, "numeric id of the Confluence parent page"},
+		{"missing secret", &confluenceConnector{cfg: confluenceCfg(map[string]string{"base_url": srv.URL, "deployment": "datacenter", "spaces": "ENG"}), http: client}, "100", pages, false, "HIVE_TEST_CONFLUENCE_UNSET"},
+		{"root lookup fails", conn, "999", pages, false, "confluence publish root 999"},
+		{"root without space", conn, "200", pages, false, "page has no space"},
+		{"write fails", conn, "100", pages, true, "publishing org/a"},
+	}
+	tests[2].conn.cfg.Auth = Auth{Env: "HIVE_TEST_CONFLUENCE_UNSET"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fail.Store(tt.fail)
+			defer fail.Store(false)
+			err := tt.conn.Publish(context.Background(), tt.root, tt.pages)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMarkdownToStorage(t *testing.T) {
+	tests := []struct {
+		name, md, want string
+	}{
+		{"marker and heading", "<!-- hive_fact_id: org/a -->\n\n# Title", "<p><sub>hive_fact_id: org/a</sub></p><h1>Title</h1>"},
+		{"paragraph escapes and inline", "a <b> & `x<y` **bold** [l](https://e.example/?a=1&b=2)\nnext", `<p>a &lt;b&gt; &amp; <code>x&lt;y</code> <strong>bold</strong> <a href="https://e.example/?a=1&amp;b=2">l</a> next</p>`},
+		{"italic footer", "---\n\n_Maintained by Hive._", "<hr /><p><em>Maintained by Hive.</em></p>"},
+		{"quote", "> **Deprecated:** gone\n> really", "<blockquote><p><strong>Deprecated:</strong> gone really</p></blockquote>"},
+		{"lists", "- a\n- b\n1. c\n2. d\n\ntext", "<ul><li>a</li><li>b</li></ul><ol><li>c</li><li>d</li></ol><p>text</p>"},
+		{"code fence", "```go\nx := 1 ]]> y\n```", `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[x := 1 ]]]]><![CDATA[> y]]></ac:plain-text-body></ac:structured-macro>`},
+		{"unterminated fence", "```\nraw", `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[raw]]></ac:plain-text-body></ac:structured-macro>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := markdownToStorage(tt.md); got != tt.want {
+				t.Fatalf("markdownToStorage(%q)\n got %s\nwant %s", tt.md, got, tt.want)
+			}
+		})
 	}
 }

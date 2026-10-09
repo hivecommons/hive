@@ -1076,3 +1076,211 @@ func richText(rts []notionRichText) string {
 	}
 	return b.String()
 }
+
+// --- Publish --------------------------------------------------------------
+
+// Notion API limits for publishing.
+const (
+	notionMaxRichText     = 2000 // characters (UTF-16 units) per rich_text item
+	notionMaxRichTextList = 100  // rich_text items per block
+	notionMaxBlocks       = 100  // blocks per create/append request
+)
+
+// Publish implements Publisher. root is the id of the parent page (shared
+// with the integration); each page becomes a child page titled with its page
+// key (`hive-<layer>-<slug>`). An existing child page with that title is
+// updated in place: its blocks are deleted and the new body appended, so
+// republishing never creates a duplicate. The markdown is sent as heading,
+// paragraph, divider and code blocks (see notionPublishBlocks).
+func (n *notionConnector) Publish(ctx context.Context, root string, pages []Page) error {
+	if len(pages) == 0 {
+		return nil
+	}
+	root = strings.Trim(root, "/")
+	if !validNotionID(root) {
+		return fmt.Errorf("publish root %q: must be the id of the Notion parent page (32 hex characters, dashes optional)", root)
+	}
+	existing := map[string]string{}
+	err := n.paginate(ctx, http.MethodGet, "/v1/blocks/"+url.PathEscape(root)+"/children", nil, func(raw json.RawMessage) error {
+		var blk notionBlock
+		if err := json.Unmarshal(raw, &blk); err != nil {
+			return err
+		}
+		if blk.Type == "child_page" {
+			if _, dup := existing[blk.Body.Title]; !dup {
+				existing[blk.Body.Title] = blk.ID
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("notion publish root %s: %w", root, err)
+	}
+	for _, p := range pages {
+		title := p.Attrs[PublishKeyAttr]
+		if title == "" {
+			title = PublishKey(p.ID)
+		}
+		blocks := notionPublishBlocks(p.Markdown)
+		if id, ok := existing[title]; ok {
+			err = n.replaceBlocks(ctx, id, blocks)
+		} else {
+			err = n.createChildPage(ctx, root, title, blocks)
+		}
+		if err != nil {
+			return fmt.Errorf("publishing %s: %w", p.ID, err)
+		}
+	}
+	return nil
+}
+
+func (n *notionConnector) createChildPage(ctx context.Context, root, title string, blocks []map[string]any) error {
+	first := blocks
+	if len(first) > notionMaxBlocks {
+		first = first[:notionMaxBlocks]
+	}
+	body := map[string]any{
+		"parent":     map[string]string{"page_id": root},
+		"properties": map[string]any{"title": map[string]any{"title": notionRichTextChunks(title)}},
+		"children":   first,
+	}
+	var created notionPage
+	if err := n.call(ctx, http.MethodPost, "/v1/pages", body, &created); err != nil {
+		return err
+	}
+	if created.ID == "" {
+		return fmt.Errorf("notion: page create returned no id")
+	}
+	return n.appendBlocks(ctx, created.ID, blocks[len(first):])
+}
+
+// replaceBlocks deletes every top-level block of page id and appends blocks.
+func (n *notionConnector) replaceBlocks(ctx context.Context, id string, blocks []map[string]any) error {
+	var old []string
+	err := n.paginate(ctx, http.MethodGet, "/v1/blocks/"+url.PathEscape(id)+"/children", nil, func(raw json.RawMessage) error {
+		var blk notionBlock
+		if err := json.Unmarshal(raw, &blk); err != nil {
+			return err
+		}
+		old = append(old, blk.ID)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, b := range old {
+		var out json.RawMessage
+		if err := n.call(ctx, http.MethodDelete, "/v1/blocks/"+url.PathEscape(b), nil, &out); err != nil {
+			return err
+		}
+	}
+	return n.appendBlocks(ctx, id, blocks)
+}
+
+func (n *notionConnector) appendBlocks(ctx context.Context, id string, blocks []map[string]any) error {
+	for len(blocks) > 0 {
+		chunk := blocks
+		if len(chunk) > notionMaxBlocks {
+			chunk = chunk[:notionMaxBlocks]
+		}
+		blocks = blocks[len(chunk):]
+		var out json.RawMessage
+		if err := n.call(ctx, http.MethodPatch, "/v1/blocks/"+url.PathEscape(id)+"/children", map[string]any{"children": chunk}, &out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// notionPublishBlocks splits the published markdown into Notion blocks:
+// `#`/`##`/`###`+ headings, `---` dividers, fenced code as code blocks and
+// every other run of non-blank lines as one paragraph of plain text (inline
+// markdown is kept literally). Text longer than Notion's per-item limit is
+// chunked, and a block that would exceed the rich_text list limit is split
+// into several blocks.
+func notionPublishBlocks(md string) []map[string]any {
+	var blocks []map[string]any
+	add := func(typ, text string, extra map[string]any) {
+		rts := notionRichTextChunks(text)
+		if len(rts) == 0 {
+			rts = []map[string]any{}
+		}
+		for first := true; first || len(rts) > 0; first = false {
+			part := rts
+			if len(part) > notionMaxRichTextList {
+				part = part[:notionMaxRichTextList]
+			}
+			rts = rts[len(part):]
+			body := map[string]any{"rich_text": part}
+			for k, v := range extra {
+				body[k] = v
+			}
+			blocks = append(blocks, map[string]any{"object": "block", "type": typ, typ: body})
+		}
+	}
+	var para []string
+	flush := func() {
+		if len(para) > 0 {
+			add("paragraph", strings.Join(para, "\n"), nil)
+			para = nil
+		}
+	}
+	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], " \t")
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```"):
+			flush()
+			var code []string
+			for i++; i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```"); i++ {
+				code = append(code, lines[i])
+			}
+			add("code", strings.Join(code, "\n"), map[string]any{"language": "plain text"})
+		case trimmed == "":
+			flush()
+		case trimmed == "---" || trimmed == "***" || trimmed == "___":
+			flush()
+			blocks = append(blocks, map[string]any{"object": "block", "type": "divider", "divider": map[string]any{}})
+		case strings.HasPrefix(trimmed, "#"):
+			level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+			text := strings.TrimSpace(trimmed[level:])
+			if level > 6 || text == "" || trimmed[level] != ' ' {
+				para = append(para, line)
+				continue
+			}
+			flush()
+			add("heading_"+strconv.Itoa(min(level, 3)), text, nil)
+		default:
+			para = append(para, line)
+		}
+	}
+	flush()
+	return blocks
+}
+
+// notionRichTextChunks splits s into text rich_text items of at most
+// notionMaxRichText UTF-16 units each, never splitting a rune. Empty s yields
+// no items.
+func notionRichTextChunks(s string) []map[string]any {
+	item := func(t string) map[string]any {
+		return map[string]any{"type": "text", "text": map[string]string{"content": t}}
+	}
+	var out []map[string]any
+	start, units := 0, 0
+	for i, r := range s {
+		w := 1
+		if r >= 0x10000 {
+			w = 2
+		}
+		if units+w > notionMaxRichText {
+			out = append(out, item(s[start:i]))
+			start, units = i, 0
+		}
+		units += w
+	}
+	if start < len(s) {
+		out = append(out, item(s[start:]))
+	}
+	return out
+}

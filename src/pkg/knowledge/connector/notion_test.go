@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -654,5 +655,175 @@ func TestNotionBlockEdgeCases(t *testing.T) {
 	md, err := s.blocks(context.Background(), "deep", 0)
 	if err != nil || !strings.Contains(md, "nested too deeply") {
 		t.Fatalf("depth cap: %q, %v", md, err)
+	}
+}
+
+func TestNotionPublish(t *testing.T) {
+	f := newNotionFixture(t)
+	f.static("GET", "/v1/blocks/"+nRoot+"/children", listJSON("",
+		blockJSON("pa", "child_page", true, `{"title":"hive-org-a"}`),
+		blockJSON("px", "paragraph", false, `{"rich_text":`+rtJSON("intro")+`}`)))
+	f.static("GET", "/v1/blocks/pa/children", listJSON("",
+		blockJSON("o1", "paragraph", false, `{"rich_text":`+rtJSON("old")+`}`),
+		blockJSON("o2", "divider", false, `{}`)))
+	f.static("DELETE", "/v1/blocks/o1", `{"object":"block","id":"o1"}`)
+	f.static("DELETE", "/v1/blocks/o2", `{"object":"block","id":"o2"}`)
+	f.static("PATCH", "/v1/blocks/pa/children", listJSON(""))
+	f.static("PATCH", "/v1/blocks/newp/children", listJSON(""))
+	var failCreate atomic.Bool
+	f.route("POST /v1/pages", func(*http.Request, string) (int, string) {
+		if failCreate.Load() {
+			return http.StatusBadRequest, `{"object":"error","status":400}`
+		}
+		return http.StatusOK, `{"object":"page","id":"newp"}`
+	})
+	if _, err := NewPublisher(nil, notionCfg(nil), Deps{HTTP: NewHTTPClient(HTTPOptions{AllowPrivate: true, MaxRetries: -1})}); err != nil {
+		t.Fatalf("NewPublisher: %v", err)
+	}
+	n, _ := newNotionTestConnector(t, nil)
+
+	var long []string
+	for i := 0; i < 150; i++ {
+		long = append(long, fmt.Sprintf("paragraph %d", i))
+	}
+	pages := []Page{
+		{ID: "org/a", Markdown: "<!-- hive_fact_id: org/a -->\n\n# A\n\nnew body\n\n---\n\n_footer_", Attrs: map[string]string{PublishKeyAttr: "hive-org-a"}},
+		{ID: "org/b", Markdown: strings.Join(long, "\n\n")},
+	}
+	if err := n.Publish(context.Background(), nRoot, pages); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("DELETE /v1/blocks/o1") != 1 || f.count("DELETE /v1/blocks/o2") != 1 {
+		t.Fatalf("old blocks not deleted: %v", f.requests)
+	}
+	type req struct {
+		Parent     map[string]string `json:"parent"`
+		Properties struct {
+			Title struct {
+				Title []struct {
+					Text struct {
+						Content string `json:"content"`
+					} `json:"text"`
+				} `json:"title"`
+			} `json:"title"`
+		} `json:"properties"`
+		Children []map[string]any `json:"children"`
+	}
+	decode := func(key string) []req {
+		var out []req
+		for _, b := range f.bodiesFor(key) {
+			var r req
+			if err := json.Unmarshal([]byte(b), &r); err != nil {
+				t.Fatalf("%s body %q: %v", key, b, err)
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	upd := decode("PATCH /v1/blocks/pa/children")
+	if len(upd) != 1 || len(upd[0].Children) != 5 || upd[0].Children[0]["type"] != "paragraph" ||
+		upd[0].Children[1]["type"] != "heading_1" || upd[0].Children[3]["type"] != "divider" ||
+		!strings.Contains(f.bodiesFor("PATCH /v1/blocks/pa/children")[0], "hive_fact_id: org/a") {
+		t.Fatalf("update %+v", f.bodiesFor("PATCH /v1/blocks/pa/children"))
+	}
+	cre := decode("POST /v1/pages")
+	if len(cre) != 1 || cre[0].Parent["page_id"] != nRoot || len(cre[0].Children) != notionMaxBlocks ||
+		len(cre[0].Properties.Title.Title) != 1 || cre[0].Properties.Title.Title[0].Text.Content != PublishKey("org/b") {
+		t.Fatalf("create %+v", f.bodiesFor("POST /v1/pages"))
+	}
+	if rest := decode("PATCH /v1/blocks/newp/children"); len(rest) != 1 || len(rest[0].Children) != 50 {
+		t.Fatalf("append rest %+v", rest)
+	}
+
+	tests := []struct {
+		name    string
+		root    string
+		auth    Auth
+		pages   []Page
+		fail    bool
+		wantErr string
+	}{
+		{"no pages is a no-op", "", Auth{Env: notionTokenEnv}, nil, false, ""},
+		{"bad root", "Hive/Knowledge", Auth{Env: notionTokenEnv}, pages, false, "must be the id of the Notion parent page"},
+		{"missing secret", nRoot, Auth{Env: "HIVE_TEST_NOTION_UNSET"}, pages, false, "HIVE_TEST_NOTION_UNSET"},
+		{"root listing fails", nOutside, Auth{Env: notionTokenEnv}, pages, false, "notion publish root " + nOutside},
+		{"create fails", nRoot, Auth{Env: notionTokenEnv}, pages[1:], true, "publishing org/b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failCreate.Store(tt.fail)
+			defer failCreate.Store(false)
+			c, _ := newNotionTestConnector(t, nil)
+			c.cfg.Auth = tt.auth
+			err := c.Publish(context.Background(), tt.root, tt.pages)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNotionPublishBlocks(t *testing.T) {
+	long := strings.Repeat("x", notionMaxRichText*notionMaxRichTextList+5)
+	tests := []struct {
+		name      string
+		md        string
+		wantTypes []string
+		check     func(t *testing.T, blocks []map[string]any)
+	}{
+		{"headings", "# one\n## two\n#### four\n#nospace", []string{"heading_1", "heading_2", "heading_3", "paragraph"}, nil},
+		{"code fence", "```go\nx := 1\n```\n\n```\n```", []string{"code", "code"}, func(t *testing.T, b []map[string]any) {
+			if b[0]["code"].(map[string]any)["language"] != "plain text" || len(b[1]["code"].(map[string]any)["rich_text"].([]map[string]any)) != 0 {
+				t.Fatalf("code blocks %+v", b)
+			}
+		}},
+		{"paragraph keeps lines", "a\nb\n\n***", []string{"paragraph", "divider"}, func(t *testing.T, b []map[string]any) {
+			rt := b[0]["paragraph"].(map[string]any)["rich_text"].([]map[string]any)
+			if rt[0]["text"].(map[string]string)["content"] != "a\nb" {
+				t.Fatalf("paragraph %+v", rt)
+			}
+		}},
+		{"oversized paragraph splits", long, []string{"paragraph", "paragraph"}, func(t *testing.T, b []map[string]any) {
+			if n := len(b[0]["paragraph"].(map[string]any)["rich_text"].([]map[string]any)); n != notionMaxRichTextList {
+				t.Fatalf("first block has %d rich_text items", n)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocks := notionPublishBlocks(tt.md)
+			var types []string
+			for _, b := range blocks {
+				types = append(types, b["type"].(string))
+			}
+			if !reflect.DeepEqual(types, tt.wantTypes) {
+				t.Fatalf("types = %v, want %v", types, tt.wantTypes)
+			}
+			if tt.check != nil {
+				tt.check(t, blocks)
+			}
+		})
+	}
+}
+
+func TestNotionRichTextChunks(t *testing.T) {
+	if got := notionRichTextChunks(""); len(got) != 0 {
+		t.Fatalf("empty = %v", got)
+	}
+	ascii := notionRichTextChunks(strings.Repeat("a", notionMaxRichText+1))
+	if len(ascii) != 2 || len(ascii[0]["text"].(map[string]string)["content"]) != notionMaxRichText {
+		t.Fatalf("ascii chunks = %d", len(ascii))
+	}
+	// Each emoji is two UTF-16 units, so 1001 of them need two items and no
+	// rune is split.
+	emoji := notionRichTextChunks(strings.Repeat("😀", notionMaxRichText/2+1))
+	if len(emoji) != 2 || emoji[1]["text"].(map[string]string)["content"] != "😀" {
+		t.Fatalf("emoji chunks = %+v", len(emoji))
 	}
 }

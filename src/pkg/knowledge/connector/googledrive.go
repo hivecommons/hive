@@ -1,11 +1,14 @@
 package connector
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"strings"
@@ -30,6 +33,9 @@ const (
 
 // driveAPIBase is the Drive v3 endpoint; tests point it at an httptest server.
 var driveAPIBase = "https://www.googleapis.com/drive/v3"
+
+// driveUploadBase is the Drive v3 media upload endpoint used by Publish.
+var driveUploadBase = "https://www.googleapis.com/upload/drive/v3"
 
 var driveIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{6,128}$`)
 
@@ -366,4 +372,155 @@ func csvToMarkdown(data string, maxRows int) string {
 		b.WriteString(line(row))
 	}
 	return b.String()
+}
+
+// Publish implements Publisher: each page is stored as `<root>/<page_key>.md`
+// (text/markdown) under the first configured folder_ids entry, or the first
+// shared drive's root when no folder is configured. Missing root folders are
+// created. An existing, untrashed file with that name is updated in place
+// through the media upload API; otherwise it is created with a multipart
+// upload, so republishing is idempotent. Publishing needs a token with the
+// drive.file or drive scope (drive.readonly can only sync).
+func (g *googleDriveConnector) Publish(ctx context.Context, root string, pages []Page) error {
+	if len(pages) == 0 {
+		return nil
+	}
+	var segs []string
+	for _, seg := range strings.Split(strings.Trim(root, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("publish root %q: must be a plain folder path", root)
+		}
+		segs = append(segs, seg)
+	}
+	token, err := g.cfg.Auth.Secret()
+	if err != nil {
+		return err
+	}
+	parent := ""
+	if ids := driveList(g.cfg, "folder_ids"); len(ids) > 0 {
+		parent = ids[0]
+	} else if ids := driveList(g.cfg, "shared_drive_ids"); len(ids) > 0 {
+		parent = ids[0]
+	}
+	if parent == "" {
+		return fmt.Errorf("no folder or shared drive configured to publish to")
+	}
+	pub := &drivePublish{g: g, token: token}
+	for _, seg := range segs {
+		if parent, err = pub.folder(ctx, parent, seg); err != nil {
+			return fmt.Errorf("google drive publish root %q: %w", root, err)
+		}
+	}
+	for _, p := range pages {
+		key := p.Attrs[PublishKeyAttr]
+		if key == "" {
+			key = PublishKey(p.ID)
+		}
+		if err := pub.upload(ctx, parent, key+".md", []byte(p.Markdown)); err != nil {
+			return fmt.Errorf("publishing %s: %w", p.ID, err)
+		}
+	}
+	return nil
+}
+
+type drivePublish struct {
+	g     *googleDriveConnector
+	token string
+}
+
+func (p *drivePublish) header(contentType string) http.Header {
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+p.token)
+	h.Set("Accept", "application/json")
+	if contentType != "" {
+		h.Set("Content-Type", contentType)
+	}
+	return h
+}
+
+func (p *drivePublish) do(ctx context.Context, method, u, contentType string, body []byte, out any) error {
+	resp, err := p.g.http.Do(ctx, method, u, p.header(contentType), body)
+	if err != nil {
+		return err
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(resp.Body, out); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+	return nil
+}
+
+// driveQuote quotes s as a Drive query string literal.
+func driveQuote(s string) string {
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", `\'`) + "'"
+}
+
+// find returns the id of the first untrashed child of parent named name with
+// the given MIME type condition, "" when there is none.
+func (p *drivePublish) find(ctx context.Context, parent, name, mimeCond string) (string, error) {
+	q := url.Values{}
+	q.Set("q", driveQuote(parent)+" in parents and name = "+driveQuote(name)+" and trashed = false and "+mimeCond)
+	q.Set("fields", "files(id)")
+	q.Set("pageSize", "1")
+	q.Set("supportsAllDrives", "true")
+	q.Set("includeItemsFromAllDrives", "true")
+	var out driveFileList
+	if err := p.do(ctx, http.MethodGet, driveAPIBase+"/files?"+q.Encode(), "", nil, &out); err != nil {
+		return "", err
+	}
+	if len(out.Files) == 0 {
+		return "", nil
+	}
+	return out.Files[0].ID, nil
+}
+
+// folder returns the id of folder name under parent, creating it if missing.
+func (p *drivePublish) folder(ctx context.Context, parent, name string) (string, error) {
+	id, err := p.find(ctx, parent, name, "mimeType = "+driveQuote(driveFolderMIME))
+	if err != nil || id != "" {
+		return id, err
+	}
+	meta, _ := json.Marshal(map[string]any{"name": name, "mimeType": driveFolderMIME, "parents": []string{parent}})
+	var created driveFile
+	if err := p.do(ctx, http.MethodPost, driveAPIBase+"/files?supportsAllDrives=true&fields=id", "application/json; charset=UTF-8", meta, &created); err != nil {
+		return "", fmt.Errorf("creating folder %q: %w", name, err)
+	}
+	if created.ID == "" {
+		return "", fmt.Errorf("creating folder %q: Drive returned no id", name)
+	}
+	return created.ID, nil
+}
+
+// upload updates file name under parent in place, or creates it.
+func (p *drivePublish) upload(ctx context.Context, parent, name string, content []byte) error {
+	id, err := p.find(ctx, parent, name, "mimeType != "+driveQuote(driveFolderMIME))
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		return p.do(ctx, http.MethodPatch, driveUploadBase+"/files/"+url.PathEscape(id)+"?uploadType=media&supportsAllDrives=true&fields=id",
+			driveMDMIME+"; charset=UTF-8", content, nil)
+	}
+	meta, _ := json.Marshal(map[string]any{"name": name, "mimeType": driveMDMIME, "parents": []string{parent}})
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for _, part := range []struct {
+		ctype string
+		data  []byte
+	}{{"application/json; charset=UTF-8", meta}, {driveMDMIME + "; charset=UTF-8", content}} {
+		pw, err := w.CreatePart(textproto.MIMEHeader{"Content-Type": {part.ctype}})
+		if err != nil {
+			return err
+		}
+		if _, err := pw.Write(part.data); err != nil {
+			return err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return p.do(ctx, http.MethodPost, driveUploadBase+"/files?uploadType=multipart&supportsAllDrives=true&fields=id",
+		"multipart/related; boundary="+w.Boundary(), buf.Bytes(), nil)
 }

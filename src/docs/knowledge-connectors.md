@@ -262,7 +262,16 @@ knowledge:
     propose_via: https://github.com/acme/knowledge   # shown in each page footer
 ```
 
-Connector types that can publish: `sharepoint`, which uploads each fact as `<root>/<page>.md` to the first configured drive or site library. Using any other type is rejected when the mirror is built.
+Connector types that can publish (using any other type is rejected when the mirror is built):
+
+| Type | `root` | What each fact becomes |
+| --- | --- | --- |
+| `sharepoint` | Folder path | `<root>/<page>.md`, uploaded to the first configured drive or site library. |
+| `confluence` | Numeric id of the parent page | A child page titled `<page>` in the parent's space. The markdown is converted to storage format: headings, paragraphs, quotes, lists, rules, code blocks (code macro), bold, italic, inline code and links. The `hive_fact_id` marker is kept as a small visible line because Confluence drops HTML comments. The credential needs permission to add and edit pages in that space. |
+| `notion` | Id of the parent page (shared with the integration) | A child page titled `<page>`. The body is sent as heading, paragraph, divider and code blocks, and inline markdown is kept as literal text. An update deletes the page's blocks and appends the new ones. Text is split to fit Notion's limits of 2000 characters per text item and 100 blocks per request. The integration needs the insert, update and read content capabilities. |
+| `google-drive` | Folder path under the first `folder_ids` entry (or the first shared drive) | `<root>/<page>.md` (`text/markdown`). Missing folders are created. The token needs the `drive.file` or `drive` scope; `drive.readonly` can only sync. |
+
+`<page>` is the page name `hive-<layer>-<slug>`. Each target finds the existing page or file by that name under `root` and updates it in place, so republishing never creates a duplicate.
 
 ### What gets published
 

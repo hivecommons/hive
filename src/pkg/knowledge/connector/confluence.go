@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -520,4 +521,202 @@ func (c *confluenceConnector) attachments(ctx context.Context, base *url.URL, he
 		}
 	}
 	return out, nil
+}
+
+// Publish implements Publisher. root is the numeric id of the parent page;
+// each page is stored in the parent's space as a child page titled with its
+// page key (`hive-<layer>-<slug>`). Confluence titles are unique per space, so
+// an existing page with that title is updated in place (and moved under root)
+// and republishing never creates a duplicate. The markdown is converted to
+// minimal storage-format XHTML by markdownToStorage.
+func (c *confluenceConnector) Publish(ctx context.Context, root string, pages []Page) error {
+	if len(pages) == 0 {
+		return nil
+	}
+	root = strings.Trim(root, "/")
+	if !confluenceIDRe.MatchString(root) {
+		return fmt.Errorf("publish root %q: must be the numeric id of the Confluence parent page", root)
+	}
+	base, err := confluenceBase(c.cfg)
+	if err != nil {
+		return err
+	}
+	header, err := c.authHeader(base)
+	if err != nil {
+		return err
+	}
+	api := strings.TrimRight(base.String(), "/") + "/rest/api/content"
+	var parent confluenceContent
+	if err := c.getJSON(ctx, api+"/"+url.PathEscape(root)+"?expand=space", header, &parent); err != nil {
+		return fmt.Errorf("confluence publish root %s: %w", root, err)
+	}
+	if parent.Space.Key == "" {
+		return fmt.Errorf("confluence publish root %s: page has no space", root)
+	}
+	header.Set("Content-Type", "application/json")
+	for _, p := range pages {
+		if err := c.publishPage(ctx, api, header, parent.Space.Key, root, p); err != nil {
+			return fmt.Errorf("publishing %s: %w", p.ID, err)
+		}
+	}
+	return nil
+}
+
+func (c *confluenceConnector) publishPage(ctx context.Context, api string, header http.Header, space, root string, p Page) error {
+	title := p.Attrs[PublishKeyAttr]
+	if title == "" {
+		title = PublishKey(p.ID)
+	}
+	q := url.Values{}
+	q.Set("spaceKey", space)
+	q.Set("title", title)
+	q.Set("type", "page")
+	q.Set("expand", "version")
+	var found confluenceSearch
+	if err := c.getJSON(ctx, api+"?"+q.Encode(), header, &found); err != nil {
+		return err
+	}
+	body := map[string]any{
+		"type":      "page",
+		"title":     title,
+		"space":     map[string]string{"key": space},
+		"ancestors": []map[string]string{{"id": root}},
+		"body":      map[string]any{"storage": map[string]string{"value": markdownToStorage(p.Markdown), "representation": "storage"}},
+	}
+	method, target := http.MethodPost, api
+	if len(found.Results) > 0 {
+		existing := found.Results[0]
+		body["id"] = existing.ID
+		body["version"] = map[string]any{"number": existing.Version.Number + 1, "message": "Updated by Hive publish mirror"}
+		method, target = http.MethodPut, api+"/"+url.PathEscape(existing.ID)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	_, err = c.http.Do(ctx, method, target, header, data)
+	return err
+}
+
+func (c *confluenceConnector) getJSON(ctx context.Context, u string, header http.Header, out any) error {
+	resp, err := c.http.Get(ctx, u, header)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(resp.Body, out); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+	return nil
+}
+
+var (
+	storageHeadingRe = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	storageMarkerRe  = regexp.MustCompile(`^<!--\s*(.*?)\s*-->$`)
+	storageOListRe   = regexp.MustCompile(`^\d+[.)]\s+(.*)$`)
+	storageCodeRe    = regexp.MustCompile("`([^`]+)`")
+	storageBoldRe    = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	storageItalicRe  = regexp.MustCompile(`(^|[\s(])_([^_]+)_([\s).,;:!?]|$)`)
+	storageLinkRe    = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
+)
+
+// markdownToStorage converts the markdown the publish mirror renders into
+// minimal Confluence storage-format XHTML: headings, paragraphs, block
+// quotes, bullet and numbered lists, horizontal rules, fenced code (as the
+// code macro) and inline bold, italic, code and links. The leading
+// hive_fact_id comment is kept as a small visible line because Confluence
+// drops HTML comments from storage format. Anything else is escaped text.
+func markdownToStorage(md string) string {
+	var b strings.Builder
+	var para, quote []string
+	list := ""
+	flushPara := func() {
+		if len(para) > 0 {
+			b.WriteString("<p>" + storageInline(strings.Join(para, " ")) + "</p>")
+			para = nil
+		}
+	}
+	flushQuote := func() {
+		if len(quote) > 0 {
+			b.WriteString("<blockquote><p>" + storageInline(strings.Join(quote, " ")) + "</p></blockquote>")
+			quote = nil
+		}
+	}
+	closeList := func() {
+		if list != "" {
+			b.WriteString("</" + list + ">")
+			list = ""
+		}
+	}
+	flush := func() { flushPara(); flushQuote(); closeList() }
+	openList := func(tag string) {
+		flushPara()
+		flushQuote()
+		if list != tag {
+			closeList()
+			b.WriteString("<" + tag + ">")
+			list = tag
+		}
+	}
+	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], " \t")
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```"):
+			flush()
+			var code []string
+			for i++; i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```"); i++ {
+				code = append(code, lines[i])
+			}
+			text := strings.ReplaceAll(strings.Join(code, "\n"), "]]>", "]]]]><![CDATA[>")
+			b.WriteString(`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[` + text + `]]></ac:plain-text-body></ac:structured-macro>`)
+		case trimmed == "":
+			flush()
+		case storageMarkerRe.MatchString(trimmed):
+			flush()
+			b.WriteString("<p><sub>" + html.EscapeString(storageMarkerRe.FindStringSubmatch(trimmed)[1]) + "</sub></p>")
+		case trimmed == "---" || trimmed == "***" || trimmed == "___":
+			flush()
+			b.WriteString("<hr />")
+		case storageHeadingRe.MatchString(trimmed):
+			flush()
+			m := storageHeadingRe.FindStringSubmatch(trimmed)
+			n := strconv.Itoa(len(m[1]))
+			b.WriteString("<h" + n + ">" + storageInline(m[2]) + "</h" + n + ">")
+		case strings.HasPrefix(trimmed, ">"):
+			flushPara()
+			closeList()
+			quote = append(quote, strings.TrimSpace(strings.TrimPrefix(trimmed, ">")))
+		case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ "):
+			openList("ul")
+			b.WriteString("<li>" + storageInline(strings.TrimSpace(trimmed[2:])) + "</li>")
+		case storageOListRe.MatchString(trimmed):
+			openList("ol")
+			b.WriteString("<li>" + storageInline(storageOListRe.FindStringSubmatch(trimmed)[1]) + "</li>")
+		default:
+			flushQuote()
+			closeList()
+			para = append(para, trimmed)
+		}
+	}
+	flush()
+	return b.String()
+}
+
+// storageInline escapes s and converts inline markdown to XHTML. Code spans
+// are converted first and their contents protected from the other rules.
+func storageInline(s string) string {
+	var codes []string
+	s = storageCodeRe.ReplaceAllStringFunc(s, func(m string) string {
+		codes = append(codes, "<code>"+html.EscapeString(m[1:len(m)-1])+"</code>")
+		return "\x00" + strconv.Itoa(len(codes)-1) + "\x00"
+	})
+	s = html.EscapeString(s)
+	s = storageLinkRe.ReplaceAllString(s, `<a href="$2">$1</a>`)
+	s = storageBoldRe.ReplaceAllString(s, "<strong>$1</strong>")
+	s = storageItalicRe.ReplaceAllString(s, "$1<em>$2</em>$3")
+	for i, c := range codes {
+		s = strings.Replace(s, "\x00"+strconv.Itoa(i)+"\x00", c, 1)
+	}
+	return s
 }
