@@ -1,6 +1,6 @@
 # Knowledge connectors
 
-External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents and GitHub wikis) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from **Settings → Knowledge → Connectors** in the dashboard.
+External knowledge systems (Confluence, Notion, Google Drive, SharePoint/OneDrive, git repositories, documents and GitHub wikis) are synced into the file vault by connectors configured under `knowledge.connectors` in `hive.yaml`. Each upstream page becomes one markdown fact, and agents read those facts like any other vault content. Operators manage connectors from the Knowledge card's **🔌 Integrations** modal or from **Settings → Knowledge → Connectors** in the dashboard.
 
 For the shared configuration fields, the fact format and how connectors relate to `git_sources` and `documents`, see [knowledge-curator.md → Connectors](knowledge-curator.md#connectors-knowledgeconnectors).
 
@@ -59,6 +59,10 @@ Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`
 
 ## Dashboard pane
 
+The Knowledge card now has one **🔌 Integrations** button instead of a separate Obsidian-only setup button. The modal keeps the Obsidian setup guide as its Obsidian entry and adds connector entries for every registered connector type. Selecting a connector type shows configured entries, status, publish state when that connector is used for `knowledge.publish`, and owner actions to save config, validate credential references, enable/disable and start a sync when the syncer is running.
+
+The same connectors remain available under **Settings → Knowledge → Connectors** for operators who prefer the governor settings dialog.
+
 | Column | Meaning |
 | --- | --- |
 | Status | `ok` last sync succeeded, `syncing` a sync is running, `error` last sync failed, `disabled` not scheduled, `pending` no sync yet |
@@ -66,7 +70,7 @@ Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`
 | Pages / facts | Pages emitted by the last sync / active facts the connector owns |
 | Last error | Truncated; hover for the full text |
 
-Owners can **Sync now**, **Edit**, **Disable/Enable** and **Remove** a connector and **Add** new ones. Non-owners see the table read-only. **Validate** inside the Add/Edit dialog is a conservative dry-run: it applies the config rules and the connector's own scope/auth checks and confirms the named environment variable is set (or the file is readable and non-empty). It performs no network access and never echoes the credential.
+Owners can **Sync now**, **Edit**, **Disable/Enable** and **Remove** a connector and **Add** new ones from Settings; the Knowledge-card Integrations modal provides the same save, validate, enable/disable and sync actions grouped by connector type. Non-owners see the table read-only. **Validate** inside the Add/Edit dialog is a conservative dry-run: it applies the config rules and the connector's own scope/auth checks and confirms the named environment variable is set (or the file is readable and non-empty). It performs no network access and never echoes the credential.
 
 Status and **Sync now** need the connector syncer, which `hive` starts at boot whenever `knowledge.connectors` is non-empty. When it is not running, the table shows configuration only and Sync now answers `503`.
 
@@ -292,7 +296,7 @@ Connector types that can publish (using any other type is rejected when the mirr
 
 The mirror publishes once at startup and then on a daily sweep. When scheduled promotion is on (`knowledge.curator.enabled: true`), every promotion sweep that promotes at least one fact also triggers a publish. Each batch produces one audit record (`PublishReport`: created, updated, deprecated, unchanged, collisions, error) that is logged as `knowledge publish batch`.
 
-**Status and Publish now.** **Settings → Knowledge → Connectors** shows a **Publish mirror** block under the connectors table: status, connector, layers, root, last run, published page count, the last batch's created/updated/deprecated/unchanged counts, collisions and last error. Owners get a **Publish now** button. The same data is the `publish` object of `GET /api/knowledge/connectors` and `GET /api/config/knowledge/connectors/status` (`null` when `knowledge.publish` is unset; `active: false` when it is set but the mirror is not running). `POST /api/knowledge/publish/sync` (owner only) runs a batch now: `202` with the publish status, `409` while a batch is running, `503` when the mirror is not running.
+**Status and Publish now.** The Knowledge-card **Integrations** modal shows publish state beside the selected connector, and **Settings → Knowledge → Connectors** shows a **Publish mirror** block under the connectors table: status, connector, layers, root, last run, published page count, the last batch's created/updated/deprecated/unchanged counts, collisions and last error. Owners get a **Publish now** button. The same data is the `publish` object of `GET /api/knowledge/connectors` and `GET /api/config/knowledge/connectors/status` (`null` when `knowledge.publish` is unset; `active: false` when it is set but the mirror is not running). `POST /api/knowledge/publish/sync` (owner only) runs a batch now: `202` with the publish status, `409` while a batch is running, `503` when the mirror is not running.
 
 ### Stopping publishing
 

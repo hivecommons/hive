@@ -3278,6 +3278,22 @@
     .public-knowledge-confirm { border: var(--line-width) solid var(--yellow); border-radius: var(--r); padding: var(--sp-3); color: var(--yellow); background: color-mix(in srgb, var(--yellow) 10%, transparent); font-size: var(--fs-sm); }
     .public-knowledge-tags { min-width: min(24em, 100%); }
     .kb-layout { display: grid; grid-template-columns: 240px 1fr; gap: var(--sp-6); min-height: 320px; }
+
+    .kb-integrations-modal { height: 72vh; overflow: hidden; }
+    .kb-integrations-loading { text-align: center; padding: var(--sp-7); color: var(--muted); }
+    .kb-integrations-shell { display: grid; grid-template-columns: 230px 1fr; gap: var(--sp-6); height: 100%; }
+    .kb-integrations-sidebar { border-right: var(--line-width) solid var(--border); padding-right: var(--sp-5); overflow: auto; }
+    .kb-integrations-list { margin-top: var(--sp-4); }
+    .kb-integrations-note { margin-top: var(--sp-5); }
+    .kb-integrations-main { overflow: auto; padding-right: var(--sp-3); }
+    .kb-integration-row-main { min-width: 0; flex: 1; }
+    .kb-integration-connector-title { font-weight: 700; color: var(--fg); }
+    .kb-integration-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
+    .kb-integration-form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--sp-4); }
+    .kb-integration-form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-4); }
+    .kb-integration-scope-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sp-4); margin-top: var(--sp-4); }
+    .kb-integration-enabled { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-4); }
+    .kb-integration-form-actions { gap: var(--sp-3); margin-top: var(--sp-4); }
     .kb-sidebar { display: flex; flex-direction: column; gap: 10px; }
     .kb-layer-list { display: flex; flex-direction: column; gap: var(--sp-2); }
     /* .kb-layer-btn — ghost button (system recipe); layout + active state here */
@@ -21205,7 +21221,7 @@ function burnAreaChart() {
       html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenSubscriptions" title="Manage knowledge sources: git repos, wiki subscriptions, document imports, and fact imports.">🔗 Knowledge Sources</button>';
       html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenVaults" title="Manage knowledge vaults — collections of facts organized by topic or project. Vaults can be shared across hive instances.">📂 Vaults</button>';
       html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenHowItWorks">📖 How it works</button>';
-      html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenObsidianSetup" title="View step-by-step instructions for connecting Obsidian via Git sync or webhook.">🔮 Obsidian Setup</button>';
+      html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenIntegrations" title="Configure knowledge integrations and connectors: Obsidian, SharePoint, Confluence, Notion, Google Drive, GitHub Wiki, git, repo wiki, and documents.">🔌 Integrations</button>';
       html += `<button class="hv-btn btn-secondary nous-btn" style="background:${_kbGraphView ? 'var(--cyan)' : 'var(--surface)'};color:${_kbGraphView ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbGraphView ? 'var(--cyan)' : 'var(--border)'}" data-action="kbToggleGraph" title="Toggle knowledge graph visualization showing relationships between facts.">🕸️ Graph</button>`;
       html += '</div>';
 
@@ -22284,11 +22300,12 @@ function burnAreaChart() {
 
           <div style="margin-bottom:18px">
             <h3 class="modal-h">Knowledge Sources</h3>
-            <p style="margin:var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0)">Knowledge comes from four types of sources, all managed through the <strong>Knowledge Sources</strong> modal:</p>
+            <p style="margin:var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0)">Knowledge comes from manually-created facts, legacy knowledge sources, vaults, and external knowledge connectors. Use <strong>Integrations</strong> to configure Obsidian setup paths and connector-backed sources such as SharePoint, Confluence, Notion, Google Drive, GitHub Wiki, git, repo wiki, and documents.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-2) var(--sp-0)"><strong>Wiki pages</strong> — Created directly in Hive with <strong>+ New Fact</strong>. Give each page a title, layer, tags, and content. Bulk-add with the <strong>Import</strong> button.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-2) var(--sp-0)"><strong>Obsidian vaults</strong> — Connect a vault or any directory of markdown files. Hive reads all <code class="code-chip">.md</code> files, picks up <code class="code-chip">#tags</code>, and re-scans every 30 seconds.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-2) var(--sp-0)"><strong>Git sources</strong> — Clone a GitHub repo (or a subdirectory within it) and index its markdown files locally. Configure git sources in <code class="code-chip">hive.yaml</code> or add them through the Knowledge Sources modal. Git sources sync every 5 minutes to pick up upstream changes.</p>
-            <p class="muted-note m-0"><strong>Wiki subscriptions</strong> — Follow a remote Hive instance or knowledge feed. New content syncs automatically on a periodic schedule.</p>
+            <p style="margin:var(--sp-0) var(--sp-0) var(--sp-2) var(--sp-0)"><strong>Wiki subscriptions</strong> — Follow a remote Hive instance or knowledge feed. New content syncs automatically on a periodic schedule.</p>
+            <p class="muted-note m-0"><strong>Knowledge connectors</strong> — Connector entries under <code class="code-chip">knowledge.connectors</code> sync external systems into the vault on a schedule. Open <strong>Integrations</strong> to save connector config, validate credential references, enable/disable entries, and start a sync when the runtime is available.</p>
           </div>
 
           <div style="margin-bottom:18px">
@@ -22326,15 +22343,186 @@ function burnAreaChart() {
       kbShowModal('📖 How Knowledge Works', body, { width: 'min(800px, 85vw)', maxHeight: '85vh' });
     }
 
-    function kbOpenObsidianSetup() {
+    let _kbIntegrationSelected = 'obsidian';
+    let _kbIntegrationEditName = '';
+
+    function kbOpenIntegrations() {
+      kbShowModal('🔌 Knowledge Integrations', '<div id="kb-integrations-content" class="kb-integrations-modal"><div class="kb-integrations-loading">Loading integrations…</div></div>', { width: 'min(1120px, 94vw)', maxHeight: '88vh' });
+      kbLoadIntegrationsModal(_kbIntegrationSelected || 'obsidian');
+    }
+
+    async function kbLoadIntegrationsModal(selected) {
+      _kbIntegrationSelected = selected || _kbIntegrationSelected || 'obsidian';
+      try {
+        const [cfgRes, stRes] = await Promise.all([fetch('/api/config/knowledge/connectors'), fetch('/api/config/knowledge/connectors/status')]);
+        const cfg = await cfgRes.json().catch(() => ({}));
+        if (!cfgRes.ok) throw new Error(cfg.error || ('HTTP ' + cfgRes.status));
+        const st = stRes.ok ? await stRes.json().catch(() => ({})) : {};
+        _kcState = Object.assign(_kcState, { loaded: true, error: '', connectors: cfg.connectors || [], types: cfg.types || [], layers: cfg.layers || _kcState.layers, rows: st.connectors || [], runtime: !!st.runtime, publish: st.publish || null });
+      } catch (e) {
+        _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
+      }
+      kbRenderIntegrationsModal();
+    }
+
+    function kbIntegrationTypes() {
+      const configured = new Set(_kcState.types || []);
+      const ordered = KB_CONNECTOR_TYPE_ORDER.filter(t => configured.has(t));
+      (_kcState.types || []).forEach(t => { if (!ordered.includes(t)) ordered.push(t); });
+      return ['obsidian'].concat(ordered);
+    }
+
+    function kbIntegrationLabel(type) {
+      if (type === 'obsidian') return 'Obsidian';
+      return (KC_TYPE_INFO[type] && KC_TYPE_INFO[type].label) || type;
+    }
+
+    function kbRenderIntegrationsModal() {
+      const el = document.getElementById('kb-integrations-content');
+      if (!el) return;
+      if (_kcState.error) {
+        el.innerHTML = '<div class="kb-notice">Failed to load integrations: ' + escapeHtml(_kcState.error) + '</div>';
+        return;
+      }
+      const types = kbIntegrationTypes();
+      if (!types.includes(_kbIntegrationSelected)) _kbIntegrationSelected = types[0] || 'obsidian';
+      let html = '<div class="kb-integrations-shell">';
+      html += '<div class="kb-integrations-sidebar">';
+      html += '<div class="section-label m-0">Integrations</div>';
+      html += '<div class="kb-layer-list kb-integrations-list">';
+      types.forEach(t => {
+        const active = t === _kbIntegrationSelected ? ' active' : '';
+        const count = t === 'obsidian' ? '' : String((_kcState.connectors || []).filter(c => c.type === t).length || 0);
+        const attr = t === 'obsidian' ? 'data-integration-type="obsidian"' : 'data-connector-type="' + escapeHtml(t) + '"';
+        html += '<button class="hv-btn btn-secondary btn-sm kb-layer-btn' + active + '" data-action="kbSelectIntegration" data-arg0="' + escapeHtml(t) + '" ' + attr + '>';
+        html += '<span class="kb-layer-label">' + (t === 'obsidian' ? '🔮 ' : '🔌 ') + escapeHtml(kbIntegrationLabel(t)) + '</span>';
+        if (count) html += '<span class="kb-layer-count">' + count + '</span>';
+        html += '</button>';
+      });
+      html += '</div><p class="muted-xs kb-integrations-note">Connector credentials are stored as environment-variable names or secret file paths only; pasted secrets are rejected.</p></div>';
+      html += '<div class="kb-integrations-main">' + (_kbIntegrationSelected === 'obsidian' ? kbRenderObsidianIntegration() : kbRenderConnectorIntegration(_kbIntegrationSelected)) + '</div></div>';
+      el.innerHTML = html;
+    }
+
+    function kbRenderObsidianIntegration() {
       const hiveHost = window.location.host;
       const modalOpts = { noBack: true, noForm: true, noDone: true };
-      let body = '<div style="max-height:70vh;overflow-y:auto;padding-right:var(--sp-6)">';
+      let body = '<div class="card-inset mb-5"><div class="title-sm">Obsidian</div><p class="muted-note m-0">Connect an Obsidian vault by mounting a Git-synced vault folder, or post individual notes through the webhook endpoint. This preserves the previous Obsidian setup guide inside the generic Integrations modal.</p></div>';
       body += renderGitSetupInstructions(hiveHost, modalOpts);
       body += '<div style="border-top:1px solid var(--border);margin:var(--sp-7) var(--sp-0)"></div>';
       body += renderWebhookSetupInstructions(hiveHost, modalOpts);
-      body += '</div>';
-      kbShowModal('🔮 Obsidian Setup Guide', body, { width: 'min(800px, 85vw)', maxHeight: '85vh' });
+      return body;
+    }
+
+    function kbConnectorRow(type, c, owner) {
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      const r = byName[c.name] || {};
+      const status = r.status || (c.enabled ? 'pending' : 'disabled');
+      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
+      html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
+      html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
+      if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
+      html += '</div>';
+      if (owner) {
+        html += '<div class="kb-integration-actions">';
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function kbRenderConnectorIntegration(type) {
+      const info = KC_TYPE_INFO[type] || { label: type, description: 'External knowledge connector.' };
+      const owner = viewerIsOwner();
+      const connectors = (_kcState.connectors || []).filter(c => c.type === type);
+      if (!_kbIntegrationEditName || !connectors.some(c => c.name === _kbIntegrationEditName)) _kbIntegrationEditName = connectors[0]?.name || '';
+      const edited = connectors.find(c => c.name === _kbIntegrationEditName) || { name: '', type, enabled: true, layer: 'project', interval: '', scope: {}, auth: {} };
+      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm">' + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></div></div>';
+      html += '<div class="row-between mb-4"><div class="section-label m-0">Configured entries</div>' + (owner ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationNew" data-arg0="' + escapeHtml(type) + '">Add ' + escapeHtml(info.label) + '</button>' : '') + '</div>';
+      html += connectors.length ? connectors.map(c => kbConnectorRow(type, c, owner)).join('') : '<div class="empty-dashed mb-4">No ' + escapeHtml(info.label) + ' connector configured yet.</div>';
+      html += owner ? kbConnectorFormHTML(type, edited, !!edited.name) : '<p class="muted-note">Only the hive owner can edit connector configuration.</p>';
+      return html;
+    }
+
+    function kbConnectorFormHTML(type, c, existing) {
+      const opts = (arr, sel) => arr.map(v => '<option value="' + escapeHtml(v) + '"' + (v === sel ? ' selected' : '') + '>' + escapeHtml(v) + '</option>').join('');
+      const authKind = c.auth && c.auth.env ? 'env' : (c.auth && c.auth.file ? 'file' : '');
+      const authVal = (c.auth && (c.auth.env || c.auth.file)) || '';
+      let html = '<div class="card-inset" data-kb-integration-form data-kb-type="' + escapeHtml(type) + '"><div class="title-sm mb-4">' + (existing ? 'Edit connector' : 'Add connector') + '</div>';
+      html += '<div class="kb-integration-form-grid-3">';
+      html += '<label class="muted-note">Name<input class="kb-search-box mt-2" type="text" data-kb-kc-name value="' + escapeHtml(c.name || '') + '"' + (existing ? ' readonly' : '') + ' placeholder="team-wiki" autocomplete="off"></label>';
+      html += '<label class="muted-note">Layer<select class="field-input field-input-block mt-2" data-kb-kc-layer>' + opts(_kcState.layers || ['personal', 'project', 'org', 'community'], c.layer || 'project') + '</select></label>';
+      html += '<label class="muted-note">Interval<input class="kb-search-box mt-2" type="text" data-kb-kc-interval value="' + escapeHtml(c.interval || '') + '" placeholder="15m" autocomplete="off"></label></div>';
+      html += '<div class="kb-integration-form-grid-2">';
+      html += '<label class="muted-note">Credential source<select class="field-input field-input-block mt-2" data-kb-kc-auth-kind><option value=""' + (authKind === '' ? ' selected' : '') + '>None</option><option value="env"' + (authKind === 'env' ? ' selected' : '') + '>Environment variable name</option><option value="file"' + (authKind === 'file' ? ' selected' : '') + '>Secret file path</option></select></label>';
+      html += '<label class="muted-note">Credential reference<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-value value="' + escapeHtml(authVal) + '" placeholder="TOKEN_ENV or /run/secrets/token" autocomplete="off"></label></div>';
+      html += '<div class="kb-integration-scope-grid">' + kcScopeFieldsHTML(type, c.scope || {}) + '</div>';
+      html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
+      html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
+      html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
+      return html;
+    }
+
+    function kbReadIntegrationForm() {
+      const box = document.querySelector('[data-kb-integration-form]');
+      if (!box) return null;
+      const val = sel => { const el = box.querySelector(sel); return el ? el.value.trim() : ''; };
+      const scope = {};
+      box.querySelectorAll('[data-kc-scope]').forEach(el => { if (el.value.trim()) scope[el.dataset.kcScope] = el.value.trim(); });
+      const authKind = val('[data-kb-kc-auth-kind]');
+      const authVal = val('[data-kb-kc-auth-value]');
+      return { name: val('[data-kb-kc-name]'), type: box.dataset.kbType, enabled: !box.querySelector('[data-kb-kc-enabled]') || box.querySelector('[data-kb-kc-enabled]').checked, layer: val('[data-kb-kc-layer]'), interval: val('[data-kb-kc-interval]'), scope, auth: authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {} };
+    }
+
+    function kbSetIntegrationMsg(text, ok) {
+      const msg = document.querySelector('[data-kb-kc-msg]');
+      if (msg) { msg.textContent = text; msg.dataset.ok = ok ? 'true' : 'false'; }
+    }
+
+    function kbSelectIntegration(type) { _kbIntegrationSelected = type || 'obsidian'; _kbIntegrationEditName = ''; kbRenderIntegrationsModal(); }
+    function kbIntegrationEdit(name) { _kbIntegrationEditName = name || ''; kbRenderIntegrationsModal(); }
+    function kbIntegrationNew(type) { _kbIntegrationSelected = type || _kbIntegrationSelected; _kbIntegrationEditName = ''; kbRenderIntegrationsModal(); }
+
+    async function kbIntegrationValidate() {
+      const next = kbReadIntegrationForm();
+      if (!next) return;
+      kbSetIntegrationMsg('Validating…', true);
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/validate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(next) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        kbSetIntegrationMsg(data.ok ? 'Configuration is valid.' : (data.error || 'Invalid configuration'), !!data.ok);
+      } catch (e) { kbSetIntegrationMsg('Validation failed: ' + e.message, false); }
+    }
+
+    async function kbIntegrationSave() {
+      const next = kbReadIntegrationForm();
+      if (!next) return;
+      const exists = (_kcState.connectors || []).some(c => c.name === next.name);
+      const list = exists ? _kcState.connectors.map(c => c.name === next.name ? next : c) : (_kcState.connectors || []).concat([next]);
+      try {
+        await kcSave(list);
+        _kbIntegrationSelected = next.type;
+        _kbIntegrationEditName = next.name;
+        await kbLoadIntegrationsModal(next.type);
+        showToast('Connector ' + next.name + ' saved', 'success');
+      } catch (e) { kbSetIntegrationMsg(e.message, false); }
+    }
+
+    async function kbIntegrationToggle(name) {
+      const list = (_kcState.connectors || []).map(c => c.name === name ? Object.assign({}, c, { enabled: !c.enabled }) : c);
+      try { await kcSave(list); await kbLoadIntegrationsModal(_kbIntegrationSelected); showToast('Connector ' + name + ' updated', 'success'); }
+      catch (e) { showToast('Connector update failed: ' + e.message, 'error'); }
+    }
+
+    async function kbIntegrationSync(name) {
+      await kcSyncNow(name);
+      setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
 
     // ── Vault Management ──
@@ -30305,10 +30493,26 @@ function burnAreaChart() {
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'repo-wiki', 'sharepoint'];
+    const KC_TYPE_INFO = {
+      'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
+      'document': { label: 'Document', description: 'Import one URL, local file path, or Context7 library document as facts.' },
+      'git': { label: 'Git repository', description: 'Clone and index markdown from a Git repository or subdirectory.' },
+      'github-wiki': { label: 'GitHub Wiki', description: 'Clone and index one or more GitHub wiki repositories.' },
+      'google-drive': { label: 'Google Drive', description: 'Sync Google Docs, Sheets, markdown, and text files from Drive folders or shared drives.' },
+      'notion': { label: 'Notion', description: 'Sync Notion pages and database rows visible to an internal integration.' },
+      'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
+      'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' }
+    };
     const KC_SCOPE_FIELDS = {
-      'git': [['url', 'Repository URL', 'https://github.com/org/repo'], ['branch', 'Branch', 'main'], ['subpath', 'Subpath', 'docs/']],
+      'confluence': [['base_url', 'Base URL', 'https://acme.atlassian.net/wiki'], ['deployment', 'Deployment', 'cloud or datacenter'], ['email', 'Cloud account email', 'hive-bot@acme.com'], ['spaces', 'Spaces', 'ENG, OPS'], ['root_page_ids', 'Root page IDs', '12345, 67890'], ['include_labels', 'Include labels', 'runbook,decision'], ['exclude_labels', 'Exclude labels', 'draft'], ['include_attachments', 'Include attachments', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
       'document': [['url', 'Document URL', 'https://example.org/guide.html'], ['file_path', 'File path', '/data/knowledge/guide.pdf'], ['context7_id', 'Context7 ID', '/org/project']],
-      'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']]
+      'git': [['url', 'Repository URL', 'https://github.com/org/repo'], ['branch', 'Branch', 'main'], ['subpath', 'Subpath', 'docs/']],
+      'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
+      'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
+      'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
+      'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
+      'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']]
     };
     let _kcState = { loaded: false, error: '', connectors: [], rows: [], types: [], layers: ['personal', 'project', 'org', 'community'], runtime: false, publish: null };
 
