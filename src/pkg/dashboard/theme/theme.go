@@ -51,6 +51,10 @@ body #repos.repo-grid .repo-card .repo-name{display:flex!important;align-items:c
 body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 auto!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}
 body #repos.repo-grid .repo-card .repo-name .repo-header-badges{flex:0 0 auto!important;justify-self:start!important;text-align:left!important;}
 body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin-left:auto!important;flex:0 0 auto!important;}
+body .oc-version-hive{--oc-version-hive-size:28px!important;--oc-version-bee-size:10px!important;--oc-version-bee-radius:22px!important;}
+body .oc-version-hive>svg{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;}
+body .oc-version-hive .oc-version-bee-orbit{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;}
+body .oc-version-hive .oc-version-bee{width:var(--oc-version-bee-size)!important;height:var(--oc-version-bee-size)!important;transform:translate3d(-50%,-50%,0) translate3d(var(--oc-version-bee-radius),0,0)!important;}
 @media (max-width:768px){body #oc-topbar.oc-topbar{left:var(--sp-0)!important;right:auto!important;width:100%!important;max-width:100%!important;}}
 `
 
