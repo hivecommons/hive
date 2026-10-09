@@ -387,49 +387,8 @@ func expectedCheckCacheFromContext(ctx context.Context) *expectedCheckCache {
 	return cache
 }
 
-func expectedCheckCacheKey(owner, repo, base string) string {
-	return strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + "#" + strings.TrimSpace(base)
-}
-
-func (c *expectedCheckCache) cached(owner, repo, base string) (map[string]bool, bool) {
-	if c == nil || strings.TrimSpace(base) == "" {
-		return nil, false
-	}
-	checks, ok := c.entries[expectedCheckCacheKey(owner, repo, base)]
-	return checks, ok
-}
-
-func (c *expectedCheckCache) get(ctx context.Context, client *gh.Client, owner, repo, base, ref string) (map[string]bool, error) {
-	if c == nil || strings.TrimSpace(base) == "" || strings.TrimSpace(ref) == "" {
-		return nil, nil
-	}
-	key := expectedCheckCacheKey(owner, repo, base)
-	if checks, ok := c.entries[key]; ok {
-		return checks, nil
-	}
-	checks, err := hgithub.ExpectedCommitChecksFromRef(ctx, client, owner, repo, ref)
-	if err != nil {
-		return nil, err
-	}
-	c.entries[key] = checks
-	return checks, nil
-}
-
 func (c *Engine) evaluatedHeadKey(owner, repo string, number int) string {
 	return strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number)
-}
-
-func (c *Engine) previousEvaluatedHead(owner, repo string, number int, current string) string {
-	if c == nil {
-		return ""
-	}
-	c.evaluatedHeadsMu.Lock()
-	defer c.evaluatedHeadsMu.Unlock()
-	prev := c.evaluatedHeads[c.evaluatedHeadKey(owner, repo, number)]
-	if strings.EqualFold(prev, current) {
-		return ""
-	}
-	return prev
 }
 
 func (c *Engine) rememberEvaluatedHead(owner, repo string, number int, sha string) {
@@ -442,34 +401,6 @@ func (c *Engine) rememberEvaluatedHead(owner, repo string, number int, sha strin
 		c.evaluatedHeads = make(map[string]string)
 	}
 	c.evaluatedHeads[c.evaluatedHeadKey(owner, repo, number)] = sha
-}
-
-func (c *Engine) expectedChecksForPR(ctx context.Context, owner, repo, base string, number int, sha string, cache *expectedCheckCache) (map[string]bool, error) {
-	if prev := c.previousEvaluatedHead(owner, repo, number, sha); prev != "" {
-		checks, err := hgithub.ExpectedCommitChecksFromRef(ctx, c.gh, owner, repo, prev)
-		if err != nil {
-			return nil, nil
-		}
-		return checks, nil
-	}
-	if cache == nil || strings.TrimSpace(base) == "" {
-		return nil, nil
-	}
-	if checks, ok := cache.cached(owner, repo, base); ok {
-		return checks, nil
-	}
-	ref, err := hgithub.LatestMergedPRHead(ctx, c.gh, owner, repo, base)
-	if err != nil || ref == "" {
-		if err == nil {
-			cache.entries[expectedCheckCacheKey(owner, repo, base)] = nil
-		}
-		return nil, nil
-	}
-	checks, err := cache.get(ctx, c.gh, owner, repo, base, ref)
-	if err != nil {
-		return nil, nil
-	}
-	return checks, nil
 }
 
 // MergerAuthorizer reports whether login is trusted to QUEUE a merge — i.e.
@@ -2026,21 +1957,17 @@ func parseHiveQueueReview(body string) string {
 // wedge the queue.
 //
 // Where that required set comes from (see requiredStatusCheckContexts for
-// the full precedence): config (auto_merge.required_checks) FIRST — the Hive
-// App token lacks administration:read, so GitHub's branch-protection API
-// (Repositories.GetRequiredStatusChecks, #3723) reliably errors in practice;
-// the operator-declared config list needs no such scope. The API is tried
-// only as a secondary source (in case the App ever does have that scope, or
-// the branch is legitimately unprotected).
+// the full precedence): branch protection first, then non-admin branch/rules
+// fallbacks, then the operator-declared auto_merge.required_checks fallback.
+// GitHub's protection APIs require administration:read on App tokens, but the
+// branch payload exposes the same required status-check contexts to pushable
+// installations.
 //
-// Fail-closed fallback: if the required-checks set cannot be determined by
-// EITHER config or the API (no config list, branch protection absent/erroring,
-// no branch known, or the API call fails) this deliberately does NOT fall
-// back to "ignore everything" — that would merge over a genuinely broken
-// build the moment both sources are unavailable. Instead it falls back to the
-// OLD isMetaCheck/isIgnorableCICheck allowlist behavior, so the previously-
-// shipped conservative behavior is preserved rather than degrading to
-// "always green".
+// Unknown-source fallback: if the required-checks set cannot be determined by
+// config, branch protection, the branch payload, or repository rulesets, the
+// sweep no longer treats arbitrary red check-runs as required. It waits only
+// while a check is still pending, then attempts the merge and lets GitHub's
+// merge endpoint enforce the actual required checks server-side.
 func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
 	return c.commitGreenForPR(ctx, owner, repo, branch, sha, 0, time.Time{}, nil)
 }
@@ -2053,26 +1980,21 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 	required, requiredKnown, fromConfig, fallback, source := hgithub.RequiredStatusCheckContextsDetailedWithSource(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
 	if prNumber > 0 {
 		c.info("automerge required checks source", "repo", owner+"/"+repo, "pr", prNumber, "branch", branch, "source", source, "known", requiredKnown, "count", len(required))
+		if !requiredKnown {
+			c.info("automerge required checks unknown; relying on server-side enforcement", "repo", owner+"/"+repo, "pr", prNumber, "branch", branch, "source", source)
+		}
 	}
 	if fallback && fromConfig {
 		c.warnRequiredChecksFallback(owner, repo, branch)
 	}
-	var expected map[string]bool
-	if !requiredKnown && expectedChecks != nil {
-		var err error
-		expected, err = c.expectedChecksForPR(ctx, owner, repo, branch, prNumber, sha, expectedChecks)
-		if err != nil {
-			return false, "check-runs", err
-		}
-	}
 	st, err := hgithub.EvaluateCommitCI(ctx, c.gh, owner, repo, sha, hgithub.CommitCIOptions{
-		Required:                required,
-		RequiredKnown:           requiredKnown,
-		RequiredKnownFromConfig: fromConfig,
-		ExpectedChecks:          expected,
-		MinHeadAge:              c.minHeadAge,
-		HeadPushedAt:            headPushedAt,
-		Now:                     c.now,
+		Required:                            required,
+		RequiredKnown:                       requiredKnown,
+		RequiredKnownFromConfig:             fromConfig,
+		UnknownRequiredChecksServerEnforced: !requiredKnown,
+		MinHeadAge:                          c.minHeadAge,
+		HeadPushedAt:                        headPushedAt,
+		Now:                                 c.now,
 	})
 	if err != nil {
 		return false, st.Reason, err
