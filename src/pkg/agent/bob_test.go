@@ -377,8 +377,8 @@ func TestBobLaunchCmdSessionLabelUsesInstanceID(t *testing.T) {
 		"v1": bobLaunchCmdV1("bob", "hive-scanner"),
 		"v2": bobLaunchCmdV2("bob", "hive-scanner"),
 	} {
-		if !strings.Contains(got, "--instance-id hive-scanner") {
-			t.Fatalf("%s command = %q, want --instance-id hive-scanner", name, got)
+		if !strings.Contains(got, "--instance-id 'hive-scanner'") {
+			t.Fatalf("%s command = %q, want --instance-id 'hive-scanner'", name, got)
 		}
 	}
 }
