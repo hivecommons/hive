@@ -33,12 +33,11 @@ name: CLI pin bump
 # images for both architectures, and the backend smoke's pinned lane picks the
 # new CLI up on its next run. See src/docs/cli-pins.md.
 #
-# Credentials: `gh pr create` runs with GITHUB_TOKEN under `pull-requests:
-# write`, exactly as v5-topup.yml does (that path opens PRs in this repo
-# today). The checkout uses TOPUP_PUSH_TOKEN when set — the same optional
-# fine-grained PAT v5-topup.yml uses — and GITHUB_TOKEN otherwise; a bump
-# never touches .github/workflows/, so GITHUB_TOKEN can push it (#7959 only
-# bites on workflow files). No new secret is introduced.
+# Credentials: checkout, push and `gh pr create` all prefer TOPUP_PUSH_TOKEN
+# when set — the same optional fine-grained PAT v5-topup.yml uses — and fall
+# back to GITHUB_TOKEN otherwise. A PAT-created PR emits the normal
+# pull_request_target event for required PR-verifier checks; the fallback still
+# works but may need the held-run release step below (#11343).
 
 on:
   schedule:
@@ -261,7 +260,7 @@ jobs:
       - name: Open or refresh the bump PR
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
           OLD: ${{ steps.bump.outputs.OLD }}
           NEW: ${{ steps.bump.outputs.NEW }}
           MAJOR: ${{ steps.bump.outputs.MAJOR }}
