@@ -69,7 +69,7 @@ func TestAutoMergeGet_OwnerSeesDefaults(t *testing.T) {
 	if body.TrustedAuthors.Enabled || body.TrustedAuthors.RequireRole != config.RoleMerger || !body.TrustedAuthors.RequireGitHubPermission {
 		t.Fatalf("trusted_author defaults wrong: %+v", body.TrustedAuthors)
 	}
-	if strings.Join(body.TrustedAuthors.ExcludeLabels, ",") != "hold,do-not-merge,needs-human,sentinel-alert" {
+	if strings.Join(body.TrustedAuthors.ExcludeLabels, ",") != "hold,do-not-merge,needs-human" {
 		t.Fatalf("trusted_author default labels wrong: %v", body.TrustedAuthors.ExcludeLabels)
 	}
 	if strings.Join(body.TrustedAuthors.Roles, ",") != "merger,owner" {

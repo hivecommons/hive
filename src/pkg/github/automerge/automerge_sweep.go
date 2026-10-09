@@ -116,6 +116,8 @@ type Engine struct {
 	now                               func() time.Time
 	evaluatedHeadsMu                  sync.Mutex
 	evaluatedHeads                    map[string]string
+	requiredChecksFallbackWarnedMu    sync.Mutex
+	requiredChecksFallbackWarned      map[string]bool
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -144,6 +146,7 @@ func New(transport Transport, opts Options) *Engine {
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
 		evaluatedHeads:                    make(map[string]string),
+		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
 	if e.now == nil {
 		e.now = time.Now
@@ -507,13 +510,9 @@ func (c *Engine) SetAttributionHooks(hooks hgithub.AttributionHooks) {
 	}
 }
 
-// SetRequiredChecks installs the config-declared required-status-check set
-// (config.AutoMergeConfig.RequiredCheckSet) consulted by commitGreen before
-// it ever calls GitHub's branch-protection API. nil/empty clears it, meaning
-// "not config-declared" — commitGreen then falls back to the API and, if that
-// also fails, to the isMetaCheck/isIgnorableCICheck allowlist. Safe to call
-// repeatedly (e.g. on every config reload); the sweep goroutine reads the
-// installed value through requiredChecksMu.
+// SetRequiredChecks installs the config-declared fallback required-status-check
+// set (config.AutoMergeConfig.RequiredCheckSet). Branch protection is the
+// authoritative source; this set is used only when protection cannot be read.
 func (c *Engine) SetRequiredChecks(set map[string]bool) {
 	if c == nil {
 		return
@@ -574,7 +573,7 @@ func (c *Engine) currentTrustedAuthorPolicy() TrustedAuthorPolicy {
 		p.RequireRole = "merger"
 	}
 	if p.ExcludeLabels == nil {
-		p.ExcludeLabels = map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true, "sentinel-alert": true}
+		p.ExcludeLabels = map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true}
 	}
 	return p
 }
@@ -855,6 +854,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				}
 			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -877,6 +877,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.UpdatedBranches++
 			}
 			if reason != "" {
+				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -896,7 +897,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "not-mergeable"}
+			skipReasonOrder := []string{"label:hold", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", "conflicting", "not-mergeable"}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -958,9 +959,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			}
 			result.Seen++
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
-				if strings.HasPrefix(reason, "excluded-label:") || reason == c.sentinelLabelName() {
-					c.info("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason)
-				}
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
 				continue
 			}
@@ -972,9 +971,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				continue
 			}
 			if reason != "" {
-				if strings.HasPrefix(reason, "excluded-label:") || reason == c.sentinelLabelName() {
-					c.info("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason)
-				}
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
 				continue
 			}
@@ -1223,8 +1220,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
-	if c.isHeld(selfLabels) {
-		return AutoMergeSweepEvent{}, "held", nil
+	if blocked := c.labelBlockReason(selfLabels, true); blocked != "" {
+		return AutoMergeSweepEvent{}, blocked, nil
 	}
 	if c.transport.IsExemptLabels(selfLabels) {
 		return AutoMergeSweepEvent{}, "exempt-label", nil
@@ -1238,7 +1235,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 
-	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	if strings.EqualFold(pr.GetMergeableState(), "behind") {
 		if !branchUpdateAllowed {
 			return AutoMergeSweepEvent{}, "not-mergeable", nil
@@ -1249,8 +1246,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		c.info("self-authored automerge sweep updated behind PR branch", "repo", displayRepo, "pr", number)
 		return AutoMergeSweepEvent{}, "updated-branch", nil
 	}
-	if mergeable != hgithub.MergeableYes {
-		return AutoMergeSweepEvent{}, "not-mergeable", nil
+	if mergeableState == "dirty" || mergeableState == "conflicting" {
+		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	baseBranch := ""
 	if pr.GetBase() != nil {
@@ -1426,15 +1423,33 @@ func (c *Engine) sentinelLabelName() string {
 	return strings.ToLower(strings.TrimSpace(c.sentinelLabel()))
 }
 
-func (c *Engine) sentinelBlockedLabel(labels []string) string {
+func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 	sentinelLabel := c.sentinelLabelName()
-	if sentinelLabel == "" {
-		return ""
+	holdLabels := labels
+	if trusted && sentinelLabel != "" {
+		holdLabels = make([]string, 0, len(labels))
+		for _, label := range labels {
+			if !strings.EqualFold(strings.TrimSpace(label), sentinelLabel) {
+				holdLabels = append(holdLabels, label)
+			}
+		}
 	}
 	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), sentinelLabel) {
-			return sentinelLabel
+		trimmed := strings.TrimSpace(label)
+		lower := strings.ToLower(trimmed)
+		switch {
+		case sentinelLabel != "" && strings.EqualFold(trimmed, sentinelLabel):
+			if !trusted {
+				return "sentinel"
+			}
+		case lower == "needs-rebase":
+			return "label:needs-rebase"
+		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
+			return "label:" + lower
 		}
+	}
+	if c.isHeld(holdLabels) {
+		return "label:hold"
 	}
 	return ""
 }
@@ -1453,11 +1468,8 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
-	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+	if blocked := c.labelBlockReason(labels, true); blocked != "" {
 		return blocked
-	}
-	if c.isHeld(labels) {
-		return "held"
 	}
 	if c.transport.IsExemptLabels(labels) {
 		return "exempt-label"
@@ -1476,11 +1488,8 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	if !hasLabel(labels, label) {
 		return "label-removed"
 	}
-	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+	if blocked := c.labelBlockReason(labels, false); blocked != "" {
 		return blocked
-	}
-	if c.isHeld(labels) {
-		return "held"
 	}
 	if c.transport.IsExemptLabels(labels) {
 		return "exempt-label"
@@ -1499,14 +1508,11 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
-	if blocked := c.sentinelBlockedLabel(labels); blocked != "" {
+	if blocked := c.labelBlockReason(labels, true); blocked != "" {
 		return blocked
 	}
 	if excluded := policy.excludedLabel(labels); excluded != "" {
 		return "excluded-label:" + excluded
-	}
-	if c.isHeld(labels) {
-		return "held"
 	}
 	if c.transport.IsExemptLabels(labels) {
 		return "exempt-label"
@@ -1582,9 +1588,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	} else if blocked {
 		return AutoMergeSweepEvent{}, "changes-requested", nil
 	}
-	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
-	if mergeable != hgithub.MergeableYes {
-		return AutoMergeSweepEvent{}, "not-mergeable", nil
+	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
+	if mergeableState == "dirty" || mergeableState == "conflicting" {
+		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	headSHA := ""
 	if pr.GetHead() != nil {
@@ -2024,7 +2030,10 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
 	configRequired, configKnown := c.configRequiredChecks()
-	required, requiredKnown := hgithub.RequiredStatusCheckContexts(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
+	required, requiredKnown, fromConfig, fallback := hgithub.RequiredStatusCheckContextsDetailed(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
+	if fallback && fromConfig {
+		c.warnRequiredChecksFallback(owner, repo, branch)
+	}
 	var expected map[string]bool
 	if !requiredKnown && expectedChecks != nil {
 		var err error
@@ -2036,7 +2045,7 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 	st, err := hgithub.EvaluateCommitCI(ctx, c.gh, owner, repo, sha, hgithub.CommitCIOptions{
 		Required:                required,
 		RequiredKnown:           requiredKnown,
-		RequiredKnownFromConfig: configKnown,
+		RequiredKnownFromConfig: fromConfig,
 		ExpectedChecks:          expected,
 		MinHeadAge:              c.minHeadAge,
 		HeadPushedAt:            headPushedAt,
@@ -2058,6 +2067,21 @@ func isFreshHeadOrMissingExpectedReason(reason string) bool {
 	return strings.HasPrefix(reason, "pending: head pushed ") || (strings.HasPrefix(reason, "pending: ") && strings.HasSuffix(reason, " has not started"))
 }
 
+func (c *Engine) warnRequiredChecksFallback(owner, repo, branch string) {
+	if c == nil {
+		return
+	}
+	key := strings.ToLower(owner + "/" + repo + "#" + branch)
+	c.requiredChecksFallbackWarnedMu.Lock()
+	if c.requiredChecksFallbackWarned[key] {
+		c.requiredChecksFallbackWarnedMu.Unlock()
+		return
+	}
+	c.requiredChecksFallbackWarned[key] = true
+	c.requiredChecksFallbackWarnedMu.Unlock()
+	c.warn("branch protection required checks unavailable; falling back to configured automerge required checks", "repo", owner+"/"+repo, "branch", branch)
+}
+
 // requiredStatusCheckContexts returns the set of status-check contexts /
 // check-run names that are actually required for branch, and whether that
 // set could be determined at all. It is the single source of truth
@@ -2066,16 +2090,13 @@ func isFreshHeadOrMissingExpectedReason(reason string) bool {
 // blocks).
 //
 // Precedence (first available source wins):
-//  1. Config: c.configRequiredChecks(), i.e. the operator-declared
-//     auto_merge.required_checks list (config.AutoMergeConfig.RequiredCheckSet).
-//     This needs NO GitHub API call and NO administration:read scope, so it
-//     is checked first and is the primary path in practice — the Hive App's
-//     token does not hold that scope, so path 2 below reliably errors.
-//  2. GitHub's branch-protection API (Repositories.GetRequiredStatusChecks).
+//  1. GitHub's branch-protection API (Repositories.GetRequiredStatusChecks).
 //     Kept as a fallback in case the App ever does have admin-read scope, or
 //     the branch is legitimately unprotected (gh.ErrBranchNotProtected — a
 //     repo with zero required checks is a valid, common state, NOT an
 //     error, so that case returns requiredKnown=true with an empty set).
+//  2. Config: c.configRequiredChecks(), i.e. the operator-declared
+//     auto_merge.required_checks list (config.AutoMergeConfig.RequiredCheckSet).
 //  3. Neither available (no config list AND branch empty / API call failed
 //     for a reason other than "not protected") → requiredKnown=false. The
 //     caller must fall back to the OLD isMetaCheck/isIgnorableCICheck

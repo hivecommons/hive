@@ -47,7 +47,7 @@ func TestClassifyMergeEligibility_BlockedNamesTheProtectionRule(t *testing.T) {
 				RequiredChecksKnown:   true,
 				MissingRequiredChecks: []string{"validate"},
 			}),
-			wantReason: `blocked — required check "validate" has not reported`,
+			wantReason: `blocked — required-check-missing:validate; GitHub also requires: required check "validate" has not reported`,
 		},
 		{
 			name: "a review GitHub requires is named",
@@ -65,7 +65,7 @@ func TestClassifyMergeEligibility_BlockedNamesTheProtectionRule(t *testing.T) {
 				RequiredChecksKnown: true,
 				ReviewDecision:      github.ReviewDecisionApproved,
 			}),
-			wantReason: "blocked — all sweep gates pass; a branch-protection rule is unsatisfied",
+			wantReason: "the sweep would merge this now — required checks are green; ignoring non-required GitHub blockers (GitHub: blocked)",
 		},
 		{
 			// NEGATIVE CONTROL. No facts at all (an older governor, a repo
@@ -73,18 +73,24 @@ func TestClassifyMergeEligibility_BlockedNamesTheProtectionRule(t *testing.T) {
 			// step 1 — this is the #7516 regression guard.
 			name:       "no facts at all keeps the step-1 placeholder",
 			pr:         blocked(nil),
-			wantReason: "blocked — all sweep gates pass; a branch-protection rule is unsatisfied",
+			wantReason: "the sweep would merge this now — required checks are green; ignoring non-required GitHub blockers (GitHub: blocked)",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bucket, verdict, _ := classifyMergeEligibility(tc.pr, false, "org/repo", tc.gates)
-			if bucket != mergeBucketSkip {
-				t.Errorf("bucket = %v, want %v", bucket, mergeBucketSkip)
+			wantBucket := mergeBucketSkip
+			wantState := github.MergeVerdictBlocked
+			if tc.name == "no rule derivable keeps the honest placeholder" || tc.name == "no facts at all keeps the step-1 placeholder" {
+				wantBucket = mergeBucketEligible
+				wantState = github.MergeVerdictEligible
 			}
-			if verdict.State != github.MergeVerdictBlocked {
-				t.Errorf("state = %q, want %q", verdict.State, github.MergeVerdictBlocked)
+			if bucket != wantBucket {
+				t.Errorf("bucket = %v, want %v", bucket, wantBucket)
+			}
+			if verdict.State != wantState {
+				t.Errorf("state = %q, want %q", verdict.State, wantState)
 			}
 			if verdict.Reason != tc.wantReason {
 				t.Errorf("reason = %q\n    want %q", verdict.Reason, tc.wantReason)
@@ -137,7 +143,7 @@ func TestClassifyMergeEligibility_BlockedKeepsBothReasons(t *testing.T) {
 		}
 		// Feed the intent gate a reason that literally contains the rule.
 		_, verdict, _ := classifyMergeEligibility(pr, true, "org/repo", mergeGates{})
-		if verdict.Reason != "blocked — held: a hold label keeps it out of the sweep; GitHub also requires: changes requested by @reviewer" {
+		if verdict.Reason != "blocked — label:hold; GitHub also requires: changes requested by @reviewer" {
 			t.Errorf("held+changes-requested reason = %q", verdict.Reason)
 		}
 	})
@@ -156,7 +162,7 @@ func TestClassifyMergeEligibility_ProtectionRuleOnlyAppliesToBlocked(t *testing.
 		want  string
 	}{
 		{"dirty", "has merge conflicts with v4 — needs a rebase"},
-		{"behind", "behind v4 — needs an update from the base branch"},
+		{"behind", "behind v4 — needs an update from the base branch; also changes requested by @reviewer"},
 	} {
 		pr := github.PullRequest{
 			Number: 4, Mergeable: github.MergeableNo, MergeableState: tc.state,

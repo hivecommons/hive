@@ -156,11 +156,11 @@ func TestTrySweepSelfAuthoredPRGuardBranches(t *testing.T) {
 		// because the branch moved while hold-gated — must stop the App from
 		// squashing its own PR on green. This path lists PRs independently of
 		// the enumeration hold gate, so it needs its own check.
-		{name: "hold label blocks self-merge", fx: selfSweepFixture{labels: []string{"hold"}}, wantReason: "held"},
-		{name: "hold-review label blocks self-merge", fx: selfSweepFixture{labels: []string{"hold/review"}}, wantReason: "held"},
-		{name: "do-not-merge label blocks self-merge", fx: selfSweepFixture{labels: []string{"do-not-merge"}}, wantReason: "exempt-label"},
+		{name: "hold label blocks self-merge", fx: selfSweepFixture{labels: []string{"hold"}}, wantReason: "label:hold"},
+		{name: "hold-review label blocks self-merge", fx: selfSweepFixture{labels: []string{"hold/review"}}, wantReason: "label:hold"},
+		{name: "do-not-merge label blocks self-merge", fx: selfSweepFixture{labels: []string{"do-not-merge"}}, wantReason: "label:do-not-merge"},
 		{name: "missing head SHA blocks merge", fx: selfSweepFixture{headSHA: gh.Ptr("")}, wantReason: "missing-head-sha"},
-		{name: "not mergeable blocks merge", fx: selfSweepFixture{mergeableState: "dirty"}, wantReason: "not-mergeable"},
+		{name: "not mergeable blocks merge", fx: selfSweepFixture{mergeableState: "dirty"}, wantReason: "conflicting"},
 		{name: "commitGreen API error propagates", fx: selfSweepFixture{statusHTTPCode: http.StatusInternalServerError}, wantReason: "status-check", wantErr: true},
 		{name: "pending CI blocks merge", fx: selfSweepFixture{statusState: "pending"}, wantReason: "status-pending"},
 		{name: "PR deleted between eval and merge", fx: selfSweepFixture{recheckGetStatus: http.StatusNotFound}, wantReason: "gone"},
