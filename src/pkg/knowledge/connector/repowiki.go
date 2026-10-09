@@ -157,9 +157,10 @@ func repoURL(repo string) string { return "https://github.com/" + repo + ".git" 
 
 // Sync pulls every configured repository and emits one page per markdown file
 // under its knowledge directory. Files with invalid front matter are skipped
-// and reported together in the returned error (which the syncer records as the
-// connector's last error) after every valid page has been emitted. The cursor
-// is the per-repo checked-out commit SHAs.
+// and reported together in a returned PartialError after every valid page has
+// been emitted: the syncer records it as the connector's last error but still
+// tombstones removed files and advances the cursor, which is the per-repo
+// checked-out commit SHAs.
 func (r *repoWikiConnector) Sync(ctx context.Context, cur Cursor, emit func(Page) error) (Cursor, error) {
 	var heads, problems []string
 	for _, repo := range wikiRepos(r.cfg) {
@@ -172,7 +173,7 @@ func (r *repoWikiConnector) Sync(ctx context.Context, cur Cursor, emit func(Page
 	}
 	next := Cursor(strings.Join(heads, ","))
 	if len(problems) > 0 {
-		return next, fmt.Errorf("repo-wiki: %d invalid file(s): %s", len(problems), strings.Join(problems, "; "))
+		return next, &PartialError{Err: fmt.Errorf("repo-wiki: %d invalid file(s): %s", len(problems), strings.Join(problems, "; "))}
 	}
 	return next, nil
 }
