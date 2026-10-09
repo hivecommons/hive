@@ -50,6 +50,12 @@ project:
 #   no_ci_ok:
 #     - your-org/docs-only-repo
 
+# Optional suspicious-activity alerts. Default: enabled, `sentinel-alert` is a
+# hard block for untrusted authors, and trusted authors (Hive App, owner-tier
+# authorized users, allow-listed bots) receive informational notices only.
+# sentinel:
+#   trusted_authors_block: false  # set true to block trusted authors too
+
 # Optional contributor help/community links. Shown on /contribute Onboarding,
 # Operations, and printed by relays when they connect. Empty/omitted defaults to
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).

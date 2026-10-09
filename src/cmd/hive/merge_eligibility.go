@@ -69,6 +69,32 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 	}
 }
 
+func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {
+	return func(repo, login string) github.SentinelAuthorTrust {
+		login = strings.TrimSpace(login)
+		if cfg == nil || login == "" {
+			return github.SentinelAuthorTrust{}
+		}
+		if ghClient != nil && strings.EqualFold(login, ghClient.AppBotLogin()) {
+			return github.SentinelAuthorTrust{Trusted: true, Reason: "hive agent"}
+		}
+		if cfg.AutoMerge.TrustedBotAuthorSet()[strings.ToLower(login)] {
+			return github.SentinelAuthorTrust{Trusted: true, Reason: "allow-listed bot"}
+		}
+		if decision := trustedAuthorFunc(cfg)(login, config.RoleOwner); decision.Allowed {
+			return github.SentinelAuthorTrust{Trusted: true, Reason: "owner"}
+		}
+		policy := trustedAuthorPolicyFunc(cfg)()
+		repoAllowed := len(policy.Repos) == 0 || policy.Repos[strings.ToLower(strings.TrimSpace(repo))]
+		if policy.Enabled && repoAllowed {
+			if decision := trustedAuthorFunc(cfg)(login, policy.RequireRole); decision.Allowed {
+				return github.SentinelAuthorTrust{Trusted: true, Reason: "trusted author"}
+			}
+		}
+		return github.SentinelAuthorTrust{}
+	}
+}
+
 // mergeEligiblePath is a var (not a const) only so tests can point
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
