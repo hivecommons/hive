@@ -275,6 +275,26 @@ Read it from:
 
 Read the numbers with care: the cohorts are not randomised. The reviewer reaches PRs in queue order, so early on the reviewed cohort skews towards whatever it got to first. The comparison becomes meaningful once both cohorts have dozens of resolved PRs; until then treat it as directional.
 
+## Event-driven dispatch
+
+With webhooks configured, a pushed PR does not wait for the next governor cadence to be reviewed (hivecommons/hive#11091). The spoke's existing signed webhook receiver (`POST /api/webhook/github`) queues a review dispatch for `pull_request` deliveries with action `opened`, `reopened`, `synchronize`, `ready_for_review` or `review_requested` on an open, non-draft PR in a managed repository.
+
+- **Debounce.** A PR fires once it has been quiet for `review.event_debounce_s` (default `90`, max `3600`). Each new delivery restarts the window and replaces the head SHA, so a burst of pushes is reviewed once, at its final head; a PR pushed continuously still fires four windows after its first event.
+- **Idempotency.** A head SHA that already fired is not queued again for 24 hours. The per-head perspective budget and dispatch state still stop a second review of the same head either way.
+- **Bounded.** At most 256 PRs wait at once; further deliveries are dropped and counted, and the cadence tick reviews those PRs as before. Wakes are spaced at least 30 seconds apart, so many PRs pushed together cost one early cycle.
+- **Same gates.** Firing wakes the governor for an early eval cycle with the fired PRs first in the review list. Head age, loop caps, ACMM, hold labels and `max_parallel_reviews` apply exactly as on a cadence tick.
+- **Fallback.** The cadence path is unchanged and still covers hives without webhooks, missed deliveries and dropped events.
+
+`review.event_driven` unset means on exactly when `GITHUB_WEBHOOK_SECRET` is set; `false` turns it off, `true` forces it on. It never runs while `require_approval` or `fan_out` is off.
+
+```yaml
+review:
+  event_driven: true
+  event_debounce_s: 90
+```
+
+`GET /api/review/dispatch/events` lists pending and recent dispatches with their counters (received, queued, coalesced, duplicates, dropped, fired, wakes). Review pipeline cards carry `trigger`: `event` (a webhook dispatch fired for the current head), `event_pending` (one is queued), or `cadence` (the head has reviewers without an event dispatch).
+
 ## Deferred work
 
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.

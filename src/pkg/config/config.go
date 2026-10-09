@@ -7734,6 +7734,10 @@ type ReviewConfig struct {
 	// aggregate has no consumer and the reviewer is silent by construction.
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+	// EventDriven and EventDebounceS control webhook-triggered review
+	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
+	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
+	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR
