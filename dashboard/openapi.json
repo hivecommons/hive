@@ -19628,6 +19628,101 @@
         }
       }
     },
+    "/api/config/upstream-watch": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Edit the upstream_watch block",
+        "description": "Owner-only. Edits upstream_watch from the Features tab: the global enabled switch, the poll interval, and per-repo add / update / remove. Every field is optional and an omitted key leaves that setting unchanged; a repo mapped to null is removed. Repo keys are stored as the bare repo name (an org-qualified key is rewritten). The candidate block is validated with the config loader's own rules before the live config changes, then persisted with saveConfig and recorded as a config_upstream_watch audit entry. The poll loop reads the live config each tick, so no restart is needed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Turn the watch on or off."
+                  },
+                  "interval": {
+                    "type": "string",
+                    "description": "Poll interval as a Go duration (for example 6h or 30m); empty restores the default."
+                  },
+                  "repos": {
+                    "type": "object",
+                    "description": "Per-repo patches keyed by repo name. null removes the repo; an absent field in a patch is left unchanged.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "upstream": {
+                          "type": "string",
+                          "description": "owner/repo this fork follows."
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Upstream sources to watch (commits, prs); empty means both."
+                        },
+                        "pr_labels": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Only surface upstream PRs carrying one of these labels; empty means all."
+                        },
+                        "max_issues_per_run": {
+                          "type": "integer",
+                          "description": "Cap on fork issues opened per run."
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "Label applied to the fork issues the watch opens."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Config updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "updated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, nothing to update, bad interval, or the candidate block failed validation (config unchanged)"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "500": {
+            "description": "Config could not be persisted (live config rolled back)"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/upstream-watch": {
       "get": {
         "tags": [
