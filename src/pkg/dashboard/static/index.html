@@ -2759,6 +2759,14 @@
       transition: transform 0.2s;
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
+    /* Carbon-style state text next to the track so ON/OFF never relies on colour alone. */
+    .config-toggle-switch { margin-inline-end: 2.2rem; flex-shrink: 0; }
+    .config-toggle-switch::after {
+      content: 'Off'; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%);
+      font-size: var(--fs-2xs); line-height: 1; color: var(--muted); white-space: nowrap; pointer-events: none;
+    }
+    .config-toggle-switch.on::after { content: 'On'; color: var(--text); font-weight: 600; }
+    .config-toggle-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .config-toggle-switch.on.danger { background: var(--red); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
     /* Reporter trust (#9665) — Settings → Labels block and Repos rows. */
@@ -26031,6 +26039,32 @@ function burnAreaChart() {
     document.addEventListener('scroll', (e) => hiveDispatchAction('scroll-action', e), true);
     document.addEventListener('toggle', (e) => hiveDispatchAction('toggle-action', e), true);
     document.addEventListener('error', (e) => hiveDispatchAction('error-action', e), true);
+    // Expose every shared on/off switch as role=switch with a synced aria-checked and Space/Enter support.
+    (function() {
+      const SEL = '.config-toggle-switch';
+      let queued = false;
+      function sync() {
+        queued = false;
+        document.querySelectorAll(SEL).forEach((el) => {
+          if (!el.hasAttribute('role')) el.setAttribute('role', 'switch');
+          if (el.getAttribute('role') !== 'switch') return;
+          if (!el.hasAttribute('tabindex') && !el.classList.contains('disabled')) el.setAttribute('tabindex', '0');
+          const on = el.classList.contains('on') ? 'true' : 'false';
+          if (el.getAttribute('aria-checked') !== on) el.setAttribute('aria-checked', on);
+          if (el.classList.contains('disabled')) el.setAttribute('aria-disabled', 'true'); else el.removeAttribute('aria-disabled');
+        });
+      }
+      function queue() { if (!queued) { queued = true; requestAnimationFrame(sync); } }
+      new MutationObserver(queue).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return;
+        const el = e.target && e.target.closest ? e.target.closest(SEL) : null;
+        if (!el || el.hasAttribute('data-keydown-action') || el.classList.contains('disabled')) return;
+        e.preventDefault();
+        el.click();
+      });
+      queue();
+    })();
 
     const TOAST_DURATION_MS = 3000;
     const TOAST_PROGRESS_MAX_MS = 60000;
