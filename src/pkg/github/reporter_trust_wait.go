@@ -128,7 +128,7 @@ func reporterTrustWaitCommentAt(webBase, repo, addedLabel string, ra ReporterAdm
 		"Thanks — this hive only works issues from " + trusted + " automatically. " +
 		"A maintainer can admit this one by adding " + labelText + " (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
 		"Until then the hive will not claim, label, or open PRs for it. " +
-		"See " + strings.TrimRight(webBase, "/") + "/" + repo + "/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these roles mean and how to escalate."
+		"See " + strings.TrimRight(webBase, "/") + "/" + repo + "/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these terms mean and how to become a trusted reporter."
 	if cc, ok := reporterTrustClankerConfig(ra); ok {
 		body += "\n\n" + clankerRequestedPointer +
 			" Once your relay is connected, this issue will be offered to it like any other queued work." +

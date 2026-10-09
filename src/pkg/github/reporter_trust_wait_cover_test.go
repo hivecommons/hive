@@ -406,7 +406,7 @@ const reporterTrustWaitGolden = "<!-- hive:reporter-trust-wait repo=o/r added-la
 	"Thanks — this hive only works issues from OWNER, MEMBER, COLLABORATOR automatically. " +
 	"A maintainer can admit this one by adding the label `triage/accepted` (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
 	"Until then the hive will not claim, label, or open PRs for it. " +
-	"See https://github.com/o/r/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these roles mean and how to escalate."
+	"See https://github.com/o/r/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these terms mean and how to become a trusted reporter."
 
 func TestReporterTrustWebBase(t *testing.T) {
 	var nilClient *Client
