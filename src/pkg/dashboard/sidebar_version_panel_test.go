@@ -263,7 +263,7 @@ var _upgradeTargetHash = null;
 const localStorage = {data:{}, getItem(k){return this.data[k] || null}, setItem(k,v){this.data[k]=String(v)}, removeItem(k){delete this.data[k]}};
 const btn = {disabled:false, textContent:'', style:{}, attrs:{}, setAttribute(k,v){this.attrs[k]=v}};
 const document = { getElementById(id){ return id === 'spoke-upgrade-btn' ? btn : null; } };
-const window = {_lastVersionData:{hash:'aaa1111abcdef'}};
+const window = {_lastVersionData:{hash:'aaa1111abcdef', deployment:{runtime:'kubernetes'}}};
 function showToast(){}
 function fetch(){ return new Promise(function(){}); }
 function setTimeout(){ return 1; }
@@ -272,6 +272,9 @@ let rnChoice = false;
 const rnCalls = [];
 function releaseNotesOpenModal(o){ rnCalls.push(o); return Promise.resolve(rnChoice); }
 ` + jsFunc(t, html, "versionShortSHA") + "\n" +
+		jsFunc(t, html, "versionHiveDisplayName") + "\n" +
+		jsFunc(t, html, "versionRuntimeUpgradeCaveat") + "\n" +
+		jsFunc(t, html, "versionJoinCaveats") + "\n" +
 		jsFunc(t, html, "versionNowMs") + "\n" +
 		jsFunc(t, html, "versionWriteUpgradeProgress") + "\n" +
 		jsFunc(t, html, "versionRecordUpgradeStart") + "\n" +
@@ -280,10 +283,15 @@ function releaseNotesOpenModal(o){ rnCalls.push(o); return Promise.resolve(rnCho
 selfUpgrade('bbb2222abcdef');
 setImmediate(function () {
   if (rnCalls.length !== 1 || rnCalls[0].from !== 'aaa1111abcdef' || rnCalls[0].to !== 'bbb2222abcdef') throw new Error('release-notes modal not opened with from/to: '+JSON.stringify(rnCalls));
+  if (rnCalls[0].title.startsWith('Upgrade kubernetes:')) throw new Error('modal title still starts with runtime: '+rnCalls[0].title);
+  if (rnCalls[0].title !== 'Upgrade Hive: aaa1111 → bbb2222') throw new Error('modal title should name the Hive by default: '+rnCalls[0].title);
+  if (rnCalls[0].caveat !== 'Runs on kubernetes — the kubernetes deployment is restarted with the new image; the cluster itself is not changed.') throw new Error('modal caveat should explain runtime restart: '+rnCalls[0].caveat);
   if (btn.disabled || localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || _upgradeInProgress) throw new Error('cancel must not start the upgrade');
   rnChoice = true;
+  window._lastVersionData.display_name = 'Production Hive';
   selfUpgrade('bbb2222abcdef');
   setImmediate(function () {
+    if (rnCalls[1].title !== 'Upgrade Production Hive: aaa1111 → bbb2222') throw new Error('modal title should prefer display name: '+rnCalls[1].title);
     if (!btn.disabled || btn.textContent !== 'Upgrading…' || btn.attrs['aria-disabled'] !== 'true') throw new Error('button not disabled as upgrading: '+JSON.stringify(btn));
     const stored = JSON.parse(localStorage.data[VERSION_UPGRADE_STORAGE_KEY] || '{}');
     if (stored.target !== 'bbb2222abcdef' || stored.targetShort !== 'bbb2222' || stored.startedFrom !== 'aaa1111abcdef') throw new Error('progress not persisted: '+JSON.stringify(stored));

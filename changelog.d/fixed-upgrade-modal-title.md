@@ -1,0 +1,1 @@
+- The upgrade confirmation now says it upgrades the Hive, not the runtime.

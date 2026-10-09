@@ -290,8 +290,11 @@ see [podman-auto-update.md](podman-auto-update.md) and gap 3 of
 ## Release notes before and after an upgrade
 
 The dashboard Upgrade button does not start the upgrade immediately. It opens a
-"What's new" modal headed `Upgrade <runtime>: <current> → <target>` (channel
-targets keep the caveat that the channel may advance before the host pulls it).
+"What's new" modal headed `Upgrade Hive: <current> → <target>` (or the Hive
+display name when the status payload includes one), with the deployment runtime
+called out in the caveat so operators know the runtime deployment restarts but
+the cluster itself is not changed. Channel targets keep the caveat that the
+channel may advance before the host pulls it.
 The body is read from `GET /api/version/release-notes`: one collapsible block
 per release, newest first with the first expanded, grouped Added / Changed /
 Fixed / Security / Deprecated, `#NNNN` references linked to the repository, and
