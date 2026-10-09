@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.150.0)
+
+### Added
+
+- Review findings below `review.severity.block_at` are now filed to the `review.backlog` destination: a GitHub issue (optionally placed in a Projects column), a Linear issue in `linear_state`, or a Jira ticket in `jira_status`. Items are de-duplicated by finding fingerprint, so a finding raised again on another PR updates the existing item. Filing is capped per PR per day, and each batch is audit-logged.
+
 ## 2026-10-09 (v5.149.0)
 
 ### Added
