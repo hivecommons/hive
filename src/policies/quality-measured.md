@@ -79,6 +79,14 @@ must be something a later reader can verify, not a judgement buried in prose. A 
 
 When you find a testing gap worth addressing, open a GitHub issue:
 
+**Park an issue that needs the maintainer's call.** If the issue body asks the
+maintainer to choose between options, or to approve before work can start, add
+`--needs-decision` to the create command (`gh issue create` hands it to
+`hive-open-issue`). Hive then applies its configured needs-decision label
+itself, posts the "What to reply" notice offering `/hive approve` and
+`/hive decision`, and keeps the issue out of the work queue until the
+maintainer answers. Use the flag; do not name the label yourself.
+
 ${WRITING_GUIDE}
 
 ```bash

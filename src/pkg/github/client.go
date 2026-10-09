@@ -2603,6 +2603,29 @@ func (c *Client) getIssueFilter() IssueAdmitter {
 	return c.issueFilter
 }
 
+// needsDecisionLabel is the label the issue relay applies to park an
+// agent-filed issue on a maintainer decision: the first configured
+// hard_suppress_labels.needs_decision label, else the built-in default.
+func (c *Client) needsDecisionLabel() string {
+	if labeler, ok := c.getIssueFilter().(NeedsDecisionLabeler); ok {
+		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" {
+			return label
+		}
+	}
+	return issueNeedsDecisionLabel
+}
+
+// appendLabelIfMissing returns labels with label added unless it is already
+// present (GitHub compares label names case-insensitively).
+func appendLabelIfMissing(labels []string, label string) []string {
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), label) {
+			return labels
+		}
+	}
+	return append(append([]string(nil), labels...), label)
+}
+
 // SetAutoMergeLabel is nil-receiver safe for the same reason as SetRepos. An
 // empty or whitespace-only value keeps the default rather than clearing it,
 // so a partially-populated config cannot produce an unnamed label.

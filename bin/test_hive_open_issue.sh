@@ -275,6 +275,47 @@ check "--close-on-merge refusal writes no request" "" "$(find_req closeonmergeco
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --- Section 3e: --needs-decision flag (relay-applied park label, #11215) ---
+run_script "needsdecisionbot" --repo "org/repo" --title "Pick A or B" --body "maintainer picks A or B" --needs-decision
+
+REQ_FILE="$(find_req needsdecisionbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_ND="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('needs_decision'))" "$REQ_FILE")"
+  check "--needs-decision sets needs_decision in the request" "True" "$GOT_ND"
+  GOT_LABELS="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['labels'])" "$REQ_FILE")"
+  check "--needs-decision does not name the label itself" "[]" "$GOT_LABELS"
+else
+  echo "  FAIL: request file not created for --needs-decision test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+run_script "noneedsdecisionbot" --repo "org/repo" --title "Plain finding" --body "it broke"
+
+REQ_FILE="$(find_req noneedsdecisionbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_ND="$(python3 -c "import json,sys; print('needs_decision' in json.load(open(sys.argv[1])))" "$REQ_FILE")"
+  check "no --needs-decision omits the field" "False" "$GOT_ND"
+else
+  echo "  FAIL: request file not created for no --needs-decision test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+set +e
+run_script "needsdecisioncommentbot" comment --repo "org/repo" 5 --body "x" --needs-decision >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "--needs-decision on a non-create is refused (exit 2)" "2" "$BAD_RC"
+check "--needs-decision refusal writes no request" "" "$(find_req needsdecisioncommentbot)"
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --parent=value style also works.
 run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
 
