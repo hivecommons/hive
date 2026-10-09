@@ -450,6 +450,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
 	s.mux.HandleFunc("PUT /api/config/write-surface", s.handleWriteSurfacePut)
+	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
+	// Registered last so the api-reference citations above do not shift.
+	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
 }
 
 var (

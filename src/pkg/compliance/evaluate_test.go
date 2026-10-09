@@ -185,7 +185,7 @@ func TestEvaluateCarriesCurrentAndRecommended(t *testing.T) {
 		if s.ControlID == "CC7.2" {
 			cc72 = s
 		}
-		if s.Framework != "soc2-type2" || s.Title == "" || s.Citation == "" || s.Domain == "" {
+		if s.Framework != "soc2-type2" || s.Title == "" || s.Text == "" || s.Citation == "" || s.Domain == "" {
 			t.Fatalf("incomplete status %+v", s)
 		}
 		if s.NotCovered != (s.Status == StatusNotCovered) || (s.NotCovered && len(s.Settings) != 0) {
@@ -196,7 +196,10 @@ func TestEvaluateCarriesCurrentAndRecommended(t *testing.T) {
 		t.Fatalf("CC7.2 settings = %+v", cc72.Settings)
 	}
 	audit := cc72.Settings[0]
-	want := SettingStatus{SettingPath: "audit.retention_days", Evaluator: EvalAtLeast, Current: "90", Recommended: "365", Status: StatusDeviates, Builtin: true}
+	want := SettingStatus{
+		SettingPath: "audit.retention_days", Kind: kindInt, Description: settings["audit.retention_days"].Description,
+		Evaluator: EvalAtLeast, Current: "90", Recommended: "365", Status: StatusDeviates, Builtin: true,
+	}
 	if audit != want {
 		t.Fatalf("audit mapping = %+v, want %+v", audit, want)
 	}

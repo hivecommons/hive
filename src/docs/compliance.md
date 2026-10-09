@@ -88,9 +88,10 @@ structs to prove each one exists), plus two documented namespaces:
 
 ## The Settings → Compliance tab
 
-The tab itself ships in [#11080](https://github.com/hivecommons/hive/issues/11080);
-until then the status API above is the interface. As designed, it has four
-panels:
+The framework and controls panels ship in
+[#11080](https://github.com/hivecommons/hive/issues/11080) — see
+[Using the Compliance tab](#using-the-compliance-tab). As designed, the tab
+has four panels:
 
 1. **Framework profile** — select one or more frameworks (SOC 2 Type II
    today; FedRAMP Moderate and ISO 27001 later; or none). The selection is
@@ -278,3 +279,43 @@ rather than implying coverage:
   statement that it holds no certification.
 - [ACMM policy matrix](acmm-policy-matrix.md) — what each autonomy level
   allows.
+
+## Using the Compliance tab
+
+Open **Settings → Compliance** (merger or owner; read and read-write users
+see a notice instead). A banner at the top repeats that Hive is not
+certified — the tab maps your configuration to control requirements, nothing
+more.
+
+**Framework profile.** One checkbox per shipped profile, with its version,
+control count and a one-line description. Checking or unchecking stages
+`compliance.frameworks`; the footer **Save & close** writes it through
+`PUT /api/config/governor/compliance` (owner only; unknown or duplicate ids
+are rejected before anything changes, and the change is audited as
+`config_compliance`). Unchecking every box turns evaluation off.
+
+**Controls.** Every control of the saved selection, grouped by domain. Each
+row shows the control id and title (hover the **i** for the requirement text
+and citation), the implementing setting(s), current → recommended value, and
+a `meets` / `deviates` / `off` / `not covered` pill. For each setting:
+
+- a boolean the owning section can write (`review.require_approval`,
+  `auto_merge.self_authored`, `auto_merge.trusted_authors.*`,
+  `sentinel.enabled`, `agent_sandbox.enabled`, `escalation.disabled`) gets an
+  inline toggle;
+- any other setting with a Settings home (authorized users, required checks,
+  Sentinel behaviours) gets **Open setting**, which switches to the owning
+  tab without discarding staged edits;
+- `env.*` settings, built-in behaviour and hive.yaml-only keys are labelled
+  as such and are read-only here.
+
+**Apply recommended** (per domain) opens a confirmation listing every
+boolean it will change, `setting: current → recommended`, plus the deviating
+settings it cannot change for you. Confirming stages those values.
+
+Toggles and Apply recommended only **stage** changes, marked `staged`, in the
+owning section (Features, Security or Health). Nothing is written until
+**Save & close**, which saves each section through its own owner-only
+endpoint — exactly as if you had edited it on that tab. Statuses are
+re-evaluated from the saved config the next time the tab opens. Non-owners
+see the same panels read-only.

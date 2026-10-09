@@ -502,3 +502,23 @@ quotes, or bundled proprietary fonts.
 ## UI conventions: no native browser dialogs
 
 Hive hub and spoke UI code must not call browser-native dialog APIs such as `prompt()`, `alert()`, `confirm()`, `showModalDialog()`, or native-styled `<dialog>.showModal()`. Use the themed in-app helpers instead (`hivePrompt`, `hiveConfirm`, `hiveAlert`/toast, or the contribute admin modal) so dialogs match the dashboard, are accessible, and do not block the whole tab. The ratchet tests `TestNoNativeBrowserDialogsRatchet` in `pkg/dashboard` and `pkg/hub` scan shipped UI sources and should be updated only to make the rule stricter.
+
+## Settings → Compliance
+
+The **Compliance** tab in Settings (merger or owner) shows how this hive's
+configuration lines up with the selected compliance framework profiles. It
+opens with a banner: Hive is not certified; the tab maps your configuration
+to control requirements.
+
+- **Framework profile** — tick the frameworks to evaluate
+  (`compliance.frameworks`); saved by the footer **Save & close** through the
+  owner-only `PUT /api/config/governor/compliance`.
+- **Controls** — every control grouped by domain with its implementing
+  setting(s), current → recommended value and a status pill. Owners get an
+  inline toggle for boolean settings and **Apply recommended** per domain
+  (a themed confirmation lists each change); other settings link to their
+  owning tab with **Open setting**. Changes are staged in the owning section
+  and written only on Save. Mergers see the tab read-only.
+
+Details, including which settings can be toggled inline, are in
+[Compliance controls](compliance.md#using-the-compliance-tab).
