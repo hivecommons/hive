@@ -395,7 +395,7 @@ A searchable record of everything Hive has done, newest first.
 
 Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order.
 
-### Pipeline
+## Review Pipeline
 
 The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.
 
