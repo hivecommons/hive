@@ -1,0 +1,1 @@
+- deps: bump golang.org/x/net to v0.60.0 (GO-2026-6617) (#11168)
