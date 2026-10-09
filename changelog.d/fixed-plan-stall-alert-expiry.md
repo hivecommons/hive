@@ -1,0 +1,1 @@
+- Expire stale plan-stall dashboard alerts when their source issue is no longer active or the plan is no longer reasserted as stalled.

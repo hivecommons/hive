@@ -28,6 +28,12 @@ func (r *ReplanSink) Alert(id, severity, message string) {
 	r.srv.AddSystemAlert(id, severity, message)
 }
 
+// ClearAlertsExcept clears stale plan-stall alerts that were not reasserted in
+// the current replan pass.
+func (r *ReplanSink) ClearAlertsExcept(prefix string, keep map[string]struct{}) {
+	r.srv.ClearSystemAlertsExcept(prefix, keep)
+}
+
 // Notify sends a high-priority notification when a notifier is configured.
 func (r *ReplanSink) Notify(title, message string) {
 	if r.notifier != nil {

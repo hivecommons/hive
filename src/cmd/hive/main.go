@@ -5832,6 +5832,8 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		// It is synchronous and adds no goroutine; kicks go through the same
 		// out-of-band SendKick path as the eval cycle above.
 		if b.replanLane != nil && b.replanLane.Due(time.Now()) {
+			refs, coveredRepos := activeIssueRefsFromLastActionable(b.lastActionable.Load())
+			b.replanLane.SetActiveIssueRefs(refs, coveredRepos)
 			if n := b.replanLane.Run(b.ctx); n > 0 {
 				b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
 			}
@@ -5948,6 +5950,32 @@ func applyNoCadenceAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 
 func applyModeUnscheduledAlert(gov *governor.Governor, dashSrv *dashboard.Server) {
 	spokealerts.ApplyModeUnscheduled(gov, dashSrv)
+}
+
+func activeIssueRefsFromLastActionable(actionable *github.ActionableResult) (map[string]struct{}, map[string]struct{}) {
+	if actionable == nil {
+		return nil, nil
+	}
+	refs := make(map[string]struct{})
+	coveredRepos := make(map[string]struct{})
+	for repo := range actionable.TotalByRepo {
+		coveredRepos[repo] = struct{}{}
+	}
+	for _, issue := range actionable.Issues.Items {
+		if ref := planning.IssueRef(issue); ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	for _, held := range actionable.Hold.Items {
+		if held.Type != "issue" || held.Repo == "" || held.Number <= 0 {
+			continue
+		}
+		ref := planning.IssueRef(github.Issue{Repo: held.Repo, Number: held.Number, Title: held.Title})
+		if ref != "" {
+			refs[ref] = struct{}{}
+		}
+	}
+	return refs, coveredRepos
 }
 
 // agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
