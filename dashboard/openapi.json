@@ -21621,6 +21621,15 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "enum": [
+                              "event",
+                              "event_pending",
+                              "cadence"
+                            ],
+                            "description": "How the current head reached review: event (webhook dispatch fired), event_pending (queued), or cadence. Omitted when neither applies."
                           }
                         }
                       }
@@ -21635,6 +21644,155 @@
           },
           "500": {
             "description": "Review verdicts, dispatch state or review links unreadable"
+          }
+        }
+      }
+    },
+    "/api/review/dispatch/events": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Webhook review dispatch queue",
+        "description": "The in-memory queue of webhook-triggered review dispatches (pull_request opened, reopened, synchronize, ready_for_review, review_requested). A delivery is debounced per PR (review.event_debounce_s, default 90 s) so a push burst fires once for its final head; a head that already fired is not dispatched again; the queue is bounded. Firing wakes the governor for an early eval cycle with the PR first in line, so every cadence gate still applies. Read-only; never calls GitHub.",
+        "responses": {
+          "200": {
+            "description": "Queue status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "webhooks_configured": {
+                      "type": "boolean"
+                    },
+                    "debounce_s": {
+                      "type": "integer"
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "recent": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "received": {
+                          "type": "integer"
+                        },
+                        "queued": {
+                          "type": "integer"
+                        },
+                        "coalesced": {
+                          "type": "integer"
+                        },
+                        "duplicates": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        },
+                        "fired": {
+                          "type": "integer"
+                        },
+                        "wakes": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "max_pending": {
+                      "type": "integer"
+                    },
+                    "last_wake": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

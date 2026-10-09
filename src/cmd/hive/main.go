@@ -1241,6 +1241,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // dereference b at call time, so bootConfig wires them before the
 // collaborators exist; tests that drive a single phase call this directly.
 func (b *boot) wireBootClosures() {
+	b.installReviewEvents()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1448,6 +1449,7 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			Governor:             b.gov,
 			GHClient:             b.ghClient,
+			ReviewEvents:         b.reviewEvents,
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
 			Tokens:               b.tokenCollector,
@@ -5750,6 +5752,102 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	deps.runSweeps(b)
 	deps.persist(b)
 
+	// tick is one governor pass. The cadence ticker runs it, and so does a
+	// review webhook wake (hivecommons/hive#11091) so a pushed PR is planned
+	// now instead of at the next cadence, under exactly the same gates.
+	tick := func() {
+		b.cfgReloadMu.Lock()
+		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
+		for _, name := range restarted {
+			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
+		}
+		// If brainstorm crashed during inception, re-kick via SendKick.
+		// SendKick waits for the CLI to be ready and sends the message
+		// If brainstorm crashed during inception, re-kick with bootstrap.
+		// The table parser in the watcher will catch questions from the
+		// agent's output even if bd create doesn't execute.
+		for _, name := range restarted {
+			if name == "brainstorm" && b.inceptionEngine != nil {
+				if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
+					msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
+					if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
+						b.logger.Warn("inception re-kick after crash failed", "error", err)
+					} else {
+						b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
+						b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
+					}
+					b.gov.RecordKick("brainstorm")
+				}
+			}
+		}
+		// Watchdog sweep (RFC #4665): synchronous but bounded — every
+		// probe carries a deadline and restarts run detached under a hard
+		// timeout, so a wedged agent can never stall this tick. Tick
+		// self-gates to watchdog.probe_interval_s.
+		//
+		// It runs BEFORE runEvalCycle so agents it revived join this
+		// cycle's resume-kick list rather than waiting a full eval
+		// interval. Restarts are detached, so a given sweep's completions
+		// are usually collected on the next pass — TakeRestarted drains
+		// whatever has finished, and the governor gate gets the final say
+		// either way.
+		if b.wd != nil {
+			// Re-resolve the mode each sweep so a change saved from the
+			// dashboard (or the fleet-wide kill switch being engaged)
+			// takes effect without a restart — and so dead-session
+			// ownership moves with it. Without this, leaving heal via the
+			// settings page would stop the watchdog restarting while the
+			// manager's crash loop was still standing down: a window in
+			// which NEITHER recovers a dead agent.
+			if s, errs := watchdog.SettingsFrom(b.cfg.Governor.Watchdog); s.Mode != b.wd.Mode() {
+				for _, e := range errs {
+					b.logger.Warn("watchdog config problem", "error", e)
+				}
+				b.logger.Info("watchdog mode changed", "from", string(b.wd.Mode()), "to", string(s.Mode))
+				b.dashSrv.AuditLog("system", "watchdog-mode", "from="+string(b.wd.Mode())+", to="+string(s.Mode), "")
+				b.wd.SetSettings(s)
+				b.agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
+			}
+			b.wd.Tick(b.ctx)
+			for _, name := range b.wd.TakeRestarted() {
+				b.dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
+				restarted = append(restarted, name)
+			}
+		}
+		b.evalCycles++
+		deps.runEval(b, restarted)
+		deps.runRotation(b)
+		deps.runSweeps(b)
+		// Trajectory review runs after the eval cycle (so kicks/intents are
+		// current) on its own cadence, gated by Due().
+		if b.trajLane != nil && b.trajLane.Due(time.Now()) {
+			b.trajLane.Run(b.ctx)
+		}
+		// Stall-replan runs on the same tick, gated by its own Due() cadence.
+		// It is synchronous and adds no goroutine; kicks go through the same
+		// out-of-band SendKick path as the eval cycle above.
+		if b.replanLane != nil && b.replanLane.Due(time.Now()) {
+			if n := b.replanLane.Run(b.ctx); n > 0 {
+				b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
+			}
+		}
+		if b.retroLane != nil && b.retroLane.Due(time.Now()) {
+			if n := b.retroLane.Run(b.ctx); n > 0 {
+				b.logger.Info("retro lane filed advisory beads", "findings", n)
+			}
+		}
+		deps.persist(b)
+		effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+		if effectiveEvalInterval != lastEvalInterval {
+			b.logger.Info("eval interval changed, resetting ticker",
+				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+			ticker.Reset(effectiveEvalInterval)
+			lastEvalInterval = effectiveEvalInterval
+		}
+		b.cfgReloadMu.Unlock()
+	}
+	b.startReviewEvents()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -5757,95 +5855,10 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
-			b.cfgReloadMu.Lock()
-			restarted := deps.restartCrashed(b.ctx, b.agentMgr)
-			for _, name := range restarted {
-				b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
-			}
-			// If brainstorm crashed during inception, re-kick via SendKick.
-			// SendKick waits for the CLI to be ready and sends the message
-			// If brainstorm crashed during inception, re-kick with bootstrap.
-			// The table parser in the watcher will catch questions from the
-			// agent's output even if bd create doesn't execute.
-			for _, name := range restarted {
-				if name == "brainstorm" && b.inceptionEngine != nil {
-					if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
-						msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
-						if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
-							b.logger.Warn("inception re-kick after crash failed", "error", err)
-						} else {
-							b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
-							b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
-						}
-						b.gov.RecordKick("brainstorm")
-					}
-				}
-			}
-			// Watchdog sweep (RFC #4665): synchronous but bounded — every
-			// probe carries a deadline and restarts run detached under a hard
-			// timeout, so a wedged agent can never stall this tick. Tick
-			// self-gates to watchdog.probe_interval_s.
-			//
-			// It runs BEFORE runEvalCycle so agents it revived join this
-			// cycle's resume-kick list rather than waiting a full eval
-			// interval. Restarts are detached, so a given sweep's completions
-			// are usually collected on the next pass — TakeRestarted drains
-			// whatever has finished, and the governor gate gets the final say
-			// either way.
-			if b.wd != nil {
-				// Re-resolve the mode each sweep so a change saved from the
-				// dashboard (or the fleet-wide kill switch being engaged)
-				// takes effect without a restart — and so dead-session
-				// ownership moves with it. Without this, leaving heal via the
-				// settings page would stop the watchdog restarting while the
-				// manager's crash loop was still standing down: a window in
-				// which NEITHER recovers a dead agent.
-				if s, errs := watchdog.SettingsFrom(b.cfg.Governor.Watchdog); s.Mode != b.wd.Mode() {
-					for _, e := range errs {
-						b.logger.Warn("watchdog config problem", "error", e)
-					}
-					b.logger.Info("watchdog mode changed", "from", string(b.wd.Mode()), "to", string(s.Mode))
-					b.dashSrv.AuditLog("system", "watchdog-mode", "from="+string(b.wd.Mode())+", to="+string(s.Mode), "")
-					b.wd.SetSettings(s)
-					b.agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
-				}
-				b.wd.Tick(b.ctx)
-				for _, name := range b.wd.TakeRestarted() {
-					b.dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
-					restarted = append(restarted, name)
-				}
-			}
-			b.evalCycles++
-			deps.runEval(b, restarted)
-			deps.runRotation(b)
-			deps.runSweeps(b)
-			// Trajectory review runs after the eval cycle (so kicks/intents are
-			// current) on its own cadence, gated by Due().
-			if b.trajLane != nil && b.trajLane.Due(time.Now()) {
-				b.trajLane.Run(b.ctx)
-			}
-			// Stall-replan runs on the same tick, gated by its own Due() cadence.
-			// It is synchronous and adds no goroutine; kicks go through the same
-			// out-of-band SendKick path as the eval cycle above.
-			if b.replanLane != nil && b.replanLane.Due(time.Now()) {
-				if n := b.replanLane.Run(b.ctx); n > 0 {
-					b.logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
-				}
-			}
-			if b.retroLane != nil && b.retroLane.Due(time.Now()) {
-				if n := b.retroLane.Run(b.ctx); n > 0 {
-					b.logger.Info("retro lane filed advisory beads", "findings", n)
-				}
-			}
-			deps.persist(b)
-			effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
-			if effectiveEvalInterval != lastEvalInterval {
-				b.logger.Info("eval interval changed, resetting ticker",
-					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
-				ticker.Reset(effectiveEvalInterval)
-				lastEvalInterval = effectiveEvalInterval
-			}
-			b.cfgReloadMu.Unlock()
+			tick()
+		case <-b.reviewWake:
+			b.logger.Info("review webhook wake: running an early eval cycle")
+			tick()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
@@ -9164,6 +9177,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			ScopeContract: pr.ScopeContract,
 		})
 	}
+	// PRs a review webhook just fired for go first, so the early eval cycle
+	// it triggered spends its review budget on them (hivecommons/hive#11091).
+	prs = prioritizeEventPRs(prs, activeReviewEvents.Load())
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
 	for name, ac := range cfg.EnabledAgents() {
 		agents = append(agents, review.AgentCapability{

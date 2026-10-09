@@ -123,6 +123,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Jev.Validate(); err != nil {
 		return err
 	}
+	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}

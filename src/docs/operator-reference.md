@@ -512,6 +512,10 @@ manage are ignored.
 - When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
   Hive logs one WARN per healthy → stale transition and falls back to the
   configured interval and TTL-bound caching.
+- `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
+  `review_requested` deliveries also queue an early review dispatch when
+  `review.event_driven` is on; see
+  [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
 
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;

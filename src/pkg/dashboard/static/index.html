@@ -22597,7 +22597,9 @@ function burnAreaChart() {
       var since = c.since ? Math.max(0, Math.floor((Date.now() - Date.parse(c.since)) / 3600000)) : 0;
       var meta = esc(String(c.repo || '')) + '#' + esc(String(c.number || '')) + ' · ' +
         (c.hive_authored ? '🤖 agent' : '👤 contributor') + (c.author ? ' @' + esc(String(c.author)) : '') +
-        (c.since ? ' · ' + esc(reviewQueueAgeLabel(since)) + ' in stage' : '');
+        (c.since ? ' · ' + esc(reviewQueueAgeLabel(since)) + ' in stage' : '') +
+        (c.trigger === 'event' ? ' · <span title="Review triggered by a webhook push or review request">⚡ event</span>'
+          : c.trigger === 'event_pending' ? ' · <span title="Webhook review dispatch queued (debouncing)">⏳ event queued</span>' : '');
       var chips = (Array.isArray(c.reviewers) ? c.reviewers : []).map(function(r) {
         var label = String(r.perspective || '') + (r.model ? ' · ' + r.model : '');
         return '<span class="review-pipeline-chip" title="' + esc(label) + '">' + esc(label) + '</span>';

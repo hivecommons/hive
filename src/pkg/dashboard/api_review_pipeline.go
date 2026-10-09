@@ -102,6 +102,7 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 			in.ReviewLink = &link
 		}
 		card := pipeline.Derive(in)
+		card.Trigger = s.reviewCardTrigger(card)
 		if stageFilter != nil && card.Stage != *stageFilter {
 			continue
 		}
