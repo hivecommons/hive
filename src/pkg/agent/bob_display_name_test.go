@@ -6,40 +6,42 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// TestBobDisplayNameEnvPair pins #11273: bob-backed agents get a reporting
-// label in HIVE_BOB_DISPLAY_NAME that is separate from the functional agent
-// name, which stays in HIVE_AGENT.
-func TestBobDisplayNameEnvPair(t *testing.T) {
+// TestBobSessionLabelEnvPair pins #11273: bob-backed agents get an optional
+// HIVE_BOB_SESSION_LABEL that is separate from the functional agent name,
+// which stays in HIVE_AGENT.
+func TestBobSessionLabelEnvPair(t *testing.T) {
 	tests := []struct {
 		name      string
 		backend   string
 		override  string
+		prefix    string
 		label     string
 		wantPair  bool
 		wantValue string
 	}{
-		{"bob with label", "bob", "", "hive-scanner", true, "hive-scanner"},
-		{"bob without label falls back to agent name", "bob", "", "", true, "scanner"},
-		{"bob label is trimmed", "bob", "", "  hive-scanner ", true, "hive-scanner"},
-		{"backend override to bob", "claude", "bob", "hive-scanner", true, "hive-scanner"},
-		{"claude backend gets no pair", "claude", "", "hive-scanner", false, ""},
-		{"copilot backend gets no pair", "copilot", "", "", false, ""},
+		{"bob with per-agent label", "bob", "", "", "hive-scanner", true, "hive-scanner"},
+		{"bob with global prefix", "bob", "", "hive-", "", true, "hive-scanner"},
+		{"bob without label gets no session label", "bob", "", "", "", false, ""},
+		{"bob label is trimmed", "bob", "", "", "  hive-scanner ", true, "hive-scanner"},
+		{"backend override to bob", "claude", "bob", "", "hive-scanner", true, "hive-scanner"},
+		{"claude backend gets no pair", "claude", "", "", "hive-scanner", false, ""},
+		{"copilot backend gets no pair", "copilot", "", "", "", false, ""},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manager{logger: discardLogger()}
+			m := &Manager{logger: discardLogger(), project: ProjectContext{BobSessionPrefix: tc.prefix}}
 			agent := &AgentProcess{
 				Name:            "scanner",
 				BackendOverride: tc.override,
-				Config:          config.AgentConfig{Backend: tc.backend, BobDisplayName: tc.label},
+				Config:          config.AgentConfig{Backend: tc.backend, Bob: config.AgentBobConfig{SessionLabel: tc.label}},
 			}
 
 			var found *agentEnvPair
 			var hiveAgent string
 			for _, p := range m.agentEnvPairs(agent) {
 				switch p.Key {
-				case "HIVE_BOB_DISPLAY_NAME":
+				case "HIVE_BOB_SESSION_LABEL":
 					pair := p
 					found = &pair
 				case "HIVE_AGENT":
@@ -56,10 +58,10 @@ func TestBobDisplayNameEnvPair(t *testing.T) {
 				return
 			}
 			if found.Value != tc.wantValue {
-				t.Errorf("HIVE_BOB_DISPLAY_NAME = %q, want %q", found.Value, tc.wantValue)
+				t.Errorf("HIVE_BOB_SESSION_LABEL = %q, want %q", found.Value, tc.wantValue)
 			}
 			if found.Secret {
-				t.Error("HIVE_BOB_DISPLAY_NAME must not be Secret: it is a label re-applied on every launch")
+				t.Error("HIVE_BOB_SESSION_LABEL must not be Secret: it is a label re-applied on every launch")
 			}
 		})
 	}

@@ -1949,7 +1949,8 @@ func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request)
 		// keyName is the operator-chosen LABEL for the key, not the key value —
 		// safe to serialize. Empty on hives that never recorded a name (the
 		// dashboard renders that as "(unnamed)"), so no backwards-compat break.
-		"keyName": bc.KeyName,
+		"keyName":       bc.KeyName,
+		"sessionPrefix": bc.SessionPrefix,
 	})
 }
 
@@ -1975,13 +1976,53 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 		// managers can tell keys apart without seeing values. Absent
 		// (nil) leaves any existing name untouched; present-but-empty clears it.
 		KeyName *string `json:"keyName"`
+		// SessionPrefix is an optional Bobalytics reporting prefix. It is
+		// config, not a secret, so it may be saved without rotating the key.
+		SessionPrefix *string `json:"sessionPrefix"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	sessionPrefixProvided := body.SessionPrefix != nil
+	var sessionPrefix string
+	if sessionPrefixProvided {
+		sessionPrefix = strings.TrimSpace(*body.SessionPrefix)
+		if err := config.ValidateBobSessionLabel("bob.session_prefix", sessionPrefix); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for name, agentCfg := range s.deps.Config.Agents {
+			if strings.TrimSpace(agentCfg.Bob.SessionLabel) != "" || strings.TrimSpace(agentCfg.BobDisplayName) != "" || sessionPrefix == "" {
+				continue
+			}
+			if len(sessionPrefix+name) > config.MaxBobSessionLabelLen {
+				jsonError(w, fmt.Sprintf("bob.session_prefix plus agent name %q is longer than %d characters", name, config.MaxBobSessionLabelLen), http.StatusBadRequest)
+				return
+			}
+		}
+	}
 	if body.APIKey == nil {
-		jsonError(w, "apiKey is required", http.StatusBadRequest)
+		if !sessionPrefixProvided {
+			jsonError(w, "apiKey is required", http.StatusBadRequest)
+			return
+		}
+		cfg := s.deps.Config
+		bc := cfg.Governor.Bob
+		bc.SessionPrefix = sessionPrefix
+		cfg.Governor.Bob = bc
+		if err := s.saveConfig(); err != nil {
+			s.logger.Error("failed to persist config after bob session prefix update", "error", err)
+		}
+		s.auditFromRequest(r, "config_governor_bob", auditDetail("section", "bob", "action", "session_prefix"), "")
+		s.refreshAndPersist()
+		jsonResponse(w, map[string]interface{}{
+			"ok":            true,
+			"configured":    bc.ResolveAPIKeySource() != "",
+			"source":        bc.ResolveAPIKeySource(),
+			"keyName":       bc.KeyName,
+			"sessionPrefix": bc.SessionPrefix,
+		})
 		return
 	}
 	var keyName string
@@ -2038,6 +2079,9 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 	if nameProvided {
 		bc.KeyName = keyName
 	}
+	if sessionPrefixProvided {
+		bc.SessionPrefix = sessionPrefix
+	}
 	if looksLikeAPIKeyValue(bc.APIKeyEnv) {
 		bc.APIKeyEnv = ""
 		s.logger.Info("cleared key-like value from bob api_key_env (replaced by stored API key)")
@@ -2084,7 +2128,8 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 		// report what actually happened instead of telling the user to do it.
 		"relaunched": len(relaunched),
 		// The label, never the value (see handleGovernorBobStatus).
-		"keyName": bc.KeyName,
+		"keyName":       bc.KeyName,
+		"sessionPrefix": bc.SessionPrefix,
 	})
 }
 

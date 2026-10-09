@@ -1292,28 +1292,37 @@ func (c *Config) JevAssistEnabled(agent string) bool {
 // the prompt editor), answered with a warning by
 // scheduler.WarnDanglingKickTemplates and shown in the prompt editor
 // (hivecommons/hive#7390).
-// MaxBobDisplayNameLen bounds agents.<name>.bob_display_name.
-const MaxBobDisplayNameLen = 64
+// MaxBobSessionLabelLen bounds bob reporting labels:
+// governor.bob.session_prefix + <agent> and agents.<name>.bob.session_label.
+const MaxBobSessionLabelLen = 64
 
-// ValidateBobDisplayName checks an optional bob reporting label. Empty is
-// valid (falls back to the agent name). Non-empty values must be at most
-// MaxBobDisplayNameLen bytes of ASCII letters, digits, '-', '_' or '.', so the
-// label is safe in env vars, file names and report keys.
-func ValidateBobDisplayName(v string) error {
+// MaxBobDisplayNameLen bounds the legacy agents.<name>.bob_display_name alias.
+const MaxBobDisplayNameLen = MaxBobSessionLabelLen
+
+// ValidateBobSessionLabel checks an optional bob reporting label component.
+// Empty is valid. Non-empty values must be at most MaxBobSessionLabelLen bytes
+// of ASCII letters, digits, '-', '_' or '.', so the label is safe in env vars,
+// file names, Bob --instance-id, and report keys.
+func ValidateBobSessionLabel(field, v string) error {
 	if v == "" {
 		return nil
 	}
-	if len(v) > MaxBobDisplayNameLen {
-		return fmt.Errorf("bob_display_name %q is longer than %d characters", v, MaxBobDisplayNameLen)
+	if len(v) > MaxBobSessionLabelLen {
+		return fmt.Errorf("%s %q is longer than %d characters", field, v, MaxBobSessionLabelLen)
 	}
 	for _, r := range v {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
 		default:
-			return fmt.Errorf("bob_display_name %q contains %q (allowed: letters, digits, '-', '_', '.')", v, r)
+			return fmt.Errorf("%s %q contains %q (allowed: letters, digits, '-', '_', '.')", field, v, r)
 		}
 	}
 	return nil
+}
+
+// ValidateBobDisplayName checks the legacy flat bob reporting label.
+func ValidateBobDisplayName(v string) error {
+	return ValidateBobSessionLabel("bob_display_name", v)
 }
 
 func ValidateKickTemplateName(v string) error {
@@ -1544,12 +1553,10 @@ type AgentConfig struct {
 	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
 	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string        `yaml:"description" json:"description,omitempty"`
-	// BobDisplayName is an optional reporting/session label for bob-backed
-	// agents (#11273), e.g. "hive-scanner". It is exported to the bob pane as
-	// HIVE_BOB_DISPLAY_NAME without changing the functional agent identity
-	// (tmux session, workdir, beads dir, claims, token buckets). bobshell has
-	// no session-label flag today, so Bob's own reports still key on the
-	// workdir basename. See ValidateBobDisplayName.
+	// Bob holds bob-backend-only per-agent options. Empty is default-off.
+	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
+	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is
+	// kept for backwards compatibility; new configs should use bob.session_label.
 	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
@@ -3587,6 +3594,17 @@ type BobConfig struct {
 	// is a normal, backwards-compatible state that the dashboard renders as
 	// "(unnamed)" rather than an error.
 	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
+	// SessionPrefix is an optional global prefix for bob --instance-id, used
+	// to make Bob/Bobalytics sessions distinguishable without renaming Hive
+	// agents. Empty is default-off and preserves the exact launch command.
+	SessionPrefix string `yaml:"session_prefix,omitempty" json:"session_prefix,omitempty"`
+}
+
+// AgentBobConfig holds per-agent bob backend options.
+type AgentBobConfig struct {
+	// SessionLabel overrides governor.bob.session_prefix + agent name for Bob
+	// --instance-id. It never changes the Hive agent identity.
+	SessionLabel string `yaml:"session_label,omitempty" json:"session_label,omitempty"`
 }
 
 // ResolveAPIKey returns the bob API key, or "" when none is configured.

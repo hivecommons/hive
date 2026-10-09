@@ -184,6 +184,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
 	}
+	if err := ValidateBobSessionLabel("governor.bob.session_prefix", strings.TrimSpace(c.Governor.Bob.SessionPrefix)); err != nil {
+		return err
+	}
 	apiReserve := c.GitHub.APIReserve
 	if apiReserve == 0 {
 		apiReserve = defaultGitHubAPIReserve
@@ -297,6 +300,19 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		}
 		if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
 			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+		}
+		if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+		}
+		bobSessionLabel := strings.TrimSpace(agent.Bob.SessionLabel)
+		if bobSessionLabel == "" {
+			bobSessionLabel = strings.TrimSpace(agent.BobDisplayName)
+		}
+		if bobSessionLabel == "" && strings.TrimSpace(c.Governor.Bob.SessionPrefix) != "" {
+			bobSessionLabel = strings.TrimSpace(c.Governor.Bob.SessionPrefix) + name
+		}
+		if len(bobSessionLabel) > MaxBobSessionLabelLen {
+			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.sourceFile), bobSessionLabel, MaxBobSessionLabelLen)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err

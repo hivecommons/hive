@@ -110,6 +110,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
 		return err
 	}
+	if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
+		return err
+	}
 	if err := validateChannels(name, agent.Channels); err != nil {
 		return err
 	}
