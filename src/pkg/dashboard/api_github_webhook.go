@@ -23,6 +23,7 @@ const (
 
 func (s *Server) registerGitHubWebhookRoutes() {
 	s.mux.HandleFunc("POST "+githubWebhookPath, s.handleGitHubWebhook)
+	s.registerReviewEventDispatchRoutes()
 }
 
 // handleGitHubWebhook applies GitHub App webhook deliveries to the PR caches
@@ -65,7 +66,11 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"status": "ignored", "reason": "unknown repository", "event": event})
 		return
 	}
-	jsonResponse(w, map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated})
+	resp := map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated}
+	if outcome := s.enqueueReviewEvent(event, body); outcome != "" {
+		resp["review_dispatch"] = outcome
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) webhookLogger() *slog.Logger {

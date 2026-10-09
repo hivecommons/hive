@@ -22610,7 +22610,9 @@ function burnAreaChart() {
       var since = c.since ? Math.max(0, Math.floor((Date.now() - Date.parse(c.since)) / 3600000)) : 0;
       var meta = esc(String(c.repo || '')) + '#' + esc(String(c.number || '')) + ' · ' +
         (c.hive_authored ? '🤖 agent' : '👤 contributor') + (c.author ? ' @' + esc(String(c.author)) : '') +
-        (c.since ? ' · ' + esc(reviewQueueAgeLabel(since)) + ' in stage' : '');
+        (c.since ? ' · ' + esc(reviewQueueAgeLabel(since)) + ' in stage' : '') +
+        (c.trigger === 'event' ? ' · <span title="Review triggered by a webhook push or review request">⚡ event</span>'
+          : c.trigger === 'event_pending' ? ' · <span title="Webhook review dispatch queued (debouncing)">⏳ event queued</span>' : '');
       var chips = (Array.isArray(c.reviewers) ? c.reviewers : []).map(function(r) {
         var label = String(r.perspective || '') + (r.model ? ' · ' + r.model : '');
         return '<span class="review-pipeline-chip" title="' + esc(label) + '">' + esc(label) + '</span>';
@@ -36733,6 +36735,7 @@ function burnAreaChart() {
             <label>Human decision label <span class="config-info">i<span class="config-tooltip">An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.</span></span></label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
+          ${renderReviewSeverityBacklog(rv)}
           <div class="config-subgroup">External review bots <span class="config-info">i<span class="config-tooltip">Effective classification.review_bots settings from hive.yaml, falling back to hive-project.yaml. Listed logins grant agents the right to address and resolve those accounts&apos; threads; changing this trust boundary requires a config-file edit. This is separate from the review swarm gate.</span></span></div>
           <div id="review-bots-settings" class="fs-sm">
             ${!rb ? '<p>Review-bot settings unavailable from this server.</p>' : rb.load_error ? `<p>Unable to load review-bot settings: ${esc(rb.load_error)}</p>` : `
@@ -38061,6 +38064,122 @@ function burnAreaChart() {
     // checked list; if every built-in is checked and nothing custom exists,
     // it is sent empty, which the server treats as "all built-ins" — so a hive
     // that never touched this keeps the default even after a save.
+    // 'Severity & backlog' (#11088): review.severity and review.backlog are
+    // sub-objects on the owner-only PUT /api/config/review. Presets only set
+    // block_at; the destination selector offers, and shows the fields of,
+    // the active work source only.
+    const REVIEW_SEVERITY_PRESETS = [
+      { blockAt: 'P2', label: 'Strict (P0–P2 block)' },
+      { blockAt: 'P1', label: 'Ship fast (P0–P1 block)' },
+      { blockAt: 'P3', label: 'Everything blocks' },
+    ];
+    const REVIEW_BACKLOG_DESTINATIONS = [
+      { value: 'github_issue', label: 'GitHub issue', workSource: '' },
+      { value: 'github_project', label: 'GitHub Projects column', workSource: 'github_projects' },
+      { value: 'linear', label: 'Linear issue', workSource: 'linear' },
+      { value: 'jira', label: 'Jira ticket', workSource: 'jira' },
+    ];
+    function reviewSeverityState() {
+      const d = _configState.data || (_configState.data = {});
+      d.review = d.review || {};
+      d.review.severity = d.review.severity || {};
+      d.review.backlog = d.review.backlog || {};
+      return d.review;
+    }
+    function reviewBacklogDestinationsFor(workSource) {
+      const ws = String(workSource || '').toLowerCase();
+      return REVIEW_BACKLOG_DESTINATIONS.filter(o => !o.workSource || o.workSource === ws);
+    }
+    function renderReviewSeverityBacklog(rv) {
+      const sev = (rv && rv.severity) || {};
+      const bl = (rv && rv.backlog) || {};
+      const ws = ((_configState.data || {}).work_source || {}).type || '';
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = canEdit ? '' : ' disabled';
+      const blockAt = sev.block_at || '';
+      const commentBelow = sev.comment_below !== false;
+      const backlogBelow = sev.backlog_below !== false;
+      const dests = reviewBacklogDestinationsFor(ws);
+      const dest = dests.some(o => o.value === bl.destination) ? bl.destination : 'github_issue';
+      const labels = Array.isArray(bl.labels) ? bl.labels : ['from-review'];
+      const presetBtns = REVIEW_SEVERITY_PRESETS.map(p => `<button type="button" class="hv-btn ${blockAt === p.blockAt ? 'btn-primary' : 'btn-secondary'} btn-sm btn-small" data-action="applyReviewSeverityPreset" data-arg0="${p.blockAt}" aria-pressed="${blockAt === p.blockAt ? 'true' : 'false'}"${dis}>${esc(p.label)}</button>`).join(' ');
+      const toggle = (key, on, label, tip) => `<div class="config-toggle mt-3">
+              <div class="config-toggle-switch ${on ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewSeverityFlag" data-arg0="${key}" data-arg-types="s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">${label} <span class="config-info">i<span class="config-tooltip">${tip}</span></span></span>
+            </div>`;
+      let destFields = '';
+      if (dest === 'github_project') {
+        destFields = `<div class="config-field mt-3"><label>Projects column (status option) id <span class="config-info">i<span class="config-tooltip">review.backlog.project_column_id: the GitHub Projects v2 status option new backlog items land in. Required for this destination.</span></span></label>
+              <input type="text" id="review-backlog-project-column" value="${esc(bl.project_column_id || '')}" placeholder="e.g. f75ad846" data-change-action="markDirtyReviewBacklog" data-arg0="project_column_id" data-arg-types="s,w"${dis}></div>`;
+      } else if (dest === 'linear') {
+        destFields = `<div class="config-field mt-3"><label>Linear state <span class="config-info">i<span class="config-tooltip">review.backlog.linear_state: the workflow state new backlog issues are created in, on the work source&apos;s Linear team. Blank uses the team&apos;s default state.</span></span></label>
+              <input type="text" id="review-backlog-linear-state" value="${esc(bl.linear_state || '')}" placeholder="Backlog" data-change-action="markDirtyReviewBacklog" data-arg0="linear_state" data-arg-types="s,w"${dis}></div>`;
+      } else if (dest === 'jira') {
+        destFields = `<div class="config-field mt-3"><label>Jira status <span class="config-info">i<span class="config-tooltip">review.backlog.jira_status: the status new backlog tickets are moved to in the work source&apos;s Jira project. Blank leaves the project&apos;s initial status.</span></span></label>
+              <input type="text" id="review-backlog-jira-status" value="${esc(bl.jira_status || '')}" placeholder="To Do" data-change-action="markDirtyReviewBacklog" data-arg0="jira_status" data-arg-types="s,w"${dis}></div>`;
+      }
+      return `<div id="review-severity-backlog">
+          <div class="config-subgroup">Severity &amp; backlog <span class="config-info">i<span class="config-tooltip">The blocking line for review findings (review.severity) and where findings below it go (review.backlog). Findings at or above the line block merge; below it they can be posted as non-blocking comments and filed as follow-up work. block_at also sets the external review-bot minimum priority unless classification.review_bots.min_priority is set explicitly. Owner only.</span></span></div>
+          <div class="config-field">
+            <label>Blocking line</label>
+            <div id="review-severity-presets">${presetBtns}</div>
+            <select id="review-severity-block-at" class="mt-3" data-change-action="applyReviewSeverityPreset" data-arg-types="v"${dis}>
+              ${[['', 'Not set (unchanged behaviour)'], ['P1', 'P0–P1 block'], ['P2', 'P0–P2 block'], ['P3', 'P0–P3 block (everything)']].map(([v, l]) => `<option value="${v}"${blockAt === v ? ' selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          ${toggle('comment_below', commentBelow, 'Post findings below the line as non-blocking comments', 'review.severity.comment_below (default on): findings below the blocking line are still shown on the PR, marked non-blocking.')}
+          ${toggle('backlog_below', backlogBelow, 'File findings below the line to the backlog', 'review.severity.backlog_below (default on): findings below the blocking line become follow-up work in the destination below.')}
+          <div class="config-field mt-3">
+            <label>Backlog destination <span class="config-info">i<span class="config-tooltip">review.backlog.destination. Only destinations for the active work source (${esc(ws || 'github')}) are offered; GitHub issue is always available and is the fallback.</span></span></label>
+            <select id="review-backlog-destination" data-change-action="setReviewBacklogDestination" data-arg-types="v"${dis}>
+              ${dests.map(o => `<option value="${o.value}"${dest === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+            </select>
+          </div>
+          ${destFields}
+          <div class="config-field mt-3">
+            <label>Backlog labels <span class="config-info">i<span class="config-tooltip">review.backlog.labels: comma-separated labels on every backlog item. Default from-review.</span></span></label>
+            <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="from-review" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
+          </div>
+          <div class="config-field mt-3">
+            <label>Max backlog items per PR per day <span class="config-info">i<span class="config-tooltip">review.backlog.max_per_pr_per_day: cap on items filed from one PR in a day. 0 or blank uses the default of 10.</span></span></label>
+            <input type="number" id="review-backlog-max" min="0" value="${esc(String(bl.max_per_pr_per_day || ''))}" placeholder="10" data-change-action="markDirtyReviewBacklog" data-arg0="max_per_pr_per_day" data-arg-types="s,N"${dis}>
+          </div>
+        </div>`;
+    }
+    function rerenderReviewSeverityBacklog() {
+      const host = document.getElementById('review-severity-backlog');
+      if (host) host.outerHTML = renderReviewSeverityBacklog(reviewSeverityState());
+    }
+    function markDirtyReviewSeverity(key, value) {
+      const rv = reviewSeverityState();
+      rv.severity[key] = value;
+      markDirty('review', 'severity', Object.assign({}, (_configState.dirty.review || {}).severity, { [key]: value }));
+    }
+    function applyReviewSeverityPreset(blockAt) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      markDirtyReviewSeverity('block_at', blockAt || '');
+      rerenderReviewSeverityBacklog();
+    }
+    function toggleReviewSeverityFlag(key) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      const rv = reviewSeverityState();
+      markDirtyReviewSeverity(key, rv.severity[key] === false);
+      rerenderReviewSeverityBacklog();
+    }
+    function markDirtyReviewBacklog(key, value) {
+      const rv = reviewSeverityState();
+      if (key === 'max_per_pr_per_day') value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      rv.backlog[key] = value;
+      markDirty('review', 'backlog', Object.assign({}, (_configState.dirty.review || {}).backlog, { [key]: value }));
+    }
+    function markDirtyReviewBacklogLabels(value) {
+      markDirtyReviewBacklog('labels', String(value || '').split(',').map(s => s.trim()).filter(Boolean));
+    }
+    function setReviewBacklogDestination(value) {
+      markDirtyReviewBacklog('destination', value || 'github_issue');
+      rerenderReviewSeverityBacklog();
+    }
+
     // review_bots is a sub-object on PUT /api/config/review; only
     // min_priority is editable from the dashboard (logins stay config-only).
     function markDirtyReviewBotsMinPriority(value) {

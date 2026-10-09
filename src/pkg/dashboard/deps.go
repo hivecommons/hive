@@ -23,6 +23,7 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -221,6 +222,10 @@ type Dependencies struct {
 	// consumer-defined interface so pkg/dashboard does not import it. Nil in
 	// bare test Dependencies.
 	QuestionAutoclose QuestionAutocloseSchedule
+
+	// ReviewEvents queues webhook-triggered review dispatch
+	// (hivecommons/hive#11091). Nil leaves reviews on the cadence path.
+	ReviewEvents *eventdispatch.Dispatcher
 }
 
 type NousState struct {

@@ -1,0 +1,1 @@
+- Settings → Review Gate gains 'Severity & backlog': `review.severity` (blocking line presets that also drive `classification.review_bots.min_priority` when unset) and `review.backlog` destination settings for the active work source.

@@ -123,6 +123,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Jev.Validate(); err != nil {
 		return err
 	}
+	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -135,6 +138,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
 	}
+	if err := ValidateKnowledgePublish(c.Knowledge.Publish); err != nil {
+		return err
+	}
 	if err := c.validateSpektacularRecheckDiscovery(); err != nil {
 		return err
 	}
@@ -142,6 +148,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Compliance.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Severity.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}
 	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {

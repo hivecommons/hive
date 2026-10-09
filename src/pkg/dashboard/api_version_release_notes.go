@@ -23,6 +23,20 @@ const (
 	releaseNotesFetchBudget = 20 * time.Second
 	releaseNotesMaxBody     = 4 << 20
 	releaseNotesMaxFrags    = 200
+	// releaseNotesMaxCacheEntries bounds the per-(from, to) response cache.
+	// The key is caller-supplied, so without a bound every distinct pair a
+	// session asks for stays resident until its TTL lookup — which never
+	// happens for a pair nobody asks for twice.
+	releaseNotesMaxCacheEntries = 64
+	// releaseNotesMaxConcurrentBuilds caps uncached builds in flight at once.
+	// One build is up to 4 + releaseNotesMaxFrags GitHub content reads against
+	// the hive's own credential.
+	releaseNotesMaxConcurrentBuilds = 2
+	// releaseNotesBuildBurst / releaseNotesBuildWindow throttle uncached
+	// builds process-wide: a cache miss is cheap to request and expensive to
+	// serve, and the dashboard's own use is one build per version-chip open.
+	releaseNotesBuildBurst  = 8
+	releaseNotesBuildWindow = 10 * time.Minute
 )
 
 var (
@@ -54,6 +68,67 @@ var releaseNotesCache = struct {
 	sync.Mutex
 	entries map[string]releaseNotesCacheEntry
 }{entries: map[string]releaseNotesCacheEntry{}}
+
+// releaseNotesBuilds is the process-wide admission state for uncached builds:
+// a fixed-window counter plus an in-flight count. Guarded by its own mutex so
+// a slow build never holds the cache lock.
+var releaseNotesBuilds = struct {
+	sync.Mutex
+	inFlight    int
+	windowStart time.Time
+	windowCount int
+}{}
+
+// releaseNotesNow is a seam for tests.
+var releaseNotesNow = time.Now
+
+// acquireReleaseNotesBuild admits one uncached build, returning a release
+// func, or ok=false with the reason when the concurrency cap or the
+// fixed-window throttle is exhausted.
+func acquireReleaseNotesBuild() (release func(), reason string, ok bool) {
+	now := releaseNotesNow()
+	releaseNotesBuilds.Lock()
+	defer releaseNotesBuilds.Unlock()
+	if releaseNotesBuilds.inFlight >= releaseNotesMaxConcurrentBuilds {
+		return nil, "release notes are already being fetched; retry shortly", false
+	}
+	if now.Sub(releaseNotesBuilds.windowStart) >= releaseNotesBuildWindow {
+		releaseNotesBuilds.windowStart = now
+		releaseNotesBuilds.windowCount = 0
+	}
+	if releaseNotesBuilds.windowCount >= releaseNotesBuildBurst {
+		return nil, "release notes fetch limit reached; retry later", false
+	}
+	releaseNotesBuilds.windowCount++
+	releaseNotesBuilds.inFlight++
+	return func() {
+		releaseNotesBuilds.Lock()
+		releaseNotesBuilds.inFlight--
+		releaseNotesBuilds.Unlock()
+	}, "", true
+}
+
+// storeReleaseNotes caches resp under key, dropping expired entries and then
+// the oldest entries until the cache fits releaseNotesMaxCacheEntries.
+func storeReleaseNotes(key string, resp releaseNotesResponse, now time.Time) {
+	releaseNotesCache.Lock()
+	defer releaseNotesCache.Unlock()
+	for k, e := range releaseNotesCache.entries {
+		if now.Sub(e.at) > releaseNotesCacheTTL {
+			delete(releaseNotesCache.entries, k)
+		}
+	}
+	for len(releaseNotesCache.entries) >= releaseNotesMaxCacheEntries {
+		oldestKey, oldest := "", time.Time{}
+		for k, e := range releaseNotesCache.entries {
+			if oldestKey == "" || e.at.Before(oldest) {
+				oldestKey, oldest = k, e.at
+			}
+		}
+		delete(releaseNotesCache.entries, oldestKey)
+	}
+	releaseNotesCache.entries[key] = releaseNotesCacheEntry{resp: resp, at: now}
+}
 
 type releaseNotesCacheEntry struct {
 	resp releaseNotesResponse
@@ -124,13 +199,19 @@ func (s *Server) handleVersionReleaseNotes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	release, reason, ok := acquireReleaseNotesBuild()
+	if !ok {
+		resp.Error = reason
+		writeReleaseNotes(w, resp)
+		return
+	}
+	defer release()
+
 	ctx, cancel := context.WithTimeout(r.Context(), releaseNotesFetchBudget)
 	defer cancel()
 	resp = buildReleaseNotes(ctx, newReleaseNotesFetcher(s), resp)
 	if resp.Source == "changelog" {
-		releaseNotesCache.Lock()
-		releaseNotesCache.entries[key] = releaseNotesCacheEntry{resp: resp, at: time.Now()}
-		releaseNotesCache.Unlock()
+		storeReleaseNotes(key, resp, releaseNotesNow())
 	}
 	writeReleaseNotes(w, resp)
 }
