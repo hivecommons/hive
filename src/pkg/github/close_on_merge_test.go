@@ -68,7 +68,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		name       string
 		labels     []string
 		marker     bool
-		merged     bool
+		unmerged   bool
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
@@ -77,7 +77,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeAwaiting},
 		{name: "epic gets likely done comment", labels: []string{"Epic"}, wantAction: CloseOnMergeAwaiting},
 		{name: "existing marker noops", marker: true, wantAction: CloseOnMergeAlreadyDone},
-		{name: "unmerged PR noops", merged: false, wantAction: CloseOnMergeNoop},
+		{name: "unmerged PR noops", unmerged: true, wantAction: CloseOnMergeNoop},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var patched bool
@@ -121,7 +121,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			defer srv.Close()
 			c := newTestClient(t, srv, "o", []string{"r"})
 			pr := mergedTestPR(42, "hive[bot]", "scanner/fix-7", "Refs #7")
-			if !tc.merged {
+			if tc.unmerged {
 				pr.Merged = gh.Ptr(false)
 				pr.MergedAt = nil
 			}
