@@ -90,17 +90,17 @@ func hasUnfinishedDelegatedWork(body string) bool {
 // permanent (retrying the same file cannot fix them) and both exist because of
 // the same observed failure: hive-open-pr silently dropped `--body-file`, so
 // PRs went out whose entire body was the attribution footer, and the
-// "Closes #N" line the agent had written never reached GitHub (the issue then
+// "Fixes #N" line the agent had written never reached GitHub (the issue then
 // stayed open after the fix merged).
 //
 //  1. An empty (or whitespace-only) body is refused outright. Every shipped
 //     policy requires a real body; an empty one here means the body was lost
 //     between the agent and the request. There is deliberately no larger size
-//     floor: "Closes #12" is a legitimate minimal body under
+//     floor: "Fixes #12" is a legitimate minimal body under
 //     scanner-automerge, so anything above "non-blank" would reject real work.
 //  2. When the request declares originating issues (req.IssueN, set by
 //     hive-open-pr --issues), the title+body must reference each one — as a
-//     closing keyword ("Closes #N") or an explicit non-closing reference
+//     closing keyword ("Fixes #N") or an explicit non-closing reference
 //     ("Refs #N"). A body that arrives without the reference it was supposed
 //     to carry is the same lost-content failure in partial form.
 //
@@ -131,7 +131,7 @@ func (c *Client) validatePRRequestBody(req PRRequest) string {
 	}
 	if len(missing) > 0 {
 		return fmt.Sprintf("request declares originating issue(s) %s but the PR body never references them — "+
-			"the body must carry a \"Closes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open; use \"Refs %s (needs-human: <reason>)\" when the remainder requires a human). "+
+			"the body must carry a \"Fixes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open; use \"Refs %s (needs-human: <reason>)\" when the remainder requires a human). "+
 			"A missing line usually means the body was truncated or replaced; re-run hive-open-pr with the full body",
 			strings.Join(missing, ", "), missing[0], missing[0], missing[0])
 	}

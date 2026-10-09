@@ -103,11 +103,11 @@ func TestPRRequestWatcher_RejectsBodyMissingDeclaredIssue(t *testing.T) {
 }
 
 // The declared-issue check accepts both a closing keyword and an explicit
-// non-closing reference: "Closes #N" is the normal case, and "Refs #N" with a
+// non-closing reference: "Fixes #N" is the normal case, and "Refs #N" with a
 // stated reason is the sanctioned exception — neither may be rejected.
 func TestPRRequestWatcher_AcceptsClosesAndRefsForDeclaredIssue(t *testing.T) {
 	for _, body := range []string{
-		"## Related Issue\nCloses #1",
+		"## Related Issue\nFixes #1",
 		"## Related Issue\nRefs #1 — the docs half stays open until the guide lands",
 	} {
 		reqPath, c, cleanup := writeBodyTestRequest(t, PRRequest{
@@ -133,7 +133,7 @@ func TestValidatePRRequestBody_RepoDefaulting(t *testing.T) {
 	c := testClient(t, srv.URL)
 
 	if reason := c.validatePRRequestBody(PRRequest{
-		Repo: "r", Title: "t", Body: "Closes #7", IssueN: []int{7},
+		Repo: "r", Title: "t", Body: "Fixes #7", IssueN: []int{7},
 	}); reason != "" {
 		t.Errorf("bare-repo request with matching reference rejected: %q", reason)
 	}
@@ -146,14 +146,14 @@ func TestValidatePRRequestBody_RepoDefaulting(t *testing.T) {
 
 // End-to-end through the real pieces: the actual bin/hive-open-pr.sh writes
 // the request from a --body-file, and the actual watcher opens it against a
-// mock GitHub — asserting the "Closes #N" line the agent wrote is present in
+// mock GitHub — asserting the "Fixes #N" line the agent wrote is present in
 // the body GitHub receives. This is the full path that failed in production
 // (script drops --body-file → watcher opens footer-only PR), pinned green.
 func TestHiveOpenPRScript_ClosesLineSurvivesIntoOpenedPR(t *testing.T) {
 	scriptPath, reqDir, root := stageHiveOpenPRScript(t)
 
 	bodyPath := filepath.Join(root, "pr-body.md")
-	const bodyText = "## Test Improvement\n\nadds the missing tests\n\n## Related Issue\nCloses #1\n"
+	const bodyText = "## Test Improvement\n\nadds the missing tests\n\n## Related Issue\nFixes #1\n"
 	if err := os.WriteFile(bodyPath, []byte(bodyText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +202,8 @@ func TestHiveOpenPRScript_ClosesLineSurvivesIntoOpenedPR(t *testing.T) {
 	if created != 1 {
 		t.Fatalf("expected the PR to be created once, got %d", created)
 	}
-	if !strings.Contains(postedBody, "Closes #1") {
-		t.Fatalf("the Closes line the agent wrote did not reach GitHub; posted body:\n%s", postedBody)
+	if !strings.Contains(postedBody, "Fixes #1") {
+		t.Fatalf("the Fixes line the agent wrote did not reach GitHub; posted body:\n%s", postedBody)
 	}
 	if !strings.Contains(postedBody, "adds the missing tests") {
 		t.Fatalf("the body content did not reach GitHub; posted body:\n%s", postedBody)
