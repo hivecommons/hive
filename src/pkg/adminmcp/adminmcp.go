@@ -27,6 +27,7 @@ const (
 
 	ToolHiveStatus         = "hive_status"
 	ToolFleetStatus        = "fleet_status"
+	ToolVersionRead        = "version_read"
 	ToolAgentsList         = "agents_list"
 	ToolRunsList           = "runs_list"
 	ToolLeasesList         = "leases_list"
@@ -338,6 +339,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
 		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups."},
+		{ToolVersionRead, "Read the build this hive is running (currentCommit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
 		{ToolAgentsList, "Read the capped list of agents known to this hive."},
 		{ToolRunsList, "Read the capped list of runs known to this hive."},
 		{ToolLeasesList, "Read active run leases through the existing runs surface."},
@@ -376,7 +378,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 
 func AllowedTool(name string) bool {
 	switch name {
-	case ToolHiveStatus, ToolFleetStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
+	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolGovernorSetup, ToolWritePreview, ToolWriteConfirm,
@@ -675,6 +677,8 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/status/summary", true
 	case ToolFleetStatus:
 		return "/api/status", true
+	case ToolVersionRead:
+		return "/api/version", true
 	case ToolAgentsList:
 		return "/api/agents" + suffix, true
 	case ToolRunsList, ToolLeasesList:

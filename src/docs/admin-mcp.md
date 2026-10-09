@@ -137,6 +137,7 @@ capped at 256 KiB.
 |------|---------|
 | `hive_status` | Hive status summary |
 | `fleet_status` | Fleet state |
+| `version_read` | Running build from `/api/version`: `currentCommit`, `branch`, `channel`, `commitsBehind`, `behind` |
 | `agents_list` | Agents |
 | `runs_list` | Runs |
 | `leases_list` | Leases |

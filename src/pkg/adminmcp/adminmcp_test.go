@@ -60,6 +60,7 @@ func TestCapResultDisclosesTopLevelArrayTruncation(t *testing.T) {
 func TestReadPathCoversPhaseTwoReadSurface(t *testing.T) {
 	for _, tool := range []string{
 		ToolFleetStatus,
+		ToolVersionRead,
 		ToolAgentsList,
 		ToolLeasesList,
 		ToolClaimsList,
@@ -688,5 +689,28 @@ func TestAgentNudgeStatusToolIsListedAsReadOnly(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("agent nudge status tool not listed")
+	}
+}
+
+// TestVersionReadToolReadsAPIVersion: version_read is a listed read-only tool
+// answered by the shared /api/version route, so the HTTP endpoint and stdio
+// hive-admin-mcp both return the running build (#11220).
+func TestVersionReadToolReadsAPIVersion(t *testing.T) {
+	if path, ok := ReadPath(ToolVersionRead, 0); !ok || path != "/api/version" {
+		t.Fatalf("version_read path = %q, %v", path, ok)
+	}
+	var found bool
+	for _, tool := range Tools() {
+		if tool["name"] != ToolVersionRead {
+			continue
+		}
+		found = true
+		annotations, _ := tool["annotations"].(map[string]any)
+		if annotations["readOnlyHint"] != true {
+			t.Fatalf("annotations = %#v", annotations)
+		}
+	}
+	if !found {
+		t.Fatal("version_read tool not listed")
 	}
 }
