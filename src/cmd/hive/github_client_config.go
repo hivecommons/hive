@@ -112,6 +112,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	client.SetReporterConfirmationEnabledFunc(func() bool {
+		return b.cfg.Issues.ReporterConfirmationEnabled()
+	})
 	// Relay provenance for the clanker-requested PR parking (#10781). The
 	// ledger is read per call because the client can be configured before
 	// it is built.

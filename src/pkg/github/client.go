@@ -90,6 +90,11 @@ type Client struct {
 	// admit everything (pre-existing behavior).
 	issueFilterMu sync.RWMutex
 	issueFilter   IssueAdmitter
+	// reporterConfirmationEnabled restores the legacy close gate for all
+	// human-filed bug-family issues when configured. Nil/false means only
+	// per-issue opt-in markers activate the gate.
+	reporterConfirmationMu      sync.RWMutex
+	reporterConfirmationEnabled func() bool
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -2627,6 +2632,25 @@ func (c *Client) SetIssueFilter(f IssueAdmitter) {
 	c.issueFilterMu.Lock()
 	defer c.issueFilterMu.Unlock()
 	c.issueFilter = f
+}
+
+func (c *Client) SetReporterConfirmationEnabledFunc(fn func() bool) {
+	if c == nil {
+		return
+	}
+	c.reporterConfirmationMu.Lock()
+	defer c.reporterConfirmationMu.Unlock()
+	c.reporterConfirmationEnabled = fn
+}
+
+func (c *Client) reporterConfirmationGateDefaultEnabled() bool {
+	if c == nil {
+		return false
+	}
+	c.reporterConfirmationMu.RLock()
+	fn := c.reporterConfirmationEnabled
+	c.reporterConfirmationMu.RUnlock()
+	return fn != nil && fn()
 }
 
 // getIssueFilter never returns nil: an unset filter admits everything, which

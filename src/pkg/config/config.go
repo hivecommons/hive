@@ -4974,7 +4974,7 @@ type HubConfig struct {
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
 	// ContributeCloseAlreadyDone is a deprecated compatibility key. Verified
 	// already-done PR evidence now runs the normal issue close path; human-filed
-	// bugs still wait for reporter confirmation unless explicitly opted in.
+	// bugs close by default unless they explicitly opted into reporter confirmation.
 	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
 	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
 	// resolved. It is also in the default contribute skip label set, so labelled

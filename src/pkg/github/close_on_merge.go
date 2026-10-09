@@ -296,7 +296,7 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "marker_present"
 		return res
 	}
-	if closeOnMergeNeedsConfirmation(issue) {
+	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
 		body := closeOnMergeAwaitingComment(pr)
 		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"

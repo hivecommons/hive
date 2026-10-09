@@ -67,12 +67,14 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		labels     []string
+		body       string
 		marker     bool
 		unmerged   bool
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
 		{name: "plain open issue closes completed", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, wantAction: CloseOnMergeAwaiting},
 		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, wantAction: CloseOnMergeAwaiting},
 		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeAwaiting},
 		{name: "epic gets likely done comment", labels: []string{"Epic"}, wantAction: CloseOnMergeAwaiting},
@@ -90,7 +92,11 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 					for _, l := range tc.labels {
 						labels = append(labels, map[string]string{"name": l})
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels})
+					body := tc.body
+					if body == "" {
+						body = "body"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "body": body, "user": map[string]string{"login": "human", "type": "User"}, "labels": labels})
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					if tc.marker {
 						_ = json.NewEncoder(w).Encode([]map[string]string{{"body": CloseOnMergeMarker}})
