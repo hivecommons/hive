@@ -28738,6 +28738,15 @@ function burnAreaChart() {
       var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
+          if (at.superseded && at.runningCommit) {
+            // The recorded upgrade landed but the hive has since been rolled to
+            // another commit: headline the running commit (the one the version
+            // menu shows) so the old target is not read as the current version.
+            aTone = 'muted'; aIcon = '↷';
+            aLabel = 'Running <strong>' + escapeHtml(at.runningCommit) + '</strong>' +
+              (targetShort ? ' <span class="text-muted">(last spoke-side upgrade to ' + escapeHtml(targetShort) + ' superseded)</span>' : '');
+            break;
+          }
           aTone = 'success'; aIcon = '✅';
           aLabel = 'Last upgrade <strong>' + (targetShort ? escapeHtml(targetShort) : 'completed') + '</strong>';
           break;

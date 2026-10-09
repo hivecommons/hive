@@ -415,8 +415,13 @@ func TestBuildUpgradeAttemptStatusSupersededByLaterRoll(t *testing.T) {
 	if !moved.Superseded || moved.RunningCommit != "ffe1e19" {
 		t.Errorf("Superseded=%v RunningCommit=%q, want true/ffe1e19", moved.Superseded, moved.RunningCommit)
 	}
-	if strings.Contains(moved.Detail, "running the target image") || !strings.Contains(moved.Detail, "since moved to ffe1e19") {
-		t.Errorf("Detail = %q, must say the hive has since moved", moved.Detail)
+	if strings.Contains(moved.Detail, "running the target image") || !strings.Contains(moved.Detail, "superseded") {
+		t.Errorf("Detail = %q, must say the recorded upgrade was superseded", moved.Detail)
+	}
+	// #11194: the running commit must lead, so the old target is not read as
+	// the current version.
+	if !strings.HasPrefix(moved.Detail, "The hive is running ffe1e19.") {
+		t.Errorf("Detail = %q, must lead with the running commit", moved.Detail)
 	}
 }
 
