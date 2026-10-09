@@ -368,6 +368,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/knowledge/connectors/status", s.handleKnowledgeConnectorsStatus)
 	s.mux.HandleFunc("POST /api/config/knowledge/connectors/validate", s.handleKnowledgeConnectorsValidate)
 	s.mux.HandleFunc("POST /api/config/knowledge/connectors/{name}/sync", s.handleKnowledgeConnectorsSync)
+	s.mux.HandleFunc("GET /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesGet)
+	s.mux.HandleFunc("PUT /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesPut)
 	s.mux.HandleFunc("GET /api/knowledge/git-sources", s.handleGitSourcesList)
 	s.mux.HandleFunc("POST /api/knowledge/git-sources", s.handleGitSourcesConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/git-sources", s.handleGitSourcesDisconnect)

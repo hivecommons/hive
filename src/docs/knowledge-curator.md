@@ -533,6 +533,23 @@ whose summary is identical updates `source_sha` but keeps `generated_at`, and
 an identical regeneration leaves the file untouched. Edits made by hand are
 overwritten on the next change, so do not edit these pages.
 
+## Per-agent scopes (`knowledge.agent_scopes`)
+
+Maps an agent name to the `layers`, `repos`, `types`, `tags` and
+`include_states` that agent's kick primer and agent-identified knowledge reads
+are restricted to. A missing agent or an empty field is unrestricted (the
+default). Unknown layer or lifecycle state names fail config load. See
+[Per-agent scopes](knowledge-toc.md#per-agent-scopes) for the intersection
+rules.
+
+```yaml
+knowledge:
+  agent_scopes:
+    scanner:
+      layers: [project, org]
+      repos: [hivecommons/hive]
+```
+
 ## Open questions
 
 - #4944 (the issue behind this section) suggested documenting auth for
