@@ -15,8 +15,8 @@ import (
 // Sentinel sweep: evaluates every open PR in the watched repos with
 // pkg/sentinel and, on a finding, ensures + applies the alert label, posts
 // one marker-stamped comment naming the finding(s) and reports the event for
-// auditing. It is observe-and-alert only — it never merges, closes, holds or
-// removes labels. A maintainer clears the alert by removing the label; the
+// auditing. The configured alert label is a hard hold for Hive approvals and
+// auto-merge lanes. A maintainer clears the alert by removing the label; the
 // sweep will not re-apply it for the same head SHA.
 const (
 	// SentinelMarker stamps the alert comment so later ticks find it and do
@@ -257,6 +257,6 @@ func SentinelComment(label, head, author string, findings []sentinel.Finding) st
 			fmt.Fprintf(&b, "  - `%s`\n", p)
 		}
 	}
-	fmt.Fprintf(&b, "\nHive added the `%s` label. Automated reviewers route this PR to a human and will not approve it. Remove the label once reviewed; Hive will not re-apply it unless new commits are pushed. Tune paths and behaviors under `%s` in hive.yaml or the dashboard Security tab.\n", label, SentinelConfigKey)
+	fmt.Fprintf(&b, "\nHive added the `%s` label. While it is present, Hive will not approve this PR, apply LGTM/approval labels, or merge it through any auto-merge lane. Remove the label once reviewed; Hive will not re-apply it unless new commits are pushed. Tune paths and behaviors under `%s` in hive.yaml or the dashboard Security tab.\n", label, SentinelConfigKey)
 	return b.String()
 }

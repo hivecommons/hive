@@ -301,11 +301,11 @@ The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
 (`pkg/sentinel`, `pkg/github.SweepSentinel`). It inspects every open PR in the
 watched repos — human, bot, or agent — and, when a PR matches one of the
 behaviors below, adds the alert label and posts one `<!-- hive-sentinel -->`
-comment per head SHA listing the matched rules and paths. It never merges,
-holds, closes, or removes labels; the point is to make the PR impossible for a
-reviewer to miss. Agents reading the reviewer-queue policy treat the label as
-"route to a human, never approve". A maintainer who removes the label keeps
-the PR clear until the author pushes again.
+comment per head SHA listing the matched rules and paths. The label is a hard
+hold: while present, Hive will not submit an APPROVE review, apply LGTM/approval
+labels, or merge the PR through any auto-merge lane (dashboard queue,
+self-authored App sweep, trusted bot authors, or trusted authors). A maintainer
+who removes the label keeps the PR clear until the author pushes again.
 
 | Behavior | Fires when |
 |---|---|
@@ -321,7 +321,7 @@ the PR clear until the author pushes again.
 | Key | Default | Meaning |
 |---|---|---|
 | `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
-| `sentinel.label` | `sentinel-alert` | Label added to flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". |
+| `sentinel.label` | `sentinel-alert` | Label added to flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |
 | `sentinel.exempt_logins` | empty | GitHub logins never flagged (e.g. a release bot). Use sparingly. |
