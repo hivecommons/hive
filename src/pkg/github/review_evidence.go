@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
 // ReviewEvidenceDirName is the directory under the durable data dir that holds
@@ -116,10 +118,12 @@ func LoadReviewEvidence(path string) (*evidence.Bundle, error) {
 	return &b, nil
 }
 
-// reviewEvidenceUpdate is what one relay pass adds to one head's bundle.
+// reviewEvidenceUpdate is what one relay or sentinel pass adds to one head's
+// bundle.
 type reviewEvidenceUpdate struct {
 	verdicts []evidence.Verdict
 	posted   []evidence.PostedReview
+	sentinel []evidence.SentinelFinding
 }
 
 // recordReviewEvidence adds what the relay just recorded to the evidence
@@ -275,6 +279,12 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 			changed = true
 		}
 	}
+	for _, f := range u.sentinel {
+		if !containsSentinelFinding(b.Sentinel, f) {
+			b.Sentinel = append(b.Sentinel, f)
+			changed = true
+		}
+	}
 	if !changed {
 		return
 	}
@@ -296,8 +306,70 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 	}
 	c.logger.Info("review evidence: bundle written",
 		slog.String("id", b.ID), slog.Int("verdicts", len(b.Verdicts)),
-		slog.Int("posted_reviews", len(b.PostedReviews)), slog.Bool("signed", b.Signed),
+		slog.Int("posted_reviews", len(b.PostedReviews)), slog.Int("sentinel", len(b.Sentinel)),
+		slog.Bool("signed", b.Signed),
 		slog.String("path", path))
+}
+
+// recordReviewEvidenceSentinel adds the findings the sentinel sweep just
+// flagged pr for to the bundle for its head. pr is the listing the sweep
+// already holds, so a head the relay has not written yet gets its bundle
+// started from it (author, base, policy) without another fetch. Like the
+// relay's writes, every failure is logged and swallowed: the alert label and
+// comment are already on GitHub.
+func (c *Client) recordReviewEvidenceSentinel(repo string, pr *gh.PullRequest, findings []sentinel.Finding, now time.Time) {
+	settings, ok := c.reviewEvidenceSettings(repo)
+	if !ok || pr == nil || len(findings) == 0 {
+		return
+	}
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if head == "" || pr.GetNumber() <= 0 {
+		return
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	var u reviewEvidenceUpdate
+	for _, f := range findings {
+		if ef, ok := evidenceSentinelFinding(f); ok {
+			u.sentinel = append(u.sentinel, ef)
+		}
+	}
+	if len(u.sentinel) == 0 {
+		return
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
+	c.upsertReviewEvidence(owner+"/"+name, pr.GetNumber(), head, u, settings.Policy, key,
+		func() *gh.PullRequest { return pr }, now.UTC())
+}
+
+// evidenceSentinelFinding maps a sentinel finding onto the bundle schema.
+// Paths are sorted so the same finding re-flagged always compares equal.
+func evidenceSentinelFinding(f sentinel.Finding) (evidence.SentinelFinding, bool) {
+	rule := strings.TrimSpace(f.Rule)
+	if rule == "" {
+		return evidence.SentinelFinding{}, false
+	}
+	var paths []string
+	for _, p := range f.Paths {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	return evidence.SentinelFinding{Rule: rule, Summary: strings.TrimSpace(f.Summary), Paths: paths}, true
+}
+
+func containsSentinelFinding(have []evidence.SentinelFinding, f evidence.SentinelFinding) bool {
+	for _, h := range have {
+		if reflect.DeepEqual(h, f) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeReviewEvidence commits b with write-then-rename so a reader never

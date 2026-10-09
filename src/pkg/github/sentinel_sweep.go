@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/sentinel"
@@ -127,6 +128,7 @@ func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (
 				continue
 			}
 			event.Repo = repo
+			c.recordReviewEvidenceSentinel(repo, pr, event.Findings, time.Now())
 			result.Flagged = append(result.Flagged, event)
 			result.ReposHit[repo]++
 			if opts.Audit != nil {
