@@ -192,6 +192,9 @@ func TestIssueFromBranchName(t *testing.T) {
 		{"no digits at all", "feat-pr-dedup-guard", 0, false},
 		{"main", "main", 0, false},
 		{"zero is rejected", "issue-0", 0, false},
+		{"compact date is not an issue", "close-on-merge-20261009", 0, false},
+		{"delimited date is not an issue", "release/2026-10-09", 0, false},
+		{"issue plus date keeps issue", "issue-123-20261009", 123, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

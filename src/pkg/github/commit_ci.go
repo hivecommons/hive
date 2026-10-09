@@ -110,34 +110,44 @@ func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, 
 // status/check contexts. GitHub branch protection is authoritative; the
 // config set is only a fallback when protection cannot be read.
 func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool) {
+	required, known, fromConfig, fallback, _ = RequiredStatusCheckContextsDetailedWithSource(ctx, client, owner, repo, branch, configSet, configKnown)
+	return required, known, fromConfig, fallback
+}
+
+func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool, source string) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		if configKnown {
-			return configSet, true, true, true
+			return configSet, true, true, true, "config"
 		}
-		return nil, false, false, false
+		return nil, false, false, false, "unknown"
 	}
 	cacheKey := requiredChecksForbiddenCacheKey(client, owner, repo, branch)
 	if sharedRequiredChecksForbiddenCache.get(cacheKey) {
 		if configKnown {
-			return configSet, true, true, true
+			return configSet, true, true, true, "config"
 		}
-		return nil, false, false, false
+		return nil, false, false, false, "unknown"
 	}
 	rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 	if err != nil {
 		if errors.Is(err, gh.ErrBranchNotProtected) {
-			return map[string]bool{}, true, false, false
+			return map[string]bool{}, true, false, false, "rest-unprotected"
 		}
 		if isRequiredChecksForbiddenCacheable(err) {
+			if !configKnown && graphQLProtectionFallbackAllowed(client) {
+				if gqlRequired, gqlKnown, gqlErr := requiredStatusChecksFromGraphQL(ctx, client, owner, repo, branch); gqlErr == nil && gqlKnown {
+					return gqlRequired, true, false, false, "graphql"
+				}
+			}
 			sharedRequiredChecksForbiddenCache.put(cacheKey)
 		}
 		if configKnown {
-			return configSet, true, true, true
+			return configSet, true, true, true, "config"
 		}
-		return nil, false, false, false
+		return nil, false, false, false, "unknown"
 	}
 	if rsc == nil {
-		return map[string]bool{}, true, false, false
+		return map[string]bool{}, true, false, false, "rest"
 	}
 	required = make(map[string]bool)
 	if rsc.Contexts != nil {
@@ -153,7 +163,107 @@ func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client,
 			required[check.Context] = true
 		}
 	}
-	return required, true, false, false
+	return required, true, false, false, "rest"
+}
+
+func graphQLProtectionFallbackAllowed(client *gh.Client) bool {
+	if client == nil || client.BaseURL == nil {
+		return true
+	}
+	host := strings.ToLower(client.BaseURL.Hostname())
+	return host != "127.0.0.1" && host != "localhost" && host != "::1"
+}
+
+func requiredStatusChecksFromGraphQL(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, false, nil
+	}
+	const query = `query($owner:String!,$name:String!,$branch:String!){
+repository(owner:$owner,name:$name){
+  branchProtectionRules(first:100){
+    nodes{
+      pattern
+      requiresStatusChecks
+      matchingRefs(first:20, query:$branch){nodes{name}}
+      requiredStatusCheckContexts
+      requiredStatusChecks{context app{id slug name}}
+    }
+  }
+}}`
+	payload := map[string]any{
+		"query": query,
+		"variables": map[string]any{
+			"owner":  owner,
+			"name":   repo,
+			"branch": branch,
+		},
+	}
+	req, err := client.NewRequest("POST", graphQLEndpoint(client.BaseURL), payload)
+	if err != nil {
+		return nil, false, err
+	}
+	var resp struct {
+		Data struct {
+			Repository struct {
+				BranchProtectionRules struct {
+					Nodes []struct {
+						Pattern                     string `json:"pattern"`
+						RequiresStatusChecks        bool   `json:"requiresStatusChecks"`
+						RequiredStatusCheckContexts []string
+						RequiredStatusChecks        []struct {
+							Context string `json:"context"`
+						} `json:"requiredStatusChecks"`
+						MatchingRefs struct {
+							Nodes []struct {
+								Name string `json:"name"`
+							} `json:"nodes"`
+						} `json:"matchingRefs"`
+					} `json:"nodes"`
+				} `json:"branchProtectionRules"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []graphQLError `json:"errors"`
+	}
+	if _, err := client.Do(ctx, req, &resp); err != nil {
+		return nil, false, err
+	}
+	if len(resp.Errors) > 0 {
+		return nil, false, &graphQLErrors{Errors: resp.Errors}
+	}
+	for _, rule := range resp.Data.Repository.BranchProtectionRules.Nodes {
+		if !branchProtectionRuleMatchesRef(rule.Pattern, branch, rule.MatchingRefs.Nodes) {
+			continue
+		}
+		required := make(map[string]bool)
+		if rule.RequiresStatusChecks {
+			for _, name := range rule.RequiredStatusCheckContexts {
+				if strings.TrimSpace(name) != "" {
+					required[name] = true
+				}
+			}
+			for _, check := range rule.RequiredStatusChecks {
+				if strings.TrimSpace(check.Context) != "" {
+					required[check.Context] = true
+				}
+			}
+		}
+		return required, true, nil
+	}
+	return nil, false, nil
+}
+
+func branchProtectionRuleMatchesRef(pattern, branch string, refs []struct {
+	Name string `json:"name"`
+}) bool {
+	if strings.EqualFold(strings.TrimSpace(pattern), strings.TrimSpace(branch)) {
+		return true
+	}
+	for _, ref := range refs {
+		if strings.EqualFold(strings.TrimSpace(ref.Name), strings.TrimSpace(branch)) {
+			return true
+		}
+	}
+	return false
 }
 
 func requiredChecksForbiddenCacheKey(client *gh.Client, owner, repo, branch string) string {

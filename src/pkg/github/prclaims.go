@@ -549,6 +549,7 @@ func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
 // of string or a -/_// separator) so a version string like "bump-v2-1" or a
 // SHA-ish suffix cannot be mistaken for an issue number.
 var branchIssuePattern = regexp.MustCompile(`(?i)(?:^|[/_-])(?:issue[/_-]?|fix[/_-]|gh[/_-])?(\d+)(?:[/_-]|$)`)
+var branchDatePattern = regexp.MustCompile(`(?:^|[/_-])(?:19|20)\d{2}(?:\d{4}|[/_-]\d{2}[/_-]\d{2})(?:[/_-]|$)`)
 
 // headRef returns the PR's head branch name, guarding the nested pointers.
 func headRef(pr *gh.PullRequest) string {
@@ -591,15 +592,27 @@ func issueFromBranchName(branch string) (int, bool) {
 	if branch == "" {
 		return 0, false
 	}
-	m := branchIssuePattern.FindStringSubmatch(branch)
-	if len(m) < 2 {
+	m := branchIssuePattern.FindStringSubmatchIndex(branch)
+	if len(m) < 4 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(m[1])
+	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(branch[m[2]:m[3]])
 	if err != nil || n <= 0 {
 		return 0, false
 	}
 	return n, true
+}
+
+func branchIssueMatchOverlapsDate(branch string, start, end int) bool {
+	for _, span := range branchDatePattern.FindAllStringIndex(branch, -1) {
+		if start < span[1] && end > span[0] {
+			return true
+		}
+	}
+	return false
 }
 
 // HiveIdentity describes which PR authors count as "this hive". A PR opened by
