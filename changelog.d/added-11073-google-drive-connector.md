@@ -1,0 +1,1 @@
+- Added a `google-drive` knowledge connector that syncs Google Docs (exported as markdown with an HTML fallback), Sheets (as capped markdown tables) and markdown/text files from configured Drive folders and shared drives, incrementally by modified time, with trashed files marked archived.

@@ -138,6 +138,8 @@ Top-level YAML keys accepted by `config.Config`:
 | Field | Default / behavior | Operator note |
 |---|---|---|
 | `github.pr_detail_ttl_s` | `1800` seconds. `HIVE_GITHUB_PR_DETAIL_TTL` overrides for tests/experiments. | Reuses `GET /pulls/{number}` detail responses while the cheap PR list still reports the same `head.sha` and `updated_at`, and GitHub has resolved `mergeable_state`. |
+| `github.graphql_pr_batch` | `true` | Uses one paginated GraphQL query per repository scan to populate the PR detail cache and CI rollup cache, replacing most per-PR `GET /pulls/{number}` and `check-runs` reads. Set `false` to return to the REST-only scan path. |
+| `github.graphql_pr_batch_page_size` | `50` | Page size for the GraphQL `pullRequests(first:)` batch. Values above GitHub's `100` maximum are rejected. |
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `project.repo_policies[].auto_merge` | effective `false` below L6; unset = `true` at L6 | Per-repo off switch. Switching to L6 turns this on for every active repo; owners can toggle repos afterward. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card switch persists this key and takes effect without restart. |
 | `project.repo_policies[].label_driven` | Off (unset) for every repo. | Opt-in for repos whose maintainers accept and park issues with labels and their own bots (for example `needs-triage` → `triage/accepted`). On such a repo the un-park sweep posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction`; `/hive approve`, `/hive decision` and `/hive help` get a one-line reply pointing at the labels. Hive still filters parked issues and may still add `needs-decision` with a question. Config-file key only; see [maintainer-commands.md](maintainer-commands.md#label-driven-repositories). |
@@ -478,6 +480,53 @@ It also sets `Retry-After` to when the one-hour window (or observed reset) can
 make progress, logs once at 80% of each agent window, and sends one
 stop-polling nudge per agent window. Hive-authored write relays are not
 agent-attributed and are not capped by this path.
+
+Open-PR scans use `github.graphql_pr_batch` by default to move mergeability,
+review-decision, linked-issue and CI-rollup reads into GitHub's separate
+GraphQL bucket. `/api/gh-rate-limits` reports these calls as caller
+`hive:pr_batch` on endpoint `/graphql` and exposes `graphql_pr_batch` counters
+for repositories, PRs, pages, REST fallbacks, errors, and the last GraphQL
+query cost. Per-PR REST reads still happen when the batch is disabled, a repo's
+GraphQL query fails, or GitHub returns `mergeable: UNKNOWN` for that PR.
+
+### Webhook-driven PR cache invalidation
+
+A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
+either delivered directly by GitHub or relayed by the hub (the hub forwards the
+original signed body to the hive that manages the repository). The receiver
+fails closed: it rejects every delivery until `GITHUB_WEBHOOK_SECRET` is set to
+the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
+body exactly as the hub does. Deliveries for repositories the hive does not
+manage are ignored.
+
+- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
+  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
+  the GraphQL batch check-run/review entries for the affected PR and mark it
+  dirty. Check and status events are matched by PR number and head SHA (fork
+  PRs arrive without a PR list); `push` invalidates every open PR whose base or
+  head branch is the pushed branch.
+- Webhooks are **healthy** while the last delivery for a managed repository is
+  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
+  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
+  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
+  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
+  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
+  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
+  the next cycle.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
+  Hive logs one WARN per healthy → stale transition and falls back to the
+  configured interval and TTL-bound caching.
+
+`/api/status` and `/api/gh-rate-limits` expose
+`webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
+changed.
+
+```yaml
+governor:
+  eval_interval_s: 300
+  eval_interval_webhook_s: 900
+```
 
 ## `HIVE_GITHUB_TOKEN` permissions
 

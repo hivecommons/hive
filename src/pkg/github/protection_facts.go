@@ -247,6 +247,9 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 	if owner == "" || name == "" {
 		return nil
 	}
+	if batch, ok := c.graphQLBatchReviewStates(repo); ok {
+		return batch
+	}
 	out := make(map[int]prReviewState)
 	vars := map[string]any{"owner": owner, "name": name}
 	query := reviewSignalsQuery

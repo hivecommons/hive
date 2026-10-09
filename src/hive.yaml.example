@@ -314,6 +314,7 @@ agents:
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
   eval_interval_max_s: 1800               # Cap when API budget mode stretches evals
+  eval_interval_webhook_s: 900            # Base interval while GitHub webhooks are healthy (see /api/webhook/github)
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 
@@ -677,9 +678,12 @@ governor:
 # evaluates against this config. Read-only: each control points at an existing
 # setting. Not a certification — see src/docs/compliance.md. Default: none.
 # compliance:
-#   frameworks: [soc2-type2]
+#   frameworks: [soc2-type2]   # also: fedramp-moderate, iso27001-annex-a
 #   posture_checks:
-#     interval: 1h   # 5m..168h; 0/unset = 1h
+#     interval: 1h        # 5m..168h; 0/unset = 1h. Posture checks (#11079) run
+#                         # on this cadence; GET /api/compliance/posture.
+#     window_days: 30     # merged-PR look-back, 1..90; 0/unset = 30
+#     history_days: 365   # posture-history retention, 30..1095; 0/unset = 365
 
 # External review-bot threads on hive-authored PRs (#7360) — optional. When a
 # bot named here leaves inline review threads on a PR the hive opened, the
@@ -705,6 +709,9 @@ github:
   token: ${HIVE_GITHUB_TOKEN}
   # Reuse per-PR detail GETs while list head.sha/updated_at still match.
   pr_detail_ttl_s: 1800
+  # Batch open PR detail and CI rollups with GraphQL during scans (default true).
+  graphql_pr_batch: true
+  graphql_pr_batch_page_size: 50
 
   # Option 2: GitHub App (recommended for production)
   # app_id: 12345
@@ -913,6 +920,17 @@ knowledge:
                                              # Defaults to true when retention_policy is
                                              # ABSENT, but false when the block is present
                                              # without this key — set it explicitly.
+  # code_maps:                               # Generated repository code maps (#11106).
+  #   enabled: true                          # OPT-IN; absent or false = never generated
+  #   schedule: hourly                       # HEAD check cadence: hourly (default) or daily
+  #   vault_path: /data/vaults/code-maps     # Auto-created and auto-connected
+  #   layer: project                         # Layer recorded on each map (default project)
+  #   max_bytes: 16384                       # Hard cap on each rendered map
+  #   repos:
+  #     - name: hivecommons/hive             # Becomes the repo:<name> scope tag
+  #       path: /workspace/hive              # Existing checkout, or:
+  #     # url: https://github.com/org/repo   # cloned (https only, like git_sources)
+  #     # branch: main
   primer:
     max_facts: 25                            # Max facts injected per agent kick
     priority:                                # Fact types, highest priority first
