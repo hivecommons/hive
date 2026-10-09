@@ -119,29 +119,29 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		fixture     evidenceContextFixture
+		fixture     *evidenceContextFixture
 		wantCI      []evidence.Check
 		wantActions []evidence.Action
 	}{
 		{
 			name:        "CI and human actions captured",
-			fixture:     evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, events: events},
+			fixture:     &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, events: events},
 			wantCI:      wantCI,
 			wantActions: append([]evidence.Action{approval}, labelActions...),
 		},
 		{
 			name:        "check runs fail leaves CI empty",
-			fixture:     evidenceContextFixture{head: "h1", checksFail: true, reviews: reviews, events: events},
+			fixture:     &evidenceContextFixture{head: "h1", checksFail: true, reviews: reviews, events: events},
 			wantActions: append([]evidence.Action{approval}, labelActions...),
 		},
 		{
 			name:    "reviews fail leaves human actions empty",
-			fixture: evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviewsFail: true, events: events},
+			fixture: &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviewsFail: true, events: events},
 			wantCI:  wantCI,
 		},
 		{
 			name:    "events fail leaves human actions empty",
-			fixture: evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, eventsFail: true},
+			fixture: &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, eventsFail: true},
 			wantCI:  wantCI,
 		},
 	}
@@ -150,7 +150,7 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 			root := withEvidenceRoot(t)
 			writeTestEvidence(t, root, "h1", "", t0)
 			f := tt.fixture
-			c := newTestClient(t, newEvidenceContextServer(t, &f), "o", []string{"o/r"})
+			c := newTestClient(t, newEvidenceContextServer(t, f), "o", []string{"o/r"})
 			c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
 
 			c.RecordPRMergedAudit("o/r", 7, "squash", "m1", PRAuditPathSweep)
