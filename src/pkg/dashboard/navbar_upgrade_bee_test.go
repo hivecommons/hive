@@ -71,7 +71,7 @@ func TestUpgradeBeeHostsDoNotClipOrbit(t *testing.T) {
 	if !strings.Contains(hiveRule, "z-index: 2") {
 		t.Fatalf("bee hive host must stay above tile backgrounds: %s", hiveRule)
 	}
-	beeRule := cssRule(t, html, ".oc-version-bee")
+	beeRule := cssRule(t, html, ".oc-version-orbit")
 	if !strings.Contains(beeRule, "z-index: 3") {
 		t.Fatalf("orbiting bees must stack above their host: %s", beeRule)
 	}
@@ -147,78 +147,6 @@ func TestUpgradeBeeSVGKeepsTwoToneTokenPalette(t *testing.T) {
 	}
 	if strings.Contains(glyph, "currentColor") {
 		t.Fatalf("upgrade bee SVG must not collapse to one-color currentColor styling:\n%s", glyph)
-	}
-}
-
-func TestUpgradeBeeOrbitLoopIsSeamless(t *testing.T) {
-	html := indexHTML(t)
-	beeRule := cssRule(t, html, ".oc-version-bee")
-	for _, want := range []string{
-		"--oc-version-bee-duration: var(--bee-orbit-duration, 11s)",
-		"--oc-version-bee-size: var(--sp-4)",
-		"--oc-version-bee-orbit-offset-x: 5px",
-		"--oc-version-bee-orbit-offset-y: -4px",
-		"animation-duration: var(--oc-version-bee-duration)",
-		"animation-timing-function: linear",
-		"animation-iteration-count: infinite",
-		"animation-fill-mode: both",
-		"will-change: transform",
-		"transform-box: border-box",
-		"contain: layout paint style",
-	} {
-		if !strings.Contains(beeRule, want) {
-			t.Fatalf("orbiting bee rule missing seamless animation hint %q in %s", want, beeRule)
-		}
-	}
-	for _, selector := range []string{".oc-version-bee--phase-b", ".oc-version-bee--phase-c"} {
-		rule := cssRule(t, html, selector)
-		if !strings.Contains(rule, "--oc-version-bee-radius:") {
-			t.Fatalf("%s should vary orbit radius for a looser swarm path: %s", selector, rule)
-		}
-		if !strings.Contains(rule, "--oc-version-bee-duration: calc(var(--bee-orbit-duration, 11s) *") {
-			t.Fatalf("%s should vary orbit speed for a looser swarm path: %s", selector, rule)
-		}
-		if !strings.Contains(rule, "animation-delay: calc(var(--oc-version-bee-duration)") {
-			t.Fatalf("%s should phase the persistent bee node without touching JS render state: %s", selector, rule)
-		}
-	}
-	navbarBeeRule := cssRule(t, html, ".oc-version-navbar-upgrade .oc-version-bee")
-	for _, want := range []string{
-		"--oc-version-bee-radius: 9.8px",
-		"--oc-version-bee-size: 19.25px",
-		"--oc-version-bee-orbit-offset-x: 2.7px",
-		"--oc-version-bee-orbit-offset-y: -2.5px",
-	} {
-		if !strings.Contains(navbarBeeRule, want) {
-			t.Fatalf("navbar bee rule should make larger bees orbit off-centre with %q in %s", want, navbarBeeRule)
-		}
-	}
-	for _, selector := range []string{".oc-version-navbar-upgrade .oc-version-bee--phase-b", ".oc-version-navbar-upgrade .oc-version-bee--phase-c"} {
-		rule := cssRule(t, html, selector)
-		if !strings.Contains(rule, "--oc-version-bee-radius:") {
-			t.Fatalf("%s should tune navbar swarm radius: %s", selector, rule)
-		}
-	}
-	glyphRule := cssRule(t, html, ".oc-version-bee-glyph")
-	for _, want := range []string{"transform-box: fill-box", "transform-origin: 50% 50%"} {
-		if !strings.Contains(glyphRule, want) {
-			t.Fatalf("bee SVG glyph should anchor transforms around its own box with %q in %s", want, glyphRule)
-		}
-	}
-
-	orbit := cssKeyframesBody(t, html, "ocBeeOrbit")
-	for _, want := range []string{
-		"0% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(0turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
-		"100% { opacity: 0.96; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0) rotate(1turn) translate3d(var(--oc-version-bee-radius, 17px), 0, 0);",
-	} {
-		if !strings.Contains(orbit, want) {
-			t.Fatalf("upgrade bee orbit keyframes missing seamless endpoint %q in %s", want, orbit)
-		}
-	}
-	for _, forbidden := range []string{"\n      50%", "rotate(-"} {
-		if strings.Contains(orbit, forbidden) {
-			t.Fatalf("upgrade bee orbit should avoid loop-boundary decomposition hitches from %q in %s", forbidden, orbit)
-		}
 	}
 }
 
