@@ -401,7 +401,7 @@ func TestBobKeyUILivesOnGovernorTab(t *testing.T) {
 		{"tab is wired into render dispatch", "case GOVERNOR_BOB_TAB: return renderGovBob();"},
 		{"tab renderer exists", "function renderGovBob() {"},
 		{"status loader exists", "async function loadBobKeyStatus() {"},
-		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source, keyName) {"},
+		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source, keyName, sessionPrefix) {"},
 		{"dialog is opened from the panel", "openBobKeyDialog(configured, source, keyName)"},
 		{"clear is reachable from the panel", "clearBtn.addEventListener('click', clearBobKey)"},
 	}
