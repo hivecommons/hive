@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -411,6 +412,65 @@ func (k *KnowledgeAPI) updateVaultLifecycle(v *FileStore, slug string, req Updat
 	}
 	k.logger.Info("fact lifecycle updated", "slug", slug, "state", st, "channel", v.Name())
 	return nil
+}
+
+// ErrEntryNotWritable reports that no writable local channel holds the entry.
+var ErrEntryNotWritable = errors.New("knowledge entry not found in a writable channel")
+
+// ErrReplacementNotInChannel reports that a supersession target is missing
+// from the channel holding the superseded entry.
+var ErrReplacementNotInChannel = errors.New("replacement entry not found in the same channel")
+
+// EntryStateChange describes a lifecycle change applied by SetEntryState.
+type EntryStateChange struct {
+	Channel  string
+	Previous LifecycleState
+	Fact     *Fact
+}
+
+// SetEntryState changes the lifecycle state of the entry id in whichever
+// writable local channel holds it. A non-empty supersededBy marks the entry
+// superseded by that entry, which must live in the same channel.
+func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, supersededBy string) (EntryStateChange, error) {
+	v, before := k.writableVaultHolding(id)
+	if v == nil {
+		return EntryStateChange{}, ErrEntryNotWritable
+	}
+	if supersededBy != "" {
+		if _, err := v.ReadPage(supersededBy); err != nil {
+			return EntryStateChange{}, ErrReplacementNotInChannel
+		}
+	}
+	change := EntryStateChange{Channel: v.Name(), Previous: before.EffectiveState()}
+	if err := k.updateVaultLifecycle(v, id, UpdateFactRequest{State: string(state), SupersededBy: supersededBy}); err != nil {
+		return change, err
+	}
+	after, err := v.ReadPage(id)
+	if err != nil {
+		return change, err
+	}
+	change.Fact = after
+	return change, nil
+}
+
+// writableVaultHolding returns the first non-reserved vault holding id and
+// the entry as currently stored.
+func (k *KnowledgeAPI) writableVaultHolding(id string) (*FileStore, *Fact) {
+	if id == "" {
+		return nil, nil
+	}
+	k.mu.RLock()
+	vaults := append([]*FileStore(nil), k.vaults...)
+	k.mu.RUnlock()
+	for _, v := range vaults {
+		if v.Name() == reservedVaultName {
+			continue
+		}
+		if f, err := v.ReadPage(id); err == nil {
+			return v, f
+		}
+	}
+	return nil, nil
 }
 
 // DeleteFact removes a fact from the specified layer.
