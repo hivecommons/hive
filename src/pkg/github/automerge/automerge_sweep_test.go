@@ -1609,6 +1609,8 @@ type selfAuthoredPR struct {
 	extraChecks     []map[string]string
 	updateCount     *int
 	updateStatus    int
+	mergeStatus     int
+	mergeMessage    string
 	// headSHAOverride, when set, is returned by the SECOND PR fetch (the
 	// merge-time re-check) instead of the first-fetch head SHA — simulates a
 	// push landing between evaluation and merge.
@@ -1697,6 +1699,15 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/merge")
+			if pr := byNumber[number]; pr != nil && pr.mergeStatus != 0 {
+				w.WriteHeader(pr.mergeStatus)
+				msg := pr.mergeMessage
+				if msg == "" {
+					msg = "merge error"
+				}
+				json.NewEncoder(w).Encode(map[string]string{"message": msg})
+				return
+			}
 			*merged = append(*merged, number)
 			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/update-branch"):
@@ -2058,6 +2069,63 @@ func TestSweepSelfAuthoredAutoMergesUpdatesBehindAppPR(t *testing.T) {
 	}
 	if len(merged) != 0 || len(result.Merged) != 0 {
 		t.Fatalf("behind PR should only be updated, merged result=%v calls=%v", result.Merged, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesUpdatesWhenRequiredChecksExpected(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:          15,
+		author:          testHiveAppBotLogin,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+		mergeStatus:     http.StatusMethodNotAllowed,
+		mergeMessage:    `Required status check "changelog-fragment-guard" is expected.`,
+		updateCount:     &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if updates != 1 {
+		t.Fatalf("UpdateBranch calls = %d, want 1", updates)
+	}
+	if result.UpdatedBranches != 1 {
+		t.Fatalf("UpdatedBranches = %d, want 1", result.UpdatedBranches)
+	}
+	if len(merged) != 0 || len(result.Merged) != 0 || result.Skipped != 1 {
+		t.Fatalf("required-checks-expected PR should update and skip, merged=%v calls=%v skipped=%d", result.Merged, merged, result.Skipped)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesUpdateBranch422Conflicting(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:         16,
+		author:         testHiveAppBotLogin,
+		mergeableState: "behind",
+		updateCount:    &updates,
+		updateStatus:   http.StatusUnprocessableEntity,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 16, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != "conflicting" || event.BranchUpdated {
+		t.Fatalf("trySweepSelfAuthoredPR reason=%q event=%+v, want conflicting without BranchUpdated", reason, event)
+	}
+	if updates != 1 {
+		t.Fatalf("UpdateBranch calls = %d, want 1", updates)
 	}
 }
 
