@@ -180,9 +180,9 @@ func BuildReport(cfg *config.Config, getenv func(string) string) Report {
 		Available:            []FrameworkInfo{},
 		Controls:             []ControlStatus{},
 		PostureCheckInterval: cfg.Compliance.PostureIntervalOrDefault().String(),
-		// The posture-check runner lands in hivecommons/hive#11079.
-		PostureChecksPending:  true,
-		PostureChecksTracking: "https://github.com/hivecommons/hive/issues/11079",
+		// Posture checks run (hivecommons/hive#11079); results are served by
+		// GET /api/compliance/posture. The fields stay for API compatibility.
+		PostureChecksPending: false,
 	}
 	ps, err := Profiles()
 	if err != nil {

@@ -18832,7 +18832,7 @@
           "System"
         ],
         "summary": "Get compliance control status",
-        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Read-only; requires merger or owner role. Not a certification.",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles, e.g. soc2-type2) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
         "responses": {
           "200": {
             "description": "compliance.Report",
@@ -18919,6 +18919,149 @@
           },
           "403": {
             "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture-check results",
+        "description": "Returns the posture-check catalogue (pkg/compliance: non-author review, owner not auto-merge author, audit retention, agent confinement, sentinel enabled, no secrets in config, dashboard auth, hold labels exist) and the latest pass, persisted under /data. With ?since= (RFC 3339 time, YYYY-MM-DD date or a look-back duration such as 168h) also returns every pass since then, oldest first, capped at 1000. Requires merger or owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Return the history since this RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "history_days": {
+                      "type": "integer"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureCheckInfo: id, title, control_ids[]"
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "nullable": true,
+                      "description": "compliance.PostureRun: at, trigger (schedule|manual), summary {pass, fail, skip, error}, results[] (check_id, title, control_ids, at, pass, status pass|fail|skip|error, detail, evidence_refs)"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureRun"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since parameter"
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/run": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Run the compliance posture checks now",
+        "description": "Runs one posture-check pass immediately and records it in the history like a scheduled pass; the run is written to the audit log (compliance_posture_run). Requires merger or owner role.",
+        "responses": {
+          "200": {
+            "description": "compliance.PostureRun",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "pass": {
+                          "type": "integer"
+                        },
+                        "fail": {
+                          "type": "integer"
+                        },
+                        "skip": {
+                          "type": "integer"
+                        },
+                        "error": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.Result: check_id, title, control_ids, at, pass, status, detail, evidence_refs"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "409": {
+            "description": "No compliance framework selected, or a posture run is already in progress"
           },
           "503": {
             "description": "Config unavailable"
