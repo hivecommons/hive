@@ -1,6 +1,6 @@
 module github.com/hivecommons/hive
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -74,7 +74,7 @@ require (
 	go.uber.org/automaxprocs v1.6.0
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
