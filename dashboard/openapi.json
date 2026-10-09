@@ -12264,6 +12264,108 @@
         }
       }
     },
+    "/api/knowledge/entry/{id}/state": {
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Change the lifecycle state of a knowledge entry",
+        "description": "Owner-only lifecycle change (draft, approved, deprecated, superseded) of an entry in a locally writable channel. `superseded` requires `superseded_by` naming another entry in the same channel; any other state rejects it. Every change is written to the audit log with the actor, previous and new state and the operator's reason (truncated to 500 characters).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Entry id (slug)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "approved",
+                      "deprecated",
+                      "superseded"
+                    ]
+                  },
+                  "superseded_by": {
+                    "type": "string",
+                    "description": "Replacement entry id; required when state is superseded"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Operator reason recorded in the audit log"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lifecycle change applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "previous_state": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "superseded_by": {
+                      "type": "string"
+                    },
+                    "fact": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown state, superseded/superseded_by mismatch, self-supersede, or replacement not in the same channel"
+          },
+          "403": {
+            "description": "Caller is not an owner"
+          },
+          "404": {
+            "description": "Entry not found in a writable channel"
+          },
+          "500": {
+            "description": "State change could not be written"
+          },
+          "503": {
+            "description": "Knowledge not enabled"
+          }
+        }
+      }
+    },
     "/api/knowledge/stats": {
       "get": {
         "tags": [
