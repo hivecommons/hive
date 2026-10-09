@@ -25,6 +25,8 @@ func TestGlobalEscapeDismissesTopOverlay(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		"function hiveDismissTopOverlay()",
+		"function hiveRememberModalOpen(el)",
+		"function hiveModalOrder(el, fallback)",
 		"document.addEventListener('keydown', function(e) {",
 		"if (e.key !== 'Escape') return;",
 		"if (e.isComposing) return;",
@@ -36,6 +38,85 @@ func TestGlobalEscapeDismissesTopOverlay(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("global Escape handler missing %q", want)
+		}
+	}
+}
+
+func TestGlobalEscapeDismissesModalsLIFO(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: modal Escape behavior was not executed")
+	}
+	html := indexHTML(t)
+	script := `const assert = require('node:assert/strict');
+function makeClassList(values) { return { values: new Set(values || []), contains(v) { return this.values.has(v); }, add(v) { this.values.add(v); }, remove(v) { this.values.delete(v); } }; }
+function modal(id) { return { id, dataset: {}, style: { display: 'flex' }, classList: makeClassList(['hive-dialog-overlay']), removed: false, hiveDialogClose() { this.removed = true; this.style.display = 'none'; closed.push(id); } }; }
+const closed = [];
+const elements = {};
+let first = modal('first-modal');
+let second = modal('second-modal');
+elements[first.id] = first;
+elements[second.id] = second;
+global.getComputedStyle = el => ({ display: el && el.style ? el.style.display : 'none', zIndex: '20000' });
+global.document = {
+  activeElement: null,
+  getElementById(id) { return elements[id] || null; },
+  querySelectorAll(sel) { return sel === '.hive-dialog-overlay' ? [first, second].filter(el => el.style.display !== 'none') : []; },
+  addEventListener() {}
+};
+function repoPillFilterActive() { return false; }
+function clearRepoPillFilter() {}
+function closeVersionMenu() {}
+function hiveCloseGHUserMenu() {}
+function dismissNPSSurvey() {}
+function acmmCloseDialog() {}
+function closeFeedbackModal() {}
+function closeWelcomeDialog() {}
+function closeConfigDialog() {}
+function closeOverviewChartSettings() {}
+function closeACMMDialog() {}
+function closeNousConfig() {}
+function cancelGHLogin() {}
+let _hiveModalSequence = 0;
+` + jsFunc(t, html, "hiveOverlayIsOpen") + jsFunc(t, html, "hiveOverlayRank") + jsFunc(t, html, "hiveRememberModalOpen") + jsFunc(t, html, "hiveModalOrder") + jsFunc(t, html, "hiveCloseGHUserMenu") + jsFunc(t, html, "hiveDismissTopOverlay") + `
+hiveRememberModalOpen(first);
+hiveRememberModalOpen(second);
+assert.equal(hiveDismissTopOverlay(), true);
+assert.deepEqual(closed, ['second-modal']);
+assert.equal(first.style.display, 'flex');
+assert.equal(second.style.display, 'none');
+assert.equal(hiveDismissTopOverlay(), true);
+assert.deepEqual(closed, ['second-modal', 'first-modal']);
+assert.equal(hiveDismissTopOverlay(), false);
+assert.deepEqual(closed, ['second-modal', 'first-modal']);
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node modal Escape LIFO failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestModalEscapeRegistryCoversKnownDashboardOverlays(t *testing.T) {
+	html := indexHTML(t)
+	body := jsFunc(t, html, "hiveDismissTopOverlay")
+	for _, want := range []string{
+		"gh-auth-modal-overlay",
+		"gh-setup-overlay",
+		"hiveChatShortcuts",
+		"hiveChatPanel",
+		"config-overlay",
+		"acmm-overlay",
+		"welcome-overlay",
+		"overview-chart-settings-overlay",
+		"nous-config-overlay",
+		"kb-modal-overlay",
+		"plan-modal-overlay",
+		"feedback-overlay",
+		"acmm-dialog-overlay",
+		"oc-drawer-backdrop",
+		".hive-dialog-overlay",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("modal Escape registry no longer covers %q", want)
 		}
 	}
 }

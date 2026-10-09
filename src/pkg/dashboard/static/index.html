@@ -5441,6 +5441,7 @@
       const overlay = document.createElement('div');
       overlay.id = 'feedback-overlay';
       overlay.className = 'config-overlay';
+      hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="config-modal feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-title-h">
         <header class="feedback-header">
           <div><h2 id="feedback-title-h" class="modal-h">Feedback</h2><p class="feedback-intro">Report a bug or request a feature. Submissions create GitHub issues in hivecommons/hive or hivecommons/docs.</p></div>
@@ -15956,6 +15957,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _overviewSettingsReturnFocus = btn || document.activeElement;
       renderOverviewSettingsPopover(overviewChartsState());
       overlay.classList.remove('hidden');
+      hiveRememberModalOpen(overlay);
       if (btn) btn.setAttribute('aria-expanded', 'true');
       const focusables = overviewSettingsFocusables();
       const initial = focusables.find(el => el.classList && el.classList.contains('config-close')) || focusables[0];
@@ -20574,6 +20576,7 @@ function burnAreaChart() {
       const overlay = document.getElementById('nous-config-overlay');
       if (!overlay) return;
       overlay.style.display = 'flex';
+      hiveRememberModalOpen(overlay);
       overlay.innerHTML = '<div class="nous-config-dialog"><div style="text-align:center;color:var(--muted);padding:40px">Loading configuration...</div></div>';
 
       const cfg = await fetchNousConfig();
@@ -22119,6 +22122,7 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
+      hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="nous-config-dialog" style="width:${dialogWidth}">
         <h2 style="font-size:1rem;margin:var(--sp-0) var(--sp-0) var(--sp-0) var(--sp-0);padding:var(--sp-8) var(--sp-8) var(--sp-6);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
           ${title}
@@ -26325,6 +26329,7 @@ function burnAreaChart() {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
+        hiveRememberModalOpen(overlay);
         const message = cfg.message || cfg.body || '';
         const parts = String(message).split('\n\n');
         const heading = cfg.title || (parts.length > 1 ? parts[0] : 'Confirm');
@@ -26346,6 +26351,7 @@ function burnAreaChart() {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
+        hiveRememberModalOpen(overlay);
         const id = 'hive-prompt-' + Math.random().toString(36).slice(2);
         const errId = id + '-error';
         overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="${id}-title">
@@ -26383,6 +26389,7 @@ function burnAreaChart() {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
+        hiveRememberModalOpen(overlay);
         overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-alert-title">
           <div id="hive-alert-title" class="hive-dialog-title">${hiveDialogEscape(title || 'Notice')}</div>
           <div class="hive-dialog-body long">${hiveDialogEscape(text)}</div>
@@ -26852,6 +26859,7 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
+      hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="nous-config-dialog" style="width:680px">
         <h2 style="font-size:1rem;margin:var(--sp-0);padding:var(--sp-8) var(--sp-8) var(--sp-6);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
           ${title}
@@ -28312,6 +28320,7 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
+      hiveRememberModalOpen(overlay);
       // Body scroll-lock comes from the shared installModalScrollLock observer
       // (#4805) — no bespoke inline body-overflow write here, which used to
       // fight the shared class-based lock.
@@ -29870,6 +29879,7 @@ function burnAreaChart() {
       // open and on close, so Cancel/X/Escape discard it like any other field.
       _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
+      hiveRememberModalOpen(document.getElementById('config-overlay'));
       const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
       document.querySelector('.config-title').textContent = title;
       const tabs = type === 'governor' ? GOVERNOR_CONFIG_TABS : (isCreate ? AGENT_CREATE_TABS : AGENT_CONFIG_TABS);
@@ -29962,6 +29972,18 @@ function burnAreaChart() {
       const z = parseInt(getComputedStyle(el).zIndex || '', 10);
       return Number.isFinite(z) ? z : (fallback || 0);
     }
+    let _hiveModalSequence = 0;
+    function hiveRememberModalOpen(el) {
+      if (!el) return el;
+      _hiveModalSequence++;
+      if (!el.dataset) el.dataset = {};
+      el.dataset.hiveModalSequence = String(_hiveModalSequence);
+      return el;
+    }
+    function hiveModalOrder(el, fallback) {
+      const seq = el && el.dataset ? parseInt(el.dataset.hiveModalSequence || '', 10) : NaN;
+      return Number.isFinite(seq) ? seq : (fallback || 0);
+    }
     function hiveCloseGHUserMenu() {
       const menu = document.getElementById('oc-gh-user-menu');
       if (menu) menu.hidden = true;
@@ -29970,7 +29992,7 @@ function burnAreaChart() {
       const candidates = [];
       function add(el, close, fallbackRank) {
         if (!hiveOverlayIsOpen(el)) return;
-        candidates.push({ el: el, close: close, rank: hiveOverlayRank(el, fallbackRank), order: candidates.length });
+        candidates.push({ el: el, close: close, rank: hiveOverlayRank(el, fallbackRank), order: hiveModalOrder(el, candidates.length) });
       }
       const installHintBtn = document.getElementById('gh-app-install-id-hint-btn');
       if (installHintBtn && installHintBtn.getAttribute('aria-expanded') === 'true') {
@@ -29994,6 +30016,10 @@ function burnAreaChart() {
       add(document.getElementById('acmm-overlay'), closeACMMDialog, 10000);
       const nousOverlay = document.getElementById('nous-config-overlay');
       add(nousOverlay, function() { if (typeof closeNousConfig === 'function') closeNousConfig(); else nousOverlay.style.display = 'none'; }, 1000);
+      const kbOverlay = document.getElementById('kb-modal-overlay');
+      add(kbOverlay, function() { if (typeof kbCloseModal === 'function') kbCloseModal(); else kbOverlay.style.display = 'none'; }, 1000);
+      const planOverlay = document.getElementById('plan-modal-overlay');
+      add(planOverlay, function() { if (typeof planCloseModal === 'function') planCloseModal(); else planOverlay.style.display = 'none'; }, 1000);
       const ghAuth = document.getElementById('gh-auth-modal-overlay');
       add(ghAuth, function() { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; }, 9999);
       const ghSetup = document.getElementById('gh-setup-overlay');
@@ -30030,6 +30056,7 @@ function burnAreaChart() {
     async function openACMMDialog() {
       _acmmOpen = true;
       document.getElementById('acmm-overlay').classList.remove('hidden');
+      hiveRememberModalOpen(document.getElementById('acmm-overlay'));
       document.getElementById('acmm-apply-error').style.display = 'none';
 
       // Restate the current level in the title so users arriving from any
@@ -40249,6 +40276,7 @@ function burnAreaChart() {
 
     chatFab.onclick = () => {
       const isOpen = chatPanel.classList.toggle('open');
+      if (isOpen) hiveRememberModalOpen(chatPanel);
       chatFab.classList.toggle('open', isOpen);
       if (isOpen) {
         chatFab.classList.remove('has-unread');
@@ -40289,8 +40317,8 @@ function burnAreaChart() {
     chatInput.addEventListener('input', () => { chatInput.style.height = 'auto'; chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px'; updateChatAutocomplete(); chatHistoryIndex = -1; chatPersistDraft(); });
     document.addEventListener('keydown', (e) => {
       const inEditable = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
-      if (e.key === '?' && !inEditable) { e.preventDefault(); if (chatShortcuts) chatShortcuts.classList.add('open'); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); chatPanel.classList.add('open'); chatFab.classList.add('open'); chatInput.focus(); }
+      if (e.key === '?' && !inEditable) { e.preventDefault(); if (chatShortcuts) { chatShortcuts.classList.add('open'); hiveRememberModalOpen(chatShortcuts); } return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); chatPanel.classList.add('open'); hiveRememberModalOpen(chatPanel); chatFab.classList.add('open'); chatInput.focus(); }
     });
 
     // Sidebar resize handle — drag right edge to resize sidebar width
@@ -40784,6 +40812,7 @@ function burnAreaChart() {
             var customLink = document.getElementById('setup-custom-apps-link');
             if (customLink) { customLink.href = ghBase + '/settings/apps/new'; customLink.textContent = ghBase.replace('https://', '') + '/settings/apps/new'; }
             document.getElementById('gh-setup-overlay').style.display = 'flex';
+            hiveRememberModalOpen(document.getElementById('gh-setup-overlay'));
             document.getElementById('setup-details-public').style.display = 'none';
             document.getElementById('setup-details-custom').style.display = isGHE ? 'block' : 'none';
           } else {
@@ -40797,6 +40826,7 @@ function burnAreaChart() {
         document.getElementById('gh-poll-status').textContent = 'Waiting for authorization...';
         document.getElementById('gh-poll-status').style.color = 'var(--muted)';
         document.getElementById('gh-auth-modal-overlay').style.display = 'flex';
+        hiveRememberModalOpen(document.getElementById('gh-auth-modal-overlay'));
         ghPollIntervalMs = data.interval ? (data.interval + 1) * 1000 : 6000;
         if (ghPollTimer) clearInterval(ghPollTimer);
         ghPollTimer = setInterval(pollGHAuth, ghPollIntervalMs);
@@ -41974,6 +42004,7 @@ function burnAreaChart() {
         panel.style.opacity = '';
       }
       overlay.classList.remove('hidden');
+      hiveRememberModalOpen(overlay);
     }
     // Genie-minimize timing. GENIE_MS must match --welcome-genie-ms in CSS;
     // it is the fallback deadline in case transitionend never fires (the
