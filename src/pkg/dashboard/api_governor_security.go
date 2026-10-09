@@ -34,13 +34,14 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
 		Sentinel *struct {
-			Enabled           *bool     `json:"enabled"`
-			Label             *string   `json:"label"`
-			SensitivePaths    *[]string `json:"sensitivePaths"`
-			DisabledBehaviors *[]string `json:"disabledBehaviors"`
-			ExemptLogins      *[]string `json:"exemptLogins"`
-			Repos             *[]string `json:"repos"`
-			MaxActions        *int      `json:"maxActions"`
+			Enabled             *bool     `json:"enabled"`
+			Label               *string   `json:"label"`
+			SensitivePaths      *[]string `json:"sensitivePaths"`
+			DisabledBehaviors   *[]string `json:"disabledBehaviors"`
+			ExemptLogins        *[]string `json:"exemptLogins"`
+			TrustedAuthorsBlock *bool     `json:"trustedAuthorsBlock"`
+			Repos               *[]string `json:"repos"`
+			MaxActions          *int      `json:"maxActions"`
 		} `json:"sentinel"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -75,6 +76,9 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		if body.Sentinel.ExemptLogins != nil {
 			sc.ExemptLogins = trimNonEmpty(*body.Sentinel.ExemptLogins)
+		}
+		if body.Sentinel.TrustedAuthorsBlock != nil {
+			sc.TrustedAuthorsBlock = *body.Sentinel.TrustedAuthorsBlock
 		}
 		if body.Sentinel.Repos != nil {
 			sc.Repos = trimNonEmpty(*body.Sentinel.Repos)
@@ -245,6 +249,7 @@ func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
 		"defaultSensitivePaths": config.DefaultSentinelSensitivePaths(),
 		"behaviors":             behaviors,
 		"exemptLogins":          nonNilStrings(sc.ExemptLogins),
+		"trustedAuthorsBlock":   sc.TrustedAuthorsBlock,
 		"repos":                 nonNilStrings(sc.Repos),
 		"maxActions":            sc.MaxActionsOrDefault(),
 	}

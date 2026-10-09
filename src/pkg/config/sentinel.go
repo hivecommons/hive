@@ -24,8 +24,9 @@ const (
 // permission widening, secret exfiltration, CI-gate softening, test deletion,
 // curl|sh payloads, …). On a match the sweep ensures and applies Label, posts
 // one marker-stamped comment naming the finding(s), and records an audit
-// entry. It never merges, closes or blocks on its own; the intent tier gate
-// and auto_merge.human_merge_paths remain the merge-time enforcement.
+// entry. The alert label is also a hard block for Hive approval and every
+// auto-merge lane until a maintainer removes it. Trusted authors default to
+// notice-only unless TrustedAuthorsBlock is explicitly enabled.
 //
 // Default ON: an unset block evaluates every watched repo with
 // sentinel.DefaultSensitivePaths and all behaviors enabled.
@@ -46,6 +47,10 @@ type SentinelConfig struct {
 	// ExemptLogins are PR authors never flagged (case-insensitive exact
 	// login match, e.g. "dependabot[bot]").
 	ExemptLogins []string `yaml:"exempt_logins,omitempty" json:"exempt_logins,omitempty"`
+	// TrustedAuthorsBlock opts trusted authors (Hive App, configured trusted
+	// bots and authorized owners) into the blocking label. The default false
+	// still evaluates and comments, but only as an informational notice.
+	TrustedAuthorsBlock bool `yaml:"trusted_authors_block,omitempty" json:"trusted_authors_block,omitempty"`
 	// Repos optionally restricts the sweep to these owner/repo slugs. Empty
 	// means every watched repo.
 	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`

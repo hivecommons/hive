@@ -9111,12 +9111,14 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	}
 	sc := cfg.Sentinel
 	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
-		Label:            sc.LabelOrDefault(),
-		LabelColor:       config.DefaultSentinelLabelColor,
-		LabelDescription: config.DefaultSentinelLabelDescription,
-		Evaluator:        sc.EvaluatorConfig(),
-		RepoAllowed:      sc.RepoAllowed,
-		MaxActions:       sc.MaxActionsOrDefault(),
+		Label:               sc.LabelOrDefault(),
+		LabelColor:          config.DefaultSentinelLabelColor,
+		LabelDescription:    config.DefaultSentinelLabelDescription,
+		Evaluator:           sc.EvaluatorConfig(),
+		TrustedAuthor:       sentinelTrustedAuthorFunc(cfg, ghClient),
+		TrustedAuthorsBlock: sc.TrustedAuthorsBlock,
+		RepoAllowed:         sc.RepoAllowed,
+		MaxActions:          sc.MaxActionsOrDefault(),
 		Audit: func(event github.SentinelSweepEvent) {
 			if dashSrv == nil {
 				return
@@ -9136,16 +9138,24 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	for _, ev := range result.Flagged {
 		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
 	}
-	if len(result.Flagged) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "skipped", result.Skipped, "errors", len(result.Errors))
+	for _, ev := range result.Notified {
+		logger.Info("sentinel notice", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "rules", strings.Join(ev.Rules(), ","))
+	}
+	for _, ev := range result.Remediated {
+		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
+	}
+	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors))
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
 		Reason:     "sentinel sweep complete",
 		Attrs: map[string]string{
-			"seen":    strconv.Itoa(result.Seen),
-			"flagged": strconv.Itoa(len(result.Flagged)),
-			"skipped": strconv.Itoa(result.Skipped),
+			"seen":       strconv.Itoa(result.Seen),
+			"flagged":    strconv.Itoa(len(result.Flagged)),
+			"notified":   strconv.Itoa(len(result.Notified)),
+			"remediated": strconv.Itoa(len(result.Remediated)),
+			"skipped":    strconv.Itoa(result.Skipped),
 		},
 	})
 }
