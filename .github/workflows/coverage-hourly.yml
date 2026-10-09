@@ -112,6 +112,20 @@ jobs:
         with:
           ref: 'v5'
 
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        # The checkout above is pinned to the measured ref; skip when that ref
+        # does not carry the script yet (same reasoning as the cache guard below).
+        run: |
+          guard="$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+          if [ -f "$guard" ]; then
+            bash "$guard"
+          else
+            echo "::notice::go-toolcache-guard.sh not present on the measured ref; setup-go populates the tool cache itself"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/go.mod
