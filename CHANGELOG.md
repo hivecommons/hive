@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-09 (v5.156.1)
+
+### Changed
+
+- Review Pipeline and Queue now render as separately collapsible tiles inside the Review dashboard section.
+- Align dashboard section settings gears with the section help mark instead of far-right header actions.
+
 ## 2026-10-09 (v5.156.0)
 
 ### Added
