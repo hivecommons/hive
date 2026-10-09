@@ -890,7 +890,7 @@ seed_bridge_checkout() {
 
 reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
 printf '# keep this comment\nUNRELATED=value with spaces\nHIVE_DEPLOYMENT_RUNTIME=unknown\n HIVE_DEPLOYMENT_RUNTIME=compose\nHIVE_DEPLOYMENT_PODMAN_MODE=rootful\nHIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/wrong\n' >>"$CONF_DIR/hive.env"
-grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
+grep -vE '^[[:space:]]*HIVE_(DEPLOYMENT_|SELF_IMAGE)' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
 cp "$CONF_DIR/hive.yaml" "$TEST_TMP/operator.yaml"
 cp "$CONF_DIR/secrets/id_ed25519" "$TEST_TMP/operator.key"
 case_expect "one command migrates a pre-bridge rootless host" 0 "migration complete" reconcile migrate
@@ -898,7 +898,7 @@ check "runtime is repaired without duplicate conflicting lines" \
   '[ "$(grep -c HIVE_DEPLOYMENT_RUNTIME= "$CONF_DIR/hive.env")" = 1 ] && grep -qx HIVE_DEPLOYMENT_RUNTIME=podman-quadlet "$CONF_DIR/hive.env"'
 check "rootless mode and container-side request directory are repaired" \
   'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootless "$CONF_DIR/hive.env" && grep -qx HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/run/hive/upgrade-requests "$CONF_DIR/hive.env"'
-grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
+grep -vE '^[[:space:]]*HIVE_(DEPLOYMENT_|SELF_IMAGE)' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
 check "non-Hive env lines and token are byte-preserved" 'cmp -s "$TEST_TMP/unrelated.env" "$TEST_TMP/unrelated.after"'
 check "yaml and secrets are untouched" 'cmp -s "$TEST_TMP/operator.yaml" "$CONF_DIR/hive.yaml" && cmp -s "$TEST_TMP/operator.key" "$CONF_DIR/secrets/id_ed25519"'
 check "request directory is private and mapped in the Podman namespace" \

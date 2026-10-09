@@ -239,6 +239,12 @@ set_hive_env_var() {
       if (!wrote) { print line }
     }
   ' "$tmp" >"$out" || { rm -f "$tmp" "$out"; return 1; }
+  # Writing an unchanged file would still bump its mtime, which the idempotent
+  # paths (reconcile migrate) treat as a change.
+  if as_owner test -f "$file" && cmp -s "$tmp" "$out"; then
+    rm -f "$tmp" "$out"
+    return 0
+  fi
   as_owner install -Dm600 "$out" "$file"
   local rc=$?
   rm -f "$tmp" "$out"
