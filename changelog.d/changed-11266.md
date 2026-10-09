@@ -1,0 +1,1 @@
+- Replace the Obsidian setup button with a Knowledge Integrations modal for Obsidian and all connector types. (#11266)
