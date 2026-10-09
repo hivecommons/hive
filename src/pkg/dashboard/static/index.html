@@ -31252,7 +31252,7 @@ function burnAreaChart() {
           <div class="config-field" style="margin-bottom:var(--sp-4)">
             <label>Bob session prefix ${settingHelpMark('backend-support-tiers', 'tagging-bob-sessions-for-bobalytics', 'Bob session prefix', `Optional prefix for Bob --instance-id labels shown by Bobalytics. It does not rename Hive agents.`)}</label>
             <input type="text" id="gov-bob-session-prefix" value="${esc(sessionPrefix || '')}" placeholder="e.g. hive-" data-change-action="markDirty" data-arg0="bob" data-arg1="sessionPrefix" data-arg-types="s,s,w">
-            <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-1)">Default off. When set, bob agents without their own label report as <code>${esc((sessionPrefix || 'hive-') + 'scanner')}</code> in Bobalytics; their Hive name, tmux session, HOME, workdir, beads, claims and token buckets do not change.</div>
+            <div style="color:var(--muted);margin-top:var(--sp-1)">Default off. When set, bob agents without their own label report as <code>${esc((sessionPrefix || 'hive-') + 'scanner')}</code> in Bobalytics; their Hive name, tmux session, HOME, workdir, beads, claims and token buckets do not change.</div>
           </div>
           <div style="font-size:0.74rem;color:var(--muted);line-height:1.5">
             bob cannot complete browser sign-in inside a pod (its callback resolves to
@@ -33295,8 +33295,8 @@ function burnAreaChart() {
         <div class="config-field" id="cfg-bob-session-label-wrap" style="${_agentBackend === 'bob' ? '' : 'display:none'}">
           <label>Bob session label ${settingHelpMark('backend-support-tiers', 'tagging-bob-sessions-for-bobalytics', 'Bob session label', `What Bobalytics shows for this bob agent. This does not rename the Hive agent or change its tmux session, workdir, HOME, beads, claims or token buckets.`)}</label>
           <input type="text" id="cfg-bob-session-label" value="${esc(_bobSessionLabel)}" placeholder="${esc(_bobSessionPrefix ? _bobSessionPrefix + agentName : 'optional override')}" data-change-action="onBobSessionLabelChange" data-arg-types="t">
-          <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-1)">Bobalytics label only; the Hive agent identity remains <code>${esc(agentName)}</code>. Leave blank to use the global prefix, if any.</div>
-          <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-1)">Effective label: <code id="cfg-bob-session-effective">${esc(_bobEffectiveLabel)}</code></div>
+          <div style="color:var(--muted);margin-top:var(--sp-1)">Bobalytics label only; the Hive agent identity remains <code>${esc(agentName)}</code>. Leave blank to use the global prefix, if any.</div>
+          <div style="color:var(--muted);margin-top:var(--sp-1)">Effective label: <code id="cfg-bob-session-effective">${esc(_bobEffectiveLabel)}</code></div>
         </div>
         <div class="config-field-row">
           <div class="config-field">
