@@ -245,3 +245,84 @@ func TestCreateIssue_DirectCallDoesNotConsolidate(t *testing.T) {
 		t.Fatalf("created=%d comments=%v result=%+v, want a plain create", m.created, m.commentedOn, res)
 	}
 }
+
+// The #11239 failure: a stream of variants against one file, each citing the
+// shared file plus its own fixture, so no two file sets are equal. Once
+// sameComponentFoldThreshold open App-bot issues cite the shared path, the
+// next variant folds into the oldest instead of becoming another issue.
+func TestIssueRequestWatcher_FoldsSameComponentStream(t *testing.T) {
+	m := &consolidationMock{}
+	srv := consolidationMockServer(t, []openTwin{
+		{number: 63, author: testBot, title: "[sec-check] CDATA bypass", body: "scripts/lib/svg-active-content.mjs and test/fixtures/cdata.svg"},
+		{number: 61, author: testBot, title: "[sec-check] DOCTYPE bypass", body: "scripts/lib/svg-active-content.mjs and test/fixtures/doctype.svg"},
+		{number: 60, author: "maintainer", title: "svg gate rewrite", body: "scripts/lib/svg-active-content.mjs"},
+		{number: 58, author: testBot, title: "[sec-check] CSS escape bypass", body: "scripts/lib/svg-active-content.mjs and test/fixtures/escape.svg"},
+	}, m)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+
+	_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+		Repo: "o/r", Agent: "sec-check",
+		Title: "[sec-check] image-set() bypass",
+		Body:  "scripts/lib/svg-active-content.mjs:88 misses image-set(); see test/fixtures/imageset.svg",
+	})
+	if m.created != 0 {
+		t.Fatalf("created %d issues, want the variant folded into #58", m.created)
+	}
+	if len(m.commentedOn) != 1 || m.commentedOn[0] != 58 {
+		t.Fatalf("comments posted on %v, want exactly one on the oldest bot issue #58", m.commentedOn)
+	}
+	for _, want := range []string{"<!-- hive-finding-folded -->", "`scripts/lib/svg-active-content.mjs`", "3 open agent-filed issues", "image-set() bypass"} {
+		if !strings.Contains(m.commentBodies[0], want) {
+			t.Errorf("folded comment lacks %q:\n%s", want, m.commentBodies[0])
+		}
+	}
+	if !res.OK || !res.Consolidated || !res.AlreadyExisted || res.Number != 58 {
+		t.Errorf("result = %+v, want ok/consolidated naming #58", res)
+	}
+}
+
+// Below the threshold, or when the only shared path is ubiquitous, an
+// overlapping finding is ordinary and files normally.
+func TestIssueRequestWatcher_SameComponentBelowThresholdFiles(t *testing.T) {
+	cases := []struct {
+		name string
+		open []openTwin
+		body string
+	}{
+		{
+			name: "two open siblings",
+			open: []openTwin{
+				{number: 61, author: testBot, title: "[sec-check] a", body: "scripts/lib/gate.mjs and test/a.svg"},
+				{number: 58, author: testBot, title: "[sec-check] b", body: "scripts/lib/gate.mjs and test/b.svg"},
+			},
+			body: "scripts/lib/gate.mjs and test/c.svg",
+		},
+		{
+			name: "only ubiquitous path shared",
+			open: []openTwin{
+				{number: 63, author: testBot, title: "[scanner] a", body: "go.mod and pkg/a.go"},
+				{number: 61, author: testBot, title: "[scanner] b", body: "go.mod and pkg/b.go"},
+				{number: 58, author: testBot, title: "[scanner] c", body: "go.mod and pkg/c.go"},
+			},
+			body: "go.mod and pkg/d.go",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{}
+			srv := consolidationMockServer(t, tc.open, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "scanner", Title: "[scanner] new finding", Body: tc.body,
+			})
+			if m.created != 1 || len(m.commentedOn) != 0 || res.Consolidated {
+				t.Fatalf("created=%d comments=%v result=%+v, want a fresh issue", m.created, m.commentedOn, res)
+			}
+		})
+	}
+}
