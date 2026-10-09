@@ -307,6 +307,20 @@ func TestWatchdogQueuedWork(t *testing.T) {
 		}
 	})
 
+	t.Run("level-default advisory agent with cleared Config.Mode", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"supervisor": "claude"})
+		cfg := m.agents["supervisor"].Config
+		cfg.Mode = ""
+		m.agents["supervisor"].Config = cfg
+		m.project.ACMMLevel = 6
+
+		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}
+		n, known := fleet.QueuedWork("supervisor")
+		if !known || n != 0 {
+			t.Fatalf("QueuedWork = (%d, %v), want (0, true): the supervisor's level-default mode is ADVISORY", n, known)
+		}
+	})
+
 	t.Run("unknown agent is unknown", func(t *testing.T) {
 		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
 		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}

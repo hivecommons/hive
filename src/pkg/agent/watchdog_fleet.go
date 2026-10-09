@@ -152,7 +152,7 @@ func (f WatchdogFleet) QueuedWork(name string) (int, bool) {
 	}
 	f.M.mu.RLock()
 	agent, ok := f.M.agents[name]
-	advisory := ok && agentIsAdvisoryOnly(agent)
+	advisory := ok && agentIsAdvisoryOnly(agent, f.M.project.ACMMLevel)
 	f.M.mu.RUnlock()
 	if !ok {
 		return 0, false
@@ -165,11 +165,15 @@ func (f WatchdogFleet) QueuedWork(name string) (int, bool) {
 
 // agentIsAdvisoryOnly reports whether an agent is barred from opening issues
 // or PRs, and therefore cannot drain the queue no matter how deep it gets.
-// Both the explicit mode and the tools-derived mode are checked, because an
-// agent can reach the advisory tier either way.
-func agentIsAdvisoryOnly(agent *AgentProcess) bool {
+// The effective mode (explicit mode, else the ACMM level default) and the
+// tools-derived mode are both checked, because an agent can reach the advisory
+// tier either way and pack agents carry no explicit mode.
+func agentIsAdvisoryOnly(agent *AgentProcess, level int) bool {
 	const advisoryMode = "ADVISORY"
 	if strings.EqualFold(strings.TrimSpace(agent.Config.Mode), advisoryMode) {
+		return true
+	}
+	if effectiveAgentMode(agent.Name, strings.TrimSpace(agent.Config.Mode), level) == ModeAdvisory {
 		return true
 	}
 	return agent.Config.Tools.EffectiveMode() == advisoryMode
