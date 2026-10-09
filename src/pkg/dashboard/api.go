@@ -455,6 +455,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// loop counter and next action. Read-only; paged like /api/review/queue.
 	s.mux.HandleFunc("GET /api/review/pipeline", s.handleReviewPipeline)
 	s.mux.HandleFunc("POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human", s.handleReviewPipelineSendToHuman)
+	// Review evidence (#11061): the per-PR evidence bundle as sealed on disk,
+	// or zipped with the artifacts it references; owner/merger only.
+	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
+	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
