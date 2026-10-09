@@ -103,6 +103,10 @@ let window = {_lastStatus:{governor:{issues:30, prs:10}}};
 		jsFunc(t, html, "governorThresholdLabel"),
 		jsFunc(t, html, "governorThresholdHintText"),
 		jsFunc(t, html, "renderGovThresholds"),
+		"let settingHelpSeq = 0;",
+		jsFunc(t, html, "esc"),
+		jsFunc(t, html, "dashboardDocsHref"),
+		jsFunc(t, html, "settingHelpMark"),
 	}, "\n") + `
 function requireIncludes(name, body, needle) {
   if (!body.includes(needle)) throw new Error(name + ' missing ' + needle + ' in ' + body);
