@@ -8881,6 +8881,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
 	})
+	client.SetReviewBacklogRouting(func() github.ReviewBacklogRouting {
+		return reviewBacklogRouting(client, cfg, logger)
+	})
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
@@ -8894,6 +8897,22 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },
 	)
+}
+
+// reviewBacklogRouting resolves review.severity / review.backlog and the
+// backlog sink for the active work source (hivecommons/hive#11089). A
+// destination whose work source cannot be built falls back to GitHub issues;
+// the reason is logged so the operator can fix the work-source config.
+func reviewBacklogRouting(client *github.Client, cfg *config.Config, logger *slog.Logger) github.ReviewBacklogRouting {
+	ghToken := cfg.GitHub.Token
+	if ghToken == "" {
+		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	}
+	sink, err := worksource.NewReviewBacklogSink(cfg.Governor.WorkSource, cfg.Review.Backlog, client, ghToken, cfg.Project.Org, logger)
+	if err != nil && logger != nil {
+		logger.Warn("review backlog: destination unavailable, filing GitHub issues", "error", err)
+	}
+	return github.ReviewBacklogRouting{Severity: cfg.Review.Severity, Backlog: cfg.Review.Backlog, Sink: sink}
 }
 
 // installReviewBots installs classification.review_bots on a (possibly

@@ -93,6 +93,8 @@ When the relay accepts a review verdict, cited out-of-scope findings (`review_sc
 
 The PR receives one summary comment listing the backlog issues filed from that review. Filing is enabled by default and bounded by `review.max_out_of_scope_backlog_issues` (default `3`) per PR; set `review.out_of_scope_backlog_disabled: true` to opt out.
 
+Out-of-scope findings follow `review.backlog` (destination, labels, per-PR daily cap) and the fingerprint dedup described under [Backlog routing](#backlog-routing).
+
 ### Pipeline stages
 
 `GET /api/review/pipeline` places every review-queue PR in exactly one stage, derived by the pure `pkg/review/pipeline.Derive` from the verdict artifact, the review dispatch state, the `review-links.json` ledger, labels, the escalation ledger, CI state and merge state. Rules are checked in this order; the first match wins:
@@ -188,9 +190,17 @@ review:
 | `labels` | `[from-review]` | Applied to every item. |
 | `max_per_pr_per_day` | `10` | Cap per PR per day. |
 
-These settings record the choice only; routing below-the-line findings to the destination is tracked in hivecommons/hive#11089.
-
 **Precedence with `classification.review_bots.min_priority`.** One blocking line governs both the hive reviewer and external review bots. The bot threshold resolves in this order, first non-empty wins: `hive.yaml` `classification.review_bots.min_priority` (including an explicit `all`), then `hive-project.yaml` `classification.review_bots.min_priority`, then `review.severity.block_at`. With none set, every bot finding is routed. `block_at` is never copied into `min_priority`; clearing the explicit override hands control back to `block_at`. Invalid values fail config load with an error naming the field (for example `review.severity.block_at`, `review.backlog.project_column_id`).
+
+#### Backlog routing
+
+When `block_at` is set and `backlog_below` is on, every cited in-scope finding (with `file` and a positive `line`) whose priority is below the line is filed to the backlog when the relay accepts the verdict. Cited out-of-scope findings go to the same destination as before (see [Out-of-scope backlog filing](#out-of-scope-backlog-filing)).
+
+- **Destination.** `github_issue` files an issue in the PR's repo. `github_project` also adds that issue to the `governor.work_source.github_projects` project and sets its Status to `project_column_id`. `linear` files an issue on the Linear team mapped to the repo, in `linear_state` when set (an unknown state is an error naming it; label names the team lacks are skipped). `jira` files a Task in the first `work_source.jira.project_keys` project and moves it to `jira_status` when set. All three use the work-source credentials. If the destination's work source is not active or cannot be built, the item is filed as a GitHub issue with the `from-review` label added, and the hive logs why.
+- **Item body.** The finding title and summary, the PR link, a `file:line` permalink at the reviewed head SHA, the severity with its P-level, the fingerprint, and the line `filed by Hive review backlog`. `labels` are applied to every item.
+- **Fingerprint dedup.** Each finding is fingerprinted as `sha256(rule | path | snippet)`: the title, the cleaned file path and the summary, lower-cased with whitespace collapsed. Line numbers are left out, so the same nit at a shifted line still matches. `/data/review-backlog-issues.json` keeps a per-repo map of fingerprint → item. When another PR raises a known fingerprint, the hive comments on the existing item with the new PR link and permalink instead of filing a second one. The same PR raising it again changes nothing.
+- **Cap.** At most `max_per_pr_per_day` items are filed or updated per PR per UTC day. Findings over the cap are retried on the next review. Out-of-scope findings also stay within `review.max_out_of_scope_backlog_issues` per PR.
+- **Audit.** Each filing pass that wrote anything records one `review_backlog_batch_routed` entry on the PR (`destination`, `filed`, `updated`, `capped`). Each new GitHub issue also gets its own `review_backlog_issue_filed` entry. The PR receives one summary comment that lists the items filed.
 
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 

@@ -24,6 +24,10 @@ const (
 	// AuditActionReviewBacklogSummaryPosted is recorded when the one summary
 	// comment listing the filed backlog issues lands on the reviewed PR.
 	AuditActionReviewBacklogSummaryPosted = "review_backlog_summary_posted"
+	// AuditActionReviewBacklogBatchRouted is recorded once per backlog
+	// filing pass that filed or updated at least one item, in any
+	// destination (GitHub issue, Projects, Linear, Jira). Target is the PR.
+	AuditActionReviewBacklogBatchRouted = "review_backlog_batch_routed"
 	// AuditActionHiveLabelApplied is recorded when the hive applies an
 	// existing repo label to a PR: the human-decision label and the review
 	// priority labels (human_decision_label.go).
@@ -72,6 +76,7 @@ func InternalWriteAuditActions() []string {
 		AuditActionSignedCommitSkipNoted,
 		AuditActionReviewBacklogIssueFiled,
 		AuditActionReviewBacklogSummaryPosted,
+		AuditActionReviewBacklogBatchRouted,
 		AuditActionHiveLabelApplied,
 		AuditActionRecommendationsPosted,
 		AuditActionFleetReportPosted,

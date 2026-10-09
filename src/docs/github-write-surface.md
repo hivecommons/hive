@@ -132,8 +132,9 @@ writes no entry.
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
 | Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
-| Review backlog issues | `review_backlog.go` | yes (`review_backlog_issue_filed`, one per issue, with `pr`, `perspective`, `reused`) | yes / backlog issue number |
+| Review backlog issues | `review_backlog.go` | yes (`review_backlog_issue_filed`, one per GitHub issue, with `pr`, `perspective`, `reused`, `destination`) | yes / backlog issue number |
 | Review backlog summary comment | `review_backlog.go` | yes (`review_backlog_summary_posted`) | yes / PR number |
+| Review backlog routing batch | `review_backlog.go` | yes (`review_backlog_batch_routed`, one per filing pass, with `destination`, `filed`, `updated`, `capped`) | yes / PR number |
 | Human-decision and review-priority labels | `human_decision_label.go` | yes (`hive_label_applied`, with `label`) | yes / PR number |
 | Recommendations issue | `recommendations.go` | yes (`recommendations_posted`, `outcome=created` or `updated`) | yes / issue number |
 | Fleet report issue | `fleet_report.go` | yes (`fleet_report_posted`, `outcome=created` or `commented`) | yes / issue number |

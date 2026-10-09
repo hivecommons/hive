@@ -84,8 +84,8 @@ const DefaultReviewBacklogLabel = "from-review"
 const DefaultReviewBacklogMaxPerPRPerDay = 10
 
 // ReviewBacklogConfig is `review.backlog` (hivecommons/hive#11088): where
-// below-the-line findings are filed. This block only records the choice; the
-// routing itself is hivecommons/hive#11089.
+// below-the-line findings are filed. The review backlog filer in pkg/github
+// routes them there (hivecommons/hive#11089).
 type ReviewBacklogConfig struct {
 	// Destination is github_issue (default), github_project, linear or jira.
 	// linear and jira only take effect when governor.work_source.type names
