@@ -312,6 +312,29 @@ func TestPrefilterTrustedAuthorPRHeldLabel(t *testing.T) {
 	}
 }
 
+func TestPrefilterTrustedAuthorPRIgnoresSentinelExcludedLabel(t *testing.T) {
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	engine := New(client, Options{
+		SentinelLabel: func() string { return "sentinel-alert" },
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			return TrustedAuthorDecision{Allowed: true, Role: requireRole}
+		},
+	})
+	policy := TrustedAuthorPolicy{
+		RequireRole:   "merger",
+		ExcludeLabels: map[string]bool{"sentinel-alert": true},
+	}
+	pr := &gh.PullRequest{
+		State:  gh.Ptr("open"),
+		User:   &gh.User{Login: gh.Ptr("alice")},
+		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
+		Labels: []*gh.Label{{Name: gh.Ptr("sentinel-alert")}},
+	}
+	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want eligible", got)
+	}
+}
+
 func TestTrustedAuthorGitHubSignalErrorsAndEdges(t *testing.T) {
 	page := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

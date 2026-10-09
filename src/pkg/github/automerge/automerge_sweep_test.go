@@ -402,6 +402,82 @@ func (b *recordingBoundary) Execute(ctx context.Context, claim effects.Claim, ef
 	return effect(ctx)
 }
 
+func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":           7,
+			"merged":           false,
+			"merge_commit_sha": "ignored-for-open-pr",
+		})
+	}))
+	defer api.Close()
+
+	boundary := &reconcilingBoundary{needsReconciliationOnce: true}
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	engine := New(client, Options{MutationBoundary: boundary})
+	claim := effects.Claim{
+		Repo:   "acme/widget",
+		Kind:   effects.KindPullRequestMerge,
+		Target: "7",
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
+	}
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+		return effects.Result{Provenance: "merge-sha"}, nil
+	})
+	if err != nil {
+		t.Fatalf("executeMergeEffect returned error: %v", err)
+	}
+	if out.Provenance != "merge-sha" {
+		t.Fatalf("provenance = %q, want merge-sha", out.Provenance)
+	}
+	if boundary.executes != 2 {
+		t.Fatalf("execute count = %d, want retry after reconciliation", boundary.executes)
+	}
+	if len(boundary.reconciled) != 1 || boundary.reconciled[0].Applied || boundary.reconciled[0].Provenance != "" {
+		t.Fatalf("reconciled states = %#v, want one NotApplied state", boundary.reconciled)
+	}
+}
+
+func TestReconcileOpenPRMergeEffectMarksNotApplied(t *testing.T) {
+	boundary := &reconcilingBoundary{}
+	engine := New(nil, Options{MutationBoundary: boundary})
+	claim := effects.Claim{
+		Repo:   "acme/widget",
+		Kind:   effects.KindPullRequestMerge,
+		Target: "7",
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "trusted-author"},
+	}
+	engine.reconcileOpenPRMergeEffect(context.Background(), claim, "acme", "widget", 7)
+	if len(boundary.reconciled) != 1 || boundary.reconciled[0].Applied || boundary.reconciled[0].Provenance != "" {
+		t.Fatalf("reconciled states = %#v, want one NotApplied state", boundary.reconciled)
+	}
+}
+
+type reconcilingBoundary struct {
+	needsReconciliationOnce bool
+	executes                int
+	reconciled              []effects.ExternalState
+}
+
+func (b *reconcilingBoundary) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	b.executes++
+	if b.needsReconciliationOnce {
+		b.needsReconciliationOnce = false
+		return effects.Result{}, effects.ErrNeedsReconciliation
+	}
+	return effect(ctx)
+}
+
+func (b *reconcilingBoundary) Reconcile(ctx context.Context, claim effects.Claim, state effects.ExternalState) error {
+	b.reconciled = append(b.reconciled, state)
+	return nil
+}
+
 func TestSweepQueuedAutoMergesIgnoresForgedNonAppQueueApproval(t *testing.T) {
 	var merged []int
 	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{{
