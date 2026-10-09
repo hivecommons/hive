@@ -145,8 +145,9 @@ func TestHandleCompliancePostureBodyAndHistory(t *testing.T) {
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	rr = compliancePostureRequest(t, s, http.MethodGet, "/api/compliance/posture?since="+future, config.RoleOwner, true)
 	resp = decodePosture(t, rr)
-	if resp.History == nil || len(resp.History) != 0 {
-		t.Fatalf("future since: history = %v, want empty slice", resp.History)
+	// history is omitempty on the wire, so an empty pass decodes as nil.
+	if len(resp.History) != 0 || resp.Truncated {
+		t.Fatalf("future since: history = %v (truncated=%v), want none", resp.History, resp.Truncated)
 	}
 
 	rr = compliancePostureRequest(t, s, http.MethodGet, "/api/compliance/posture?since=yesterday", config.RoleOwner, true)
