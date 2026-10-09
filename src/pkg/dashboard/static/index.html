@@ -25818,11 +25818,11 @@ function burnAreaChart() {
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
       hiveRememberModalOpen(overlay);
-      overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title" style="width:min(920px, calc(100vw - 32px));max-height:calc(100vh - 32px);display:flex;flex-direction:column">
+      overlay.innerHTML = `<div class="hive-dialog hive-export-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title">
         <div id="hive-export-title" class="hive-dialog-title"></div>
-        <div class="hive-dialog-body long" style="display:flex;flex-direction:column;gap:8px;min-height:0">
+        <div class="hive-dialog-body long hive-export-body">
           <div class="cmp-note hive-export-note"></div>
-          <textarea class="hive-export-text" readonly spellcheck="false" style="width:100%;min-height:360px;max-height:60vh;resize:vertical;font-family:var(--font-mono);font-size:var(--fs-sm);line-height:1.4;background:var(--terminal-bg);color:var(--terminal-fg);border:1px solid var(--terminal-line);border-radius:var(--r);padding:10px;white-space:pre"></textarea>
+          <textarea class="hive-export-text" readonly spellcheck="false"></textarea>
         </div>
         <div class="hive-dialog-buttons">
           <a class="hv-btn btn-secondary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
