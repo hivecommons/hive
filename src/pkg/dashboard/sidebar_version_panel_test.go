@@ -141,6 +141,10 @@ const fallback = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1',
 if (!fallback.includes('candidate (v5)')) throw new Error('tracking fallback missing: '+fallback);
 const empty = renderVersionDetails({hash:'abcdef1234567890', short:'abcdef1', tracking:'unknown', autoUpdate:{state:'unknown'}}, {deliveryLabel:''});
 if (!empty.includes('>—</strong>')) throw new Error('fallback dash missing: '+empty);
+const building = {hash:'aaa1111', short:'aaa1111', stableV4ImageReady:false, target:{source:'branch', branch:'v6', sha:'bbb2222', short:'bbb2222', resolved:true}, autoUpdate:{state:'behind'}};
+if (versionStatusSummary(building, 'bbb2222') !== 'queued (v6 building)') throw new Error('building status changed: '+versionStatusSummary(building, 'bbb2222'));
+const stuck = versionStatusSummary(Object.assign({}, building, {deployment:{runtime:'unknown', upgradeSupported:false}}), 'bbb2222');
+if (stuck !== 'manual update required (unknown); v6 building') throw new Error('unsupported deployment must not report only the build: '+stuck);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

@@ -26,8 +26,10 @@ hand.
 
 ## Upgrading an existing Podman install
 
-From a current `v5` checkout containing the host request bridge, run **one**
-command as the account that owns the install (choose the matching manager):
+From an up-to-date `v5` or `v6` checkout (both branches carry the host request
+bridge assets), run **one** command as the account that owns the install
+(choose the matching manager). An older checkout, such as one still on `v4`,
+lacks these assets: update it (`git switch v5 && git pull`, or `v6`) first.
 
 ```sh
 # Rootless: run as the user who installed Hive, not with sudo.

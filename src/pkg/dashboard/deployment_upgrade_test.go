@@ -75,6 +75,8 @@ func TestDetectDeploymentFallsBackToKubernetesOnlyWithServiceAccountEvidence(t *
 	kubernetesServiceAccountNamespacePath = filepath.Join(t.TempDir(), "missing")
 	if got := srv.detectDeployment(); got.Runtime != deploymentRuntimeUnknown || got.UpgradeSupported {
 		t.Fatalf("detectDeployment without service account evidence = %+v, want unknown unsupported", got)
+	} else if !strings.Contains(got.Reason, "bin/hive-podman-update.sh reconcile migrate --rootless") || strings.Contains(got.Reason, "hive-podman-setup.sh") {
+		t.Fatalf("unknown-runtime reason = %q, want the reconcile migrate command and not setup", got.Reason)
 	}
 
 	dir := t.TempDir()

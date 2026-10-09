@@ -55,7 +55,7 @@ func (s *Server) detectDeployment() deploymentInfo {
 	if s != nil && s.deps != nil {
 		cfg = s.deps.Config
 	}
-	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured; if this is a Podman/Quadlet host, upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful), or rerun bin/hive-podman-setup.sh to add HIVE_DEPLOYMENT_RUNTIME"}
+	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured; if this is a Podman/Quadlet host, upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful), or enable dashboard upgrades by running `bin/hive-podman-update.sh reconcile migrate --rootless` (or `--rootful`) from an up-to-date v5 or v6 checkout"}
 	rawRuntime := firstNonEmpty(os.Getenv("HIVE_DEPLOYMENT_RUNTIME"), deploymentConfigValue(cfg, "runtime"))
 	if rawRuntime != "" {
 		switch normalizeDeploymentRuntime(rawRuntime) {
