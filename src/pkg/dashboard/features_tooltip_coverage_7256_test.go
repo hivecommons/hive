@@ -52,7 +52,7 @@ func extractJSFunction(t *testing.T, html, name string) string {
 }
 
 // TestFeaturesTabControlsAllHaveTooltips enforces the invariant behind #7256:
-// every labelled control on Settings -> Features must carry an (i) help
+// every labelled control on Settings -> Features must carry a ? help
 // affordance.
 //
 // The Features tab is a grab-bag of unrelated, non-obvious capabilities --
@@ -75,7 +75,7 @@ func TestFeaturesTabControlsAllHaveTooltips(t *testing.T) {
 		body := extractJSFunction(t, html, fn)
 		for _, control := range featuresTabControl.FindAllString(body, -1) {
 			total++
-			if strings.Contains(control, "config-info") {
+			if strings.Contains(control, "settingHelpMark(") {
 				continue
 			}
 			text := strings.TrimSpace(featuresTagPattern.ReplaceAllString(control, ""))
@@ -94,9 +94,9 @@ func TestFeaturesTabControlsAllHaveTooltips(t *testing.T) {
 	}
 
 	if len(missing) > 0 {
-		t.Errorf("%d Features-tab control(s) have no (i) tooltip (#7256). "+
+		t.Errorf("%d Features-tab control(s) have no ? help mark (#7256). "+
 			"Every control on this tab needs one -- add a "+
-			`<span class="config-info">i<span class="config-tooltip">...</span></span> `+
+			"`${settingHelpMark(page, anchor, label, `...`)}` "+
 			"inside the label, sourced from the config doc-comment:\n  %s",
 			len(missing), strings.Join(missing, "\n  "))
 	}
@@ -166,12 +166,17 @@ func controlTooltip(t *testing.T, body, label string) string {
 		t.Fatalf("control %q not found on the Features tab", label)
 	}
 	rest := body[idx:]
-	open := strings.Index(rest, `<span class="config-tooltip">`)
+	open := strings.Index(rest, "settingHelpMark(")
 	if open < 0 {
 		t.Fatalf("control %q has no tooltip", label)
 	}
-	rest = rest[open+len(`<span class="config-tooltip">`):]
-	end := strings.Index(rest, "</span>")
+	rest = rest[open:]
+	tip := strings.Index(rest, ", `")
+	if tip < 0 {
+		t.Fatalf("control %q has no tooltip text", label)
+	}
+	rest = rest[tip+len(", `"):]
+	end := strings.Index(rest, "`)}")
 	if end < 0 {
 		t.Fatalf("unterminated tooltip on control %q", label)
 	}

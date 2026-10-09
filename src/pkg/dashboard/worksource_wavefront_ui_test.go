@@ -15,6 +15,9 @@ func TestWorkSourceSettingsRendersWavefrontConfig(t *testing.T) {
 	script := `const assert = require('node:assert/strict');
 const _configState = { data: { agents: [] }, dirty: {} };
 ` + jsFunc(t, html, "esc") + `
+let settingHelpSeq = 0;
+` + jsFunc(t, html, "dashboardDocsHref") + `
+` + jsFunc(t, html, "settingHelpMark") + `
 ` + jsFunc(t, html, "wsWavefrontSource") + `
 ` + jsFunc(t, html, "wsWavefrontErrors") + `
 ` + jsFunc(t, html, "renderGovWorkSource") + `
