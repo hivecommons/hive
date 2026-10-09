@@ -29908,6 +29908,18 @@ function burnAreaChart() {
         // client no longer second-guesses it.
     }
 
+    function focusAuthorizedUsersAccessList() {
+      const el = document.getElementById('access-users-list') || document.getElementById('access-users-status');
+      if (!el) return;
+      if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+    }
+
+    function openTrustedAuthorSecurityAccess() {
+      switchConfigTab('Security');
+      requestAnimationFrame(() => setTimeout(focusAuthorizedUsersAccessList, 0));
+    }
+
     function switchConfigTab(tabId) {
       _configState.tab = tabId;
       const configKey = _configState.type === 'governor' ? '__governor__' : _configState.agent;
@@ -30824,7 +30836,7 @@ function burnAreaChart() {
           view is read-only.
         </div>
         <div id="access-users-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)"></div>
-        <div id="access-users-list"><div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">Loading…</div></div>`;
+        <div id="access-users-list" tabindex="-1"><div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">Loading…</div></div>`;
     }
 
     async function loadAuthorizedUsers() {
@@ -36916,6 +36928,7 @@ function burnAreaChart() {
               <div class="config-field">
                 <label for="am-trusted-authors-require-role">Required author role</label>
                 <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
+                <p class="am-trusted-authors-note">Who holds these roles is defined by Authorized users on the Security tab; hosted hives manage read, read-write, merger, and owner roles on the hub's Manage Access screen — <a class="text-accent" href="#" data-action="openTrustedAuthorSecurityAccess" data-prevent="1">Open Security tab</a>.</p>
               </div>
               <div class="config-field">
                 <label>GitHub permission check ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'GitHub permission check', `When on (the default), GitHub must also report push, maintain, or admin permission for the author on the repository.`)}</label>
