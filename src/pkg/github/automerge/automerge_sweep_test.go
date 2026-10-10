@@ -306,7 +306,7 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 		{name: "nil", want: "missing-head-sha"},
 		{name: "closed", pr: pr(func(p *gh.PullRequest) { p.State = gh.Ptr("closed") }), want: "closed"},
 		{name: "draft", pr: pr(func(p *gh.PullRequest) { p.Draft = gh.Ptr(true) }), want: "draft"},
-		{name: "excluded", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}} }), want: "excluded-label:needs-human"},
+		{name: "excluded", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}} }), want: "label:needs-human"},
 		{name: "missing head", pr: pr(func(p *gh.PullRequest) { p.Head = nil }), want: "missing-head-sha"},
 		{name: "role", pr: pr(func(p *gh.PullRequest) { p.User = &gh.User{Login: gh.Ptr("bob")} }), want: "untrusted-author-role"},
 		{name: "ok", pr: pr(), want: ""},
