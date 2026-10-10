@@ -72,10 +72,18 @@ lower() { tr '[:upper:]' '[:lower:]'; }
 # Matches the identity shapes GitHub uses for automation. Kept deliberately
 # broad: a false positive costs a contributor one trailer edit on an unmerged
 # branch, a false negative costs a permanent waiver on protected history.
+#
+# hive-release@hive.kubestellar.io is the address cli-pin-bump.yml,
+# v5-topup.yml and v6-topup.yml commit as (`hive-release[bot]`). It is not a
+# registered GitHub account, so the commits API returns author.login=null for
+# it and this gate runs its degraded path — which only fails a sign-off this
+# function recognises. Missing it let the squashes of #11407 and #11408 land as
+# mismatched-signoffs (#11412) without this gate ever regressing.
 is_bot_identity() {
   case "$(printf '%s' "$1" | lower)" in
     *'[bot]'*|*copilot@users.noreply.github.com|*'+copilot@users.noreply.github.com'| \
-    *github-actions*|*'hive-release-bot'*|actions@github.com|actions-user|*noreply@anthropic.com)
+    *github-actions*|*'hive-release-bot'*|actions@github.com|actions-user|*noreply@anthropic.com| \
+    hive-release@hive.kubestellar.io)
       return 0
       ;;
     *) return 1 ;;
@@ -224,6 +232,12 @@ while IFS= read -r sha; do
     if signoff_is_pr_author "$signoff_email"; then
       author_signed=1
     elif is_bot_identity "$signoff_email"; then
+      any_bot=1
+    # A bot signing off as its own author address is a bot sign-off even when
+    # the address itself is unfamiliar: the author NAME (`foo[bot]`) is what
+    # identifies it. Only the sign-off that IS the author's email is read this
+    # way, so a human's sign-off on a bot-authored commit is unaffected.
+    elif [ "$signoff_email" = "$author_lc" ] && is_bot_identity "$author_name"; then
       any_bot=1
     fi
   done <<EOF
