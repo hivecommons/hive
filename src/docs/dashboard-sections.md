@@ -399,7 +399,7 @@ Review Pipeline shows pull requests by stage first; Review Queue lists the same 
 
 ## Review Pipeline
 
-The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.
+Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.
 
 **What it tells you.** Each column is one stage of the review loop: unreviewed, reviewing, changes requested, fixing, waiting for a human, approved, merged and abandoned. Each card shows the pull request, who has reviewed it, how many findings were raised at each severity and what should happen next.
 
@@ -411,7 +411,7 @@ The same open pull requests laid out as a board, one column per review stage, wi
 
 ## Queue
 
-Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.
+Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.
 
 **What it tells you.** It ranks open pull requests from all your repositories in one list, whoever wrote them.
 
