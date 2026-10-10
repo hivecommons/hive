@@ -996,10 +996,12 @@ type HubServer struct {
 	// goroutine — which outlives test servers, since nothing closes saveCh —
 	// only ever sees its own path and cannot race a test redirecting the
 	// global for the next server (the TestLoadRegistry -race failure).
-	registryPath string
-	hubGitHash   string
-	hubGitBranch string
-	hubSecret    string
+	registryPath   string
+	hubGitHash     string
+	hubGitBranch   string
+	hubSecret      string
+	myHivesCacheMu sync.Mutex
+	myHivesCache   map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is

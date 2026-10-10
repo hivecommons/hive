@@ -293,13 +293,180 @@ type MyHiveEntry struct {
 // transient tooltip into a scrolling log. "See all" opens the full modal.
 const myHivesRecentEventCount = 3
 
+const (
+	myHivesSnapshotTTL          = 5 * time.Second
+	myHivesSnapshotMaxStale     = 30 * time.Second
+	myHivesSnapshotMaxEntries   = 256
+	myHivesServerTimingCacheHit = "myhives-cache-hit"
+	myHivesServerTimingStale    = "myhives-cache-stale"
+	myHivesServerTimingMiss     = "myhives-cache-miss"
+	myHivesServerTimingBuild    = "myhives-build"
+	myHivesServerTimingTotal    = "myhives-total"
+)
+
+type myHivesSnapshot struct {
+	body       []byte
+	storedAt   time.Time
+	refreshing bool
+}
+
 func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	username := s.getAuthUser(r)
 	if username == "" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
+	cacheKey := myHivesSnapshotKey(username, r.URL.RawQuery)
+	if body, age, ok := s.myHivesCachedResponse(cacheKey, false); ok {
+		w.Header().Set("Server-Timing", serverTimingHeader(serverTimingMetric{name: myHivesServerTimingCacheHit, duration: age}))
+		writeMyHivesJSON(w, body)
+		return
+	}
+	if body, age, ok := s.myHivesCachedResponse(cacheKey, true); ok {
+		w.Header().Set("Server-Timing", serverTimingHeader(serverTimingMetric{name: myHivesServerTimingStale, duration: age}))
+		s.refreshMyHivesSnapshot(cacheKey, username, r.URL.Query())
+		writeMyHivesJSON(w, body)
+		return
+	}
+
+	buildStart := time.Now()
+	body, err := s.buildMyHivesResponse(username, r.URL.Query())
+	if err != nil {
+		s.logger.Warn("handleMyHives: encode failed", "user", username, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"failed to encode hives"}`))
+		return
+	}
+	s.storeMyHivesSnapshot(cacheKey, body)
+	w.Header().Set("Server-Timing", serverTimingHeader(
+		serverTimingMetric{name: myHivesServerTimingMiss},
+		serverTimingMetric{name: myHivesServerTimingBuild, duration: time.Since(buildStart)},
+		serverTimingMetric{name: myHivesServerTimingTotal, duration: time.Since(start)},
+	))
+	writeMyHivesJSON(w, body)
+}
+
+func myHivesSnapshotKey(username, rawQuery string) string {
+	return username + "\x00" + rawQuery
+}
+
+func (s *HubServer) myHivesCachedResponse(key string, allowStale bool) ([]byte, time.Duration, bool) {
+	s.myHivesCacheMu.Lock()
+	defer s.myHivesCacheMu.Unlock()
+	snap, ok := s.myHivesCache[key]
+	if !ok || len(snap.body) == 0 {
+		return nil, 0, false
+	}
+	age := time.Since(snap.storedAt)
+	if (!allowStale && age > myHivesSnapshotTTL) || age > myHivesSnapshotMaxStale {
+		return nil, age, false
+	}
+	body := append([]byte(nil), snap.body...)
+	return body, age, true
+}
+
+func (s *HubServer) storeMyHivesSnapshot(key string, body []byte) {
+	s.myHivesCacheMu.Lock()
+	defer s.myHivesCacheMu.Unlock()
+	if s.myHivesCache == nil {
+		s.myHivesCache = make(map[string]myHivesSnapshot)
+	}
+	s.evictMyHivesSnapshotsLocked()
+	s.myHivesCache[key] = myHivesSnapshot{body: append([]byte(nil), body...), storedAt: time.Now()}
+}
+
+func (s *HubServer) evictMyHivesSnapshotsLocked() {
+	if len(s.myHivesCache) < myHivesSnapshotMaxEntries {
+		return
+	}
+	now := time.Now()
+	for key, snap := range s.myHivesCache {
+		if now.Sub(snap.storedAt) > myHivesSnapshotMaxStale {
+			delete(s.myHivesCache, key)
+		}
+	}
+	for len(s.myHivesCache) >= myHivesSnapshotMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for key, snap := range s.myHivesCache {
+			if oldestKey == "" || snap.storedAt.Before(oldest) {
+				oldestKey = key
+				oldest = snap.storedAt
+			}
+		}
+		delete(s.myHivesCache, oldestKey)
+	}
+}
+
+func (s *HubServer) refreshMyHivesSnapshot(key, username string, query url.Values) {
+	s.myHivesCacheMu.Lock()
+	if s.myHivesCache == nil {
+		s.myHivesCache = make(map[string]myHivesSnapshot)
+	}
+	snap := s.myHivesCache[key]
+	if snap.refreshing {
+		s.myHivesCacheMu.Unlock()
+		return
+	}
+	snap.refreshing = true
+	s.myHivesCache[key] = snap
+	s.myHivesCacheMu.Unlock()
+
+	queryCopy := cloneURLValues(query)
+	go func() {
+		body, err := s.buildMyHivesResponse(username, queryCopy)
+		s.myHivesCacheMu.Lock()
+		defer s.myHivesCacheMu.Unlock()
+		if err != nil {
+			if cur, ok := s.myHivesCache[key]; ok {
+				cur.refreshing = false
+				s.myHivesCache[key] = cur
+			}
+			if s.logger != nil {
+				s.logger.Warn("handleMyHives: background refresh failed", "user", username, "error", err)
+			}
+			return
+		}
+		s.evictMyHivesSnapshotsLocked()
+		s.myHivesCache[key] = myHivesSnapshot{body: append([]byte(nil), body...), storedAt: time.Now()}
+	}()
+}
+
+func cloneURLValues(in url.Values) url.Values {
+	out := make(url.Values, len(in))
+	for k, vals := range in {
+		out[k] = append([]string(nil), vals...)
+	}
+	return out
+}
+
+func writeMyHivesJSON(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
+}
+
+type serverTimingMetric struct {
+	name     string
+	duration time.Duration
+}
+
+func serverTimingHeader(metrics ...serverTimingMetric) string {
+	var b strings.Builder
+	for i, metric := range metrics {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(metric.name)
+		b.WriteString(";dur=")
+		b.WriteString(fmt.Sprintf("%.1f", float64(metric.duration.Microseconds())/1000))
+	}
+	return b.String()
+}
+
+func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values) ([]byte, error) {
 	user := ensureSaaSUser(username)
 
 	s.mu.Lock()
@@ -870,7 +1037,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// page is a wire-level view, not a different fleet. No query params →
 	// full set, exactly as before.
 	hivesView := result
-	query := parseMyHivesQuery(r.URL.Query())
+	query := parseMyHivesQuery(queryValues)
 	matched := len(result)
 	if query.active() {
 		hivesView, matched = applyMyHivesQuery(result, query)
@@ -944,8 +1111,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		resp["live_engaged_users"] = s.engagedHiveUsernames()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	return json.Marshal(resp)
 }
 
 func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
