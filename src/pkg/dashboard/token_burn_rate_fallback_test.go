@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// A quiet hive leaves too few token-total changes in the sparkline history for
-// computeHourlyBurnRates() to bucket, so it returns null. The Tokens card's
-// headline tok/hr must fall back to the window average in that state: when it
-// dereferenced the null instead, render() threw before renderRepos() and every
-// later section stopped repainting until a full page reload.
+// Short or flat token history (a fresh page, an idle hive) gives
+// computeHourlyBurnRates() too little to bucket, so it returns null. The Tokens
+// card's headline tok/hr must fall back to the window average in that state:
+// when it dereferenced the null instead, render() threw before renderRepos(),
+// so no section painted after Tokens repainted while the rates stayed null.
 func TestTokenBurnHeadlineFallsBackWhenHistoryIsFlat(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
