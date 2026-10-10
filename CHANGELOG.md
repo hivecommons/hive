@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.161.0)
+
+### Added
+
+- The dashboard Review Queue now tags a PR in the supersession sweep's grace window as `superseded`, links the merged PR that superseded it and shows when the sweep will close it. Owners can **Close now** (same comment, `hive/superseded` label and close as the sweep) or **Keep open**, which adds `hive/keep-open`; the sweep never auto-closes a PR carrying that label (`POST /api/review/queue/{owner}/{repo}/{number}/superseded/close|keep-open`, #11430).
+
+### Fixed
+
+- Automerge sweep now blocks on a completed failing check-run or status when the base branch requires no status checks, instead of deferring to a merge endpoint that enforces nothing (hivecommons.github.io #162/#164 regression, #11477).
+
 ## 2026-10-10 (v5.160.1)
 
 ### Fixed
