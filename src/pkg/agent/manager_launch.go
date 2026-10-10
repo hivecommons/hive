@@ -171,12 +171,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if launchCmdOverride != "" {
 		launchCmd = launchCmdOverride
 	} else if agent.Config.Tools != nil {
-		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference, effort)
+		launchCmd = toolRulesToLaunchCmdWithBobSession(binary, model, backend, agent.Config.Tools, isInference, effort, bobSessionLabel(agent, m.project.BobSessionPrefix))
 		if agent.Config.Tools != nil && agent.Config.Mode != "" {
 			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
 		}
 	} else {
-		launchCmd = backendLaunchCmd(binary, model, backend, isInference, effort)
+		launchCmd = backendLaunchCmdWithBobSession(binary, model, backend, isInference, effort, bobSessionLabel(agent, m.project.BobSessionPrefix))
 	}
 
 	launchScope := m.launchScopeForAgentLocked(agent, agent.launchGen+1)
@@ -793,27 +793,47 @@ func hostStateBypassRequested(value string) bool {
 // error ("unexpected token `)'"), so bob never started on any hive. `sh -c`
 // is a simple command, so the assignments apply to it and are inherited by
 // the exec'd bob.
-func bobLaunchCmd(binary string) string {
+func bobLaunchCmd(binary string, sessionLabels ...string) string {
+	sessionLabel := ""
+	if len(sessionLabels) > 0 {
+		sessionLabel = strings.TrimSpace(sessionLabels[0])
+	}
 	script := fmt.Sprintf(`case "$(%s --version 2>/dev/null | sed -n 1p)" in 1.*) exec %s ;; *) exec %s ;; esac`,
 		binary,
-		bobLaunchCmdV1(binary),
-		bobLaunchCmdV2(binary))
+		bobLaunchCmdV1(binary, sessionLabel),
+		bobLaunchCmdV2(binary, sessionLabel))
 	return "sh -c " + shellQuote(script)
 }
 
-func bobLaunchCmdV1(binary string) string {
-	return fmt.Sprintf("%s --accept-license %s %s %s %s %s",
+func bobLaunchCmdV1(binary string, sessionLabels ...string) string {
+	sessionLabel := ""
+	if len(sessionLabels) > 0 {
+		sessionLabel = strings.TrimSpace(sessionLabels[0])
+	}
+	cmd := fmt.Sprintf("%s --accept-license %s %s %s %s %s",
 		binary,
 		config.BobAuthMethodFlag, config.BobAuthTypeAPIKey,
 		config.BobApprovalModeFlag, config.BobApprovalModeYolo,
 		config.BobTrustFlag)
+	if sessionLabel != "" {
+		cmd += " --instance-id " + shellQuote(sessionLabel)
+	}
+	return cmd
 }
 
-func bobLaunchCmdV2(binary string) string {
-	return fmt.Sprintf("%s chat --accept-license %s %s",
+func bobLaunchCmdV2(binary string, sessionLabels ...string) string {
+	sessionLabel := ""
+	if len(sessionLabels) > 0 {
+		sessionLabel = strings.TrimSpace(sessionLabels[0])
+	}
+	cmd := fmt.Sprintf("%s chat --accept-license %s %s",
 		binary,
 		config.BobAutoApproveFlag,
 		config.BobTrustFlag)
+	if sessionLabel != "" {
+		cmd += " --instance-id " + shellQuote(sessionLabel)
+	}
+	return cmd
 }
 
 // toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
@@ -821,6 +841,10 @@ func bobLaunchCmdV2(binary string) string {
 // effort control consume it (see codexEffortFlag / agyLaunchEffort /
 // claudeEffortFlag).
 func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort string) string {
+	return toolRulesToLaunchCmdWithBobSession(binary, model, backend, tools, isInference, effort, "")
+}
+
+func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort, bobLabel string) string {
 	denies := tools.DenyPatterns()
 
 	switch backend {
@@ -832,7 +856,7 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		// A bob agent with tools configured therefore launches identically to
 		// one without; the deny patterns are silently inapplicable, exactly as
 		// they already were before this branch existed.
-		return bobLaunchCmd(binary)
+		return bobLaunchCmd(binary, bobLabel)
 	case "claude":
 		bareFlag := ""
 		if isInference {
@@ -898,6 +922,10 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 // effort control consume it (see codexEffortFlag / agyLaunchEffort /
 // claudeEffortFlag).
 func backendLaunchCmd(binary, model, backend string, isInference bool, effort string) string {
+	return backendLaunchCmdWithBobSession(binary, model, backend, isInference, effort, "")
+}
+
+func backendLaunchCmdWithBobSession(binary, model, backend string, isInference bool, effort, bobLabel string) string {
 	var launchCmd string
 	switch backend {
 	case "claude":
@@ -949,7 +977,7 @@ func backendLaunchCmd(binary, model, backend string, isInference bool, effort st
 			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
 		}
 	case bobBackend:
-		launchCmd = bobLaunchCmd(binary)
+		launchCmd = bobLaunchCmd(binary, bobLabel)
 	case codexBackend:
 		// Codex takes the model as a CLI flag like the others. Without this
 		// case codex fell to the bare-binary default below, so a dashboard

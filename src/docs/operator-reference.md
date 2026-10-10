@@ -127,6 +127,9 @@ Top-level YAML keys accepted by `config.Config`:
 | `quality` | Optional quality-lane capabilities. | `formal: true` enables agent-authored Spin models only at ACMM L5/L6; see [Formal verification](formal-verification.md). |
 | `runs` | Long-running run settings: `runs.external.flue`, the report-only external-execution binding pilot, and `runs.external.omp`, the OMP workbench host behind the same adapter. | Both default OFF and independent. `enabled: true` with no `mode` runs in `shadow` (persists admissions, observes, never starts external work); `mode: report-only` dispatches. Flue dispatches to a runtime at `endpoint` pinned to `workflow_version` and needs a build with the `extwork_flue` tag; OMP offers work over the contributor relay to a workbench peer declaring `ext-exec/omp` whose declared version matches `workflow_version`, and needs the `extwork_omp` tag. Neither host receives a repository credential, dashboard token, or publication tool; OMP (tier T3) is additionally refused any write-capable stage. See [External workflow admission](design/external-workflow-admission.md). |
 | `auto_merge` | The App self-merge sweep: whether and how the Forge App merges its **own** CI-green PRs. | Default ON, but inert below `acmm_level: 6`. See [App self-merge sweep](#app-self-merge-sweep-auto_merge) below. |
+| `issues.close_on_merge` | `true`. | When a hive-authored or trusted-author PR merges and closing keywords or Hive claim metadata show it fixed an open issue, Hive comments `Fixed by #<pr> (merged <sha>). Closing. Reply /reopen if the problem persists.` and closes the issue as `completed`. Issues labelled `needs-reporter-confirmation`, `epic`, or `needs-human` stay open: Hive comments that the fix merged, adds `hive/likely-done`, and waits for `/fixed` or more instructions. |
+| `issues.close_on_merge_backfill_interval` | `1h`. | How often Hive scans open issues carrying Hive PR-linkage signals (`hive/covered-by-pr`, `hive/likely-done`, claim/covered comments, or timeline PR references) and applies the same close-on-merge policy to PRs that merged before the current process saw them. |
+| `issues.reporter_confirmation` | `false`. | Legacy opt-in switch for hives that want every human-filed bug-family issue to wait for reporter verification before close. Leave false for the default close-on-merge policy; add `hive: needs-confirmation` to an individual issue when only that issue needs the gate. `hive: reporter-confirmed` and `hive: close-on-merge` remain accepted legacy bypasses. |
 | `contribute.help_links` | Defaults to Hive contributor docs and the Hive issue tracker. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
@@ -244,7 +247,8 @@ advanced into the merge path.
 | `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
 | `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
 | `auto_merge.min_head_age` | `3m` | Minimum PR head age before automerge trusts an unknown required-check set. A fresh head pushed more recently than this waits with `pending: head pushed ... ago (< min_head_age)` unless `auto_merge.required_checks` is declared and every required check is complete and successful. |
-| `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
+| `auto_merge.required_checks` | unset | Default operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on repos without a per-repo override. See below. |
+| `auto_merge.repos.<repo>.required_checks` | inherits default | Per-repo override for heterogeneous hives. `<repo>` may be the bare name from `project.repos` or `owner/repo`; an explicit empty list declares that GitHub has no required contexts, while Hive still requires positive CI evidence before merge. |
 | `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
 | `auto_merge.human_merge_paths` | unset | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge, e.g. `Danathar/goodreads-mcp: [".claude/settings.json", ".claude/hooks/**"]`. Every App merge path honors it: the automerge sweep lanes (App self-merge, trusted-author, label-queued) and the agent merge-request relay refuse a PR that touches a listed path, add `hold`, and post one `<!-- hive-human-merge-path -->` comment naming the path(s); a person must merge it. If the changed-file list cannot be fetched completely for a configured repo, the merge is withheld (#11038, #11039). |
@@ -295,9 +299,31 @@ which the Hive GitHub App does not hold. Without a config-declared list the
 sweep falls back to that API (which errors) and then to a built-in
 meta-check allowlist — which can block on *non-required* checks (a cancelled
 "Detect untested files", a CodeQL analyze failure). Declaring the branch's
-real required set per hive removes the scope dependency entirely. The
-required-checks set is per-repo/per-branch, so there is deliberately no
-hardcoded default.
+real required set removes the scope dependency. On hives that watch multiple
+repositories, keep `auto_merge.required_checks` only as a default and put
+repo-specific gates under `auto_merge.repos`:
+
+```yaml
+auto_merge:
+  required_checks: [build-gate]   # default for repos without an override
+  repos:
+    console:
+      required_checks: [build-gate]
+    console-marketplace:
+      required_checks: [static-validation, card-quality-gate, validate]
+    homebrew-tap:
+      required_checks: [brew-ci gate, unit tests + drift check]
+    docs:
+      required_checks: []
+```
+
+Repo keys may be bare names from `project.repos` or fully qualified
+`owner/repo` names. If the configured list names a check that has never
+reported on the PR head and GitHub's branch-protection/branch/ruleset fallback
+chain returns a known actual set that does not include it, Hive logs a once per
+repo warning (`automerge required_checks override does not match repo
+protection`) and uses the actual set. If the actual set is unknown, Hive keeps
+waiting on the configured list rather than silently weakening the gate.
 
 When `required_checks` is unset and GitHub's branch-protection API is not
 available, the sweep also waits for every non-meta, non-ignorable PR-context
@@ -458,6 +484,33 @@ A Hive without the serialized lane ignores the `merge_strategy` key
 opted-in repository silently goes back to `direct` merging. Older versions
 cannot be changed to warn about this; check your repositories' strategy before
 downgrading.
+## Supersession sweep (`supersession_sweep`)
+
+The supersession sweep (`src/pkg/github/pr_supersession_sweep.go`) looks for
+open PRs whose claimed issue is already closed by a *different* merged PR. It
+keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
+
+- **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
+  touch was also touched by the merged PR and they claim no other open issue;
+  below L6 they get `needs-human`.
+- **Human-authored PRs** only get the notice unless
+  `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).
+  With it set, the sweep closes the PR only when **all** of these hold: every
+  file it touches was also touched by the merged PR; it claims no other open
+  issue; it is `size/XS`–`size/M` (or under 100 changed lines when unlabeled);
+  the author has no unresolved review threads; review threads could be read;
+  and `grace_period` has passed since the notice announced the window with no
+  human (author or maintainer) comment or review comment after the notice. Any
+  doubt keeps the PR open and rewrites the notice to say why.
+- A closed PR gets the `hive/superseded` label and one
+  `<!-- hive:pr-supersession-autoclose -->` comment naming the merged PR and
+  its merge time, with "reopen if that's wrong". Reopening and commenting
+  keeps it open on the next pass.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
+| `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
 
 ## Suspicious-activity alerts (`sentinel`)
 
@@ -502,6 +555,13 @@ the dashboard writes the owner-only `/api/config/governor/security` overlay.
 Every alert is also written to the dashboard audit log as `sentinel-alert`,
 and, when `evidence.enabled` is on, recorded under `sentinel` in the flagged
 head's [review evidence bundle](review-evidence.md).
+
+On the dashboard's Projects cards, every open PR that carries the configured
+sentinel label is drawn as a red pill (status chip and main pill), taking
+precedence over the held, needs-human and merge colours, and the pill legend
+has a matching entry. The red clears on the next status refresh after a
+maintainer removes the label. Trusted-author PRs that only received a sentinel
+comment are not red.
 
 ## Image provenance and tags
 

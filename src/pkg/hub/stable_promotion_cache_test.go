@@ -32,6 +32,7 @@ func stubStablePromotionRuns(t *testing.T, runs []stablePromotionWorkflowRun, ga
 		return runs
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		stablePromotionFetchRuns = orig
 		resetStablePromotionCaches()
 	})
@@ -102,6 +103,7 @@ func TestStablePromotionRunsFailureServesPreviousAndRetries(t *testing.T) {
 		return []stablePromotionWorkflowRun{{RunNumber: 7}}
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		stablePromotionFetchRuns = orig
 		resetStablePromotionCaches()
 	})
@@ -166,7 +168,7 @@ func TestStablePromotionEligibleBuildBoundsAndCachesVerification(t *testing.T) {
 		atomic.AddInt32(&digestCalls, 1)
 		return "" // nothing verifies
 	}
-	t.Cleanup(func() { ghcrTagDigest = origDigest })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagDigest = origDigest })
 
 	if build, at := stablePromotionEligibleBuild(100, now, slog.Default()); at != "" || build.Generation != 0 {
 		t.Fatalf("unverifiable runs produced %+v at %q", build, at)
@@ -193,7 +195,7 @@ func TestStablePromotionFetchRunsCarriesHubToken(t *testing.T) {
 	defer srv.Close()
 	oldBase := githubAPIBase
 	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); githubAPIBase = oldBase })
 	t.Setenv(hubGitHubTokenEnv, "ghp_test")
 
 	runs := stablePromotionFetchRuns(slog.Default())
@@ -235,7 +237,7 @@ func TestStablePromotionFetchRunsPaginatesPastBusyQueues(t *testing.T) {
 	defer srv.Close()
 	oldBase := githubAPIBase
 	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); githubAPIBase = oldBase })
 
 	runs := stablePromotionFetchRuns(slog.Default())
 	if len(runs) != stablePromotionRunsPerPage+1 {

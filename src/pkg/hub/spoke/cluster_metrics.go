@@ -35,6 +35,10 @@ const metricsCollectionCacheTTL = 60 * time.Second
 // during spoke-side metrics collection.
 const metricsCollectionTimeout = 10 * time.Second
 
+// nodeHealthWarningInterval prevents a permanently missing/forbidden node API
+// from writing the same warning on every heartbeat.
+const nodeHealthWarningInterval = time.Hour
+
 // maxNodesInHeartbeat limits the number of nodes reported in a heartbeat
 // to prevent oversized payloads on large clusters.
 const maxNodesInHeartbeat = 100
@@ -43,6 +47,8 @@ var (
 	cachedClusterHealth     *HeartbeatClusterHealthReport
 	cachedClusterHealthTime time.Time
 	cachedClusterHealthMu   sync.Mutex
+	lastNodeHealthWarning   = map[string]time.Time{}
+	nodeHealthWarningMu     sync.Mutex
 )
 
 // CollectClusterHealth gathers node-level CPU, memory, pod, and GPU metrics
@@ -267,9 +273,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			nodeHealthError = nodeHealthErrorReason("pods API failed", err)
 			logNodeHealthWarning(logger, nodeHealthError)
 		} else {
-			if logger != nil {
-				logger.Warn("spoke node health partial: pods API failed", "error", err)
-			}
+			logNodeHealthWarning(logger, nodeHealthErrorReason("pods API failed", err))
 		}
 	}
 	if err == nil && len(podOut) > 0 {
@@ -454,9 +458,19 @@ func nodeHealthErrorReason(prefix string, err error) string {
 }
 
 func logNodeHealthWarning(logger *slog.Logger, reason string) {
-	if logger != nil {
-		logger.Warn("spoke node health partial", "reason", reason)
+	if logger == nil {
+		return
 	}
+	now := time.Now()
+	nodeHealthWarningMu.Lock()
+	last := lastNodeHealthWarning[reason]
+	if now.Sub(last) < nodeHealthWarningInterval {
+		nodeHealthWarningMu.Unlock()
+		return
+	}
+	lastNodeHealthWarning[reason] = now
+	nodeHealthWarningMu.Unlock()
+	logger.Warn("spoke node health partial", "reason", reason)
 }
 
 // These are vars (not consts) purely so tests can redirect the in-cluster K8s

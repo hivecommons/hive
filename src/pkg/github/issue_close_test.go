@@ -23,11 +23,9 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 		wantLabels     []string
 	}{
 		{
-			name:        "human-filed bug is blocked and asks for confirmation",
-			issue:       closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"}),
-			wantErr:     true,
-			wantComment: "please confirm",
-			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
+			name:       "human-filed bug closes by default",
+			issue:      closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"}),
+			wantClosed: true,
 		},
 		{
 			name:       "bot-filed bug closes normally",
@@ -40,7 +38,21 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			wantClosed: true,
 		},
 		{
-			name:       "human-filed bug with close-on-merge marker in body closes",
+			name:        "human-filed bug with needs-confirmation marker is blocked",
+			issue:       closeGateIssue("human", "User", "Bug: still broken", "reported by a person\n\nhive: needs-confirmation", []string{"bug"}),
+			wantErr:     true,
+			wantComment: "please confirm",
+			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
+		},
+		{
+			name:        "human-filed bug with needs-confirmation label is blocked",
+			issue:       closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug", "hive: needs-confirmation"}),
+			wantErr:     true,
+			wantComment: "please confirm",
+			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
+		},
+		{
+			name:       "human-filed bug with close-on-merge marker closes",
 			issue:      closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code\n\nhive: close-on-merge", []string{"kind/bug"}),
 			wantClosed: true,
 		},
@@ -50,15 +62,13 @@ func TestCloseIssueReporterConfirmationGate(t *testing.T) {
 			wantClosed: true,
 		},
 		{
-			name:        "human-filed kind/bug without close-on-merge is still blocked",
-			issue:       closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code", []string{"kind/bug"}),
-			wantErr:     true,
-			wantComment: "please confirm",
-			wantLabels:  []string{issueNeedsReporterConfirmationLabel},
+			name:       "human-filed kind/bug without close-on-merge closes",
+			issue:      closeGateIssue("human", "User", "Bug: sweep finding", "found by reading the code", []string{"kind/bug"}),
+			wantClosed: true,
 		},
 		{
 			name:           "override records reason and closes",
-			issue:          closeGateIssue("human", "User", "Bug: duplicate", "reported by a person", []string{"kind/bug"}),
+			issue:          closeGateIssue("human", "User", "Bug: duplicate", "reported by a person\n\nhive: needs-confirmation", []string{"kind/bug"}),
 			overrideReason: "duplicate of #99; reporter asked us to consolidate there",
 			wantClosed:     true,
 			wantComment:    "Reporter-confirmation close override used",
@@ -151,8 +161,14 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 		wantGate  bool
 	}{
 		{
-			name:      "human bug without confirmation is gated",
+			name:      "human bug without opt-in is not gated",
 			issue:     closeGateIssue("human", "User", "Bug", "plain body", []string{"type: bug"}),
+			wantHuman: true,
+			wantGate:  false,
+		},
+		{
+			name:      "human bug with needs-confirmation marker is gated",
+			issue:     closeGateIssue("human", "User", "Bug", "plain body\n\nhive: needs-confirmation", []string{"type: bug"}),
 			wantHuman: true,
 			wantGate:  true,
 		},
@@ -193,7 +209,7 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 			if got := IsHumanFiledBugReport(tt.issue); got != tt.wantHuman {
 				t.Fatalf("IsHumanFiledBugReport = %v, want %v", got, tt.wantHuman)
 			}
-			prGate := humanFiledBugReason(tt.issue) != ""
+			prGate := humanFiledBugReason(tt.issue, false) != ""
 			closeGate := ReporterConfirmationCloseGateReason(tt.issue) != ""
 			if prGate != closeGate {
 				t.Fatalf("PR gate = %v, close gate = %v; both call sites must share the predicate", prGate, closeGate)
@@ -205,8 +221,29 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 	}
 }
 
+func TestReporterConfirmationConfigReenablesGate(t *testing.T) {
+	c := &Client{}
+	c.SetReporterConfirmationEnabledFunc(func() bool { return true })
+	if got := c.reporterConfirmationCloseGateReason(closeGateIssue("human", "User", "Bug", "plain body", []string{"bug"})); got == "" {
+		t.Fatal("configured reporter_confirmation should gate human-filed bugs")
+	}
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"reporter confirmed", "hive: reporter-confirmed"},
+		{"close on merge", "hive: close-on-merge"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := c.reporterConfirmationCloseGateReason(closeGateIssue("human", "User", "Bug", tt.body, []string{"bug"})); got != "" {
+				t.Fatalf("legacy marker should bypass configured gate, got %q", got)
+			}
+		})
+	}
+}
+
 func TestCloseIssueReporterConfirmationLabelsMaintainerReporterNeedsHuman(t *testing.T) {
-	issue := closeGateIssue("maintainer", "User", "Bug: fixed", "reported by maintainer", []string{"bug"})
+	issue := closeGateIssue("maintainer", "User", "Bug: fixed", "reported by maintainer\n\nhive: needs-confirmation", []string{"bug"})
 	var labels []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -288,7 +325,7 @@ func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
 
 	for _, tt := range existing {
 		t.Run(tt.name, func(t *testing.T) {
-			issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", append([]string{"bug"}, tt.labels...))
+			issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person\n\nhive: needs-confirmation", append([]string{"bug"}, tt.labels...))
 			var posted []string
 			var labelsAdded int
 			var closed bool
@@ -344,7 +381,7 @@ func TestCloseIssueAsksForConfirmationOnlyOnce(t *testing.T) {
 
 // An unreadable comment list must not turn a gated close into a silent one.
 func TestCloseIssueConfirmationDedupFailsOpen(t *testing.T) {
-	issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person", []string{"bug"})
+	issue := closeGateIssue("human", "User", "Bug: still broken", "reported by a person\n\nhive: needs-confirmation", []string{"bug"})
 	var posted []string
 	var closed bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

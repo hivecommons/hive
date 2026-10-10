@@ -437,7 +437,7 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		StartedFrom: "1234567",
 		StartedAt:   now.Add(-5 * time.Minute),
 		UpdatedAt:   now.Add(-5 * time.Minute),
-	}, "f29ba7aabcdef", now, nil)
+	}, "f29ba7aabcdef", now, nil, "")
 	if targetlessMoved.State != dashboardUpgradeStateDone || !sameCommitDashboard(targetlessMoved.Target, "f29ba7a") {
 		t.Fatalf("targetless moved state = %+v, want done at running commit", targetlessMoved)
 	}
@@ -451,7 +451,7 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		StartedFrom: "1234567",
 		StartedAt:   now.Add(-5 * time.Minute),
 		UpdatedAt:   now.Add(-5 * time.Minute),
-	}, "f29ba7aabcdef", now, nil)
+	}, "f29ba7aabcdef", now, nil, "")
 	if targetedMoved.State != dashboardUpgradeStateSuperseded {
 		t.Fatalf("targeted moved state = %+v, want superseded until ancestry proves completion", targetedMoved)
 	}
@@ -467,7 +467,7 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		CurrentSHA:  "0904d04",
 		RequestedAt: now.Add(-5 * time.Minute),
 		CompletedAt: now.Add(-2 * time.Minute),
-	})
+	}, "")
 	if floatingLanded.State != dashboardUpgradeStateDone || !sameCommitDashboard(floatingLanded.Target, "a9edaea") {
 		t.Fatalf("floating landed state = %+v, want done at the landed commit", floatingLanded)
 	}
@@ -477,12 +477,31 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 		Target:    "990d0b2",
 		StartedAt: now.Add(-16 * time.Minute),
 		UpdatedAt: now.Add(-16 * time.Minute),
-	}, "1234567abcdef", now, nil)
+	}, "1234567abcdef", now, nil, "")
 	if stale.State != dashboardUpgradeStateFailed {
 		t.Fatalf("stale state = %+v, want failed", stale)
 	}
 	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptFailed || !strings.Contains(at.Detail, "no rollout or completion signal") {
 		t.Fatalf("attempt from stale state = %+v, want visible failure", at)
+	}
+
+	queued := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:     dashboardUpgradeStateQueued,
+		Target:    "fa00a72",
+		UpdatedAt: now.Add(-dashboardUnpublishedTargetGraceDefault - time.Minute),
+	}, "91b2ce6abcdef", now, nil, "b6d181d")
+	if queued.State != dashboardUpgradeStateSuperseded || !sameCommitDashboard(queued.Target, "b6d181d") ||
+		!strings.Contains(queued.Reason, "falling forward") {
+		t.Fatalf("queued state = %+v, want superseded toward latest published image", queued)
+	}
+
+	cleared := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
+		State:     dashboardUpgradeStateQueued,
+		Target:    "fa00a72",
+		UpdatedAt: now.Add(-dashboardUnpublishedTargetGraceDefault - time.Minute),
+	}, "b6d181dabcdef", now, nil, "b6d181d")
+	if cleared.State != dashboardUpgradeStateSuperseded || !strings.Contains(cleared.Reason, "already running latest published image") {
+		t.Fatalf("cleared state = %+v, want stale queued state superseded by running latest", cleared)
 	}
 }
 

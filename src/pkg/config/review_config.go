@@ -337,6 +337,9 @@ type AutoMergeConfig struct {
 	// to obtain for its own PRs. Set `auto_merge.self_authored: false` to
 	// disable and fall back to fully manual merges for App PRs.
 	SelfAuthored *bool `yaml:"self_authored,omitempty" json:"self_authored,omitempty"`
+	// Repos carries per-repository auto-merge overrides such as required
+	// status checks.
+	Repos map[string]AutoMergeRepoConfig `yaml:"repos,omitempty" json:"repos,omitempty"`
 	// MaxMerges caps merges per sweep pass, shared semantics with
 	// AutoMergeSweepOptions.MaxMerges for the human queue sweep. Zero means
 	// DefaultAutoMergeSweepMaxMerges.
@@ -398,6 +401,26 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+}
+
+// SupersessionSweepConfig tunes the supersession sweep
+// (github.SweepSupersededOpenPRs), which finds open PRs whose claimed issue was
+// already closed by a different merged PR (hivecommons/hive#11418).
+type SupersessionSweepConfig struct {
+	// CloseContributorPRs authorizes closing superseded human-authored PRs
+	// after the grace window. Default off.
+	CloseContributorPRs bool `yaml:"close_contributor_prs,omitempty" json:"close_contributor_prs,omitempty"`
+	// GracePeriod is how long a human-authored PR stays open after the
+	// supersession notice. Non-positive means the sweep default.
+	GracePeriod time.Duration `yaml:"grace_period,omitempty" json:"grace_period,omitempty"`
+}
+
+// AutoMergeRepoConfig carries per-repository auto-merge overrides.
+type AutoMergeRepoConfig struct {
+	// RequiredChecks overrides auto_merge.required_checks for this repository.
+	// An explicit empty list means the repo declares no required checks; an
+	// omitted field falls back to the global default.
+	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
 }
 
 type TrustedAuthorAutoMergeConfig struct {
@@ -513,27 +536,64 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 	return nil
 }
 
-// RequiredCheckSet returns the config-declared required-status-check set as a
-// membership map, and whether the config actually declared one. An
-// empty/unset RequiredChecks list returns (nil, false) — "not config-declared"
-// — so callers can distinguish that from a genuinely empty required set (e.g.
-// an unprotected branch) and fall through to their next source (the
-// branch-protection API, then the allowlist fallback). A non-empty list
-// always returns requiredKnown=true; entries are matched by exact string
-// equality against status-context / check-run names.
+// RequiredCheckSet returns the global config-declared required-status-check set
+// as a membership map, and whether the global config actually declared one.
+// Empty/unset RequiredChecks returns (nil, false) — "not config-declared".
 func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
-	if len(a.RequiredChecks) == 0 {
+	return requiredCheckSetFromList(a.RequiredChecks, false)
+}
+
+// RequiredCheckSetForRepo returns the per-repo required-check override for repo
+// when one is configured, otherwise the global RequiredCheckSet. Repo may be a
+// bare name or owner/repo; configured keys are matched case-insensitively by
+// exact owner/repo or by bare repo name. An explicit per-repo empty list is a
+// known empty set.
+func (a AutoMergeConfig) RequiredCheckSetForRepo(repo string) (map[string]bool, bool) {
+	repo = strings.TrimSpace(repo)
+	bare := repo
+	if i := strings.LastIndex(bare, "/"); i >= 0 {
+		bare = bare[i+1:]
+	}
+	for key, cfg := range a.Repos {
+		if strings.EqualFold(strings.TrimSpace(key), repo) {
+			return requiredCheckSetFromRepoConfig(a, cfg)
+		}
+	}
+	for key, cfg := range a.Repos {
+		kBare := strings.TrimSpace(key)
+		if i := strings.LastIndex(kBare, "/"); i >= 0 {
+			kBare = kBare[i+1:]
+		}
+		if bare != "" && strings.EqualFold(kBare, bare) {
+			return requiredCheckSetFromRepoConfig(a, cfg)
+		}
+	}
+	return a.RequiredCheckSet()
+}
+
+func requiredCheckSetFromRepoConfig(a AutoMergeConfig, cfg AutoMergeRepoConfig) (map[string]bool, bool) {
+	if cfg.RequiredChecks == nil {
+		return a.RequiredCheckSet()
+	}
+	return requiredCheckSetFromList(cfg.RequiredChecks, true)
+}
+
+func requiredCheckSetFromList(checks []string, declaredEmptyKnown bool) (map[string]bool, bool) {
+	if len(checks) == 0 {
+		if declaredEmptyKnown {
+			return map[string]bool{}, true
+		}
 		return nil, false
 	}
-	set := make(map[string]bool, len(a.RequiredChecks))
-	for _, name := range a.RequiredChecks {
+	set := make(map[string]bool, len(checks))
+	for _, name := range checks {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		set[name] = true
 	}
-	if len(set) == 0 {
+	if len(set) == 0 && !declaredEmptyKnown {
 		return nil, false
 	}
 	return set, true

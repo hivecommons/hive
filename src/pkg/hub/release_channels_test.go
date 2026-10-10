@@ -16,6 +16,11 @@ func testChannelLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func init() {
+	channelTargetRefreshDisabled = true
+	channelImageTargetRefreshDisabled = true
+}
+
 // stubChannelDigests points ghcrTagDigest at a fixed tag→digest table for the
 // duration of one test, and clears the channel cache on both sides so tests
 // cannot leak a resolved association into each other.
@@ -58,6 +63,7 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 		return time.Time{}, fmt.Errorf("commit date not stubbed in this test")
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
 		ghcrTagGeneration = origGen
@@ -68,6 +74,7 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 		resetChannelCommitDateCache()
 		resetChannelTargetCache()
 	})
+	t.Cleanup(func() { waitChannelTargetRefreshes(t) })
 }
 
 // stubChannelCommitDates points fetchCommitDate at a fixed SHA→date table for
@@ -84,9 +91,25 @@ func stubChannelCommitDates(t *testing.T, by map[string]time.Time) {
 		return d, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitDate = orig
 		resetChannelCommitDateCache()
 	})
+	t.Cleanup(func() { waitChannelTargetRefreshes(t) })
+}
+
+func waitChannelTargetRefreshes(t *testing.T) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		waitForChannelTargetRefreshes()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(channelResolveTimeout + 2*time.Second):
+		t.Fatal("timed out waiting for in-flight channel target refresh(es)")
+	}
 }
 
 func resetChannelCommitDateCache() {
@@ -111,9 +134,11 @@ func stubChannelDistances(t *testing.T, by map[channelDistanceKey]channelDistanc
 		return d, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})
+	t.Cleanup(func() { waitChannelTargetRefreshes(t) })
 }
 
 func resetChannelDistanceCache() {
@@ -123,9 +148,11 @@ func resetChannelDistanceCache() {
 }
 
 func resetChannelTargetCache() {
+	waitForChannelTargetRefreshes()
 	channelTargetMu.Lock()
 	channelTargetCache = nil
 	channelTargetCachedAt = time.Time{}
+	channelTargetRefreshInFlight = false
 	channelTargetMu.Unlock()
 }
 
@@ -425,6 +452,7 @@ func TestGhcrTagDigestWarnsOnNonOK(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 		got := ghcrTagDigest(ghcrRepoSpoke, ReleaseChannelStable, logger)
+		waitChannelTargetRefreshes(t)
 		ghcrBase = oldBase
 		srv.Close()
 
@@ -455,7 +483,7 @@ func TestGhcrTagDigestSucceedsAndStaysQuiet(t *testing.T) {
 
 	oldBase := ghcrBase
 	ghcrBase = srv.URL
-	defer func() { ghcrBase = oldBase }()
+	defer func() { waitChannelTargetRefreshes(t); ghcrBase = oldBase }()
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -476,7 +504,7 @@ func TestGhcrTagDigestSucceedsAndStaysQuiet(t *testing.T) {
 func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
 	resetChannelTargetCache()
 	orig := ghcrTagDigest
-	t.Cleanup(func() { ghcrTagDigest = orig; resetChannelTargetCache() })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagDigest = orig; resetChannelTargetCache() })
 
 	// Cold cache, registry dark.
 	ghcrTagDigest = func(string, string, *slog.Logger) string { return "" }
@@ -496,5 +524,42 @@ func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
 	got := getChannelTargets(shas, testChannelLogger())
 	if targetFor(got, ReleaseChannelStable).Branch != "v4" {
 		t.Errorf("an empty resolve poisoned the cache: stable = %+v, want branch v4 once the registry recovered", targetFor(got, ReleaseChannelStable))
+	}
+}
+
+func TestGetChannelTargetsNonBlockingDoesNotWaitOnColdResolve(t *testing.T) {
+	resetChannelTargetCache()
+	orig := ghcrTagDigest
+	channelTargetMu.Lock()
+	origDisabled := channelTargetRefreshDisabled
+	channelTargetRefreshDisabled = false
+	channelTargetMu.Unlock()
+	block := make(chan struct{})
+	ghcrTagDigest = func(string, string, *slog.Logger) string {
+		<-block
+		return ""
+	}
+	t.Cleanup(func() {
+		close(block)
+		waitChannelTargetRefreshes(t)
+		ghcrTagDigest = orig
+		channelTargetMu.Lock()
+		channelTargetRefreshDisabled = origDisabled
+		channelTargetMu.Unlock()
+		resetChannelTargetCache()
+	})
+
+	done := make(chan []ChannelTarget, 1)
+	go func() {
+		done <- getChannelTargetsNonBlocking(map[string]string{"v5": "abc1234"}, testChannelLogger())
+	}()
+
+	select {
+	case got := <-done:
+		if targetFor(got, ReleaseChannelStable).Channel != ReleaseChannelStable {
+			t.Fatalf("cold non-blocking resolve should return channel placeholders, got %+v", got)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("non-blocking channel target lookup waited on the registry refresh")
 	}
 }

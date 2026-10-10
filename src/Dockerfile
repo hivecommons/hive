@@ -1,3 +1,8 @@
+# Base images are pulled from the ECR Public mirror of Docker Official Images
+# (public.ecr.aws/docker/library/*) instead of Docker Hub: GitHub-hosted runners
+# share egress IPs and exhaust Docker Hub's anonymous pull quota (429s, #11327).
+# The manifest-list digest is identical on the mirror, so the pins are unchanged.
+#
 # Pinned to the golang:1.27-alpine multi-arch index digest to prevent
 # floating-tag supply-chain risk. Refresh deliberately:
 #   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/golang:pull" | jq -r .token)
@@ -5,7 +10,7 @@
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
 #     https://registry-1.docker.io/v2/library/golang/manifests/1.27-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -69,7 +74,7 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
 # supply-chain risk. Refresh deliberately (same technique as golang above,
 # repo library/node, tag 26-slim) and update both the tag and the @sha256
 # digest together in BOTH FROM node:26-slim lines in this file.
-FROM node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS tmux-builder
+FROM public.ecr.aws/docker/library/node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS tmux-builder
 ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
 ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
@@ -97,7 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (and the rewrite RUN below) from the branch-scoped GHA cache — so a fresh
 # binary was rebuilt and then discarded, and the OLD binary shipped. See the
 # stale-binary note in .github/workflows/docker.yml.
-FROM node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS runtime
+FROM public.ecr.aws/docker/library/node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS runtime
 
 # --- Layer 1: system packages (rarely changes) ---
 # util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
@@ -261,12 +266,12 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.160.0
+ARG CODEX_VERSION=0.162.1
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.289
+ARG CLAUDE_CODE_VERSION=2.1.296
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -287,9 +292,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.53.0
-ARG GOOSE_SHA256_AMD64=deb2191a6b75acc0a20232fc5c52655ea2f9cc8fa2f5dffc8622e8d378a915dc
-ARG GOOSE_SHA256_ARM64=01a0ea109e1984e7a511ff3f99d1a29d32e6f90f0852b5a3b416499c8eaae567
+ARG GOOSE_VERSION=1.54.0
+ARG GOOSE_SHA256_AMD64=ab396c95aebbd28b4d38c175234be8d4a3ea0c96e7ccb24c307e4618c9be57e1
+ARG GOOSE_SHA256_ARM64=0f174b5118a53888cd4e65b7ca9a4b72dd0b887e89142c8ce41e2409205e40d5
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -395,7 +400,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=1.0.0
+ARG PI_VERSION=1.1.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"

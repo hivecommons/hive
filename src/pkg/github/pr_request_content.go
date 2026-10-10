@@ -72,7 +72,9 @@ func prContentMetadataReason(err error) (string, bool) {
 }
 
 // validatePRRequestContent checks only lines added by the candidate branch.
-// Existing repository prose and deleted metadata do not block a cleanup PR.
+// Existing repository prose and deleted metadata do not block a cleanup PR,
+// and neither does an edit of a line that already carried the same marker
+// (see addedInternalMetadata).
 func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
@@ -124,15 +126,53 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 	return nil
 }
 
-// addedInternalMetadata scans a unified patch and returns the new-file line of
-// the first leaked attribution marker. Marker strings are assembled from
+// attributionMarker classifies one patch line body (without its +/- prefix).
+// It returns the marker kind and a normalized key identifying the marker, or
+// an empty kind when the line carries none. Marker strings are assembled from
 // fragments so this detector's own source is not itself a match.
-func addedInternalMetadata(patch string) (line int, kind string, found bool) {
+func attributionMarker(body string) (kind, key string) {
 	filedPrefix := strings.ToLower("Filed" + " by ")
+	agentSuffix := " agent (acmm"
 	hivePrefix := strings.ToLower("hive" + ":")
-	newLine := 0
-	inHunk := false
 
+	lower := strings.ToLower(strings.TrimSpace(body))
+	if filed := strings.Index(lower, filedPrefix); filed >= 0 {
+		rest := lower[filed+len(filedPrefix):]
+		if agent := strings.Index(rest, agentSuffix); agent >= 0 {
+			return "agent attribution", rest[:agent+len(agentSuffix)]
+		}
+	}
+	trimmed := strings.TrimSpace(strings.TrimLeft(lower, "—-"))
+	if strings.HasPrefix(trimmed, hivePrefix) {
+		return "hive run", hivePrefix
+	}
+	return "", ""
+}
+
+// addedInternalMetadata scans a unified patch and returns the new-file line of
+// the first leaked attribution marker. A marker on an added line is tolerated
+// when the same marker (kind and key) is also on a removed line of the same
+// patch: that is an edit of a line that already carried the marker on the
+// base (e.g. a forward-merge carrying a wording change), not a new leak. A
+// marker that is only added is still reported.
+func addedInternalMetadata(patch string) (line int, kind string, found bool) {
+	removed := map[string]bool{}
+	inHunk := false
+	for _, text := range strings.Split(patch, "\n") {
+		if compareHunkRE.MatchString(text) {
+			inHunk = true
+			continue
+		}
+		if !inHunk || text == "" || text[0] != '-' || strings.HasPrefix(text, "---") {
+			continue
+		}
+		if k, key := attributionMarker(text[1:]); k != "" {
+			removed[k+"\x00"+key] = true
+		}
+	}
+
+	newLine := 0
+	inHunk = false
 	scanner := bufio.NewScanner(strings.NewReader(patch))
 	for scanner.Scan() {
 		text := scanner.Text()
@@ -149,15 +189,8 @@ func addedInternalMetadata(patch string) (line int, kind string, found bool) {
 			if strings.HasPrefix(text, "+++") {
 				continue
 			}
-			added := strings.TrimSpace(text[1:])
-			lower := strings.ToLower(added)
-			if filed := strings.Index(lower, filedPrefix); filed >= 0 &&
-				strings.Contains(lower[filed+len(filedPrefix):], " agent (acmm") {
-				return newLine, "agent attribution", true
-			}
-			trimmed := strings.TrimSpace(strings.TrimLeft(added, "—-"))
-			if strings.HasPrefix(strings.ToLower(trimmed), hivePrefix) {
-				return newLine, "hive run", true
+			if k, key := attributionMarker(text[1:]); k != "" && !removed[k+"\x00"+key] {
+				return newLine, k, true
 			}
 			newLine++
 		case '-':

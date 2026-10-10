@@ -856,7 +856,7 @@ func (s *HubServer) pushReportedNoHealthNote(clusterID string) string {
 	if diag.predatesHealthFix {
 		return "push-reported · heartbeat carries no node health — spoke build predates " + clusterHealthUpgradeFixPR + "; upgrade spokes to ≥ " + clusterHealthUpgradeVersion + ageSuffix
 	}
-	return "push-reported · heartbeat carries no node health — check spoke node-metrics RBAC and metrics-server" + ageSuffix
+	return "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; set hub.cluster_id or HIVE_CLUSTER_ID, then check node-metrics RBAC and metrics-server" + ageSuffix
 }
 
 type pushReportedHeartbeatDiagnostic struct {

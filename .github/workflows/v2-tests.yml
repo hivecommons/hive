@@ -38,50 +38,14 @@ on:
       # release PRs touch only these; the required contexts must report — #10795
       - 'CHANGELOG.md'
       - 'changelog.d/**'
-      - '.github/workflows/v2-tests.yml'
-      - '.github/workflows/tagged-release.yml'
-      # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
-      - '.github/workflows/coverage-hourly.yml'
-      - '.github/workflows/dco-post-merge.yml'
-      - '.github/scripts/slowest-tests.sh'
-      - '.github/scripts/ci-gotestsum-flake-summary.sh'
-      - '.github/scripts/ci-gotestsum-preserve-coverprofile.sh'
-      - '.github/scripts/ci-install-tool.sh'
-      - '.github/scripts/test-ci-install-tool-apt-cache.sh'
+      - '.github/workflows/**'
+      - '.github/scripts/**'
   pull_request:
     branches: [v4, v5, v6]
-    # Several package tests police shipped files outside src/: contributor
-    # scripts under bin/, the shared shell backend config, and Justfile recipes.
-    # Those files must trigger the tests that guard them; otherwise a change to
-    # the guarded side of a parity assertion skips the assertion entirely.
-    # dashboard/openapi.json is the same class: its route/schema guards live in
-    # src/pkg/dashboard, but the published contract does not. The contract test
-    # in pkg/github/ci_trigger_contract_test.go pins this complete relationship.
-    paths:
-      - 'src/**'
-      - 'bin/**'
-      - 'config/**'
-      - 'Justfile'
-      - 'dashboard/openapi.json'
-      # release PRs touch only these; the required contexts must report — #10795
-      - 'CHANGELOG.md'
-      - 'changelog.d/**'
-      - '.github/workflows/v2-tests.yml'
-      - '.github/workflows/tagged-release.yml'
-      # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
-      - '.github/workflows/coverage-hourly.yml'
-      - '.github/workflows/dco-post-merge.yml'
-      # The slowest-tests reporter runs in every shard; an edit to it must run
-      # the job that executes it (same rule dashboard-lint applies to its
-      # checker, #5388).
-      - '.github/scripts/slowest-tests.sh'
-      - '.github/scripts/ci-gotestsum-flake-summary.sh'
-      - '.github/scripts/ci-gotestsum-preserve-coverprofile.sh'
-      # Same rule for the toolchain installer: every shard shells out to it
-      # before it can build, so an edit to it must run the shards it gates
-      # (#6648).
-      - '.github/scripts/ci-install-tool.sh'
-      - '.github/scripts/test-ci-install-tool-apt-cache.sh'
+    # Required contexts from this workflow must appear on every PR head. Keep
+    # the trigger unfiltered and let required-context-scope below decide whether
+    # to run the expensive shards or report success for out-of-scope diffs.
+
 
 permissions:
   contents: read
@@ -180,6 +144,59 @@ concurrency:
 #  - the aggregate `test` job (the required-check name) fails closed: it
 #    requires list-packages AND every shard to succeed.
 jobs:
+  required-context-scope:
+    name: required context scope
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    outputs:
+      run-tests: ${{ steps.scope.outputs.run-tests }}
+    steps:
+      - name: Decide whether the test and coverage gates need the real suite
+        id: scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : > changed-files.txt
+          page=1
+          api_root="${GITHUB_API_URL:-https://api.github.com}"
+          while :; do
+            curl -fsSL               -H "Authorization: Bearer ${GITHUB_TOKEN}"               -H "Accept: application/vnd.github+json"               "${api_root}/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"               -o changed-files-page.json
+            python3 - <<'PYFILES' >> changed-files.txt
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              for item in json.load(f):
+                  print(item['filename'])
+          PYFILES
+            count=$(python3 - <<'PYCOUNT'
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              print(len(json.load(f)))
+          PYCOUNT
+          )
+            [ "$count" -lt 100 ] && break
+            page=$((page + 1))
+          done
+          rm -f changed-files-page.json
+          run=false
+          while IFS= read -r path; do
+            case "$path" in
+              src/*|bin/*|config/*|Justfile|dashboard/openapi.json|CHANGELOG.md|changelog.d/*|.github/workflows/*|.github/scripts/*)
+                run=true
+                ;;
+            esac
+          done < changed-files.txt
+          echo "run-tests=${run}" >> "$GITHUB_OUTPUT"
+          if [ "$run" = true ]; then
+            echo "v2 test/coverage gates will run real shards."
+          else
+            echo "No v2 test paths changed; required test/coverage contexts will report success without shards."
+          fi
+
   # pkg/hub is one package of ~2,700 test functions that takes ~125s serially
   # under -race — after #4118 sliced pkg/agent, this single job was the PR
   # gate's critical path (~3.3 min wall clock against ~2.4 min for the widest
@@ -189,7 +206,8 @@ jobs:
   # hub floor. Adding a hub test no longer moves the gate's wall clock by its
   # full duration — only by 1/H of it.
   test-hub:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    needs: required-context-scope
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (hub ${{ matrix.idx }}/4)
     strategy:
       fail-fast: false
@@ -369,7 +387,8 @@ jobs:
   # job below merges them by summing per-block counts before scoring, so the
   # agent floor is applied to the union, never to a partial run.
   test-agent:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    needs: required-context-scope
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (agent ${{ matrix.idx }}/5)
     strategy:
       fail-fast: false
@@ -534,7 +553,8 @@ jobs:
   # 3s — they are all ≤ 8s). The hints only affect BALANCE, never MEMBERSHIP:
   # a stale weight makes a bucket slower, not a package untested.
   list-packages:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    needs: required-context-scope
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
@@ -689,9 +709,9 @@ jobs:
           echo "matrix={\"include\":[$INCLUDE]}" >> "$GITHUB_OUTPUT"
 
   test-rest:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (rest ${{ matrix.idx }}/${{ matrix.total }})
-    needs: list-packages
+    needs: [required-context-scope, list-packages]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.list-packages.outputs.matrix) }}
@@ -872,7 +892,8 @@ jobs:
   # No -coverprofile here: pkg/dashboard's coverage floor is scored from the
   # rest-bucket profile; this lane exists only to vary the execution order.
   test-dashboard-shuffle:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    needs: required-context-scope
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (dashboard shuffle ${{ matrix.idx }}/2)
     strategy:
       fail-fast: false
@@ -1045,11 +1066,11 @@ jobs:
   # summary says it is not complete green test evidence.
   test:
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
-    if: ${{ !cancelled() && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     # Do not run this aggregate in concurrency-cancelled twin runs (#6293);
     # the surviving run still fail-closes on any non-success shard result.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
-    needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
+    needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
       - name: Check shard results
         env:
@@ -1058,8 +1079,20 @@ jobs:
           TEST_AGENT_RESULT: ${{ needs.test-agent.result }}
           TEST_REST_RESULT: ${{ needs.test-rest.result }}
           TEST_DASHBOARD_SHUFFLE_RESULT: ${{ needs.test-dashboard-shuffle.result }}
+          RUN_TESTS: ${{ needs.required-context-scope.outputs.run-tests }}
+          SCOPE_RESULT: ${{ needs.required-context-scope.result }}
         run: |
           set -euo pipefail
+
+          if [ "${SCOPE_RESULT:-}" != success ]; then
+            echo "::error::required-context-scope failed; refusing to report test success without a diff verdict"
+            exit 1
+          fi
+
+          if [ "${RUN_TESTS:-}" != true ]; then
+            echo "No v2 test paths changed; reporting required test context success without running shards."
+            exit 0
+          fi
 
           shard_names=(
             list-packages
@@ -1149,24 +1182,42 @@ jobs:
   # still parsed for the two states a profile cannot express: FAIL and
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
-    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
+    if: ${{ always() && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
-    needs: [test-hub, test-agent, test-rest]
+    needs: [required-context-scope, test-hub, test-agent, test-rest]
     steps:
+      - name: Report coverage not required for this diff
+        if: ${{ needs.required-context-scope.result == 'success' && needs.required-context-scope.outputs.run-tests != 'true' }}
+        run: echo "No v2 coverage paths changed; reporting required coverage context success."
+
+      - name: Fail if scope failed or a required test shard did not complete
+        if: ${{ needs.required-context-scope.result != 'success' || (needs.required-context-scope.outputs.run-tests == 'true' && (needs.test-hub.result != 'success' || needs.test-agent.result != 'success' || needs.test-rest.result != 'success')) }}
+        run: |
+          if [ "${{ needs.required-context-scope.result }}" != success ]; then
+            echo "::error::required-context-scope failed; refusing to report coverage success without a diff verdict"
+            exit 1
+          fi
+          echo "::error::Coverage requires successful test shards (hub=${{ needs.test-hub.result }}, agent=${{ needs.test-agent.result }}, rest=${{ needs.test-rest.result }})"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - name: List packages present in checkout
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
         working-directory: src
         run: |
           # The coverage scorer consumes shard artifacts, but the package set it
@@ -1180,6 +1231,7 @@ jobs:
           fi
 
       - name: Download shard coverage artifacts
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: test-shard-*
@@ -1187,6 +1239,7 @@ jobs:
           merge-multiple: true
 
       - name: Check per-package coverage
+        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
         working-directory: shards
         run: |
           THRESHOLD=90

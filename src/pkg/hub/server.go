@@ -973,6 +973,7 @@ type HubServer struct {
 	githubActivityCancel context.CancelFunc
 	configPath           string
 	envGitHubToken       string
+	discordRequests      discordRequestNotificationState
 	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
 	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
 	// forever: in tests, the loop could wake up to registrySaveDelay after the
@@ -998,10 +999,12 @@ type HubServer struct {
 	// goroutine — which outlives test servers, since nothing closes saveCh —
 	// only ever sees its own path and cannot race a test redirecting the
 	// global for the next server (the TestLoadRegistry -race failure).
-	registryPath string
-	hubGitHash   string
-	hubGitBranch string
-	hubSecret    string
+	registryPath   string
+	hubGitHash     string
+	hubGitBranch   string
+	hubSecret      string
+	myHivesCacheMu sync.Mutex
+	myHivesCache   map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1721,6 +1724,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.registerSaaSRoutes()
 	s.registerOpenRouterRoutes()
 	go s.saveLoop()
+	go s.refreshActiveMyHivesSnapshotsLoop()
 
 	return s
 }
@@ -2668,17 +2672,24 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// Store heartbeat-reported cluster health so the hub can use it as a
 	// fallback when it cannot reach the cluster directly via kubectl.
 	if payload.ClusterHealth != nil && entry.ClusterID != "" {
+		now := time.Now()
+		stored := false
 		s.heartbeatHealthMu.Lock()
-		s.heartbeatHealth[entry.ClusterID] = &HeartbeatHealthEntry{
-			Report:     payload.ClusterHealth,
-			ReceivedAt: time.Now(),
+		prev := s.heartbeatHealth[entry.ClusterID]
+		if shouldReplaceHeartbeatHealth(prev, payload.ClusterHealth, now) {
+			s.heartbeatHealth[entry.ClusterID] = &HeartbeatHealthEntry{
+				Report:     payload.ClusterHealth,
+				ReceivedAt: now,
+			}
+			stored = true
 		}
 		s.heartbeatHealthMu.Unlock()
-		s.logger.Debug("stored heartbeat cluster health",
+		s.logger.Debug("received heartbeat cluster health",
 			"hive_id", payload.HiveID,
 			"cluster_id", entry.ClusterID,
 			"nodes", len(payload.ClusterHealth.Nodes),
 			"node_health_error", payload.ClusterHealth.NodeHealthError,
+			"stored", stored,
 		)
 	}
 
@@ -3184,6 +3195,26 @@ const (
 	// implausibly large active-session list (defensive; a real hive has a handful).
 	maxActiveSessionUsers = 200
 )
+
+func shouldReplaceHeartbeatHealth(prev *HeartbeatHealthEntry, next *HeartbeatClusterHealthReport, now time.Time) bool {
+	if next == nil {
+		return false
+	}
+	if prev == nil || prev.Report == nil {
+		return true
+	}
+	if len(next.Nodes) > 0 {
+		if next.NodeHealthError != "" && len(prev.Report.Nodes) > 0 && prev.Report.NodeHealthError == "" &&
+			now.Sub(prev.ReceivedAt) <= heartbeatHealthStaleness {
+			return false
+		}
+		return true
+	}
+	if len(prev.Report.Nodes) == 0 {
+		return true
+	}
+	return now.Sub(prev.ReceivedAt) > heartbeatHealthStaleness
+}
 
 // creditActiveSessionTime accumulates per-user "time in hive" from one heartbeat's
 // active-session report. Each distinct, valid username that had a live session on
@@ -4191,6 +4222,9 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 		"image_statuses":   getImageStatuses(),
 		"image_build_urls": getImageBuildURLs(),
 		"upgrade_state":    s.hubUpgradeState(),
+	}
+	if discordRequestNotifications := s.discordRequestsNotificationSnapshot(); discordRequestNotifications != nil {
+		resp["discord_request_notifications"] = discordRequestNotifications
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")

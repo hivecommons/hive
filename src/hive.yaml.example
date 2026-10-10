@@ -75,6 +75,17 @@ project:
 # github:
 #   self_authorization_hold: true
 #
+# Issue lifecycle automation. Defaults shown: after a hive/trusted fix PR
+# merges, Hive posts a close marker and closes the fixed issue as completed
+# itself, because GitHub only auto-closes keyword-linked PRs that target the
+# repository default branch. Add `hive: needs-confirmation` to a specific
+# issue, or set reporter_confirmation: true globally, only when human-filed
+# bug issues must wait for reporter verification before closing.
+# issues:
+#   close_on_merge: true
+#   close_on_merge_backfill_interval: 1h
+#   reporter_confirmation: false
+#
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then
 # the live ACMM-level default when the hive-wide setting is also unset.
@@ -129,6 +140,15 @@ ioscan:
     model: ""                             # empty uses governor.litellm default_model, then gpt-4o-mini
     warn_threshold: 0.55                  # advisory bead/audit threshold
     block_threshold: 0.85                 # open=redact, closed=block kick
+
+# Spoke-wide backend allow/deny list (optional). Deny wins; an empty allow
+# means every backend is allowed. ACMM pack apply never places an agent on a
+# disallowed backend (it falls back to the first allowed entry, else the hive
+# default, and moves pack-owned agents off it), and
+# PUT /api/config/agent/{name}/models rejects such a placement with 400.
+# backends:
+#   allow: [claude, codex]
+#   deny: [copilot]
 
 # Agent CLAUDE.md policies from a git config repo (optional).
 # Uncomment and set to your own policy repo if you have custom agent prompts.

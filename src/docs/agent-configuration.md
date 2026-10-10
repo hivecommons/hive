@@ -77,7 +77,28 @@ agents:
     role: scanner                # behavioral role; defaults to the agent name
     sort_order: 20               # dashboard ordering (supervisors default to 0, others 100)
     aliases: [sc]                # short names accepted in dispatch/commands
+    bob:
+      session_label: hive-scanner # bob backend only: overrides governor.bob.session_prefix + name
 ```
+
+`agents.<name>.bob.session_label` gives a bob-backed agent a Bob session label
+without renaming the agent. If it is unset, `governor.bob.session_prefix` can
+prefix every bob agent (for example `hive-` makes `scanner` report as
+`hive-scanner`). Hive passes the label to Bob as `--instance-id` and exports it
+to the bob pane as `HIVE_BOB_SESSION_LABEL`; `HIVE_AGENT`,
+`HIVE_AGENT_DISPLAY_NAME`, tmux session, workdir, beads directory, claims, token
+buckets, and Hive token attribution stay keyed to the real agent name. Labels
+may contain up to 64 ASCII letters, digits, `-`, `_`, or `.` characters.
+
+Renaming agents is a migration, not a display-only change. The YAML key is the
+agent identity: changing it splits tmux session/socket names,
+`/data/agents/<name>`, `/data/logs/kicks/<name>`, default `/data/beads/<name>`,
+claim holders, dashboard/token buckets, hub heartbeat names, and defaults that
+literally use the agent name. Prefer `display_name` for dashboard presentation
+and Bob `session_label` / `session_prefix` for Bobalytics tagging.
+
+The legacy flat `bob_display_name` spelling is still accepted as an alias for
+older overlays, but new configs should use `bob.session_label`.
 
 ### Engine — what powers it
 
@@ -528,6 +549,21 @@ Each agent shows a 📌 pin on its CLI and its model in the dashboard. The seman
 2. **Discovery says the model is gone.** When a *genuine* (non-fallback) discovery returns a model set that no longer contains an agent's selected model — a key swap or endpoint change stripped the entitlement — the agent is switched to the first available model, with a toast. A static-fallback list never triggers this, and a model that is still present is never re-selected.
 
 Pin a model when reproducibility matters more than the governor's budget optimizations. Leave it unpinned when you want the hive to manage cost for you.
+
+### Disabling a backend spoke-wide
+
+A top-level `backends:` block restricts which backends agents on this spoke may be placed on ([#11310](https://github.com/hivecommons/hive/issues/11310)):
+
+```yaml
+backends:
+  allow: [claude, codex]   # empty or omitted = every backend is allowed
+  deny: [copilot]          # deny wins over allow
+```
+
+Names compare case-insensitively; an empty `backend:` (the hive default) is always allowed. The list is enforced where placements are decided:
+
+- **ACMM pack apply** never places an agent on a disallowed backend. A pack agent whose pack backend is disallowed gets the first allowed `allow` entry instead (or the hive default when `allow` is empty), without the pack's model, so the replacement backend uses its own default model. A pack-owned agent already on a now-disallowed backend is moved the same way on the next apply. Backends an operator explicitly chose (operator-owned) are left alone.
+- **`PUT /api/config/agent/{name}/models`** rejects a placement onto a disallowed backend with `400` and a message naming it.
 
 ### Changing backend and model together: use the atomic endpoint
 

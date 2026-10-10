@@ -21,6 +21,26 @@ type supersessionPRFixture struct {
 	Merged bool
 	SHA    string
 	Files  []string
+	// Fields below drive the contributor auto-close path (#11418).
+	Labels        []string
+	Additions     int
+	Comments      []supersessionCommentFixture
+	Threads       []supersessionThreadFixture
+	ThreadsBroken bool
+}
+
+type supersessionCommentFixture struct {
+	ID        int64
+	Body      string
+	Author    string
+	Bot       bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type supersessionThreadFixture struct {
+	Resolved bool
+	Comments []supersessionCommentFixture
 }
 
 type supersessionIssueFixture struct {
@@ -35,11 +55,12 @@ type supersessionObservations struct {
 	closed   []int
 	comments map[int][]string
 	labels   map[int][]string
+	edits    map[int64]string
 }
 
 func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionPRFixture, issues []supersessionIssueFixture) (*httptest.Server, *supersessionObservations) {
 	t.Helper()
-	obs := &supersessionObservations{comments: map[int][]string{}, labels: map[int][]string{}}
+	obs := &supersessionObservations{comments: map[int][]string{}, labels: map[int][]string{}, edits: map[int64]string{}}
 	now := time.Now().Format(time.RFC3339)
 	prByNumber := map[int]supersessionPRFixture{}
 	for _, pr := range prs {
@@ -53,17 +74,41 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 	mux := http.NewServeMux()
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
+			Query     string         `json:"query"`
 			Variables map[string]any `json:"variables"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "reviewThreads") {
+			n, _ := strconv.Atoi(fmt.Sprint(payload.Variables["number"]))
+			pr := prByNumber[n]
+			if pr.ThreadsBroken {
+				_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{"message": "boom"}}})
+				return
+			}
+			threads := []map[string]any{}
+			for _, th := range pr.Threads {
+				cms := []map[string]any{}
+				for _, cm := range th.Comments {
+					typename := "User"
+					if cm.Bot {
+						typename = "Bot"
+					}
+					cms = append(cms, map[string]any{"createdAt": cm.CreatedAt.Format(time.RFC3339), "author": map[string]any{"__typename": typename, "login": cm.Author}})
+				}
+				threads = append(threads, map[string]any{"isResolved": th.Resolved, "comments": map[string]any{"nodes": cms}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{"nodes": threads}}}}})
+			return
+		}
 		n, _ := strconv.Atoi(fmt.Sprint(payload.Variables["issue"]))
 		issue := issueByNumber[n]
 		nodes := []map[string]any{}
 		if issue.GraphQLCloserPR > 0 {
 			nodes = append(nodes, map[string]any{
-				"number": issue.GraphQLCloserPR,
-				"url":    fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, issue.GraphQLCloserPR),
-				"merged": true,
+				"number":   issue.GraphQLCloserPR,
+				"url":      fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, issue.GraphQLCloserPR),
+				"merged":   true,
+				"mergedAt": "2026-10-10T11:40:00Z",
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": nodes}}}}})
@@ -89,6 +134,13 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 				"state":    "open",
 				"user":     map[string]any{"login": pr.Author, "type": "Bot"},
 				"html_url": fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, pr.Number),
+			}
+			if len(pr.Labels) > 0 {
+				labels := []map[string]any{}
+				for _, l := range pr.Labels {
+					labels = append(labels, map[string]any{"name": l})
+				}
+				entry["labels"] = labels
 			}
 			if pr.Merged {
 				entry["state"] = "closed"
@@ -118,6 +170,11 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		rest := strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/pulls/", org, repo))
 		parts := strings.Split(rest, "/")
 		n, _ := strconv.Atoi(parts[0])
+		if len(parts) == 1 && r.Method == "GET" {
+			pr := prByNumber[n]
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "additions": pr.Additions, "deletions": 0})
+			return
+		}
 		if len(parts) == 2 && parts[1] == "files" {
 			wire := []map[string]any{}
 			for _, f := range prByNumber[n].Files {
@@ -131,7 +188,19 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/issues/", org, repo))
 		if strings.HasPrefix(rest, "comments/") {
-			w.WriteHeader(http.StatusNotFound)
+			id, _ := strconv.ParseInt(strings.TrimPrefix(rest, "comments/"), 10, 64)
+			if r.Method != "PATCH" || id == 0 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			obs.mu.Lock()
+			obs.edits[id] = payload.Body
+			obs.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "body": payload.Body})
 			return
 		}
 		parts := strings.Split(rest, "/")
@@ -146,7 +215,25 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			obs.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "closed"})
 		case len(parts) == 2 && parts[1] == "comments" && r.Method == "GET":
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
+			wire := []map[string]any{}
+			for _, cm := range prByNumber[n].Comments {
+				userType := "User"
+				if cm.Bot {
+					userType = "Bot"
+				}
+				updated := cm.UpdatedAt
+				if updated.IsZero() {
+					updated = cm.CreatedAt
+				}
+				wire = append(wire, map[string]any{
+					"id":         cm.ID,
+					"body":       cm.Body,
+					"user":       map[string]any{"login": cm.Author, "type": userType},
+					"created_at": cm.CreatedAt.Format(time.RFC3339),
+					"updated_at": updated.Format(time.RFC3339),
+				})
+			}
+			_ = json.NewEncoder(w).Encode(wire)
 		case len(parts) == 2 && parts[1] == "comments" && r.Method == "POST":
 			var payload struct {
 				Body *string `json:"body"`
@@ -177,6 +264,12 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": SupersededLabel})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels/", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": SupersededLabel})
 	})
 	return httptest.NewServer(mux), obs
 }

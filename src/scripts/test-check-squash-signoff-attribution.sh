@@ -392,6 +392,69 @@ else
   printf '%s\n' "$output" | sed 's/^/      | /'
 fi
 
+# --- #11412: the cli-pin-bump shape ----------------------------------------
+#
+# cli-pin-bump.yml committed as hive-release[bot] <hive-release@hive.kubestellar.io>
+# with `git commit -s`, then opened the PR with TOPUP_PUSH_TOKEN — a human's
+# PAT. The squashes of #11407 (a0de3f92) and #11408 (c6c78c3a) landed as
+# author=Andy Anderson, signed-off-by=hive-release@hive.kubestellar.io. That
+# address is not a GitHub account, so the commits API gives no author login
+# and there is no map entry here: this exercises the degraded path, which used
+# to pass it because the address was not recognised as a bot.
+git checkout -q -b pinbump "$base_sha"
+echo pb > pb.txt
+git add pb.txt
+GIT_AUTHOR_NAME='hive-release[bot]' GIT_AUTHOR_EMAIL='hive-release@hive.kubestellar.io' \
+  git commit -q -m "⬆️ images: bump goose 1.53.0 -> 1.54.0" \
+  -m "Signed-off-by: hive-release[bot] <hive-release@hive.kubestellar.io>"
+pinbump_sha=$(git rev-parse HEAD)
+
+run pinbump clubanderson
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q "^FAIL ${pinbump_sha} bot-signoff"; then
+  pass "a hive-release[bot] self-signed commit on a human PR is rejected (the #11407 case)"
+else
+  bad "the #11407 pin-bump shape was not caught (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# An unfamiliar bot address is still caught by its [bot] author name when the
+# bot signs off as itself.
+git checkout -q -b otherbot "$base_sha"
+echo ob > ob.txt
+git add ob.txt
+GIT_AUTHOR_NAME='some-app[bot]' GIT_AUTHOR_EMAIL='bot@automation.example.com' \
+  git commit -q -m "change from an unfamiliar bot" \
+  -m "Signed-off-by: some-app[bot] <bot@automation.example.com>"
+otherbot_sha=$(git rev-parse HEAD)
+
+run otherbot clubanderson
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q "^FAIL ${otherbot_sha} bot-signoff"; then
+  pass "a [bot]-named author signing off as itself is rejected on a human PR"
+else
+  bad "a [bot]-named self-sign-off was not caught (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# The fix cli-pin-bump.yml now applies (the d00254b shape): keep the bot's
+# sign-off and add one naming the PAT owner, i.e. the PR author. The squash
+# will be attributed to that person and their noreply certifies it, so this
+# must pass even without an author login.
+git checkout -q -b pinbumpfixed "$base_sha"
+echo pf > pf.txt
+git add pf.txt
+GIT_AUTHOR_NAME='hive-release[bot]' GIT_AUTHOR_EMAIL='hive-release@hive.kubestellar.io' \
+  git commit -q -m "⬆️ images: bump claude 2.1.295 -> 2.1.296" \
+  -m "Signed-off-by: hive-release[bot] <hive-release@hive.kubestellar.io>
+Signed-off-by: clubanderson <407614+clubanderson@users.noreply.github.com>"
+
+run pinbumpfixed clubanderson
+if [ "$rc" -eq 0 ]; then
+  pass "a pin bump that also signs off as the PAT owner passes on that owner's PR"
+else
+  bad "the fixed pin-bump shape was rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-squash-signoff-attribution FAILED"
   exit 1

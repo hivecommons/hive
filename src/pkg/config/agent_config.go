@@ -119,6 +119,39 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	return out
 }
 
+// MaxBobSessionLabelLen bounds bob reporting labels:
+// governor.bob.session_prefix + <agent> and agents.<name>.bob.session_label.
+const MaxBobSessionLabelLen = 64
+
+// MaxBobDisplayNameLen bounds the legacy agents.<name>.bob_display_name alias.
+const MaxBobDisplayNameLen = MaxBobSessionLabelLen
+
+// ValidateBobSessionLabel checks an optional bob reporting label component.
+// Empty is valid. Non-empty values must be at most MaxBobSessionLabelLen bytes
+// of ASCII letters, digits, '-', '_' or '.', so the label is safe in env vars,
+// file names, Bob --instance-id, and report keys.
+func ValidateBobSessionLabel(field, v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > MaxBobSessionLabelLen {
+		return fmt.Errorf("%s %q is longer than %d characters", field, v, MaxBobSessionLabelLen)
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("%s %q contains %q (allowed: letters, digits, '-', '_', '.')", field, v, r)
+		}
+	}
+	return nil
+}
+
+// ValidateBobDisplayName checks the legacy flat bob reporting label.
+func ValidateBobDisplayName(v string) error {
+	return ValidateBobSessionLabel("bob_display_name", v)
+}
+
 // ValidateKickTemplateName gates the SHAPE of a kick_template value: it is a
 // bare file name that the scheduler looks up under the policy directories and
 // the embedded defaults, never a path. Empty is fine (convention lookup). A
@@ -244,6 +277,11 @@ type AgentConfig struct {
 	AgentSpec       string        `yaml:"agent_spec" json:"agent_spec,omitempty"`
 	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string        `yaml:"description" json:"description,omitempty"`
+	// Bob holds bob-backend-only per-agent options. Empty is default-off.
+	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
+	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is
+	// kept for backwards compatibility; new configs should use bob.session_label.
+	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
 	Role           string              `yaml:"role" json:"role,omitempty"`

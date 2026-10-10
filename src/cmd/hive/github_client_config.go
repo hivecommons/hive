@@ -66,14 +66,15 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 }
 
 // githubHoldLabels is the hold-label set every client carries: the canonical
-// per-hive hold label (hive-pause/<id>), plus the clanker-requested label while
-// reporter_trust.clanker_requested is on. The legacy hive/<id> spelling is
-// deliberately NOT part of it: that label is the provenance label on every
-// item the hive claims, and github.HasHoldLabelWith never treats it as a hold
-// (#9371), so carrying it here could hold nothing and treating it as a hold
-// would park every claimed item.
+// per-hive hold label (hive-pause/<id>), the configured sentinel alert label,
+// plus the clanker-requested label while reporter_trust.clanker_requested is
+// on. The legacy hive/<id> spelling is deliberately NOT part of it: that label
+// is the provenance label on every item the hive claims, and
+// github.HasHoldLabelWith never treats it as a hold (#9371), so carrying it
+// here could hold nothing and treating it as a hold would park every claimed
+// item.
 func (b *boot) githubHoldLabels() []string {
-	labels := []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID)}
+	labels := []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID), b.cfg.Sentinel.LabelOrDefault()}
 	return append(labels, b.cfg.Project.IssueFilter.ReporterTrust.ExtraHoldLabels()...)
 }
 
@@ -84,6 +85,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 		return
 	}
 	client.SetHoldLabels(b.githubHoldLabels())
+	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a
 	// pause taken in the dashboard narrows the very next enumeration and
@@ -112,6 +114,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	client.SetReporterConfirmationEnabledFunc(func() bool {
+		return b.cfg.Issues.ReporterConfirmationEnabled()
+	})
 	// Relay provenance for the clanker-requested PR parking (#10781). The
 	// ledger is read per call because the client can be configured before
 	// it is built.

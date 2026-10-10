@@ -40,6 +40,7 @@ func resetCommitBehindState(t *testing.T) {
 	latestSHAByBranch[fallbackReleaseLine] = branchSHAInfo{SHA: "head999"}
 	latestSHAMu.Unlock()
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		waitForCommitBehindResolvers(t)
 		resolveStableReleaseLine = origResolve
 		commitBehindMu.Lock()
@@ -202,6 +203,7 @@ func TestFetchCommitBehindCountHTTP(t *testing.T) {
 		return nil, errors.New("process-global default transport used")
 	})
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		githubAPIBase = oldBase
 		http.DefaultTransport = oldDefaultTransport
 	})

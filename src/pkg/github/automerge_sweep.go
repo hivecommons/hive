@@ -15,21 +15,36 @@ func (c *Client) SetRequiredChecks(set map[string]bool) {
 	c.requiredChecksMu.Lock()
 	defer c.requiredChecksMu.Unlock()
 	c.requiredChecks = set
+	c.requiredChecksForRepo = nil
 }
 
-// configRequiredChecks returns the currently installed config-declared
-// required-check set and whether one is installed. Mirrors isTrustedMerger's
-// nil-safe read pattern for c.mergerAuthz.
-func (c *Client) configRequiredChecks() (map[string]bool, bool) {
+// SetRequiredChecksForRepo installs a live config resolver for per-repository
+// required-check overrides. Passing nil clears the resolver and keeps the
+// global SetRequiredChecks fallback.
+func (c *Client) SetRequiredChecksForRepo(fn func(repo string) (map[string]bool, bool)) {
+	if c == nil {
+		return
+	}
+	c.requiredChecksMu.Lock()
+	defer c.requiredChecksMu.Unlock()
+	c.requiredChecksForRepo = fn
+}
+
+func (c *Client) configRequiredChecksForRepo(repo string) (map[string]bool, bool) {
 	if c == nil {
 		return nil, false
 	}
 	c.requiredChecksMu.RLock()
-	defer c.requiredChecksMu.RUnlock()
-	if len(c.requiredChecks) == 0 {
+	fn := c.requiredChecksForRepo
+	set := c.requiredChecks
+	c.requiredChecksMu.RUnlock()
+	if fn != nil {
+		return fn(repo)
+	}
+	if len(set) == 0 {
 		return nil, false
 	}
-	return c.requiredChecks, true
+	return set, true
 }
 
 func (c *Client) SetAutoMergeMinHeadAge(d time.Duration) {
@@ -124,6 +139,6 @@ func (c *Client) info(msg string, args ...any) {
 // sweep itself lives in pkg/github/automerge, so this Client-level shim is
 // used only by the protection-facts collector (#7515).
 func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
-	set, ok := c.configRequiredChecks()
+	set, ok := c.configRequiredChecksForRepo(owner + "/" + repo)
 	return RequiredStatusCheckContexts(ctx, c.client, owner, repo, branch, set, ok)
 }

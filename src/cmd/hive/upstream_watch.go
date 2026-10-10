@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
@@ -20,8 +21,13 @@ import (
 var upstreamWatchStatePath = "/data/upstream-watch.json"
 
 // upstreamWatchLastRun is the wall-clock of the last watch pass (zero =
-// never). Only the eval goroutine touches it.
+// never). Guarded by upstreamWatchMu.
 var upstreamWatchLastRun time.Time
+
+// upstreamWatchMu makes a pass single-flight: dashboard saves run whole eval
+// cycles on their own goroutines, so two cycles can reach runUpstreamWatch at
+// once.
+var upstreamWatchMu sync.Mutex
 
 // runUpstreamWatch is the eval-tick half of the opt-in upstream watch
 // (hivecommons/hive#9967). With upstream_watch.enabled off (the default) it
@@ -35,6 +41,10 @@ func runUpstreamWatch(ctx context.Context, cfg *config.Config, ghClient *github.
 	if cfg == nil || !cfg.UpstreamWatch.Enabled || len(cfg.UpstreamWatch.Repos) == 0 {
 		return
 	}
+	if !upstreamWatchMu.TryLock() {
+		return
+	}
+	defer upstreamWatchMu.Unlock()
 	client := ghClient.GoGitHub()
 	if client == nil {
 		return

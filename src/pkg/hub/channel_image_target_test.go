@@ -79,7 +79,7 @@ func (f *fakeGHCR) install(t *testing.T) *httptest.Server {
 	t.Cleanup(srv.Close)
 	savedBase := ghcrBase
 	ghcrBase = srv.URL
-	t.Cleanup(func() { ghcrBase = savedBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 	return srv
 }
 

@@ -63,10 +63,16 @@ type Config struct {
 	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
 	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
 	Hub                         HubConfig           `yaml:"hub"`
-	Fleet                       FleetConfig         `yaml:"fleet,omitempty" json:"fleet,omitempty"`
-	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID                      string              `yaml:"hive_id"`
-	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
+	// at pack apply and by PUT /api/config/agent/{name}/models.
+	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Issues tunes issue lifecycle automation. Zero value keeps the safe
+	// defaults: close issues after their fix PR merges, and backfill hourly.
+	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
+	Fleet      FleetConfig      `yaml:"fleet,omitempty" json:"fleet,omitempty"`
+	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID     string           `yaml:"hive_id"`
+	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	// ModelRoles is the named model-roles map (#9722): a small set of names,
 	// each naming a backend, a model and a reasoning effort, referenced as
 	// "@<role>" wherever hive asks for a model (today: agents' model and the
@@ -132,6 +138,9 @@ type Config struct {
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
 	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
+	// SupersessionSweep tunes the superseded-PR sweep. Closing human-authored
+	// PRs is opt-in (hivecommons/hive#11418); the default only comments.
+	SupersessionSweep SupersessionSweepConfig `yaml:"supersession_sweep,omitempty" json:"supersession_sweep,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`

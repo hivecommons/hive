@@ -51,6 +51,7 @@ func TestAuthGitHubRequestPrefersAppTokenThenPAT(t *testing.T) {
 	oldBase := githubAPIBase
 	githubAPIBase = appAPI.URL
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		githubAPIBase = oldBase
 		resetHubGitHubAppAuthForTest()
 	})
@@ -79,6 +80,7 @@ func TestAuthGitHubRequestFallsBackToPATWhenAppUnavailable(t *testing.T) {
 	oldBase := githubAPIBase
 	githubAPIBase = appAPI.URL
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		githubAPIBase = oldBase
 		resetHubGitHubAppAuthForTest()
 	})
@@ -160,7 +162,7 @@ func TestHubGHRateLimitsEndpointShape(t *testing.T) {
 
 	oldBase := githubAPIBase
 	githubAPIBase = api.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); githubAPIBase = oldBase })
 
 	srv := &HubServer{logger: slog.Default()}
 	rec := httptest.NewRecorder()

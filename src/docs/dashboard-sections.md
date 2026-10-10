@@ -47,6 +47,7 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - **Held** counts issues and pull requests with a hold label. A hold label, such as `hold` or `on-hold`, parks an item on purpose.
 - **Blocked / needs-human** counts work that waits on a person or on something else. For issues, that is the "Needs human" and "Confirm & close" bands. It also counts issues with a `needs-human` label and issues waiting for their reporter. For pull requests, it is the "Needs human" and "Blocked" bands.
 - **Outside** counts open items that Hive's filters kept off its work list. Hover its ⓘ mark to see why each item was kept out. The reasons are labels such as `needs-direction`, `needs-decision` or `needs-spec`, and exempt labels. Others are reporter triage, your project issue filter, standing advisory issues and bot dependency dashboards. Draft pull requests count here too.
+- **Test coverage** appears at the end of the row when `HIVE_COVERAGE_BADGE_URL` is configured and readable. It shows the primary repository's current coverage and goal, using the same reading as the quality agent.
 - The last part of Outside is **hold-adjacent/other**. It is whatever is left after every named reason is counted. Hive cannot say more about these items.
 - The Outside tile exists on the v5 line only. On v6 the same items are part of the totals but have no tile of their own.
 - **Issues by band** groups tracked and held issues. The bands are Unclaimed, Claimed, Needs triage, Needs human and Confirm & close.
@@ -75,6 +76,7 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - `dashboard.issue_bands.stale_days` decides when an item counts as having had no activity for too long.
 - `project.issue_filter.require_labels`, `project.issue_filter.hard_suppress_labels`, `project.issue_filter.reporter_trust` and `governor.labels.exempt` decide what counts as Outside. Change them in **Settings → Labels**.
 - The chart type and trend window are saved in your browser only.
+- `HIVE_COVERAGE_BADGE_URL` turns on the Test coverage tile by giving Hive the coverage badge that the quality agent already reads.
 
 ## Governor
 
@@ -314,6 +316,7 @@ One card per repository Hive looks after, listing its open issues and pull reque
 
 - The cards use the same bands as the Overview charts. See the Overview entry for each band's meaning.
 - Small pills on each item show signals, such as a hold, a failing check or no recent activity.
+- A red pull-request pill means the sentinel flagged it for a possible security override, privilege escalation or codebase damage. Hive will not merge it until a maintainer reviews it and removes the sentinel label. Pull requests from trusted authors usually get a sentinel comment instead of the label, so they are usually not red.
 - The **needs-human** count in the header counts open pull requests that need a person to review or decide. Needs-human means waiting on a person.
 
 **What it is good for.** Use it to act on single items. Open the legend above the cards to learn what each pill means.
@@ -373,13 +376,14 @@ Actions Hive wants to take that are waiting for you to approve or reject them.
 
 ## Audit Log
 
-A searchable record of everything Hive has done, newest first.
+A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.
 
 **What it tells you.** Every action Hive takes is written to the audit log. This section lets you read and search it.
 
 **How the numbers are worked out.**
 
 - The collapsed summary counts today's events.
+- Its **sensitive** badge counts sensitive audit actions over the last 24 hours. Click it to expand the card, apply the visible **Sensitive only** filter, and scroll to the first matching row.
 - The search box matches any of the words you type. Wrap text in slashes, like `/merge.*failed/`, to search with a pattern.
 - The match count shows how many events match.
 
@@ -397,23 +401,23 @@ Review Pipeline shows pull requests by stage first; Review Queue lists the same 
 
 ## Review Pipeline
 
-The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.
+Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.
 
 **What it tells you.** Each column is one stage of the review loop: unreviewed, reviewing, changes requested, fixing, waiting for a human, approved, merged and abandoned. Each card shows the pull request, who has reviewed it, how many findings were raised at each severity and what should happen next.
 
-**How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The Pipeline header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
+**How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The collapsible Pipeline tile header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
 
 **What it is good for.** See at a glance where review work is piling up, and which pull requests have gone round the review loop enough times that a person should step in.
 
 **Example.** Three cards sit in "changes requested" and one has looped twice. The next action on that card says a person should look at it.
 
-### Queue
+## Queue
 
-Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.
+Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.
 
 **What it tells you.** It ranks open pull requests from all your repositories in one list, whoever wrote them.
 
-**How the numbers are worked out.** Hive scores each pull request by its review priority and history, then sorts them. The Queue header shows how many are in the queue. The order is the same every time for the same data.
+**How the numbers are worked out.** Hive scores each pull request by its review priority and history, then sorts them. The collapsible Queue tile header shows how many are in the queue. The order is the same every time for the same data.
 
 **What it is good for.** Review from the top when you have time. The reasons tell you why an item is high.
 

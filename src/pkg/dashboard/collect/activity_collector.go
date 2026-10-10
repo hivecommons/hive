@@ -30,6 +30,9 @@ type AuditEntry struct {
 	Action    string `json:"action"`
 	Detail    string `json:"detail,omitempty"`
 	Agent     string `json:"agent,omitempty"`
+	// Sensitive is stamped at API serve time for actions whose type is in the
+	// dashboard's sensitive-action vocabulary. Audit files omit it.
+	Sensitive bool `json:"sensitive,omitempty"`
 	// Repo and Target are the typed coordinates of a hive-mediated GitHub
 	// write (hivecommons/hive#9587): the repository and the issue/PR number.
 	// Entries written before they existed carry them only as repo=/number=

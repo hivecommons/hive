@@ -16,6 +16,7 @@ import (
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/releasenotes"
 )
 
 const (
@@ -239,6 +240,53 @@ func TestReleaseNotesCachesPerPair(t *testing.T) {
 	doGet(s, url)
 	if f.calls == calls {
 		t.Error("expired entry was served from cache")
+	}
+}
+
+func TestReleaseNotesUsesHubCacheForHostedSpoke(t *testing.T) {
+	f := &rnStubFetcher{files: map[string]string{
+		rnFromSHA + ":CHANGELOG.md": rnOldLog,
+		rnToSHA + ":CHANGELOG.md":   rnOldLog,
+	}}
+	s := rnSetup(t, f)
+	hubCalls := 0
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hubCalls++
+		if r.URL.Path != "/api/saas/release-notes" {
+			t.Fatalf("hub path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("from"); got != rnFromSHA {
+			t.Errorf("from = %q", got)
+		}
+		if got := r.URL.Query().Get("to"); got != rnToSHA {
+			t.Errorf("to = %q", got)
+		}
+		if got := r.Header.Get(proxyAuthHeader); got != "spoke-proof" {
+			t.Errorf("%s = %q", proxyAuthHeader, got)
+		}
+		_ = json.NewEncoder(w).Encode(releaseNotesResponse{
+			From:     releaseNotesFrom{SHA: rnFromSHA, Version: "v5.144.0"},
+			To:       releaseNotesTo{SHA: rnToSHA, Ref: rnToSHA, Version: "v5.145.0"},
+			Sections: []releasenotes.Section{{Version: "v5.145.0", Date: "2026-10-08"}},
+			Source:   "changelog",
+		})
+	}))
+	t.Cleanup(hub.Close)
+	s.deps.Config.Hub.URL = hub.URL
+	s.deps.Config.HiveID = "hosted-test"
+	s.authToken = "spoke-proof"
+
+	url := "/api/version/release-notes?from=" + rnFromSHA + "&to=" + rnToSHA
+	out := rnDecode(t, doGet(s, url))
+	if out["source"] != "changelog" || hubCalls != 1 {
+		t.Fatalf("first response=%v hubCalls=%d", out, hubCalls)
+	}
+	if f.calls != 0 {
+		t.Fatalf("hosted spoke fell back to local GitHub build: calls=%d", f.calls)
+	}
+	rnDecode(t, doGet(s, url))
+	if hubCalls != 1 {
+		t.Fatalf("second modal open missed local cache: hubCalls=%d", hubCalls)
 	}
 }
 

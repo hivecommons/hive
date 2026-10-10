@@ -91,8 +91,11 @@ type MSTeamsConfig struct {
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
-	BotToken       string `yaml:"bot_token"`
-	ChannelID      string `yaml:"channel_id"`
+	// RequestsWebhookURL posts new hosted-hive provision requests to the
+	// community request channel. Secret; do not expose over JSON/status APIs.
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
+	BotToken           string `yaml:"bot_token"`
+	ChannelID          string `yaml:"channel_id"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel

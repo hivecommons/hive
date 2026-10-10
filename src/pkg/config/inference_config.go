@@ -272,6 +272,17 @@ type BobConfig struct {
 	// is a normal, backwards-compatible state that the dashboard renders as
 	// "(unnamed)" rather than an error.
 	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
+	// SessionPrefix is an optional global prefix for bob --instance-id, used
+	// to make Bob/Bobalytics sessions distinguishable without renaming Hive
+	// agents. Empty is default-off and preserves the exact launch command.
+	SessionPrefix string `yaml:"session_prefix,omitempty" json:"session_prefix,omitempty"`
+}
+
+// AgentBobConfig holds per-agent bob backend options.
+type AgentBobConfig struct {
+	// SessionLabel overrides governor.bob.session_prefix + agent name for Bob
+	// --instance-id. It never changes the Hive agent identity.
+	SessionLabel string `yaml:"session_label,omitempty" json:"session_label,omitempty"`
 }
 
 // ResolveAPIKey returns the bob API key, or "" when none is configured.

@@ -80,6 +80,7 @@ case "${args[0]:-}" in
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;
   daemon-reload) : ;;
+  show-environment) exit "${FAKE_USER_BUS_RC:-0}" ;;
   is-enabled|is-active)
     if [ "${args[1]:-}" = hive-upgrade.path ]; then
       [ -f "$sd/bridge-enabled" ]; exit $?
@@ -252,6 +253,7 @@ reset_env() {
   export FAKE_AUTOUPDATE_LABEL=""
   export FAKE_AUTO_UPDATE_UPDATED="true"
   export FAKE_AUTO_UPDATE_RC=0
+  export FAKE_USER_BUS_RC=0
   # The gateway (#4493): known, startable, and answering by default; each case
   # breaks exactly the link it is about. Retries are collapsed so a dead
   # gateway costs the suite nothing.
@@ -888,7 +890,7 @@ seed_bridge_checkout() {
 
 reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
 printf '# keep this comment\nUNRELATED=value with spaces\nHIVE_DEPLOYMENT_RUNTIME=unknown\n HIVE_DEPLOYMENT_RUNTIME=compose\nHIVE_DEPLOYMENT_PODMAN_MODE=rootful\nHIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/wrong\n' >>"$CONF_DIR/hive.env"
-grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
+grep -vE '^[[:space:]]*HIVE_(DEPLOYMENT_|SELF_IMAGE)' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.env"
 cp "$CONF_DIR/hive.yaml" "$TEST_TMP/operator.yaml"
 cp "$CONF_DIR/secrets/id_ed25519" "$TEST_TMP/operator.key"
 case_expect "one command migrates a pre-bridge rootless host" 0 "migration complete" reconcile migrate
@@ -896,7 +898,7 @@ check "runtime is repaired without duplicate conflicting lines" \
   '[ "$(grep -c HIVE_DEPLOYMENT_RUNTIME= "$CONF_DIR/hive.env")" = 1 ] && grep -qx HIVE_DEPLOYMENT_RUNTIME=podman-quadlet "$CONF_DIR/hive.env"'
 check "rootless mode and container-side request directory are repaired" \
   'grep -qx HIVE_DEPLOYMENT_PODMAN_MODE=rootless "$CONF_DIR/hive.env" && grep -qx HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR=/run/hive/upgrade-requests "$CONF_DIR/hive.env"'
-grep -vE '^[[:space:]]*HIVE_DEPLOYMENT_' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
+grep -vE '^[[:space:]]*HIVE_(DEPLOYMENT_|SELF_IMAGE)' "$CONF_DIR/hive.env" >"$TEST_TMP/unrelated.after"
 check "non-Hive env lines and token are byte-preserved" 'cmp -s "$TEST_TMP/unrelated.env" "$TEST_TMP/unrelated.after"'
 check "yaml and secrets are untouched" 'cmp -s "$TEST_TMP/operator.yaml" "$CONF_DIR/hive.yaml" && cmp -s "$TEST_TMP/operator.key" "$CONF_DIR/secrets/id_ed25519"'
 check "request directory is private and mapped in the Podman namespace" \
@@ -950,6 +952,30 @@ check "symlink rejection never changes secrets permissions" '[ "$(stat -c %a "$C
 reset_env; seed_managed_host; seed_bridge_checkout
 case_expect "migration refuses an absent operator env rather than provisioning" 78 "needs an existing" reconcile migrate
 check "absent env remains absent" '[ ! -e "$CONF_DIR/hive.env" ]'
+
+echo
+echo "== migrate records self-image env and preflights the user bus (#11296) =="
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+printf 'Image=%s:edge\n' "$REPO" >"$QUADLET_DIR/hive.container.d/10-image.conf"
+case_expect "migrating a registry-tracked unit succeeds" 0 "migration complete" reconcile migrate
+check "migrate records the effective image and registry tracking" \
+  'grep -qx "HIVE_SELF_IMAGE=${REPO}:edge" "$CONF_DIR/hive.env" && grep -qx HIVE_SELF_IMAGE_TRACKING=registry "$CONF_DIR/hive.env"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+mkdir -p "$QUADLET_DIR/hive.container.d"; printf 'Image=%s@%s\n' "$REPO" "$DIGEST_OLD" >"$QUADLET_DIR/hive.container.d/10-image.conf"
+case_expect "migrating a digest-pinned unit succeeds" 0 "migration complete" reconcile migrate
+check "migrate leaves the self-image env to the pin path for a digest pin" \
+  '! grep -q "^HIVE_SELF_IMAGE" "$CONF_DIR/hive.env"'
+
+reset_env; seed_managed_host; seed_operator_files; seed_bridge_checkout
+export FAKE_USER_BUS_RC=1
+cp "$CONF_DIR/hive.env" "$TEST_TMP/nobus.env"
+case_expect "rootless migrate without a user bus fails with a hint" 78 "XDG_RUNTIME_DIR" reconcile migrate
+check "a missing user bus is caught before any managed file is written" \
+  'cmp -s "$TEST_TMP/nobus.env" "$CONF_DIR/hive.env" && [ ! -e "$CONF_DIR/upgrade-requests" ] && [ ! -e "$CONF_DIR/.upgrade-bridge-migration-pending" ] && ! grep -q daemon-reload "$SYSTEMCTL_CALL_LOG"'
+export FAKE_USER_BUS_RC=0
 
 echo
 echo "== drift is visible without being asked for (#6078) =="
@@ -1188,6 +1214,32 @@ check "the handled request is archived under done/" '[ -n "$(find "$REQ_DIR/done
 check "the result file records the upgrade" 'grep -qF "ok: upgraded to ${REPO}:abc" "$REQ_DIR"/done/*-ok.json.result'
 check "the requester is still reported, minus the escape bytes" 'grep -qF "requested by op[31mRED[0m at 2026-01-01T00:00:00Z" <<<"$out"'
 check "control bytes in advisory fields never reach the log" '! grep -q "$(printf "\033")" <<<"$out"'
+
+# #11291: on rootless Podman the request is owned by a container subuid and the
+# drain user cannot read it. That must fail loudly, never as a `<missing>`
+# ref, and the drain must first retry through `podman unshare`. Root reads
+# anything, so these only mean something as an unprivileged user.
+if [ "$(id -u)" != 0 ]; then
+  UNSHARE_BIN="${TEST_TMP}/unshare-bin"
+  rm -rf "$UNSHARE_BIN"; mkdir -p "$UNSHARE_BIN"
+  printf '#!/bin/sh\nexit 125\n' >"$UNSHARE_BIN/podman"; chmod +x "$UNSHARE_BIN/podman"
+  reset_request 0
+  printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/locked.json"; chmod 000 "$REQ_DIR/locked.json"
+  out="$(PATH="${UNSHARE_BIN}:${PATH}" run_request apply --rootless)"; rc=$?
+  check "an unreadable request is EX_CONFIG with a permission-denied reason" \
+    '[ "$rc" = 78 ] && grep -qF "cannot read request: permission denied (owner uid $(id -u), drain uid $(id -u))" <<<"$out"'
+  check "an unreadable request is never reported as a missing ref" '! grep -qF "<missing>" <<<"$out"'
+  check "an unreadable request is archived as unreadable" 'grep -qF "rejected: unreadable request" "$REQ_DIR"/failed/*-locked.json.result'
+
+  printf '#!/bin/sh\n[ "$1 $2 $3" = "unshare cat --" ] || exit 125\nprintf %%s "{\\"target_ref\\":\\"%s:abc\\"}"\n' "$REPO" >"$UNSHARE_BIN/podman"
+  reset_request 0
+  printf '{"target_ref":"%s:abc"}\n' "$REPO" >"$REQ_DIR/subuid.json"; chmod 000 "$REQ_DIR/subuid.json"
+  out="$(PATH="${UNSHARE_BIN}:${PATH}" run_request apply --rootless)"; rc=$?
+  check "a rootless request the drain cannot read is read through podman unshare" \
+    '[ "$rc" = 0 ] && grep -qF "read through podman unshare" <<<"$out" && grep -qF "completed and ended healthy" <<<"$out"'
+  check "archive directories are created private to the host user" '[ "$(stat -c %a "$REQ_DIR/done")" = 700 ]'
+  chmod -R u+rw "$REQ_DIR" 2>/dev/null
+fi
 unset REQ_DIR FAKE_UPDATE VICTIM HOST_DIR
 
 echo "== invocation =="

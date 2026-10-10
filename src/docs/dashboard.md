@@ -155,7 +155,7 @@ Project Inception is branded as powered by Spektacular with a linked header pill
 
 ## Audit Log
 
-The Audit Log viewport defaults to a taller resizable panel. Browser-local height changes are persisted in `localStorage` under `hive.audit.panel.height`; the entry cap/search controls remain in the card header area above the scrollable table.
+The Audit Log viewport defaults to a taller resizable panel. Browser-local height changes are persisted in `localStorage` under `hive.audit.panel.height`; the entry cap/search controls remain in the card header area above the scrollable table. The collapsed **sensitive** badge is actionable: it opens the card, applies the visible **Sensitive only** filter for the same 24-hour window as the badge count, and jumps to the first sensitive row.
 
 ## Hive Chat
 
@@ -310,8 +310,17 @@ and PR bands (rendered from the shared band table, each with its rule as a
 tooltip), issue held pills, plan chips, hold/release controls, issue state
 glyphs (`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`,
 `◐`, `⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, stale `🕒`,
-reviewed `💬`, auto-merge `🔀`, agent role badges, and review-class badges
-such as `FIX`). Repository cards also show a labelled auto-merge switch: it is effectively off below L6, switching the hive to L6 turns it on for every active repo, and owners may toggle individual repos afterward.
+reviewed `💬`, auto-merge `🔀`, agent role badges, review-class badges
+such as `FIX`, and the red `sentinel` pill). A PR that carries the configured
+sentinel alert label (`sentinel.label`, default `sentinel-alert`, matched
+case-insensitively) is drawn red on its card, status chip and main pill, whether
+it is listed as held or open; red wins over the held, needs-human and merge
+colours, and the row keeps its other chips. The sentinel flagged it for a
+possible security override, privilege escalation or codebase damage, and Hive
+will not merge it until a maintainer reviews it and removes the label. Trusted
+authors normally get a sentinel comment rather than the label, so their PRs are
+usually not red. The label name reaches the page through `/api/role`
+(`sentinel_label`, every role); until it is known no row is drawn red. Repository cards also show a labelled auto-merge switch: it is effectively off below L6, switching the hive to L6 turns it on for every active repo, and owners may toggle individual repos afterward.
 
 Actionable issue pills are grouped client-side for display only; enumeration,
 holds, filters, ranking, and agent kick behaviour are unchanged. Bands are
@@ -389,7 +398,7 @@ Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull 
 
 ## Review pipeline board
 
-The **Review** section opens with a **Pipeline** subsection that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position.
+The **Review** section opens with a separately collapsible **Pipeline** tile that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position. The sibling **Queue** tile is separately collapsible too, ranking the same open PRs in Hive’s suggested review order from `GET /api/review/queue` without hiding the Pipeline tile.
 
 ## PR review and link signals
 

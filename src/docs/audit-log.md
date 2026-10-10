@@ -34,9 +34,10 @@ One JSON object per line (JSONL), append-only. Written by
 | `repo` | `Repo` | no (`omitempty`) | Repository a hive-mediated GitHub write went to. Set on write entries since [#9587](https://github.com/hivecommons/hive/issues/9587); see [GitHub write surface](github-write-surface.md). |
 | `target` | `Target` | no (`omitempty`) | Issue or PR number that write went to, when it has one. |
 | `user_name` | `UserName` | **API responses only** (`omitempty`) | Display name for an opaque OIDC actor key. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. See below. |
+| `sensitive` | `Sensitive` | **API responses only** (`omitempty`) | `true` when the entry's action is in the dashboard sensitive-action vocabulary used by the collapsed Audit Log risk count. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. |
 
 Optional fields are omitted entirely rather than emitted empty, so **a consumer
-must treat a missing `detail`, `agent`, `repo`, `target`, or `user_name` as
+must treat a missing `detail`, `agent`, `repo`, `target`, `user_name`, or `sensitive` as
 absent, not as an empty string**.
 
 ### `user_name` exists only on the API surface
@@ -124,11 +125,16 @@ The dashboard serves recent entries at `GET /api/audit`
 - **Auth**: requires at least the read-write dashboard role; lesser roles get
   `403`.
 - **Shape**: a JSON object `{"entries": [...]}` — the entries are wrapped in an
-  envelope, not served as a bare array.
+  envelope, not served as a bare array. Entries include a serve-time
+  `sensitive: true` flag when their action uses the same sensitive predicate as
+  the collapsed dashboard count.
 - **Ordering**: newest first.
 - **Cap**: at most 200 entries (`auditMaxEntries`), which is *smaller* than the
   500-entry in-memory ring — the API never returns the whole ring, let alone
   the whole file.
+- **Sensitive filter**: `?sensitive=1` returns sensitive entries from the same
+  24-hour window as `sensitive_24h`, scanning the in-memory ring so an entry
+  older than the default 200-row page can still be found.
 - **Enrichment**: `user_name` is stamped here, on served copies only (see
   above).
 

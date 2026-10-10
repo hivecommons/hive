@@ -55,7 +55,7 @@ func (s *HubServer) behindTargetFor(e *RegistryEntry, trackedChannel string) beh
 	if channel == "" {
 		return behindTarget{SHA: getLatestSHAForBranch(branch), Ref: branch + behindTargetSuffixBranch}
 	}
-	return channelPublishedImageTarget(branch, channel, cachedChannelRevisionSHA(channel), s.logger)
+	return channelPublishedImageTargetNonBlocking(branch, channel, cachedChannelRevisionSHA(channel), s.logger)
 }
 
 // cachedChannelRevisionSHA returns the last commit a channel resolved to,

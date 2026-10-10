@@ -42,6 +42,26 @@ func TestAddedInternalMetadata(t *testing.T) {
 			patch: "@@ -1,2 +1,3 @@\n " + filed + "\n+real content\n context\n",
 		},
 		{
+			name:  "edited pre-existing attribution line allowed",
+			patch: "@@ -5 +5 @@\n-gh pr create --body \"Closes #1\" " + filed + "\n+gh pr create --body \"Fixes #1\" " + filed + "\n",
+		},
+		{
+			name:  "edited pre-existing hive run line allowed",
+			patch: "@@ -5 +5 @@\n-" + hive + " model=a\n+" + hive + " model=b\n",
+		},
+		{
+			name:     "new attribution beside removed different attribution",
+			patch:    "@@ -5 +5,2 @@\n-" + filed + "\n+" + strings.Replace(filed, "outreach", "scanner", 1) + "\n+ok\n",
+			wantLine: 5,
+			wantKind: "agent attribution",
+		},
+		{
+			name:     "added attribution beside removed hive run",
+			patch:    "@@ -5 +5,2 @@\n-" + hive + "\n+text\n+" + filed + "\n",
+			wantLine: 6,
+			wantKind: "agent attribution",
+		},
+		{
 			name:  "ordinary authorship prose allowed",
 			patch: "@@ -1 +1 @@\n+Filed by the release engineering team.\n",
 		},

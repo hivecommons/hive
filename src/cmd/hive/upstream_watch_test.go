@@ -47,6 +47,23 @@ func TestRunUpstreamWatch_DisabledIsNoop(t *testing.T) {
 	}
 }
 
+func TestRunUpstreamWatch_SingleFlight(t *testing.T) {
+	prev := upstreamWatchLastRun
+	t.Cleanup(func() { upstreamWatchLastRun = prev })
+	cfg := &config.Config{UpstreamWatch: config.UpstreamWatchConfig{
+		Enabled: true,
+		Repos:   map[string]config.UpstreamWatchRepo{"widgets": {}},
+	}}
+	upstreamWatchMu.Lock()
+	defer upstreamWatchMu.Unlock()
+	// A pass already in flight makes this call return before it reaches the
+	// (nil) GitHub client or the timer.
+	runUpstreamWatch(context.Background(), cfg, nil, slog.Default())
+	if !upstreamWatchLastRun.Equal(prev) {
+		t.Fatal("a concurrent call touched the pass timer")
+	}
+}
+
 type recordingFiler struct{ got upstreamwatch.Issue }
 
 func (r *recordingFiler) FindMarker(context.Context, string) (upstreamwatch.Existing, bool, error) {
