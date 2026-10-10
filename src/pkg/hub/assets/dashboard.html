@@ -3174,6 +3174,10 @@
        drill-down until the first poll landed.
        v6: agent verdicts carry restart-storm telemetry and reset markers. */
     var HIVES_CACHE_VERSION = 6;
+    /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
+       fields being absent, so keep accepting a recent cache instead of showing
+       the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
+    var HIVES_CACHE_MIN_READ_VERSION = 5;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -3188,7 +3192,7 @@
         var raw = window.localStorage.getItem(LS_HIVES_CACHE);
         if (!raw) return null;
         var c = JSON.parse(raw);
-        if (!c || c.version !== HIVES_CACHE_VERSION) return null;
+        if (!c || c.version > HIVES_CACHE_VERSION || c.version < HIVES_CACHE_MIN_READ_VERSION) return null;
         if (!c.savedAt || (Date.now() - c.savedAt) > HIVES_CACHE_TTL_MS) return null;
         if (!Array.isArray(c.hives) || !c.hives.length) return null;
         return c;
