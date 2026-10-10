@@ -351,7 +351,7 @@ func TestValidate_AcceptsEveryCadenceScope(t *testing.T) {
 }
 
 func TestEffectiveCoverageTarget(t *testing.T) {
-	if got := (GovernorConfig{}).EffectiveCoverageTarget(); got != DefaultCoverageTarget || got != 91 {
+	if got := (GovernorConfig{}).EffectiveCoverageTarget(); got != DefaultCoverageTarget || DefaultCoverageTarget != 91 {
 		t.Fatalf("default coverage target = %d, want 91", got)
 	}
 	if got := (GovernorConfig{CoverageTarget: 75}).EffectiveCoverageTarget(); got != 75 {
