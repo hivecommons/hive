@@ -316,6 +316,7 @@ One card per repository Hive looks after, listing its open issues and pull reque
 
 - The cards use the same bands as the Overview charts. See the Overview entry for each band's meaning.
 - Small pills on each item show signals, such as a hold, a failing check or no recent activity.
+- A red pull-request pill means the sentinel flagged it for a possible security override, privilege escalation or codebase damage. Hive will not merge it until a maintainer reviews it and removes the sentinel label. Pull requests from trusted authors usually get a sentinel comment instead of the label, so they are usually not red.
 - The **needs-human** count in the header counts open pull requests that need a person to review or decide. Needs-human means waiting on a person.
 
 **What it is good for.** Use it to act on single items. Open the legend above the cards to learn what each pill means.

@@ -310,8 +310,17 @@ and PR bands (rendered from the shared band table, each with its rule as a
 tooltip), issue held pills, plan chips, hold/release controls, issue state
 glyphs (`⛔`, `❓`, `👤`, `✓`, role badges, stale `🕒`) and PR states (`✓`,
 `◐`, `⚠`, held `⏸`, failing CI `✗ CI`, conflicts `⑂`, stale `🕒`,
-reviewed `💬`, auto-merge `🔀`, agent role badges, and review-class badges
-such as `FIX`). Repository cards also show a labelled auto-merge switch: it is effectively off below L6, switching the hive to L6 turns it on for every active repo, and owners may toggle individual repos afterward.
+reviewed `💬`, auto-merge `🔀`, agent role badges, review-class badges
+such as `FIX`, and the red `sentinel` pill). A PR that carries the configured
+sentinel alert label (`sentinel.label`, default `sentinel-alert`, matched
+case-insensitively) is drawn red on its card, status chip and main pill, whether
+it is listed as held or open; red wins over the held, needs-human and merge
+colours, and the row keeps its other chips. The sentinel flagged it for a
+possible security override, privilege escalation or codebase damage, and Hive
+will not merge it until a maintainer reviews it and removes the label. Trusted
+authors normally get a sentinel comment rather than the label, so their PRs are
+usually not red. The label name reaches the page through `/api/role`
+(`sentinel_label`, every role); until it is known no row is drawn red. Repository cards also show a labelled auto-merge switch: it is effectively off below L6, switching the hive to L6 turns it on for every active repo, and owners may toggle individual repos afterward.
 
 Actionable issue pills are grouped client-side for display only; enumeration,
 holds, filters, ranking, and agent kick behaviour are unchanged. Bands are

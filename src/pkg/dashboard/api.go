@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -755,6 +756,9 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 		// The queue label is server-configured, so the dashboard must be told
 		// it rather than hard-coding a name that a hive may have changed.
 		"automerge_label": s.autoMergeLabel(),
+		// The sentinel alert label is configurable (sentinel.label); every
+		// role needs it so Projects cards can draw flagged PRs red.
+		"sentinel_label": s.sentinelLabel(),
 	}
 	// display_name is the human name for an opaque OIDC identity key
 	// ("ibmid:5500…"), delivered by the hub heartbeat (AuthorizedUserNames).
@@ -783,6 +787,13 @@ func (s *Server) autoMergeLabel() string {
 		return github.AutoMergeQueuedLabel
 	}
 	return s.deps.GHClient.AutoMergeLabel()
+}
+
+func (s *Server) sentinelLabel() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return config.DefaultSentinelLabel
+	}
+	return s.deps.Config.Sentinel.LabelOrDefault()
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
