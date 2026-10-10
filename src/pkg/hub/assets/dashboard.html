@@ -288,13 +288,31 @@
        panel cell, which owns the form, rather than with !important per field. */
     .contact-panel-cell { text-align: left; }
     .contact-panel-cell input, .contact-panel-cell textarea { text-align: left; }
+    .access-modal-card { background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);width:min(1280px,94vw);height:min(86vh,900px);display:flex;flex-direction:column;overflow:hidden; }
+    .access-modal-header { flex:0 0 auto;padding:var(--sp-8) var(--sp-9) var(--sp-5);border-bottom:1px solid var(--border); }
+    .access-modal-title { font-size:1.3rem;margin:var(--sp-0);color:var(--hub-dashboard-accent); }
+    .access-modal-identity { margin-top:var(--sp-4);display:flex;flex-wrap:wrap;gap:var(--sp-3) var(--sp-6);align-items:baseline;min-width:0; }
+    .access-modal-identity #access-hive-label { font-size:0.8rem;color:var(--muted);margin:var(--sp-0); }
+    .access-modal-identity #access-hive-url { font-size:0.8rem;min-width:0;word-break:break-word; }
+    .access-modal-body { flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:var(--sp-6);padding:var(--sp-6) var(--sp-9);overflow:hidden; }
+    .access-left-pane, .access-right-pane { min-height:0;overflow:auto; }
+    .access-right-pane { display:flex;flex-direction:column; }
+    .access-panel { border:1px solid var(--border);border-radius:var(--r);background:color-mix(in srgb,var(--surface) 92%,var(--bg));padding:var(--sp-5); }
+    .access-panel + .access-panel { margin-top:var(--sp-5); }
+    .access-panel-title { font-size:0.9rem;margin:var(--sp-0) var(--sp-0) var(--sp-4);color:var(--hub-dashboard-accent); }
+    .access-add-panel { flex:1 1 auto;min-height:0;display:flex;flex-direction:column; }
+    .access-add-form { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:var(--sp-4); }
+    .access-add-controls { display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:center; }
     .access-typeahead { position: relative; flex: 1 1 340px; min-width: 260px; }
+    .access-add-panel .access-typeahead { flex:1 1 auto;min-height:0;display:flex;flex-direction:column;width:100%; }
     .access-typeahead-input { width: 100%; box-sizing: border-box; padding: var(--sp-4) calc(var(--sp-9) + var(--sp-2)) var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; }
     .access-typeahead-input[aria-expanded="true"] { border-color: var(--hub-dashboard-accent); }
     .access-typeahead-toggle { position: absolute; top: 1px; right: 1px; width: 36px; height: 36px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
     .access-typeahead-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--hub-dashboard-accent) 8%, transparent); }
     .access-typeahead-list { display: none; position: absolute; z-index: 130; left: 0; right: 0; top: calc(100% + 4px); max-height: 300px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); }
+    .access-add-panel .access-typeahead-list { position:static;z-index:auto;max-height:none;flex:1 1 auto;min-height:0;margin-top:var(--sp-2);box-shadow:none; }
     .access-typeahead-list.open { display: block; }
+    .access-add-panel .access-typeahead-list.open { display:block; }
     .access-typeahead-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); cursor: pointer; border-bottom: 1px solid var(--border); }
     .access-typeahead-option:last-child { border-bottom: 0; }
     .access-typeahead-option[aria-selected="true"] { background: color-mix(in srgb, var(--hub-dashboard-accent) 15%, transparent); }
@@ -324,6 +342,13 @@
     .online-dot.upgrading { width: 12px; height: 12px; background: #58a6ff; box-shadow: 0 0 8px rgba(88,166,255,0.9), 0 0 3px rgba(88,166,255,0.7); animation: hiveUpgradePulse 1.8s ease-in-out infinite; }
     @keyframes hiveUpgradePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(88,166,255,1), 0 0 4px rgba(88,166,255,0.8); } 50% { opacity: 0.4; box-shadow: 0 0 4px rgba(88,166,255,0.4); } }
     @media (prefers-reduced-motion: reduce) { .online-dot.upgrading { animation: none; } }
+
+    @media (max-width: 900px) {
+      .access-modal-card { width:94vw;height:min(86vh,900px); }
+      .access-modal-body { grid-template-columns:1fr;overflow:auto; }
+      .access-left-pane, .access-right-pane { overflow:visible;min-height:auto; }
+      .access-right-pane { min-height:560px; }
+    }
     /* Heartbeat heart: a small red heart next to a hive's identity that
        appears ONLY when a new heartbeat lands, pulses exactly three times,
        then disappears until the next beat. The element is invisible by
@@ -12366,74 +12391,90 @@
   </div>
 
   <div id="access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:860px;width:min(96vw,860px);max-height:88vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Manage Access</h2>
-      <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9) var(--sp-9)">
-      <p style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-6)" id="access-hive-label"></p>
-      <div id="access-list"><div class="loading">Loading...</div></div>
-      <div id="access-bulk-bar" style="display:none;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4);padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r)">
-        <span id="access-bulk-count" style="font-size:var(--fs-sm);color:var(--muted);flex:1"></span>
-        <select id="access-bulk-role" style="padding:var(--sp-2) var(--sp-4);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:var(--fs-sm)">
-          <option value="read">Read</option>
-          <option value="read-write">Read-Write</option>
-          <option value="merger">Merger</option>
-          <option value="owner">Owner</option>
-        </select>
-        <button onclick="bulkChangeAccessRole()" class="hv-btn btn-primary btn-primary btn-sm">Change Role</button>
-        <button class="hv-btn btn-danger btn-sm" onclick="bulkRemoveAccess()">Remove</button>
-      </div>
-      <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-4);color:var(--hub-dashboard-accent)">Pending Requests</h3>
-        <div id="pending-requests"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
-      </div>
-      <div style="margin-top:var(--sp-5);border-top:1px solid var(--border);padding-top:var(--sp-5)">
-        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-2);color:var(--hub-dashboard-accent)">Audit Log</h3>
-        <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)">Every grant, role change and removal — who did it and when. Append-only.</p>
-        <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
-      </div>
-      <div style="margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-6)">
-        <h3 style="font-size:0.9rem;margin-bottom:var(--sp-4);color:var(--text)">Add User</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:var(--sp-4)">
-          <div class="access-typeahead">
-            <input id="access-user-search" class="access-typeahead-input" type="text" placeholder="Search users..." autocomplete="off"
-              role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="access-user-results"
-              aria-activedescendant="" oninput="filterAccessUserDropdown()" onkeydown="accessUserSearchKeydown(event)"
-              onfocus="openAccessUserResults()">
-            <button id="access-user-toggle" class="access-typeahead-toggle" type="button" aria-label="Show grantable users" onclick="toggleAccessUserResults()">▾</button>
-            <input id="access-username" type="hidden" value="">
-            <div id="access-selected-user-chip" class="access-typeahead-chip"></div>
-            <div id="access-user-results" class="access-typeahead-list" role="listbox" aria-label="Matching hub users"></div>
-          </div>
-          <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="flex:0 0 auto;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
-            <option value="read" title="View-only: dashboard, agents and config. Cannot change anything.">Read</option>
-            <option value="read-write" title="Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.">Read-Write</option>
-            <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
-            <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
-          </select>
-          <!-- A checkbox owns whether the new grant expires; the date input is
-               HIDDEN until it is checked.
-               An empty <input type="date"> cannot express "no expiry" — the
-               browser paints its own mm/dd/yyyy placeholder, so an untouched
-               field looks like a date the operator already chose. Adding a
-               label alone did not fix it: the control then showed a name and a
-               date that disagreed. Hiding the input when unchecked leaves
-               exactly one visible answer. -->
-          <span style="display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto">
-            <input type="checkbox" id="access-expiry-enabled" onchange="toggleAddExpiryVisible()"
-              title="Off — access lasts until it is removed. On — pick the last day of access."
-              style="cursor:pointer;margin:var(--sp-0)">
-            <label for="access-expiry-enabled" style="font-size:0.7rem;color:var(--muted);cursor:pointer;white-space:nowrap">Expires</label>
-            <input id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."
-              style="display:none;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
-            <span id="access-expiry-never" style="font-size:0.7rem;color:var(--text)">Never</span>
-          </span>
-          <button id="access-add-btn" onclick="addAccess()" class="hv-btn btn-primary btn-primary" disabled title="Search and select a user first">Add</button>
-          <div id="access-add-hint" class="access-add-hint">Search and select a hub user to grant access.</div>
+    <div class="access-modal-card">
+      <div class="access-modal-header">
+        <h2 class="access-modal-title">Manage Access</h2>
+        <div class="access-modal-identity">
+          <p id="access-hive-label"></p>
+          <div id="access-hive-url"></div>
         </div>
-        <div id="access-role-hint" style="margin-top:var(--sp-3);font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
       </div>
+      <div class="access-modal-body">
+        <div id="access-left-pane" class="access-left-pane">
+          <div class="access-panel">
+            <h3 class="access-panel-title">Pending Requests</h3>
+            <div id="pending-requests"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+          </div>
+          <div class="access-panel">
+            <h3 class="access-panel-title">Granted Users</h3>
+            <div id="access-list"><div class="loading">Loading...</div></div>
+            <div id="access-bulk-bar" style="display:none;align-items:center;gap:var(--sp-4);margin-top:var(--sp-4);padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r)">
+              <span id="access-bulk-count" style="font-size:var(--fs-sm);color:var(--muted);flex:1"></span>
+              <select id="access-bulk-role" style="padding:var(--sp-2) var(--sp-4);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:var(--fs-sm)">
+                <option value="read">Read</option>
+                <option value="read-write">Read-Write</option>
+                <option value="merger">Merger</option>
+                <option value="owner">Owner</option>
+              </select>
+              <button onclick="bulkChangeAccessRole()" class="hv-btn btn-primary btn-primary btn-sm">Change Role</button>
+              <button class="hv-btn btn-danger btn-sm" onclick="bulkRemoveAccess()">Remove</button>
+            </div>
+          </div>
+          <div class="access-panel">
+            <details>
+              <summary style="cursor:pointer;color:var(--hub-dashboard-accent);font-size:0.9rem;font-weight:700">Audit Log</summary>
+              <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-4)">Every grant, role change and removal — who did it and when. Append-only.</p>
+              <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+            </details>
+          </div>
+        </div>
+        <div id="access-right-pane" class="access-right-pane">
+          <div class="access-panel access-add-panel">
+            <h3 class="access-panel-title" style="color:var(--text)">Add User</h3>
+            <div class="access-add-form">
+              <div class="access-typeahead">
+                <input id="access-user-search" class="access-typeahead-input" type="text" placeholder="Search users..." autocomplete="off"
+                  role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="access-user-results"
+                  aria-activedescendant="" oninput="filterAccessUserDropdown()" onkeydown="accessUserSearchKeydown(event)"
+                  onfocus="openAccessUserResults()">
+                <button id="access-user-toggle" class="access-typeahead-toggle" type="button" aria-label="Show grantable users" onclick="toggleAccessUserResults()">▾</button>
+                <input id="access-username" type="hidden" value="">
+                <div id="access-selected-user-chip" class="access-typeahead-chip"></div>
+                <div id="access-user-results" class="access-typeahead-list" role="listbox" aria-label="Matching hub users"></div>
+              </div>
+              <div class="access-add-controls">
+                <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="flex:0 0 auto;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
+                  <option value="read" title="View-only: dashboard, agents and config. Cannot change anything.">Read</option>
+                  <option value="read-write" title="Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.">Read-Write</option>
+                  <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
+                  <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
+                </select>
+                <!-- A checkbox owns whether the new grant expires; the date input is
+                     HIDDEN until it is checked.
+                     An empty <input type="date"> cannot express "no expiry" — the
+                     browser paints its own mm/dd/yyyy placeholder, so an untouched
+                     field looks like a date the operator already chose. Adding a
+                     label alone did not fix it: the control then showed a name and a
+                     date that disagreed. Hiding the input when unchecked leaves
+                     exactly one visible answer. -->
+                <span style="display:flex;align-items:center;gap:var(--sp-3);flex:0 0 auto">
+                  <input type="checkbox" id="access-expiry-enabled" onchange="toggleAddExpiryVisible()"
+                    title="Off — access lasts until it is removed. On — pick the last day of access."
+                    style="cursor:pointer;margin:var(--sp-0)">
+                  <label for="access-expiry-enabled" style="font-size:0.7rem;color:var(--muted);cursor:pointer;white-space:nowrap">Expires</label>
+                  <input id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."
+                    style="display:none;padding:var(--sp-4) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem">
+                  <span id="access-expiry-never" style="font-size:0.7rem;color:var(--text)">Never</span>
+                </span>
+                <button id="access-add-btn" onclick="addAccess()" class="hv-btn btn-primary btn-primary" disabled title="Search and select a user first">Add</button>
+              </div>
+              <div id="access-add-hint" class="access-add-hint">Search and select a hub user to grant access.</div>
+              <div id="access-role-hint" style="font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex:0 0 auto">
         <button class="hv-btn btn-primary" id="access-export-btn" onclick="exportAccessCSV()" title="Download this hive's access list as CSV for audit/compliance">&#11015;&#65039; Export CSV</button>
         <button class="hv-btn btn-primary" onclick="document.getElementById('access-modal').style.display='none'">Close</button>
       </div>
