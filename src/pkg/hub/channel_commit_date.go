@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -28,9 +29,11 @@ var (
 // merge mode) the committer date is when the commit landed on the branch,
 // which is what "how long has stable been behind candidate" asks.
 var fetchCommitDate = func(sha string, logger *slog.Logger) (time.Time, error) {
-	client := &http.Client{Timeout: channelResolveTimeout}
+	client := hubGitHubHTTPClient()
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "channel_commit_date"), channelResolveTimeout)
+	defer cancel()
 	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, url.PathEscape(sha))
-	req, err := http.NewRequest(http.MethodGet, commitURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, commitURL, nil)
 	if err != nil {
 		return time.Time{}, err
 	}

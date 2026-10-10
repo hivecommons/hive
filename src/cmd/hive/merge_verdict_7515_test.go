@@ -62,7 +62,7 @@ func TestClassifyMergeEligibility_BlockedKeepsSweepReason(t *testing.T) {
 			held:       true,
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: "blocked — held: a hold label keeps it out of the sweep",
+			wantReason: "blocked — label:hold",
 		},
 		{
 			name: "intent verdict",
@@ -87,14 +87,14 @@ func TestClassifyMergeEligibility_BlockedKeepsSweepReason(t *testing.T) {
 			// branch-protection rule the sweep does not read yet. Say so.
 			name:       "no sweep gate explains it",
 			pr:         blockedPR(7, "success"),
-			wantBucket: mergeBucketSkip,
-			wantState:  github.MergeVerdictBlocked,
-			wantReason: "blocked — all sweep gates pass; a branch-protection rule is unsatisfied",
+			wantBucket: mergeBucketEligible,
+			wantState:  github.MergeVerdictEligible,
+			wantReason: "the sweep would merge this now — required checks are green; ignoring non-required GitHub blockers (GitHub: blocked)",
 		},
 		{
 			name:       "conflicts",
 			pr:         github.PullRequest{Number: 8, Mergeable: no, MergeableState: "dirty", BaseRef: "v4", CIStatus: "success"},
-			wantBucket: mergeBucketSkip,
+			wantBucket: mergeBucketConflict,
 			wantState:  github.MergeVerdictBlocked,
 			wantReason: "has merge conflicts with v4 — needs a rebase",
 		},
@@ -108,17 +108,17 @@ func TestClassifyMergeEligibility_BlockedKeepsSweepReason(t *testing.T) {
 		{
 			name:       "behind",
 			pr:         github.PullRequest{Number: 10, Mergeable: no, MergeableState: "behind", BaseRef: "v4", CIStatus: "success"},
-			wantBucket: mergeBucketSkip,
-			wantState:  github.MergeVerdictBlocked,
-			wantReason: "behind v4 — needs an update from the base branch",
+			wantBucket: mergeBucketEligible,
+			wantState:  github.MergeVerdictEligible,
+			wantReason: "the sweep would merge this now",
 		},
 		{
 			// An abbreviated payload with no base ref still reads sensibly.
 			name:       "behind with the base branch unknown",
 			pr:         github.PullRequest{Number: 11, Mergeable: no, MergeableState: "behind", CIStatus: "success"},
-			wantBucket: mergeBucketSkip,
-			wantState:  github.MergeVerdictBlocked,
-			wantReason: "behind the base branch — needs an update from it",
+			wantBucket: mergeBucketEligible,
+			wantState:  github.MergeVerdictEligible,
+			wantReason: "the sweep would merge this now",
 		},
 		{
 			name:       "draft",
@@ -142,7 +142,7 @@ func TestClassifyMergeEligibility_BlockedKeepsSweepReason(t *testing.T) {
 			held:       true,
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: "not mergeable on GitHub (draft); also held: a hold label keeps it out of the sweep",
+			wantReason: "not mergeable on GitHub (draft); also label:hold",
 		},
 	}
 	for _, tc := range cases {
@@ -179,10 +179,14 @@ func TestClassifyMergeEligibility_ReviewGateOrderKeepsBuckets(t *testing.T) {
 		{Number: 3, Mergeable: github.MergeableYes, MergeableState: "clean", CIStatus: "success"},
 	} {
 		bucket, verdict := mergeVerdictOf(t, pr, false, gates)
-		if bucket != mergeBucketSkip {
-			t.Errorf("#%d: bucket = %v, want skip (reason %q)", pr.Number, bucket, verdict.Reason)
+		wantBucket := mergeBucketSkip
+		if pr.MergeableState == "dirty" {
+			wantBucket = mergeBucketConflict
 		}
-		if !strings.Contains(verdict.Reason, "awaiting review approval") {
+		if bucket != wantBucket {
+			t.Errorf("#%d: bucket = %v, want %v (reason %q)", pr.Number, bucket, wantBucket, verdict.Reason)
+		}
+		if pr.MergeableState != "dirty" && !strings.Contains(verdict.Reason, "awaiting review approval") {
 			t.Errorf("#%d: reason %q does not name the missing review", pr.Number, verdict.Reason)
 		}
 	}

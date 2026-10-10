@@ -91,3 +91,59 @@ func TestUpstreamWatchValidation(t *testing.T) {
 		t.Error("negative interval accepted")
 	}
 }
+
+func TestUpstreamWatchPruneToWatched(t *testing.T) {
+	cfg := parseUpstreamWatch(t, upstreamWatchBase+
+		"upstream_watch:\n  enabled: true\n  repos:\n    acme/forked-thing: {}\n    other: {}\n")
+	if cfg.PruneUpstreamWatchToWatched() {
+		t.Fatal("nothing to prune, but reported a change")
+	}
+	cfg.Project.Repos = []string{"other"}
+	if !cfg.PruneUpstreamWatchToWatched() {
+		t.Fatal("removed repo was not pruned")
+	}
+	if _, ok := cfg.UpstreamWatch.Repos["acme/forked-thing"]; ok || len(cfg.UpstreamWatch.Repos) != 1 {
+		t.Errorf("repos after prune = %v, want only other", cfg.UpstreamWatch.Repos)
+	}
+	if err := cfg.ValidateUpstreamWatch(); err != nil {
+		t.Errorf("pruned config must validate: %v", err)
+	}
+	cfg.Project.Repos = nil
+	if !cfg.PruneUpstreamWatchToWatched() || cfg.UpstreamWatch.Repos != nil {
+		t.Errorf("pruning every repo must leave a nil map, got %v", cfg.UpstreamWatch.Repos)
+	}
+	if !cfg.UpstreamWatch.Enabled {
+		t.Error("pruning must not flip enabled")
+	}
+	var nilCfg *Config
+	if nilCfg.PruneUpstreamWatchToWatched() || nilCfg.ClearUpstreamWatchRepos() {
+		t.Error("nil config must report no change")
+	}
+}
+
+func TestUpstreamWatchClearRepos(t *testing.T) {
+	cfg := parseUpstreamWatch(t, upstreamWatchBase+"upstream_watch:\n  enabled: true\n  repos:\n    forked-thing: {}\n")
+	if !cfg.ClearUpstreamWatchRepos() || cfg.UpstreamWatch.Repos != nil {
+		t.Fatalf("clear left %v", cfg.UpstreamWatch.Repos)
+	}
+	if cfg.ClearUpstreamWatchRepos() {
+		t.Error("second clear reported a change")
+	}
+}
+
+func TestUpstreamWatchExportedDefaultsAndValidate(t *testing.T) {
+	cfg := parseUpstreamWatch(t, upstreamWatchBase)
+	cfg.UpstreamWatch = UpstreamWatchConfig{Enabled: true, Repos: map[string]UpstreamWatchRepo{"forked-thing": {}}}
+	cfg.ApplyUpstreamWatchDefaults()
+	r := cfg.UpstreamWatch.Repos["forked-thing"]
+	if cfg.UpstreamWatch.Interval != DefaultUpstreamWatchInterval || r.Label != DefaultUpstreamWatchLabel || len(r.Sources) != 2 {
+		t.Errorf("defaults not applied: %+v", cfg.UpstreamWatch)
+	}
+	if err := cfg.ValidateUpstreamWatch(); err != nil {
+		t.Errorf("valid block rejected: %v", err)
+	}
+	cfg.UpstreamWatch.Repos["nope"] = UpstreamWatchRepo{}
+	if err := cfg.ValidateUpstreamWatch(); err == nil {
+		t.Error("unknown repo accepted")
+	}
+}

@@ -97,3 +97,17 @@ func TestIssueFilterHardSuppressDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("override bucket = %q, want %q", got, DefaultNeedsDirectionLabel)
 	}
 }
+
+// TestIssueFilterNeedsDecisionLabel: the issue relay parks an agent-filed
+// decision issue with the first configured needs-decision label, falling back
+// to the built-in default (hivecommons/hive#11215).
+func TestIssueFilterNeedsDecisionLabel(t *testing.T) {
+	var f IssueFilterConfig
+	if got := f.NeedsDecisionLabel(); got != DefaultNeedsDecisionLabel {
+		t.Errorf("default NeedsDecisionLabel = %q, want %q", got, DefaultNeedsDecisionLabel)
+	}
+	f.HardSuppressLabels.NeedsDecision = []string{" ", "owner-call", "decide"}
+	if got := f.NeedsDecisionLabel(); got != "owner-call" {
+		t.Errorf("configured NeedsDecisionLabel = %q, want %q", got, "owner-call")
+	}
+}

@@ -332,6 +332,30 @@ well-tested surface, and merging `auth_health` into that taxonomy is left as
 a deliberate follow-up rather than risking that machinery in the same change
 that adds the canary.
 
+## Compliance rollup (#11083)
+
+A spoke with a compliance framework selected (`compliance.frameworks`) adds a
+`compliance` block to its hub heartbeat:
+
+```json
+{"compliance": {"frameworks": ["soc2-type2"], "posture": {"pass": 7, "fail": 1, "lastRun": "2026-10-01T12:00:00Z"}}}
+```
+
+`posture` is the summary of the spoke's latest posture-check run and is absent
+until the first run. A spoke with no framework selected sends an empty block,
+which clears whatever the hub stored; a beat with no block at all (an older
+spoke, or a minimal upgrade beat) keeps the last stored profile.
+
+The hub Fleet table shows this as a **Compliance** column: a pass-rate pill
+(`pass / (pass + fail)`; skipped and errored checks are not counted) with the
+framework IDs beneath it. The pill links to the spoke's Settings → Compliance
+tab when the hub knows the spoke's dashboard URL.
+
+`GET /api/hub/compliance` (hub admin only) exports the fleet-wide aggregate:
+spoke counts, per-framework spoke counts, total pass/fail with the overall
+pass rate, and one row per spoke with a framework selected. Pass rates are
+rounded to whole percent and are `null`/absent when no check has been decided.
+
 ## Troubleshooting: symptom → hint → fix
 
 | Symptom on `/fleet` | What it means | Fix, and where |

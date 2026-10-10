@@ -217,12 +217,12 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 		},
 		{
 			name: "pending and conflicting is neither",
-			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo, MergeableState: "dirty"},
 			want: bucketNeither,
 		},
 		{
 			name:     "green but conflicting is neither",
-			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo, MergeableState: "dirty"},
 			want:     bucketNeither,
 			guarding: "2026-08-31: DIRTY go.mod bumps pinned the eligible count at N while nothing could merge",
 		},
@@ -232,6 +232,7 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 			want: bucketEligible,
 		},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			eligible, failing := runWriteMergeEligible(t, []github.PullRequest{tc.pr}, tc.in)
@@ -250,6 +251,15 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 				t.Fatalf("PR #%d landed in %s, want %s (%s)", tc.pr.Number, got, tc.want, tc.guarding)
 			}
 		})
+	}
+}
+
+func TestTrustedAuthorPolicyDoesNotExcludeSentinelLabel(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Sentinel.Label = "sentinel-alert"
+	policy := trustedAuthorPolicyFunc(cfg)()
+	if policy.ExcludeLabels[config.DefaultSentinelLabel] {
+		t.Fatalf("trusted-author exclude labels = %v, sentinel must notify but not block trusted authors", policy.ExcludeLabels)
 	}
 }
 

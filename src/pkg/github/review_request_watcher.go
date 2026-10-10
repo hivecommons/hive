@@ -323,6 +323,41 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	sentinelBlockNote := ""
+	if apiEvent == "APPROVE" {
+		if blocked, err := c.sentinelReviewBlockReason(ctx, req.Repo, req.Number); err != nil {
+			c.denyReviewRequest(path, req, "sentinel approval block could not read PR labels: "+err.Error(), nowFn)
+			return
+		} else if blocked != "" {
+			meta := c.attributionMeta(req.Agent)
+			c.recordWriteAudit(AuditActionSentinelBlockedApproval, meta,
+				WriteTarget{Repo: req.Repo, Number: req.Number},
+				"state", "approved", "label", blocked)
+			if strings.TrimSpace(req.Body) == "" {
+				c.recordReviewEvidence(ctx, req, nil, nil, nowFn())
+				c.writeReviewResult(path, ReviewResponse{
+					OK:     true,
+					Number: req.Number,
+					State:  ReviewEventRecordVerdict,
+					Note:   fmt.Sprintf("approval suppressed: %s label requires human review", blocked),
+					At:     nowFn().UTC().Format(time.RFC3339),
+				})
+				_ = os.Remove(path)
+				c.reviewRetries.clear(path)
+				c.logger.Warn("review-request watcher: approval suppressed by sentinel label",
+					slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+					slog.Int("number", req.Number), slog.String("label", blocked))
+				return
+			}
+			apiEvent, state, _ = reviewEventToAPI("comment")
+			req.Report = ""
+			sentinelBlockNote = fmt.Sprintf("approval downgraded to COMMENT: %s label requires human review", blocked)
+			c.logger.Warn("review-request watcher: approval downgraded by sentinel label",
+				slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+				slog.Int("number", req.Number), slog.String("label", blocked))
+		}
+	}
+
 	// COMMENT-only on contributor PRs (hivecommons/hive#9590). The hive
 	// reviews everyone's work but adjudicates only its own: an APPROVE or
 	// REQUEST_CHANGES aimed at a PR this hive did not open becomes a COMMENT
@@ -350,7 +385,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// state record_verdict and a note, so the agent's own loop is done.
 	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
-			c.recordReviewVerdict(req, "")
+			c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
 			if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 				c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -369,7 +404,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Authorized and well-formed, but nothing to post: record and finish
 	// without touching the GitHub API.
 	if recordOnly {
-		c.recordReviewVerdict(req, "")
+		c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), nil, nowFn())
 		if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 			c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),
@@ -459,6 +494,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if commentOnlyNote != "" {
 		resp.Note = commentOnlyNote
 	}
+	if sentinelBlockNote != "" {
+		resp.Note = sentinelBlockNote
+	}
 
 	// Record where the review landed so the queue views can link to it. A
 	// failure here is logged and swallowed: the review is already posted, and
@@ -483,8 +521,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 
 	// Persist the structured verdict now that the comment is posted. The two
 	// artifacts are recorded together so a verdict can never be attributed to a
-	// review that never actually landed.
-	c.recordReviewVerdict(req, "")
+	// review that never actually landed. The evidence bundle for the head
+	// records the same two things (review_evidence.go).
+	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(req, ""), created, nowFn())
 	if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
 		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),

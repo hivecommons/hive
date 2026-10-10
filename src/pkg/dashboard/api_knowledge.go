@@ -370,6 +370,14 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Search defaults to approved (current) knowledge; include_states opts
+	// into draft/deprecated/superseded facts, e.g. "deprecated,superseded" or "all".
+	includeStates, err := knowledge.ParseLifecycleStates(r.URL.Query().Get("include_states"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	typeFilter := r.URL.Query().Get("type")
 	limitStr := r.URL.Query().Get("limit")
 	limit := 0
@@ -379,7 +387,7 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 
 	var results []knowledge.Fact
 	if tagFilter != "" {
-		all := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
+		all := knowledge.FilterByLifecycle(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0), includeStates)
 		for _, f := range all {
 			for _, t := range f.Tags {
 				if strings.EqualFold(t, tagFilter) {
@@ -392,7 +400,7 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 			results = results[:limit]
 		}
 	} else {
-		results = s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, query, typeFilter, limit)
+		results = knowledge.FilterByLifecycle(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, query, typeFilter, limit), includeStates)
 	}
 
 	jsonResponse(w, map[string]interface{}{

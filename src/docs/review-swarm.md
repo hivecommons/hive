@@ -93,6 +93,36 @@ When the relay accepts a review verdict, cited out-of-scope findings (`review_sc
 
 The PR receives one summary comment listing the backlog issues filed from that review. Filing is enabled by default and bounded by `review.max_out_of_scope_backlog_issues` (default `3`) per PR; set `review.out_of_scope_backlog_disabled: true` to opt out.
 
+Out-of-scope findings follow `review.backlog` (destination, labels, per-PR daily cap) and the fingerprint dedup described under [Backlog routing](#backlog-routing).
+
+### Pipeline stages
+
+`GET /api/review/pipeline` places every review-queue PR in exactly one stage, derived by the pure `pkg/review/pipeline.Derive` from the verdict artifact, the review dispatch state, the `review-links.json` ledger, labels, the escalation ledger, CI state and merge state. Rules are checked in this order; the first match wins:
+
+| Stage | Meaning |
+|---|---|
+| `merged` | The PR merged. |
+| `abandoned` | The PR closed without merging. |
+| `human_hold` | A `hold`/`needs-human` label or held queue entry, a `requires_human` or `reject` verdict on the current head, a dispatch-state human hold, an escalated escalation entry, or a `changes_requested`/`fixing` PR whose loop counter reached the fix-cycle cap. |
+| `approved` | A merge-eligible `approve` verdict on the current head, an `lgtm`/`approved`/`reviewer-passed` label, the escalation ledger's reviewer-passed SHA on the head, or an approving hive review on the head. The next action is merge, fix CI or wait for CI depending on the CI rollup. |
+| `fixing` | A fix is dispatched for the current head. |
+| `changes_requested` | The current head's verdict (or, without one, the hive's posted review) requests changes. |
+| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated. |
+| `unreviewed` | None of the above; a verdict on an older head does not count once the head moves. |
+
+Each card also carries the reviewers (perspective and model), in-scope finding counts on the P0–P3 scale `review_bots.min_priority` uses (critical → P0, high → P1, medium → P2, low/info → P3), the loop counter against its cap, one next action and the reasons for the stage. The review queue lists open PRs only, so the endpoint does not return `merged` or `abandoned` cards yet.
+
+### Loop safety
+
+A card carries `loop_warning` (reason, plus the reviewer and thread behind it) while the fix-cycle counter is at `loop_cap − 1` or over, or a review-bot thread has reached `review_bots.max_attempts_per_thread`, and no human has the PR yet. `POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human` (merger or owner role) applies `needs-human` and posts one `<!-- hive-review-loop -->` comment saying why; repeating it posts no second comment, and each use is audit-logged. The endpoint does not load bot-thread counts yet, so cards warn on the fix-cycle counter only.
+
+Review-loop safety checklist:
+
+- [ ] The fix-cycle counter is below `loop_cap`, or the PR is already with a human.
+- [ ] No review-bot thread is at its attempt cap without a human reply.
+- [ ] A PR sent to a human carries `needs-human` and exactly one loop-safety comment.
+- [ ] Nobody re-dispatches a fix on a PR that carries `needs-human`.
+
 ### Confidence score
 
 Every aggregate also carries a derived 0–5 **mergeability confidence** (`confidence.score`, with `confidence.reasons`) so a maintainer working a queue can sort or glance without reading each finding (hivecommons/hive#8182). It is computed from the same reports as the verdict — never asked of the model — so it means the same thing on every PR:
@@ -135,7 +165,42 @@ review:
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
+  severity:
+    block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
+    comment_below: true                     # default true
+    backlog_below: true                     # default true
+  backlog:
+    destination: github_issue               # github_issue | github_project | linear | jira
+    labels: [from-review]                   # default [from-review]
+    max_per_pr_per_day: 10                  # default 10
 ```
+
+### Blocking line (`review.severity`, `review.backlog`)
+
+`review.severity.block_at` is the lowest finding priority that still blocks merge, on the P0–P3 scale (critical → P0, high → P1, medium → P2, low/info → P3). **Settings → Features → Review Gate → Severity & backlog** offers three presets: *Strict (P0–P2 block)* sets `P2`, *Ship fast (P0–P1 block)* sets `P1`, and *Everything blocks* sets `P3`. Unset keeps today's behaviour. Findings below the line are posted as non-blocking comments when `comment_below` is true (default) and filed as follow-up work when `backlog_below` is true (default).
+
+`review.backlog` says where that follow-up work goes:
+
+| Key | Default | Notes |
+|---|---|---|
+| `destination` | `github_issue` | `github_project`, `linear` and `jira` require `governor.work_source.type` to be `github_projects`, `linear` or `jira` respectively. The dashboard only offers the active work source's destination, and the owner-only `PUT /api/config/review` rejects a mismatch. If the work source later changes, the hive falls back to `github_issue` rather than failing to load. |
+| `project_column_id` | — | Projects v2 status option id; required when `destination: github_project`. |
+| `linear_state` | team default | Linear workflow state for new items. |
+| `jira_status` | project initial status | Jira status for new tickets. |
+| `labels` | `[from-review]` | Applied to every item. |
+| `max_per_pr_per_day` | `10` | Cap per PR per day. |
+
+**Precedence with `classification.review_bots.min_priority`.** One blocking line governs both the hive reviewer and external review bots. The bot threshold resolves in this order, first non-empty wins: `hive.yaml` `classification.review_bots.min_priority` (including an explicit `all`), then `hive-project.yaml` `classification.review_bots.min_priority`, then `review.severity.block_at`. With none set, every bot finding is routed. `block_at` is never copied into `min_priority`; clearing the explicit override hands control back to `block_at`. Invalid values fail config load with an error naming the field (for example `review.severity.block_at`, `review.backlog.project_column_id`).
+
+#### Backlog routing
+
+When `block_at` is set and `backlog_below` is on, every cited in-scope finding (with `file` and a positive `line`) whose priority is below the line is filed to the backlog when the relay accepts the verdict. Cited out-of-scope findings go to the same destination as before (see [Out-of-scope backlog filing](#out-of-scope-backlog-filing)).
+
+- **Destination.** `github_issue` files an issue in the PR's repo. `github_project` also adds that issue to the `governor.work_source.github_projects` project and sets its Status to `project_column_id`. `linear` files an issue on the Linear team mapped to the repo, in `linear_state` when set (an unknown state is an error naming it; label names the team lacks are skipped). `jira` files a Task in the first `work_source.jira.project_keys` project and moves it to `jira_status` when set. All three use the work-source credentials. If the destination's work source is not active or cannot be built, the item is filed as a GitHub issue with the `from-review` label added, and the hive logs why.
+- **Item body.** The finding title and summary, the PR link, a `file:line` permalink at the reviewed head SHA, the severity with its P-level, the fingerprint, and the line `filed by Hive review backlog`. `labels` are applied to every item.
+- **Fingerprint dedup.** Each finding is fingerprinted as `sha256(rule | path | snippet)`: the title, the cleaned file path and the summary, lower-cased with whitespace collapsed. Line numbers are left out, so the same nit at a shifted line still matches. `/data/review-backlog-issues.json` keeps a per-repo map of fingerprint → item. When another PR raises a known fingerprint, the hive comments on the existing item with the new PR link and permalink instead of filing a second one. The same PR raising it again changes nothing.
+- **Cap.** At most `max_per_pr_per_day` items are filed or updated per PR per UTC day. Findings over the cap are retried on the next review. Out-of-scope findings also stay within `review.max_out_of_scope_backlog_issues` per PR.
+- **Audit.** Each filing pass that wrote anything records one `review_backlog_batch_routed` entry on the PR (`destination`, `filed`, `updated`, `capped`). Each new GitHub issue also gets its own `review_backlog_issue_filed` entry. The PR receives one summary comment that lists the items filed.
 
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
@@ -196,6 +261,8 @@ A review-fix kick tells the fixer agent to check out the PR branch and push a co
 - `review.fix_human_prs` (default off) lets the fix kick be dispatched for a PR the hive did **not** open. Owner-only; in the dashboard it sits next to "Review every PR" under Features -> Review Gate -> Reviewers, as "Push fix commits to PRs Hive did not open".
 - `review.contributor_prs.base_sync` (default off) is narrower: it only lets PR follow-up call GitHub's update-branch API for a hive-authored lane PR whose head is in a contributor fork, whose base moved (`behind`/`dirty`), and whose author enabled "allow edits by maintainers". `behind` produces a GitHub-authored merge commit; `dirty` falls back to the base-moved repair note and kick. Fork pushes still do not pass through Hive, so stale-head prevention is a post-push note/kick rather than a true pre-push rejection.
 
+For PRs the hive did not author, the scanner never pushes content or fixup commits: it comments with the proposed change (or a GitHub suggestion) and leaves the author to apply it. The only sanctioned pushes are the base-sync above and, with `fix_human_prs: true`, a fix kick; governance and policy text is never changed without the author's or a maintainer's consent.
+
 Before every fix kick the planner checks authorship. A PR counts as the hive's own when its author login is an agent (`github.ai_author` or a `[bot]` login), when the audit trail attributes it to one of this hive's agents, or when its body carries the hive attribution trailer (a PR an agent opened on a person's credentials). Anything else gets a fix kick only with `fix_human_prs: true`.
 
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and `setting=review.fix_human_prs=false`, so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
@@ -245,7 +312,27 @@ Read it from:
 
 Read the numbers with care: the cohorts are not randomised. The reviewer reaches PRs in queue order, so early on the reviewed cohort skews towards whatever it got to first. The comparison becomes meaningful once both cohorts have dozens of resolved PRs; until then treat it as directional.
 
+## Event-driven dispatch
+
+With webhooks configured, a pushed PR does not wait for the next governor cadence to be reviewed (hivecommons/hive#11091). The spoke's existing signed webhook receiver (`POST /api/webhook/github`) queues a review dispatch for `pull_request` deliveries with action `opened`, `reopened`, `synchronize`, `ready_for_review` or `review_requested` on an open, non-draft PR in a managed repository.
+
+- **Debounce.** A PR fires once it has been quiet for `review.event_debounce_s` (default `90`, max `3600`). Each new delivery restarts the window and replaces the head SHA, so a burst of pushes is reviewed once, at its final head; a PR pushed continuously still fires four windows after its first event.
+- **Idempotency.** A head SHA that already fired is not queued again for 24 hours. The per-head perspective budget and dispatch state still stop a second review of the same head either way.
+- **Bounded.** At most 256 PRs wait at once; further deliveries are dropped and counted, and the cadence tick reviews those PRs as before. Wakes are spaced at least 30 seconds apart, so many PRs pushed together cost one early cycle.
+- **Same gates.** Firing wakes the governor for an early eval cycle with the fired PRs first in the review list. Head age, loop caps, ACMM, hold labels and `max_parallel_reviews` apply exactly as on a cadence tick.
+- **Fallback.** The cadence path is unchanged and still covers hives without webhooks, missed deliveries and dropped events.
+
+`review.event_driven` unset means on exactly when `GITHUB_WEBHOOK_SECRET` is set; `false` turns it off, `true` forces it on. It never runs while `require_approval` or `fan_out` is off.
+
+```yaml
+review:
+  event_driven: true
+  event_debounce_s: 90
+```
+
+`GET /api/review/dispatch/events` lists pending and recent dispatches with their counters (received, queued, coalesced, duplicates, dropped, fired, wakes). Review pipeline cards carry `trigger`: `event` (a webhook dispatch fired for the current head), `event_pending` (one is queued), or `cadence` (the head has reviewers without an event dispatch).
+
 ## Deferred work
 
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.
-- Add dashboard visibility for review verdict artifacts.
+- Add dashboard visibility for review verdict artifacts. The per-PR [review evidence bundle](review-evidence.md) (tracked in #11058) is the planned durable, downloadable record; see also the [SOC 2 control mapping](soc2-control-mapping.md) (not a compliance claim).

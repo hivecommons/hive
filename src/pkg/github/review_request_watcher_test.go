@@ -123,6 +123,59 @@ func TestReviewRequestWatcher_ApprovesAndAudits(t *testing.T) {
 	}
 }
 
+func TestReviewRequestWatcher_SentinelSuppressesApproval(t *testing.T) {
+	reviewed := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/5":
+			json.NewEncoder(w).Encode(map[string]any{
+				"head":   map[string]string{"sha": "head5"},
+				"labels": []map[string]string{{"name": "Sentinel-Alert"}},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			reviewed++
+			t.Fatalf("sentinel-labelled PR must not receive an APPROVE review")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := reviewTestClient(t, api.URL)
+	c.SetSentinelAlertLabel("sentinel-alert")
+	dir := withReviewDir(t)
+	var gotAction, gotDetail string
+	c.SetAttributionAudit(func(action, detail, agent string) { gotAction, gotDetail = action, detail })
+
+	reqPath, err := WriteReviewRequest(dir, ReviewRequest{
+		Repo: "o/r", Number: 5, Event: "approve", Agent: "reviewer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+
+	if reviewed != 0 {
+		t.Fatalf("expected no review submitted, got %d", reviewed)
+	}
+	if gotAction != AuditActionSentinelBlockedApproval || !strings.Contains(gotDetail, "label=sentinel-alert") {
+		t.Fatalf("audit = %q %q, want sentinel-blocked-approval with label", gotAction, gotDetail)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("review request should be consumed when approval is suppressed")
+	}
+	var resp ReviewResponse
+	data, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if !resp.OK || !strings.Contains(resp.Note, "sentinel-alert") {
+		t.Fatalf("response = %+v, want ok note naming sentinel-alert", resp)
+	}
+}
+
 // request_changes and comment map to the right API verb + state.
 func TestReviewRequestWatcher_EventMapping(t *testing.T) {
 	cases := []struct{ event, apiEvent, state string }{

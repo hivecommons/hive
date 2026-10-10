@@ -1,0 +1,1 @@
+- Fixed the scanner pushing content commits onto PR branches the hive did not author; it now comments with the suggestion instead, leaving only the `review.contributor_prs.base_sync` update-branch unstick.

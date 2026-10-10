@@ -108,6 +108,13 @@ func validateAgentGeneralInput(body map[string]interface{}) error {
 			}
 		}
 	}
+	if v, ok := body["bobSessionLabel"]; ok {
+		if s, ok := v.(string); ok {
+			if err := config.ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(s)); err != nil {
+				return err
+			}
+		}
+	}
 	if v, ok := body["emoji"]; ok {
 		if s, ok := v.(string); ok {
 			if utf8.RuneCountInString(s) > maxEmojiLen {

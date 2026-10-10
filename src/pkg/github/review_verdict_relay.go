@@ -50,10 +50,13 @@ var reviewVerdictAuditPath = "/data/audit.jsonl"
 // Failures here are logged and swallowed. The review is already posted by the
 // time this runs; losing the verdict must never turn a successful review into a
 // retry that posts the comment a second time.
-func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
+//
+// It returns the reports actually recorded, which are what the review evidence
+// bundle may claim (review_evidence.go).
+func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.PerspectiveReport {
 	raw := strings.TrimSpace(req.Report)
 	if raw == "" {
-		return
+		return nil
 	}
 	dir = review.ReportDir(dir)
 	// Validate BEFORE the report lands where the collector reads. review.Collect
@@ -68,23 +71,28 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) {
 		c.logger.Warn("review-request watcher: rejected malformed verdict",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("agent", req.Agent), slog.String("error", err.Error()))
-		return
+		return nil
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
-		return
+		return nil
 	}
+	var recorded []review.PerspectiveReport
 	for _, report := range reports {
-		c.writeOneVerdict(req, report, dir)
+		if written, ok := c.writeOneVerdict(req, report, dir); ok {
+			recorded = append(recorded, written)
+		}
 	}
+	return recorded
 }
 
 // writeOneVerdict commits a single perspective's verdict where review.Collect
 // will find it. One file per perspective, which is what the collector has
 // always read — a combined review changes how verdicts arrive, not how they
-// are stored, so nothing downstream needs to know the difference.
-func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveReport, dir string) {
+// are stored, so nothing downstream needs to know the difference. It returns
+// the report as stored and whether it was.
+func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveReport, dir string) (review.PerspectiveReport, bool) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
@@ -93,20 +101,20 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 			slog.String("claimed", fmt.Sprintf("%s#%d", report.Repo, report.Number)),
 			slog.String("agent", req.Agent))
-		return
+		return report, false
 	}
 	// Bind to a real dispatch record. A combined review answers one kick with
 	// several verdicts, so each element is checked on its own: the dispatch is
 	// recorded per perspective, and a perspective nothing dispatched is refused
 	// here exactly as it would be for a single-object verdict.
-	ok, reason, dispatchHead := verdictDispatchAuthorized(report, req)
+	ok, reason, dispatchHead := c.verdictDispatchAuthorized(report, req)
 	if !ok {
 		c.logger.Warn("review-request watcher: verdict does not match a review dispatch, discarded",
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 			slog.String("perspective", string(report.Perspective)),
 			slog.String("agent", req.Agent),
 			slog.String("reason", reason))
-		return
+		return report, false
 	}
 	if strings.TrimSpace(report.HeadSHA) == "" && strings.TrimSpace(dispatchHead) != "" {
 		report.HeadSHA = strings.TrimSpace(dispatchHead)
@@ -121,7 +129,7 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	if err != nil {
 		c.logger.Warn("review-request watcher: could not serialize verdict",
 			slog.String("perspective", string(report.Perspective)), slog.String("error", err.Error()))
-		return
+		return report, false
 	}
 
 	name := review.ReviewReportFilePrefix +
@@ -137,26 +145,27 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		c.logger.Warn("review-request watcher: could not write verdict",
 			slog.String("path", path), slog.String("error", err.Error()))
-		return
+		return report, false
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		c.logger.Warn("review-request watcher: could not commit verdict",
 			slog.String("path", path), slog.String("error", err.Error()))
-		return
+		return report, false
 	}
 	c.logger.Info("review-request watcher: verdict recorded",
 		slog.String("repo", report.Repo), slog.Int("number", report.Number),
 		slog.String("perspective", string(report.Perspective)),
 		slog.String("verdict", string(report.Verdict)),
 		slog.String("path", path))
+	return report, true
 }
 
-func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return advisoryVerdictAuthorized(report, req)
+			return c.advisoryVerdictAuthorized(report, req)
 		}
 		return false, "dispatch_state_unavailable", ""
 	}
@@ -191,13 +200,21 @@ func verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewReques
 	// "awaiting review approval", and combined verdict arrays from the
 	// reviewer recorded only the one perspective whose dispatch happened to be
 	// assigned to that same agent.
-	return advisoryVerdictAuthorized(report, req)
+	return c.advisoryVerdictAuthorized(report, req)
 }
 
-func advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+// advisoryVerdictAuthorized admits a verdict no dispatch row binds. The
+// verdict feeds the same aggregate that gates merge eligibility and
+// recommends closing a PR, so the submitting lane must be one this hive
+// reviews with: any other lane that can reach the relay could otherwise
+// approve or veto any PR it did not author.
+func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
 	head := strings.TrimSpace(report.HeadSHA)
 	if head == "" {
 		return false, "missing_head_sha_without_dispatch", ""
+	}
+	if !c.isReviewerAgent(req.Agent) {
+		return false, "non_reviewer_without_dispatch", ""
 	}
 	if sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
 		return false, "author_self_approval", ""

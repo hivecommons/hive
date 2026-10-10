@@ -19,8 +19,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// pkg/retro for autonomy signal facts and automatic ACMM decisions (#8364),
 	// plus pkg/claims for the worker-claim ledger the relay honours and the
 	// /api/claims routes expose (hivecommons/hive#8380), plus pkg/upstreamwatch
-	// for the divergence view and /api/upstream-watch route (hivecommons/hive#10361).
-	const maxDashboardInternalImports = 43
+	// for the divergence view and /api/upstream-watch route (hivecommons/hive#10361),
+	// plus pkg/releasenotes for the GET /api/version/release-notes changelog
+	// gap endpoint (hivecommons/hive#11065), plus pkg/compliance for the
+	// control registry and /api/compliance routes (hivecommons/hive#11078).
+	const maxDashboardInternalImports = 45
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

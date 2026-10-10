@@ -341,7 +341,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	if len(agentIssues) == 0 && actionable != nil && len(actionable.Issues.Items) > 0 {
 		agentIssues = actionable.Issues.Items
 	}
-	knowledgeSection := s.primeKnowledge(agentIssues)
+	knowledgeSection := s.primeKnowledge(agentName, agentIssues)
 
 	repoRoot := s.agentsRepoRoot(primaryRepo)
 

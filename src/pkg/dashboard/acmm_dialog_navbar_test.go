@@ -30,6 +30,7 @@ func TestACMMNavbarPillOpensDialogAndNoPreviewButtons(t *testing.T) {
 		"global.window = { _lastStatus: { acmmLevel: 1 } };\n" +
 		"global.fetch = async (url) => { assert.equal(url, '/api/packs'); return { json: async () => [{ level: 2, name: 'Advisory', description: 'observe only', agentCount: 1, governor: { modes: 'SURGE', mergePolicy: 'manual' }, agents: [{ name: 'guide', displayName: 'guide', description: 'docs', emoji: '🧭', color: '#8e44ad' }] }] }; };\n" +
 		"let _acmmOpen = false; let _acmmPacks = null;\n" +
+		"function hiveRememberModalOpen() {}\n" +
 		jsFunc(t, html, "esc") + "\n" +
 		"const ACMM_LEVEL_COLORS = ['var(--status-neutral)', 'var(--acmm-level-1)', 'var(--acmm-level-2)', 'var(--acmm-level-3)', 'var(--acmm-level-4)', 'var(--acmm-level-5)', 'var(--acmm-level-6)'];\n" +
 		"const acmmLevelColor = level => ACMM_LEVEL_COLORS[level] || 'var(--status-info)';\n" +

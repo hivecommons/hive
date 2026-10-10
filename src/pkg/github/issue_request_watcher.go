@@ -109,6 +109,13 @@ type IssueRequest struct {
 	// read it instead of only in prose. A failed link does not fail the
 	// create; linked and failed blockers are both reported in the result.
 	BlockedBy []int `json:"blocked_by,omitempty"` // issue only
+	// NeedsDecision parks the new issue on a maintainer decision
+	// (hivecommons/hive#11215). On an "issue" request the watcher adds the
+	// hive's configured needs-decision label (hard_suppress_labels.
+	// needs_decision) to the create itself, so an issue that asks the
+	// maintainer to choose gets the "What to reply" notice and stays out of
+	// the actionable queue whatever labels the agent named.
+	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -501,7 +508,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		res, err = c.createIssue(ctx, req.Repo, req.Title, body, req.Labels, true)
+		createLabels := req.Labels
+		if req.NeedsDecision {
+			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
+		}
+		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict
@@ -775,7 +786,9 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	if consolidateOpen && strings.TrimSpace(c.appBotLogin) != "" {
 		wantFiles = issueFileRefSet(title + "\n" + body)
 	}
-	var fileSetTwin *gh.Issue
+	var fileSetTwin, componentTwin *gh.Issue
+	var componentPath string
+	var componentCount int
 	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, wantFiles); err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
@@ -789,6 +802,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
 	} else {
 		fileSetTwin = found.fileSet
+		componentTwin, componentPath, componentCount = found.component, found.componentPath, found.componentCount
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
@@ -824,6 +838,23 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 			slog.String("repo", repoName), slog.Int("number", fileSetTwin.GetNumber()),
 			slog.String("existing_title", fileSetTwin.GetTitle()))
 		return CreateIssueResult{Number: fileSetTwin.GetNumber(), URL: fileSetTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
+	}
+
+	// Same-component fold (#11239): exact file-set equality misses a stream
+	// of variants against one file — each bypass cites the shared file plus
+	// its own fixture or helper, so every set differs and every variant became
+	// its own issue and PR. Once enough open agent-filed issues already cite a
+	// path this finding also cites, the pattern is clear: fold the finding
+	// into the oldest of them, which acts as the component's tracker.
+	if componentTwin != nil {
+		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, componentTwin.GetNumber(),
+			foldedComponentFindingComment(title, body, componentPath, componentCount)); err != nil {
+			return CreateIssueResult{}, fmt.Errorf("CreateIssue: folding into open issue #%d in %s/%s: %w", componentTwin.GetNumber(), owner, repoName, err)
+		}
+		c.logger.Info("CreateIssue: folded finding into the oldest open issue on the same component",
+			slog.String("repo", repoName), slog.Int("number", componentTwin.GetNumber()),
+			slog.String("path", componentPath), slog.Int("open_siblings", componentCount))
+		return CreateIssueResult{Number: componentTwin.GetNumber(), URL: componentTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
@@ -880,6 +911,34 @@ type openIssueMatches struct {
 	// fileSet is the oldest App-bot-filed open issue whose file-reference set
 	// equals the requested one. Only looked for when wantFiles is non-empty.
 	fileSet *gh.Issue
+
+	// component is the oldest App-bot-filed open issue citing componentPath,
+	// a path the request also cites and that at least
+	// sameComponentFoldThreshold such open issues cite (#11239).
+	// componentCount is how many do.
+	component      *gh.Issue
+	componentPath  string
+	componentCount int
+}
+
+// sameComponentFoldThreshold is how many open App-bot-filed issues must
+// already cite one path before a new finding citing it is folded into the
+// oldest of them instead of filed (#11239). Below it, overlapping findings
+// file normally: two issues touching one file is ordinary, a third is a
+// stream.
+const sameComponentFoldThreshold = 3
+
+// ubiquitousFileRefs are paths so many unrelated findings mention in passing
+// that sharing one says nothing about sharing a root cause.
+var ubiquitousFileRefs = map[string]bool{
+	"README.md": true, "CHANGELOG.md": true, "CONTRIBUTING.md": true,
+	"go.mod": true, "go.sum": true, "package.json": true, "package-lock.json": true,
+	"pnpm-lock.yaml": true, "yarn.lock": true, "Cargo.toml": true, "Cargo.lock": true,
+	"pyproject.toml": true, "requirements.txt": true,
+}
+
+func isUbiquitousFileRef(p string) bool {
+	return ubiquitousFileRefs[p[strings.LastIndex(p, "/")+1:]]
 }
 
 // scanOpenIssues scans up to the 3 most recent pages of open issues for an
@@ -896,6 +955,8 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 	wantCanonical := canonicalIssueSubject(title)
 	botLogin := strings.TrimSpace(c.appBotLogin)
 	var found openIssueMatches
+	componentCounts := make(map[string]int)
+	componentOldest := make(map[string]*gh.Issue)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
 		Sort:        "created",
@@ -921,13 +982,31 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
 				found.subject = is
 			}
-			if len(wantFiles) > 0 && botLogin != "" && is.GetUser().GetLogin() == botLogin &&
-				equalFileRefSets(wantFiles, issueFileRefSet(candidate+"\n"+is.GetBody())) {
-				found.fileSet = is
+			if len(wantFiles) > 0 && botLogin != "" && is.GetUser().GetLogin() == botLogin {
+				have := issueFileRefSet(candidate + "\n" + is.GetBody())
+				if equalFileRefSets(wantFiles, have) {
+					found.fileSet = is
+				}
+				for p := range have {
+					if wantFiles[p] && !isUbiquitousFileRef(p) {
+						componentCounts[p]++
+						componentOldest[p] = is
+					}
+				}
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
+		}
+	}
+	// Most-cited shared path wins; ties go to the lexically smallest so the
+	// choice is deterministic.
+	for p, n := range componentCounts {
+		if n < sameComponentFoldThreshold {
+			continue
+		}
+		if n > found.componentCount || (n == found.componentCount && p < found.componentPath) {
+			found.component, found.componentPath, found.componentCount = componentOldest[p], p, n
 		}
 	}
 	return found, nil
@@ -946,6 +1025,24 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it references exactly the same files as this one (")
 	b.WriteString(strings.Join(paths, ", "))
 	b.WriteString("), so it was folded in here instead. Address it in the same PR as this issue — two PRs editing the same files would conflict.\n\n### ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString(body)
+	return b.String()
+}
+
+// foldedComponentFindingComment renders a finding folded into the oldest open
+// issue on a component that already has a stream of open findings (#11239).
+// The marker lets tooling count folded variants; the header tells whoever
+// works the tracker to fix the shared root cause rather than one more variant.
+func foldedComponentFindingComment(title, body, path string, openSiblings int) string {
+	var b strings.Builder
+	b.WriteString("<!-- hive-finding-folded -->\n")
+	b.WriteString("**Folded finding.** This was filed as a separate issue, but ")
+	b.WriteString(strconv.Itoa(openSiblings))
+	b.WriteString(" open agent-filed issues already cite `")
+	b.WriteString(path)
+	b.WriteString("`, so it was folded into the oldest of them instead of opening another. Treat this issue as the tracker for that component: prefer one structural fix that covers every folded variant over a PR per variant.\n\n### ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
 	b.WriteString(body)

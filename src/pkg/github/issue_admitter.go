@@ -64,6 +64,14 @@ type HardSuppressClassifier interface {
 	HardSuppressIssueBucket(labels []string) string
 }
 
+// NeedsDecisionLabeler is the optional configurable name of the label that
+// parks an issue on a maintainer decision. The issue relay applies it when an
+// agent files an issue with needs_decision set (hivecommons/hive#11215). A
+// filter that does not implement it gets the built-in needs-decision label.
+type NeedsDecisionLabeler interface {
+	NeedsDecisionLabel() string
+}
+
 // admitAllIssues is the filter used when none has been installed. It preserves
 // the pre-existing zero-value behaviour of config.IssueFilterConfig, where an
 // unset filter admits every issue.

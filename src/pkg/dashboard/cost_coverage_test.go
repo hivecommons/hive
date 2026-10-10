@@ -333,6 +333,100 @@ func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
 	if resp.CountWindowStart != window.UnixMilli() || resp.CountUpdatedAt != "2026-08-18T00:00:00Z" {
 		t.Errorf("count window metadata = (%d,%q), want (%d,updated)", resp.CountWindowStart, resp.CountUpdatedAt, window.UnixMilli())
 	}
+	if !resp.CountAvailable {
+		t.Error("CountAvailable = false with live count snapshot")
+	}
+}
+
+func TestCostUsesPersistedHiveThroughputDivisors(t *testing.T) {
+	s, deps := covServer(t)
+	deps.Config.Project.Org = "kubestellar"
+	deps.Config.Project.Repos = []string{"console"}
+	deps.Config.Project.AIAuthor = "hivecommons-hive[bot]"
+	s.audit = &AuditLog{prCounters: PRThroughputCounters{
+		Since: "2026-07-24T22:36:00Z",
+		ByActor: PRThroughputActorMatrix{
+			prThroughputKindPR: {
+				prThroughputRoleMerged: {
+					prThroughputActorHive:  937,
+					prThroughputActorHuman: 4,
+				},
+			},
+			prThroughputKindIssue: {
+				prThroughputRoleClosed: {
+					prThroughputActorHive: 1182,
+				},
+			},
+		},
+		ByRepo: map[string]PRThroughputRepoCounters{
+			"kubestellar/console": {
+				Since: "2026-07-24T22:36:00Z",
+				ByActor: PRThroughputActorMatrix{
+					prThroughputKindPR: {
+						prThroughputRoleMerged: {prThroughputActorHive: 937},
+					},
+					prThroughputKindIssue: {
+						prThroughputRoleClosed: {prThroughputActorHive: 1182},
+					},
+				},
+			},
+			"kubestellar/docs": {
+				ByActor: PRThroughputActorMatrix{
+					prThroughputKindPR: {
+						prThroughputRoleMerged: {prThroughputActorHive: 9000},
+					},
+				},
+			},
+		},
+	}}
+	deps.MetricsCollector = &MetricsCollector{prIssueCounts: &ghpkg.PRIssueCounts{
+		MergedPRs:    0,
+		ClosedIssues: 0,
+		UpdatedAt:    "2026-10-08T00:00:00Z",
+		Basis:        "hive-attributed",
+	}}
+
+	rec := doGet(s, "/api/cost")
+	var resp costResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.CountAvailable || resp.MergedPRs != 937 || resp.ClosedIssues != 1182 {
+		t.Fatalf("cost divisors = available %v merged %d closed %d, want persisted 937/1182", resp.CountAvailable, resp.MergedPRs, resp.ClosedIssues)
+	}
+	if resp.CountBasis != "persisted-pr-throughput" || resp.CountStatus != "persisted" || !resp.CountStale {
+		t.Fatalf("count metadata = basis %q status %q stale %v, want persisted stale throughput", resp.CountBasis, resp.CountStatus, resp.CountStale)
+	}
+}
+
+func TestCostPrefersFreshSearchDivisorsOverPersistedFallback(t *testing.T) {
+	s, deps := covServer(t)
+	s.audit = &AuditLog{prCounters: PRThroughputCounters{
+		ByActor: PRThroughputActorMatrix{
+			prThroughputKindPR: {
+				prThroughputRoleMerged: {prThroughputActorHive: 7},
+			},
+			prThroughputKindIssue: {
+				prThroughputRoleClosed: {prThroughputActorHive: 3},
+			},
+		},
+	}}
+	deps.MetricsCollector = &MetricsCollector{prIssueCounts: &ghpkg.PRIssueCounts{
+		MergedPRs:    937,
+		ClosedIssues: 1182,
+		UpdatedAt:    "2026-10-08T00:00:00Z",
+		Basis:        "hive-attributed",
+		Status:       "fresh",
+	}}
+
+	rec := doGet(s, "/api/cost")
+	var resp costResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.MergedPRs != 937 || resp.ClosedIssues != 1182 || resp.CountBasis != "hive-attributed" {
+		t.Fatalf("cost divisors = %+v, want fresh search counts", resp)
+	}
 }
 
 func TestCov_HandleCost_NoPRIssueCounts(t *testing.T) {
@@ -344,6 +438,12 @@ func TestCov_HandleCost_NoPRIssueCounts(t *testing.T) {
 	}
 	if resp.MergedPRs != 0 || resp.ClosedIssues != 0 {
 		t.Errorf("expected zero counts with no MetricsCollector, got merged=%d closed=%d", resp.MergedPRs, resp.ClosedIssues)
+	}
+	if resp.CountAvailable {
+		t.Fatalf("CountAvailable = true with no live or persisted counts: %+v", resp)
+	}
+	if resp.CountStatus != "counts unavailable (GitHub rate-limited)" {
+		t.Fatalf("CountStatus = %q", resp.CountStatus)
 	}
 }
 

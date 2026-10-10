@@ -32,6 +32,7 @@ func TestDashboardNavPeekHelpers(t *testing.T) {
 	html := indexHTML(t)
 	script := `
 const SECTION_LS_PREFIX = 'hive-section-collapsed-';
+function dashboardAliasSectionId(id){ return id === 'review-pipeline-section' ? 'review-queue-section' : id; }
 let layoutUpdates = 0;
 function dashboardUpdateLayoutMenuState(){ layoutUpdates++; }
 function normalizeSectionCardChrome(){}
@@ -118,6 +119,7 @@ func TestDashboardNavPeekNavigationWaitsForSettledLayout(t *testing.T) {
 	html := indexHTML(t)
 	script := `
 const SECTION_LS_PREFIX = 'hive-section-collapsed-';
+function dashboardAliasSectionId(id){ return id === 'review-pipeline-section' ? 'review-queue-section' : id; }
 const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
 const NAV_JUMP_SETTLE_MS = 350;
 const NAV_JUMP_RESIZE_QUIET_MS = 60;

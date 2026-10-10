@@ -88,6 +88,19 @@ func (t *rateLimitTracker) observe(bucket string, obs RateLimitEntry) RateLimitE
 	return entryOf(accepted)
 }
 
+func (t *rateLimitTracker) snapshot(bucket string) RateLimitEntry {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.windows == nil {
+		return RateLimitEntry{}
+	}
+	w, ok := t.windows[bucket]
+	if !ok {
+		return RateLimitEntry{}
+	}
+	return entryOf(w)
+}
+
 func entryOf(w rateLimitWindow) RateLimitEntry {
 	return RateLimitEntry{
 		Limit:      w.limit,

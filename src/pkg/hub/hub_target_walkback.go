@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,15 +13,18 @@ import (
 // the tip has no hub image. Each candidate costs one GHCR manifest probe; the
 // walk stops early at the current target, so in the steady state (image-less
 // release commit on top of a verified one) it probes exactly one commit.
-const hubTargetWalkbackDepth = 10
+const hubTargetWalkbackDepth = 30
 
 // listRecentBranchCommits returns up to n commits reachable from branch,
 // newest first (the tip is index 0), as short SHA + first-line message. A nil
 // slice means the listing failed; the caller must then leave the target alone.
 func listRecentBranchCommits(client *http.Client, branch string, n int, logger *slog.Logger) []branchSHAInfo {
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_commit_list"), shaFetchTimeout)
+	defer cancel()
 	commitsURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits?sha=%s&per_page=%d", githubAPIBase, branch, n)
-	req, _ := http.NewRequest("GET", commitsURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, commitsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	authGitHubRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: commit list request failed", "branch", branch, "error", err)

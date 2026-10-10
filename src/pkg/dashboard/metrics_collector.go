@@ -32,8 +32,10 @@ type MetricsCollector struct {
 	// first delivered after an App-less boot) is used without a restart
 	// (#9621). See SetGitHubClientProvider.
 	clientFn      func() *ghpkg.Client
+	scopeMu       sync.RWMutex
 	org           string
 	repo          string
+	repos         []string
 	badgeURL      string
 	aiAuthor      string
 	projectName   string
@@ -139,7 +141,25 @@ func (mc *MetricsCollector) GetMTTR() *ghpkg.MTTRResult {
 func (mc *MetricsCollector) GetPRIssueCounts() *ghpkg.PRIssueCounts {
 	mc.prIssueMu.RLock()
 	defer mc.prIssueMu.RUnlock()
-	return mc.prIssueCounts
+	if mc.prIssueCounts == nil {
+		return nil
+	}
+	cp := *mc.prIssueCounts
+	return &cp
+}
+
+// SetProjectScope refreshes the repo and effective author values cached by
+// count-style collectors after config reloads or hub-delivered project updates.
+func (mc *MetricsCollector) SetProjectScope(org, primaryRepo string, repos []string, aiAuthor string) {
+	if mc == nil {
+		return
+	}
+	mc.scopeMu.Lock()
+	defer mc.scopeMu.Unlock()
+	mc.org = org
+	mc.repo = primaryRepo
+	mc.repos = append([]string(nil), repos...)
+	mc.aiAuthor = aiAuthor
 }
 
 func (mc *MetricsCollector) collect(ctx context.Context) {
@@ -148,8 +168,10 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 	outreach := mc.collectOutreach(ctx)
 	metrics["outreach"] = outreach
 
-	ciMaintainer := mc.collectCoverage(ctx)
+	coveragePct, coverageOK := mc.measureCoverage(ctx)
+	ciMaintainer := ciMaintainerCoverageMetrics(coveragePct, coverageOK)
 	metrics["ci-maintainer"] = ciMaintainer
+	metrics[qualityAgentName] = qualityCoverageMetrics(coveragePct, coverageOK)
 
 	architect := mc.collectArchitect()
 	metrics["architect"] = architect
@@ -173,11 +195,12 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 // "Fixes #N" references, persists the result to disk, and stores it in memory.
 func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 	gh := mc.client()
-	if gh == nil || mc.repo == "" {
+	repo := mc.primaryRepo()
+	if gh == nil || repo == "" {
 		return
 	}
 
-	result, err := gh.ComputeMTTR(ctx, mc.repo)
+	result, err := gh.ComputeMTTR(ctx, repo)
 	if err != nil {
 		mc.logger.Warn("failed to compute MTTR", "error", err)
 		return
@@ -201,7 +224,8 @@ func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 // cost-per-issue.
 func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 	gh := mc.client()
-	if gh == nil || mc.repo == "" {
+	repos := mc.countRepos()
+	if gh == nil || len(repos) == 0 {
 		return
 	}
 
@@ -209,13 +233,28 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 	if mc.prIssueWindowStart != nil {
 		since = mc.prIssueWindowStart()
 	}
-	result, err := gh.ComputePRIssueCountsSince(ctx, mc.repo, mc.aiAuthor, since)
+	result, err := gh.ComputePRIssueCountsForReposSince(ctx, repos, mc.countAuthor(), since)
 	if err != nil {
 		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
+		mc.markPRIssueCountsStale(err)
 		return
 	}
 
 	mc.prIssueMu.Lock()
+	if prIssueCountsTotal(result) == 0 && prIssueCountsTotal(mc.prIssueCounts) > 0 {
+		mc.prIssueCounts.Stale = true
+		mc.prIssueCounts.Status = "stale: zero response ignored"
+		mc.prIssueMu.Unlock()
+		mc.logger.Warn("ignored zero PR/issue counts while last-good counts exist",
+			"merged_prs", result.MergedPRs,
+			"closed_issues", result.ClosedIssues,
+		)
+		return
+	}
+	result.Stale = false
+	if result.Status == "" {
+		result.Status = "fresh"
+	}
 	mc.prIssueCounts = result
 	mc.prIssueMu.Unlock()
 
@@ -224,6 +263,81 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 		"merged_prs", result.MergedPRs,
 		"closed_issues", result.ClosedIssues,
 	)
+}
+
+func (mc *MetricsCollector) countRepos() []string {
+	if mc == nil {
+		return nil
+	}
+	mc.scopeMu.RLock()
+	defer mc.scopeMu.RUnlock()
+	repos := append([]string(nil), mc.repos...)
+	if mc.repo != "" {
+		repos = append([]string{mc.repo}, repos...)
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		key := strings.ToLower(repo)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, repo)
+	}
+	return out
+}
+
+func (mc *MetricsCollector) countAuthor() string {
+	if mc == nil {
+		return ""
+	}
+	mc.scopeMu.RLock()
+	defer mc.scopeMu.RUnlock()
+	return mc.aiAuthor
+}
+
+func (mc *MetricsCollector) primaryRepo() string {
+	if mc == nil {
+		return ""
+	}
+	mc.scopeMu.RLock()
+	defer mc.scopeMu.RUnlock()
+	return mc.repo
+}
+
+func (mc *MetricsCollector) projectScope() (org, primaryRepo, aiAuthor string) {
+	if mc == nil {
+		return "", "", ""
+	}
+	mc.scopeMu.RLock()
+	defer mc.scopeMu.RUnlock()
+	return mc.org, mc.repo, mc.aiAuthor
+}
+
+func prIssueCountsTotal(c *ghpkg.PRIssueCounts) int {
+	if c == nil {
+		return 0
+	}
+	return c.MergedPRs + c.ClosedIssues
+}
+
+func (mc *MetricsCollector) markPRIssueCountsStale(err error) {
+	mc.prIssueMu.Lock()
+	defer mc.prIssueMu.Unlock()
+	if prIssueCountsTotal(mc.prIssueCounts) == 0 {
+		return
+	}
+	status := "stale: GitHub unavailable"
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "rate") {
+		status = "stale: GitHub rate-limited"
+	}
+	mc.prIssueCounts.Stale = true
+	mc.prIssueCounts.Status = status
 }
 
 func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any {
@@ -242,7 +356,8 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		return result
 	}
 
-	repoFull := mc.org + "/" + mc.repo
+	org, primaryRepo, _ := mc.projectScope()
+	repoFull := org + "/" + primaryRepo
 	parts := strings.SplitN(repoFull, "/", 2)
 	if len(parts) != 2 {
 		return result
@@ -263,11 +378,11 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 	// the "hivecommons" org (org transfer), but hives configured before the
 	// transfer still report org "kubestellar" — accept BOTH so the migration
 	// does not silently zero these panels on older configs.
-	if mc.org == "kubestellar" || mc.org == "hivecommons" {
-		adopters := mc.countAdopters(ctx, mc.org, mc.repo)
+	if org == "kubestellar" || org == "hivecommons" {
+		adopters := mc.countAdopters(ctx, org, primaryRepo)
 		result["adopters"] = adopters
 
-		acmm := mc.countACMM(ctx, mc.org, mc.repo)
+		acmm := mc.countACMM(ctx, org, primaryRepo)
 		result["acmm"] = acmm
 
 		open, merged := mc.countOutreachPRs(ctx)
@@ -285,20 +400,48 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 // file from the hive's own repo via the App client. Nothing configured, or
 // anything unreadable, reports 0 — never a number for some OTHER project.
 func (mc *MetricsCollector) collectCoverage(ctx context.Context) map[string]any {
+	return ciMaintainerCoverageMetrics(mc.measureCoverage(ctx))
+}
+
+// measureCoverage reads the coverage badge once and reports the parsed
+// percentage, with ok=false when no badge is configured or it is unreadable.
+func (mc *MetricsCollector) measureCoverage(ctx context.Context) (int, bool) {
+	if mc.badgeURL == "" {
+		return 0, false
+	}
+	body, ok := mc.fetchCoverageBadge(ctx)
+	if !ok {
+		return 0, false
+	}
+	return parseCoverageBadge(body)
+}
+
+// ciMaintainerCoverageMetrics is the ci-maintainer card's coverage map; an
+// unknown reading stays 0 there for backwards compatibility.
+func ciMaintainerCoverageMetrics(pct int, ok bool) map[string]any {
 	result := map[string]any{
 		"coverage":       0,
 		"coverageTarget": coverageTarget,
 	}
-
-	if mc.badgeURL == "" {
-		return result
+	if ok {
+		result["coverage"] = pct
 	}
+	return result
+}
 
-	body, ok := mc.fetchCoverageBadge(ctx)
-	if !ok {
-		return result
+// qualityCoverageSource labels where the quality card's coverage comes from.
+const qualityCoverageSource = "coverage badge (HIVE_COVERAGE_BADGE_URL)"
+
+// qualityCoverageMetrics is the quality agent's view of the same coverage
+// reading (#11150): the figure the ACMM Level 3 coverage loop drives toward
+// the target. Unlike the ci-maintainer map, an unknown reading omits
+// "coverage" entirely so the card renders "—" instead of a fabricated 0%.
+func qualityCoverageMetrics(pct int, ok bool) map[string]any {
+	result := map[string]any{
+		"coverageTarget": coverageTarget,
+		"coverageSource": qualityCoverageSource,
 	}
-	if pct, ok := parseCoverageBadge(body); ok {
+	if ok {
 		result["coverage"] = pct
 	}
 	return result
@@ -378,16 +521,17 @@ func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) i
 
 func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged int) {
 	gh := mc.client()
-	if gh == nil || mc.aiAuthor == "" {
+	org, _, author := mc.projectScope()
+	if gh == nil || author == "" {
 		return 0, 0
 	}
 
-	openCount, err := gh.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "open")
+	openCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "open")
 	if err != nil {
 		mc.logger.Warn("failed to count open outreach PRs", "error", err)
 	}
 
-	mergedCount, err := gh.SearchOutreachPRCount(ctx, mc.aiAuthor, mc.org, mc.projectName, "merged")
+	mergedCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "merged")
 	if err != nil {
 		mc.logger.Warn("failed to count merged outreach PRs", "error", err)
 	}
@@ -459,6 +603,13 @@ func (mc *MetricsCollector) loadPRIssueCountsFromDisk() {
 	}
 	var result ghpkg.PRIssueCounts
 	if json.Unmarshal(data, &result) == nil && result.UpdatedAt != "" {
+		result.Stale = true
+		if result.Status == "" || result.Status == "fresh" {
+			result.Status = "stale cache"
+		}
+		if result.Basis == "" {
+			result.Basis = "hive-attributed"
+		}
 		mc.prIssueCounts = &result
 		mc.logger.Info("PR/issue counts loaded from disk cache",
 			"merged_prs", result.MergedPRs,
@@ -519,14 +670,15 @@ func (mc *MetricsCollector) fetchCoverageBadge(ctx context.Context) (string, boo
 			return "", false
 		}
 		gh := mc.client()
-		if gh == nil || mc.org == "" || mc.repo == "" {
+		org, primaryRepo, _ := mc.projectScope()
+		if gh == nil || org == "" || primaryRepo == "" {
 			// No App client (or no primary repo) — nothing to read it with.
 			return "", false
 		}
-		content, err := gh.GetFileContentRef(ctx, mc.org, mc.repo, path, ref)
+		content, err := gh.GetFileContentRef(ctx, org, primaryRepo, path, ref)
 		if err != nil {
 			mc.logger.Warn("coverage badge: could not read from primary repo",
-				"repo", mc.org+"/"+mc.repo, "ref", ref, "path", path, "error", err)
+				"repo", org+"/"+primaryRepo, "ref", ref, "path", path, "error", err)
 			return "", false
 		}
 		return content, true

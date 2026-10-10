@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	ghauth "github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -42,6 +44,10 @@ const (
 
 var feedbackGitHubAPIBase = "https://api.github.com"
 var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
+var mintHubFeedbackAppToken = func(ctx context.Context, s *HubServer, hiveID string) (string, string) {
+	return s.feedbackAppIssueToken(ctx, hiveID)
+}
+var hubFeedbackAuthoringHTTPClient = func() *http.Client { return http.DefaultClient }
 
 type feedbackConsoleError struct {
 	Timestamp string `json:"timestamp,omitempty"`
@@ -219,17 +225,14 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	token := strings.TrimSpace(s.envGitHubToken)
-	if token == "" {
-		token = hubGitHubToken()
-	}
+	token, botLogin := mintHubFeedbackAppToken(r.Context(), s, hiveID)
 	if token == "" {
 		release()
-		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
+		npsJSONError(w, "hub GitHub App token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	req.CredentialLogin = hubGitHubLoginForMention(lookupHubFeedbackTokenLogin(token))
-	result, warning, err := createHubFeedbackIssue(r.Context(), http.DefaultClient, token, req, feedbackGitHubAPIBase)
+	req.CredentialLogin = hubGitHubLoginForMention(botLogin)
+	result, warning, err := createHubFeedbackIssue(r.Context(), hubFeedbackAuthoringHTTPClient(), token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
 		if s.logger != nil {
@@ -244,6 +247,53 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, IssueNumber: result.Number, IssueURL: result.URL, Warning: warning})
+}
+
+func (s *HubServer) feedbackAppIssueToken(ctx context.Context, hiveID string) (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	var hive RegistryEntry
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if h.ID == hiveID {
+			hive = h
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if hive.ID == "" || hive.GitHubAppID == 0 || hive.GitHubInstallationID == 0 {
+		return "", ""
+	}
+	key := s.appKeysByAppID()[hive.GitHubAppID]
+	if key.PrivateKey == "" {
+		return "", ""
+	}
+	auth, err := ghauth.NewAppAuthFromPEM(hive.GitHubAppID, hive.GitHubInstallationID, []byte(key.PrivateKey), s.logger, hive.GitHubAPIURL)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("feedback: could not load hub GitHub App key", "hive", hiveID, "app_id", hive.GitHubAppID, "error", err)
+		}
+		return "", ""
+	}
+	token, _, err := auth.MintInstallationToken(ctx, nil)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("feedback: could not mint hub GitHub App token", "hive", hiveID, "app_id", hive.GitHubAppID, "installation_id", hive.GitHubInstallationID, "error", err)
+		}
+		return "", ""
+	}
+	slug := strings.TrimSpace(hive.GitHubAppSlug)
+	if slug == "" && hive.GitHubAppID == config.PublicGitHubAppID {
+		slug = config.DefaultGitHubAppSlug
+	}
+	if slug == "" {
+		slug = key.AppSlug
+	}
+	if slug == "" {
+		return strings.TrimSpace(token), ""
+	}
+	return strings.TrimSpace(token), slug + "[bot]"
 }
 
 func (s *HubServer) handleFeedbackIssues(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +332,7 @@ func (s *HubServer) handleFeedbackIssues(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "hub GitHub token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	items, err := fetchHubFeedbackIssueStatuses(r.Context(), http.DefaultClient, feedbackGitHubAPIBase, token, refs)
+	items, err := fetchHubFeedbackIssueStatuses(r.Context(), hubGitHubHTTPClient(), feedbackGitHubAPIBase, token, refs)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("feedback: issue lookup failed", "hive", hiveID, "error", err)
@@ -480,6 +530,7 @@ func fetchHubFeedbackIssueStatuses(ctx context.Context, client *http.Client, api
 }
 
 func fetchHubFeedbackIssueStatus(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int) (feedbackIssueStatus, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_status")
 	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -657,6 +708,7 @@ func writeHubFeedbackDiagnostics(b *strings.Builder, d *feedbackDiagnostics, sub
 	}
 }
 func postHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo, title, body string, labels []string) (feedbackIssueResult, int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_issue")
 	payload := map[string]any{"title": title, "body": body}
 	if labels != nil {
 		payload["labels"] = labels
@@ -754,6 +806,7 @@ func putHubGitHubContent(ctx context.Context, client *http.Client, apiBase, toke
 	return dl, err
 }
 func putHubGitHubContentOnBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_upload")
 	payload := map[string]string{
 		"message": "Add feedback screenshot",
 		"content": base64.StdEncoding.EncodeToString(content),
@@ -819,6 +872,7 @@ func ensureHubGitHubBranch(ctx context.Context, client *http.Client, apiBase, to
 	return nil
 }
 func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u string, payload any, out any) (int, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_json")
 	var body io.Reader
 	if payload != nil {
 		data, _ := json.Marshal(payload)
@@ -850,6 +904,7 @@ func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u st
 	return resp.StatusCode, nil
 }
 func postHubGitHubComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, body string) (string, error) {
+	ctx = hubGitHubCallerContext(ctx, "feedback_comment")
 	payload := map[string]string{"body": body}
 	data, _ := json.Marshal(payload)
 	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", strings.TrimRight(apiBase, "/"), owner, repo, issue)

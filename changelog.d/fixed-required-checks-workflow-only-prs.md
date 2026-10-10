@@ -1,0 +1,1 @@
+- Required CI contexts now report on every PR head, including workflow-only changes that previously left branch protection waiting forever.

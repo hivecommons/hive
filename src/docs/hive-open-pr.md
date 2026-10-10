@@ -69,7 +69,7 @@ Every shipped policy requires a real PR body; an empty one at this point means
 the body was lost on the way in — the observed failure was `--body-file` being
 silently dropped by an older parser, which opened PRs whose entire body was the
 attribution footer. The floor is "non-blank" only: minimal bodies like
-`Closes #12` still pass.
+`Fixes #12` still pass.
 
 **On a host without `python3`, a control character in any field is refused**
 with exit `3` and no request written. The request JSON is normally encoded by
@@ -83,12 +83,12 @@ exists to prevent; now nothing is written. Install `python3`, or strip the
 control character, and rerun.
 
 `--issues` declares which issue(s) this PR is for. The watcher then verifies
-the body actually references each declared issue — `Closes #N`, or `Refs #N`
+the body actually references each declared issue — `Fixes #N`, or `Refs #N`
 when part of the issue deliberately stays open — and rejects the request
 otherwise. Pass it whenever the run started from an issue, so a truncated or
 replaced body cannot open a PR that orphans its issue.
 
-When the PR body resolves an issue (`Closes #N`, `Fixes #N`, or
+When the PR body resolves an issue (`Fixes #N`, `Closes #N`, or
 `Resolves #N`), add the issue-author trailer before the first push with
 `src/scripts/issue-coauthor.sh --amend N` (repeat once per resolved issue).
 `issue-coauthor.sh` is the single source of truth for identity resolution: it
@@ -106,7 +106,7 @@ DCO sign-off. Never add `Signed-off-by:` for the issue author or anyone else
 unless that person actually signed off on the commit.
 
 Before writing `Refs #N`, answer the question directly: *does merging this PR
-leave anything for issue #N to track?* If nothing, use `Closes #N` — that is
+leave anything for issue #N to track?* If nothing, use `Fixes #N` — that is
 the default. Reserve `Refs #N` for an epic/tracker or a deliberately partial
 fix, and say on the same line what remains open. #6411 (`Refs #6319, #6410`,
 a follow-up tracker) and #6434 (a doc recording tracker state) are correct
@@ -194,7 +194,7 @@ above (`issue-coauthor.sh`), and like it, it is not a DCO sign-off.
 
 ## Policy gates that change or reject your request
 
-For the full operator-side label reference, including `hold`, `approved-direction`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
+For the full operator-side label reference, including `hold`, `approved-direction`, `hive: needs-confirmation`, `hive: reporter-confirmed`, and `hive: close-on-merge`, see [Hive Labels and Control Signals](labels-and-control-signals.md).
 
 Beyond the empty-body and `--issues` checks above, the watcher applies policy
 gates before opening the PR. Tracker/epic claims can be rewritten, and unsafe
@@ -219,15 +219,11 @@ finish it:
   free ([#7156](https://github.com/hivecommons/hive/issues/7156)).
 
 Human-filed bug reports are no longer rewritten to `Refs #N` for
-reporter-confirmation. A fix PR should still carry `Closes #N` / `Fixes #N`;
-when the merge reaches the issue close path, `CloseIssue` applies the
-reporter-confirmation gate. If the issue has `hive: reporter-confirmed` or
-`hive: close-on-merge`, the close proceeds. Otherwise Hive leaves the issue
-open, asks the reporter to confirm, and the reporter or a maintainer can reply
-`/fixed` (or "yes, this is fixed" on a `hive/likely-done` issue) to close it
-([#9746](https://github.com/hivecommons/hive/issues/9746),
-`.github/workflows/issue-confirm-fixed.yml`). This keeps GitHub's PR/issue
-closing relationship visible while Hive owns the reporter-verification policy.
+reporter-confirmation. A fix PR should still carry `Fixes #N`; when it
+merges, the issue closes by default. Add `hive: needs-confirmation` to the
+issue body or as a label (or enable `issues.reporter_confirmation`) only when
+the reporter genuinely must verify before closure. `hive: reporter-confirmed`
+and `hive: close-on-merge` remain accepted legacy bypass markers.
 
 A downgraded tracker reference says so in the PR body it lands in:
 

@@ -7,8 +7,8 @@ name: Refs sweep
 # never closes an issue for a non-closing `Refs #N` (only comments), but it
 # does close a parent issue once every one of its GitHub sub-issues (#9435)
 # is closed, posting a comment listing them first (hivecommons/hive#9449).
-# The reporter or a maintainer answers the question with `/fixed` (or a
-# plain-language confirmation); issue-confirm-fixed.yml closes it (#9746).
+# Refs-only issues stay open by default; use a closing keyword next time, or
+# opt the issue into reporter verification with `hive: needs-confirmation`.
 
 on:
   schedule:

@@ -14,6 +14,9 @@ import (
 
 func newAPIV1QueueServer(t *testing.T, role, tokenUser, prAuthor, headSHA string) (*Server, *bool, *bool) {
 	t.Helper()
+	// The shared PR-detail cache is keyed by repo+number; every test here uses
+	// acme/widget#7 with a different author, so cached details leak across tests.
+	t.Setenv(config.GitHubPRDetailTTLEnv, "0")
 	var reviewCreated, labelAdded bool
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

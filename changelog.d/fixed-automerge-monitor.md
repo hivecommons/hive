@@ -1,0 +1,1 @@
+- Keep automerge sweeps from attempting PR merges while required checks are missing, avoid wedging deterministic merge refusals in the effects ledger, ignore sentinel notices for trusted-author eligibility, and avoid treating date-stamped branches as issue numbers.

@@ -489,6 +489,10 @@ type ProjectContext struct {
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+	// BobSessionPrefix mirrors governor.bob.session_prefix. Empty is
+	// default-off; bob launch commands remain byte-identical unless it or a
+	// per-agent bob.session_label is configured.
+	BobSessionPrefix string
 	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
 	// a live predicate rather than a snapshot list because ProjectContext is
 	// built once at boot and a pause is taken mid-run — a repo frozen for a

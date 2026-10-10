@@ -38,10 +38,18 @@ type Client struct {
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
-	rateLimits rateLimitTracker
-	org        string
-	reposMu    sync.RWMutex
-	repos      []string
+	rateLimits             rateLimitTracker
+	prDetailTTL            func() time.Duration
+	graphQLPRBatchEnabled  func() bool
+	graphQLPRBatchPageSize func() int
+	prBatchMu              sync.Mutex
+	prBatchCheckRuns       map[prBatchCheckRunKey][]*gh.CheckRun
+	prBatchReviews         map[string]map[int]prReviewState
+	prBatchStats           GraphQLPRBatchStats
+	prBatchGraphQLRate     RateLimitEntry
+	org                    string
+	reposMu                sync.RWMutex
+	repos                  []string
 	// repoPaused reports whether a repo is under an operator pause (#6203).
 	// Guarded by reposMu because the dashboard can pause a repo while the
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
@@ -67,6 +75,8 @@ type Client struct {
 	exemptLabels  []string
 	holdLabelsMu  sync.RWMutex
 	holdLabels    []string
+	sentinelMu    sync.RWMutex
+	sentinelLabel string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -80,6 +90,11 @@ type Client struct {
 	// admit everything (pre-existing behavior).
 	issueFilterMu sync.RWMutex
 	issueFilter   IssueAdmitter
+	// reporterConfirmationEnabled restores the legacy close gate for all
+	// human-filed bug-family issues when configured. Nil/false means only
+	// per-issue opt-in markers activate the gate.
+	reporterConfirmationMu      sync.RWMutex
+	reporterConfirmationEnabled func() bool
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -94,12 +109,15 @@ type Client struct {
 	mergePolicyMu             sync.RWMutex
 	allowUnprotectedBaseRepos map[string]bool
 	noCIAllowedRepos          map[string]bool
+	humanMergePaths           map[string][]string // auto_merge.human_merge_paths; see SetHumanMergePaths
+	sentinelHeads             sentinelHeadsSeen   // head SHAs the sentinel sweep already evaluated
 	autoMergeMinHeadAge       time.Duration
 	mergeAlertMu              sync.Mutex
 	mergeAlertSink            MergeFailureAlertSink
 	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	authToken                 string   // token-authenticated clients only; never log
 	canariesEnabled           bool
@@ -114,10 +132,17 @@ type Client struct {
 	approvalDesk ApprovalDeskHook
 	reviseRepos  []string
 	perspectives review.PerspectiveSet
+	// reviewerAgent reports whether a lane is a reviewer (review.ReviewCapable).
+	// Only reviewers may record a verdict that no dispatch row binds; nil falls
+	// back to the dispatcher's name-token rule.
+	reviewerAgent func(agent string) bool
 	// confidenceScore gates the Confidence line on review comments.
-	confidenceScore func() bool
-	// reviewBacklog controls review out-of-scope finding filing.
-	reviewBacklog func() (enabled bool, cap int)
+	confidenceScore      func() bool
+	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap
+	reviewBacklogRouting func() ReviewBacklogRouting    // review.severity / review.backlog; see review_backlog_routing.go
+	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
+	// means no bundles are written (see review_evidence.go).
+	reviewEvidence func(repo string) ReviewEvidenceSettings
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
 	// false → no comment is fetched, no Issue carries claim fields. Read live
@@ -381,6 +406,28 @@ func (c *Client) SetPerspectives(set review.PerspectiveSet) {
 		return
 	}
 	c.perspectives = set
+}
+
+// SetReviewerAgentFunc tells the relay which lanes are reviewers. A verdict
+// with no matching dispatch row is recorded only when the submitting agent
+// passes this check, so a non-reviewer lane cannot satisfy or veto the
+// review-approval merge gate for a PR nothing asked it to review.
+func (c *Client) SetReviewerAgentFunc(fn func(agent string) bool) {
+	if c == nil {
+		return
+	}
+	c.reviewerAgent = fn
+}
+
+func (c *Client) isReviewerAgent(agent string) bool {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return false
+	}
+	if c != nil && c.reviewerAgent != nil {
+		return c.reviewerAgent(agent)
+	}
+	return review.ReviewCapable(review.AgentCapability{Name: agent}, nil)
 }
 
 // SetConfidenceScore turns on the one-line mergeability score the relay
@@ -933,11 +980,12 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger, ap
 	// (see proxytrust.go).
 	client := newTokenClient(token, apiURL)
 	return &Client{
-		client:    client,
-		org:       org,
-		repos:     repos,
-		logger:    logger,
-		authToken: token,
+		client:      client,
+		org:         org,
+		repos:       repos,
+		logger:      logger,
+		authToken:   token,
+		prDetailTTL: func() time.Duration { return (config.GitHubConfig{}).PRDetailTTL() },
 	}
 }
 
@@ -971,6 +1019,42 @@ func NewClientForTest(serverURL string, org string, repos []string, logger *slog
 	}
 	c.client.BaseURL = base
 	return c
+}
+
+func (c *Client) SetPRDetailTTLFunc(fn func() time.Duration) {
+	if c == nil {
+		return
+	}
+	c.prDetailTTL = fn
+}
+
+func (c *Client) SetGraphQLPRBatchConfig(enabled func() bool, pageSize func() int) {
+	if c == nil {
+		return
+	}
+	c.graphQLPRBatchEnabled = enabled
+	c.graphQLPRBatchPageSize = pageSize
+}
+
+func (c *Client) effectivePRDetailTTL() time.Duration {
+	if c != nil && c.prDetailTTL != nil {
+		if ttl := c.prDetailTTL(); ttl >= 0 {
+			return ttl
+		}
+	}
+	return (config.GitHubConfig{}).PRDetailTTL()
+}
+
+func (c *Client) cachedPRDetailFromList(repo string, number int, headSHA string, updatedAt time.Time) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.get(repo, number, headSHA, updatedAt, c.effectivePRDetailTTL())
+}
+
+func (c *Client) cachedPRDetailAny(repo string, number int) (*gh.PullRequest, bool) {
+	return sharedPRDetailCache.getAny(repo, number, c.effectivePRDetailTTL())
+}
+
+func (c *Client) storePRDetail(repo string, number int, pr *gh.PullRequest) {
+	sharedPRDetailCache.put(repo, number, pr)
 }
 
 // SetOrg is nil-receiver safe for the same reason as SetRepos: dashboard saves
@@ -1387,6 +1471,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		}
 		opts.Page = resp.NextPage
 	}
+	c.prefetchOpenPRDetailsGraphQL(ctx, owner, repoName, repo)
 
 	for _, pr := range allPRs {
 		totalPRs++
@@ -1767,28 +1852,43 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	}
 	owner, repoName := c.splitRepo(pr.Repo)
 
-	// Fetch the PR individually to learn its mergeability. The list
-	// endpoint that produced these PullRequests never populates
-	// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
-	// returns them only from this single-PR GET. On error we leave the
-	// field as MergeableUnknown rather than guessing.
-	if full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number); err != nil {
-		c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
-	} else {
+	// The list endpoint that produced this PullRequest carries a cheap,
+	// ETag-friendly head SHA and updated_at but not mergeability. Reuse a
+	// detail response only while those list fields still match; merge decisions
+	// below still re-fetch fresh details before mutating.
+	full, ok := c.cachedPRDetailFromList(pr.Repo, pr.Number, pr.HeadSHA, pr.UpdatedAt)
+	if !ok {
+		var err error
+		started := sharedWebhookTracker.now()
+		full, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:enrich_pr_ci"), owner, repoName, pr.Number)
+		if err != nil {
+			c.logger.Warn("failed to fetch PR mergeability", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		} else {
+			c.storePRDetail(pr.Repo, pr.Number, full)
+			sharedWebhookTracker.clearDirtyBefore(pr.Repo, pr.Number, started)
+		}
+	}
+	if full != nil {
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
 	}
 
-	checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
-		pr.CIStatus = ciStatusPending
-		return nil
+	var allCheckRuns []*gh.CheckRun
+	if cached, ok := c.graphQLBatchCheckRuns(pr.Repo, pr.Number, pr.HeadSHA); ok {
+		allCheckRuns = cached
+	} else {
+		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, pr.HeadSHA, &gh.ListCheckRunsOptions{
+			ListOptions: gh.ListOptions{PerPage: 100},
+		})
+		if err != nil {
+			c.logger.Warn("failed to fetch check runs", "repo", pr.Repo, "pr", pr.Number, "error", err)
+			pr.CIStatus = ciStatusPending
+			return nil
+		}
+		allCheckRuns = checkRuns.CheckRuns
 	}
-	latestCheckRuns := latestCheckRunsByNameAndApp(checkRuns.CheckRuns)
+	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
@@ -2090,11 +2190,17 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 	if c == nil {
 		return "", ErrNoGitHubClient
 	}
+	// Dashboard decoration tolerates the bounded PR-detail TTL; a stale author
+	// display is harmless and avoids another charged GET when enrichment just ran.
+	if pr, ok := c.cachedPRDetailAny(repo, number); ok {
+		return safeGetLogin(pr.GetUser()), nil
+	}
 	owner, repoName := c.splitRepo(repo)
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_author"), owner, repoName, number)
 	if err != nil {
 		return "", err
 	}
+	c.storePRDetail(repo, number, pr)
 	return safeGetLogin(pr.GetUser()), nil
 }
 
@@ -2113,10 +2219,17 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 	if c == nil {
 		return PRState{}, ErrNoGitHubClient
 	}
-	owner, repoName := c.splitRepo(repo)
-	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
-	if err != nil {
-		return PRState{}, err
+	// Outcome/follow-up ledgers reconcile display history and retry later; they
+	// can accept one PR-detail TTL of staleness rather than recharging a GET.
+	pr, ok := c.cachedPRDetailAny(repo, number)
+	if !ok {
+		owner, repoName := c.splitRepo(repo)
+		var err error
+		pr, _, err = c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_state"), owner, repoName, number)
+		if err != nil {
+			return PRState{}, err
+		}
+		c.storePRDetail(repo, number, pr)
 	}
 	st := PRState{State: pr.GetState()}
 	if !pr.GetMergedAt().IsZero() {
@@ -2150,6 +2263,12 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	}
 	if headSHA == "" {
 		return errors.New("PR head SHA is required for auto-merge approval")
+	}
+	if blocked := c.sentinelBlockedLabel(labelNames(pr.Labels)); blocked != "" {
+		c.recordWriteAudit(AuditActionSentinelBlockedApproval, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: number},
+			"agent", queuedBy, "label", blocked)
+		return fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
 	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
@@ -2453,6 +2572,37 @@ func (c *Client) SetHoldLabels(labels []string) {
 	c.holdLabels = append([]string{}, labels...)
 }
 
+func (c *Client) SetSentinelAlertLabel(label string) {
+	if c == nil {
+		return
+	}
+	c.sentinelMu.Lock()
+	defer c.sentinelMu.Unlock()
+	c.sentinelLabel = strings.TrimSpace(label)
+}
+
+func (c *Client) sentinelAlertLabel() string {
+	if c == nil {
+		return ""
+	}
+	c.sentinelMu.RLock()
+	defer c.sentinelMu.RUnlock()
+	return strings.TrimSpace(c.sentinelLabel)
+}
+
+func (c *Client) sentinelBlockedLabel(labels []string) string {
+	sentinelLabel := strings.ToLower(c.sentinelAlertLabel())
+	if sentinelLabel == "" {
+		return ""
+	}
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), sentinelLabel) {
+			return sentinelLabel
+		}
+	}
+	return ""
+}
+
 func (c *Client) isHeld(labels []string) bool {
 	if c == nil {
 		return HasHoldLabel(labels)
@@ -2484,6 +2634,25 @@ func (c *Client) SetIssueFilter(f IssueAdmitter) {
 	c.issueFilter = f
 }
 
+func (c *Client) SetReporterConfirmationEnabledFunc(fn func() bool) {
+	if c == nil {
+		return
+	}
+	c.reporterConfirmationMu.Lock()
+	defer c.reporterConfirmationMu.Unlock()
+	c.reporterConfirmationEnabled = fn
+}
+
+func (c *Client) reporterConfirmationGateDefaultEnabled() bool {
+	if c == nil {
+		return false
+	}
+	c.reporterConfirmationMu.RLock()
+	fn := c.reporterConfirmationEnabled
+	c.reporterConfirmationMu.RUnlock()
+	return fn != nil && fn()
+}
+
 // getIssueFilter never returns nil: an unset filter admits everything, which
 // is the zero-value contract the config struct had before this became an
 // interface. Returning nil here would turn "no filter configured" into a
@@ -2495,6 +2664,29 @@ func (c *Client) getIssueFilter() IssueAdmitter {
 		return admitAllIssues{}
 	}
 	return c.issueFilter
+}
+
+// needsDecisionLabel is the label the issue relay applies to park an
+// agent-filed issue on a maintainer decision: the first configured
+// hard_suppress_labels.needs_decision label, else the built-in default.
+func (c *Client) needsDecisionLabel() string {
+	if labeler, ok := c.getIssueFilter().(NeedsDecisionLabeler); ok {
+		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" {
+			return label
+		}
+	}
+	return issueNeedsDecisionLabel
+}
+
+// appendLabelIfMissing returns labels with label added unless it is already
+// present (GitHub compares label names case-insensitively).
+func appendLabelIfMissing(labels []string, label string) []string {
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), label) {
+			return labels
+		}
+	}
+	return append(append([]string(nil), labels...), label)
 }
 
 // SetAutoMergeLabel is nil-receiver safe for the same reason as SetRepos. An
@@ -2654,11 +2846,27 @@ func trackerTitlePrefix(title string) bool {
 }
 
 type RateLimitInfo struct {
-	Core         RateLimitEntry `json:"core"`
-	Search       RateLimitEntry `json:"search"`
-	GraphQL      RateLimitEntry `json:"graphql"`
-	TopConsumers []RESTConsumer `json:"top_consumers,omitempty"`
-	ETagCache    ETagCacheInfo  `json:"etag_cache"`
+	APIBudget      APIBudgetSnapshot   `json:"api_budget"`
+	Core           RateLimitEntry      `json:"core"`
+	Search         RateLimitEntry      `json:"search"`
+	GraphQL        RateLimitEntry      `json:"graphql"`
+	TopConsumers   []RESTConsumer      `json:"top_consumers,omitempty"`
+	ETagCache      ETagCacheInfo       `json:"etag_cache"`
+	PRDetailCache  ETagCacheInfo       `json:"pr_detail_cache"`
+	GraphQLPRBatch GraphQLPRBatchStats `json:"graphql_pr_batch"`
+	Webhooks       WebhookHealth       `json:"webhooks"`
+}
+
+type GraphQLPRBatchStats struct {
+	Repos     int `json:"repos"`
+	PRs       int `json:"prs"`
+	Pages     int `json:"pages"`
+	Fallbacks int `json:"fallbacks"`
+	Errors    int `json:"errors"`
+	LastCost  int `json:"last_cost"`
+	// WebhookSkips counts repo scans that reused the previous batch because
+	// webhooks were healthy and no PR was marked dirty (#11177).
+	WebhookSkips int `json:"webhook_skips"`
 }
 
 type ETagCacheInfo struct {
@@ -2720,9 +2928,22 @@ func (c *Client) RateLimits(ctx context.Context) (*RateLimitInfo, error) {
 	info.Core = c.rateLimits.observe("core", info.Core)
 	info.Search = c.rateLimits.observe("search", info.Search)
 	info.GraphQL = c.rateLimits.observe("graphql", info.GraphQL)
+	if c != nil {
+		c.prBatchMu.Lock()
+		if c.prBatchGraphQLRate != (RateLimitEntry{}) {
+			info.GraphQL = c.rateLimits.observe("graphql", c.prBatchGraphQLRate)
+		}
+		info.GraphQLPRBatch = c.prBatchStats
+		c.prBatchMu.Unlock()
+	}
 	hits, misses, entries := ETagCacheStats()
 	info.ETagCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	hits, misses, entries = PRDetailCacheStats()
+	info.PRDetailCache = ETagCacheInfo{Hits: hits, Misses: misses, Entries: entries}
+	info.Webhooks = WebhookHealthSnapshot()
 	info.TopConsumers = RESTTopConsumers(10)
+	_, snapshot := c.APIBudgetMode()
+	info.APIBudget = snapshot
 
 	return info, nil
 }
@@ -3190,6 +3411,9 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 		"method", method,
 		"sha", sha,
 		"path", path)
+	// Every merge path ends here, so this is where the merged head's evidence
+	// bundle gains its merge event and the PR gets its evidence pointer.
+	c.recordReviewEvidenceMerge(repo, number, method, sha, path)
 }
 
 // RepoWorkBreakdown explains the raw open issue and PR totals for one

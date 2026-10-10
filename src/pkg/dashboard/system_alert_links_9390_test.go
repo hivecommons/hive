@@ -10,10 +10,10 @@ import (
 // Approve the runs manually or relax the repo setting at
 // https://github.com/hivecommons/pluk/settings/actions") rendered their
 // message as plain escaped text, so the operator had to select/copy/paste the
-// URL the alert was telling them to open. renderSystemAlerts now escapes the
-// message first — same as before — and then auto-links http(s) tokens into
-// <a> tags, so a message can never inject raw markup even though it also
-// grows a clickable link.
+// URL/reference the alert was telling them to open. renderSystemAlerts now
+// escapes the message first — same as before — and then auto-links http(s)
+// tokens and GitHub owner/repo#N references into <a> tags, so a message can
+// never inject raw markup even though it also grows clickable links.
 func TestSystemAlertMessagesAreEscapedThenLinkified(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -23,7 +23,9 @@ func TestSystemAlertMessagesAreEscapedThenLinkified(t *testing.T) {
 
 	for _, snippet := range []string{
 		"function escapeHtmlAndLinkify(",
-		"escapeHtmlAndLinkify(a.message)",
+		"function linkifyGitHubRefs(",
+		"linkifyGitHubRefs(a.message, window._githubBaseUrl)",
+		"stopSystemAlertLinkClicks(banner)",
 		"system-alert-link",
 	} {
 		if !strings.Contains(html, snippet) {
@@ -36,7 +38,11 @@ func TestSystemAlertMessagesAreEscapedThenLinkified(t *testing.T) {
 
 	var script strings.Builder
 	script.WriteString("const assert = require('node:assert/strict');\n")
+	script.WriteString("globalThis.window = { _githubBaseUrl: 'https://github.com' };\n")
 	script.WriteString(jsFunc(t, html, "escapeHtml") + "\n")
+	script.WriteString(jsFunc(t, html, "githubRefsBaseURL") + "\n")
+	script.WriteString(jsFunc(t, html, "normalizeGitHubRepoContext") + "\n")
+	script.WriteString(jsFunc(t, html, "linkifyGitHubRefs") + "\n")
 	script.WriteString(jsFunc(t, html, "escapeHtmlAndLinkify") + "\n")
 	script.WriteString(`
 // A message containing a URL produces a clickable, new-tab anchor.
@@ -46,6 +52,11 @@ const withUrl = escapeHtmlAndLinkify(
 assert.match(withUrl, /<a class="system-alert-link" href="https:\/\/github\.com\/hivecommons\/pluk\/settings\/actions" target="_blank" rel="noopener noreferrer">https:\/\/github\.com\/hivecommons\/pluk\/settings\/actions<\/a>/);
 // Trailing sentence punctuation must not be swallowed into the href.
 assert.ok(withUrl.endsWith('actions<\/a>.'), 'trailing period must stay outside the anchor: ' + withUrl);
+
+// A stalled-plan alert containing owner/repo#N produces a GitHub issue/PR link
+// that opens in a new tab. GitHub redirects /issues/N to /pull/N for PRs.
+const withRepoRef = linkifyGitHubRefs('plan "kubestellar/console#23616" stalled for 288h44m0s and hit the replan cap (5) — needs human review', 'github.com');
+assert.match(withRepoRef, /<a class="system-alert-link" href="https:\/\/github\.com\/kubestellar\/console\/issues\/23616" target="_blank" rel="noopener noreferrer">kubestellar\/console#23616<\/a>/);
 
 // A <script> tag embedded in an untrusted message must stay escaped, even
 // though the same message also contains a URL to linkify.

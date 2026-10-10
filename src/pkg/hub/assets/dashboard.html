@@ -390,6 +390,15 @@
     .journey-gentle { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
     .journey-firm { background: rgba(244,199,95,0.15); color: #f4c75f; border: 1px solid rgba(244,199,95,0.3); }
     .journey-deprovision-warning { background: rgba(255,126,126,0.18); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.4); }
+    /* Compliance pill (#11083): tone classes instead of inline color so the
+       style ratchet keeps biting; the th-mid helper replaces an inline
+       vertical-align on the header cell. */
+    .compliance-pill-none { color: var(--muted); border: 1px solid var(--muted); }
+    .compliance-pill-pass { color: var(--green); border: 1px solid var(--green); }
+    .compliance-pill-warn { color: var(--yellow); border: 1px solid var(--yellow); }
+    .compliance-pill-fail { color: var(--red); border: 1px solid var(--red); }
+    .compliance-link { text-decoration: none; }
+    .th-mid { vertical-align: middle; }
     .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
     /* The relay badge marks a hive satisfying stage 2 through human
        contributors rather than an assigned method/model — deliberately its own
@@ -516,7 +525,7 @@
     <a href="/" class="brand">
       <span class="brand-mark">🐝</span>
       <span>Hive</span>
-      <span onclick="window.open(&#39;https://github.com/hivecommons/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:var(--sp-1);cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
+      <span onclick="event.preventDefault(); location.href='https://github.com/hivecommons/hive'" title="Source Code" style="opacity:0.6;margin-left:var(--sp-1);cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
     </a>
     <nav>
       <a href="/">Hives</a>
@@ -557,7 +566,7 @@
              title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/hivecommons/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:var(--sp-4);align-items:center">
-        <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('banner-modal'));loadBannerHiveList()">Send Banner</button>
         <!-- Register-your-own-hive: for a user who self-installed a standalone
              hive and wants to attach it to THIS hub. Points at the self-host
              guide (get-started.html #self-host).
@@ -577,7 +586,7 @@
         <a class="hv-btn btn-primary btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
         <!-- Self-create path, for users who DO have hosted quota. Hidden when the
              user has no quota (the Request-a-hive link above takes over). -->
-        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
+        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('create-modal'))">+ Add Hosted Hive</button>
       </div>
     </div>
 
@@ -676,6 +685,14 @@
             </form>
           </div>
           <div id="hub-admins-list" class="fs-sm text-muted">Loading hub admins...</div>
+        </div>
+        <div id="hub-gh-rate-limits-panel" class="card hub-admins-panel mt-5" hidden>
+          <div class="hub-admins-head">
+            <div>
+              <div class="hub-admins-title">Hub GitHub API quota</div>
+              <div class="fs-sm text-muted" id="hub-gh-rate-limits-summary">Loading GitHub rate limits...</div>
+            </div>
+          </div>
         </div>
         <div id="users-container"><div class="loading">Loading users...</div></div>
         <!-- Fleet-wide geographic rollup of the user base. Lives directly under
@@ -943,6 +960,31 @@
         var a = quadrantAxis(q, name);
         return QUADRANT_AXIS_LABELS[name] + (a.scored ? ' ' + a.score : ' not measured');
       }).join(', ');
+    }
+
+    /* complianceCell (#11083): pass-rate pill from the spoke's latest posture
+       run, linking to that spoke's Settings → Compliance tab when its dashboard
+       URL is known. Empty when the spoke has no framework profile selected. */
+    function complianceCell(h) {
+      var c = h && h.compliance;
+      if (!c || !c.frameworks || !c.frameworks.length) return '<span class="text-muted">—</span>';
+      var p = c.posture;
+      var decided = p ? (p.pass || 0) + (p.fail || 0) : 0;
+      var label = 'no run';
+      var tone = 'compliance-pill-none';
+      var tip = c.frameworks.join(', ') + ' — no posture run yet';
+      if (decided > 0) {
+        var pct = Math.round(100 * p.pass / decided);
+        label = pct + '%';
+        tone = p.fail === 0 ? 'compliance-pill-pass' : (pct >= 80 ? 'compliance-pill-warn' : 'compliance-pill-fail');
+        tip = c.frameworks.join(', ') + ' — ' + p.pass + ' pass, ' + p.fail + ' fail' + (p.lastRun ? ' (last run ' + p.lastRun + ')' : '');
+      }
+      var pill = '<span class="journey-badge ' + tone + '" title="' + escAttr(tip) + '">' + esc(label) + '</span>';
+      var fw = '<div class="fs-2xs text-muted">' + esc(c.frameworks.join(', ')) + '</div>';
+      if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
+        return '<a href="' + escAttr(h.dashboardUrl) + '#config/governor/Compliance" target="_blank" title="Open this hive&#39;s Settings → Compliance tab" class="compliance-link">' + pill + '</a>' + fw;
+      }
+      return pill + fw;
     }
 
     /* quadrantCell is the table column: the small kite plus its own hover
@@ -1474,6 +1516,38 @@
       } catch (e) { return false; }
     }
 
+    function showTextExport(name, text) {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:24px';
+      var panel = document.createElement('div');
+      panel.style.cssText = 'width:min(900px,100%);max-height:90vh;background:var(--surface-1);border:1px solid var(--line-strong);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px';
+      var title = document.createElement('h2');
+      title.textContent = name;
+      title.style.margin = '0';
+      var note = document.createElement('div');
+      note.textContent = 'Rendered in-app so the browser does not prompt for downloads.';
+      note.style.color = 'var(--text-muted)';
+      var area = document.createElement('textarea');
+      area.readOnly = true;
+      area.value = text;
+      area.style.cssText = 'min-height:360px;max-height:60vh;resize:vertical;font-family:monospace;background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:8px;padding:10px';
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+      var copy = document.createElement('button');
+      copy.type = 'button';
+      copy.textContent = 'Copy to clipboard';
+      copy.onclick = function() { copyHiveText(text, name); };
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.textContent = 'Close';
+      close.onclick = function() { overlay.remove(); };
+      row.appendChild(copy); row.appendChild(close);
+      panel.appendChild(title); panel.appendChild(note); panel.appendChild(area); panel.appendChild(row); overlay.appendChild(panel);
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+      document.body.appendChild(overlay);
+      close.focus();
+    }
+
     function hiveDialogOptions(first, fallbackRawHTML) {
       if (first && typeof first === 'object') return Object.assign({}, first);
       return { message: String(first == null ? '' : first), rawHTML: !!fallbackRawHTML };
@@ -1486,8 +1560,10 @@
     function hiveDialogWire(overlay, resolve, cancelValue, submit) {
       var done = false;
       function finish(val) { if (done) return; done = true; overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(val); }
+      overlay.hiveDialogClose = function() { finish(cancelValue); };
+      hiveHubRememberModalOpen(overlay);
       function onKey(e) {
-        if (e.key === 'Escape') { e.preventDefault(); finish(cancelValue); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(cancelValue); }
         else if (e.key === 'Enter') { e.preventDefault(); submit(finish); }
         else if (e.key === 'Tab') {
           var nodes = Array.prototype.slice.call(overlay.querySelectorAll('button,input,[href],[tabindex]:not([tabindex="-1"])')).filter(function(el) { return !el.disabled && el.offsetParent !== null; });
@@ -1520,16 +1596,62 @@
       });
     }
 
+    var _hiveHubModalSeq = 0;
+    function hiveHubRememberModalOpen(el) {
+      if (!el) return el;
+      _hiveHubModalSeq++;
+      if (!el.dataset) el.dataset = {};
+      el.dataset.hiveModalSequence = String(_hiveHubModalSeq);
+      return el;
+    }
+    function hiveHubModalVisible(el) {
+      if (!el) return false;
+      if (el.hidden) return false;
+      if (el.classList && el.classList.contains('hidden')) return false;
+      var disp = el.style && el.style.display ? el.style.display : (window.getComputedStyle ? window.getComputedStyle(el).display : '');
+      return disp !== 'none';
+    }
+    function hiveHubModalRank(el, fallback) {
+      var z = parseInt((window.getComputedStyle ? window.getComputedStyle(el).zIndex : '') || '', 10);
+      return isFinite(z) ? z : (fallback || 0);
+    }
+    function hiveHubModalOrder(el, fallback) {
+      var seq = el && el.dataset ? parseInt(el.dataset.hiveModalSequence || '', 10) : NaN;
+      return isFinite(seq) ? seq : (fallback || 0);
+    }
+    function hiveHubDismissTopModal() {
+      var candidates = [];
+      function add(el, close, fallbackRank) {
+        if (!hiveHubModalVisible(el)) return;
+        candidates.push({el: el, close: close, rank: hiveHubModalRank(el, fallbackRank), order: hiveHubModalOrder(el, candidates.length)});
+      }
+      document.querySelectorAll('.hive-confirm-overlay').forEach(function(el) {
+        add(el, function() {
+          if (typeof el.hiveDialogClose === 'function') el.hiveDialogClose();
+          else el.remove();
+        }, 150);
+      });
+      add(document.getElementById('approve-overlay'), closeApproveModal, 2000);
+      add(document.getElementById('assign-overlay'), closeAssignModal, 2000);
+      add(document.getElementById('orf-overlay'), closeOrFundModal, 2000);
+      add(document.getElementById('request-access-modal'), closeRequestAccessModal, 100);
+      add(document.getElementById('banner-modal'), function() { document.getElementById('banner-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('create-modal'), function() { document.getElementById('create-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('timeline-modal'), function() { document.getElementById('timeline-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('access-modal'), function() { document.getElementById('access-modal').style.display = 'none'; }, 100);
+      if (!candidates.length) return false;
+      candidates.sort(function(a, b) { return (b.rank - a.rank) || (b.order - a.order); });
+      candidates[0].close();
+      return true;
+    }
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
-      var createModal = document.getElementById('create-modal');
-      if (createModal && createModal.style.display === 'flex') { createModal.style.display = 'none'; return; }
-      var accessOverlay = document.querySelector('.hive-confirm-overlay');
-      if (accessOverlay) { accessOverlay.remove(); return; }
-      var timelineModal = document.getElementById('timeline-modal');
-      if (timelineModal && timelineModal.style.display === 'flex') { timelineModal.style.display = 'none'; return; }
-      var accessModal = document.getElementById('access-modal');
-      if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
+      if (e.isComposing) return;
+      var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'select') return;
+      if (!hiveHubDismissTopModal()) return;
+      e.preventDefault();
+      e.stopPropagation();
     });
 
     var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Fully Autonomous'};
@@ -2783,8 +2905,9 @@
       if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
       var target = a.getAttribute(SSO_NAV_ATTR);
       if (!target) return;
-      ev.preventDefault();
-      window.open(target, '_blank');
+      a.href = target;
+      a.target = '_blank';
+      a.rel = 'noopener';
     });
 
     // Show or hide the sticky "Viewing as … read-only" banner and nudge the page
@@ -6316,6 +6439,7 @@
       var submit = document.getElementById('request-access-submit');
       if (submit) { submit.disabled = false; submit.textContent = 'Send Request'; }
       document.getElementById('request-access-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('request-access-modal'));
       if (ta) ta.focus();
     }
 
@@ -7236,7 +7360,7 @@
         //   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts kept)
         // Counted against the <th> cells in the header and the <td> cells emitted
         // below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 13;
+        var TOTAL_COLUMNS = 14;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -7389,6 +7513,7 @@
           /* QUADRANT: the small kite. Shape only at this size — the numbers
              live in its hover, which is the same chart drawn large. */
           '<td>' + quadrantCell(h) + '</td>' +
+          '<td>' + complianceCell(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -7397,8 +7522,8 @@
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 12 after the 15-to-9 fold (PROV, DRIFT,
          ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity), then 13 with the
-         Quadrant column. Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 13;
+         Quadrant column, 14 with Compliance. Must stay equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 14;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -7555,6 +7680,7 @@
            single axis is the point of the column: "weakest efficiency" turns
            the table into a worklist rather than a picture. */
         '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
+        '<th class="th-mid" title="Compliance framework profiles and the pass rate of the latest posture-check run; click the pill to open the hive&#39;s Compliance settings">Compliance</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -8887,6 +9013,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Approve &amp; assign placeholder</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeApproveModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
       /* No cluster is known yet (auto-pick is the default selection), so the
          "Cluster default" note stays generic until a placeholder is chosen. */
       wireGitHubHostChoice('approve', '');
@@ -10025,6 +10152,7 @@
         loadActiveBanner();
         loadHubNotifications();
         loadHubAdmins();
+        loadHubGHRateLimits();
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
@@ -10039,6 +10167,27 @@
       } finally {
         _adminLoading = false;
       }
+    }
+
+    async function loadHubGHRateLimits() {
+      if (!_isAdmin) return;
+      var panel = document.getElementById('hub-gh-rate-limits-panel');
+      var summary = document.getElementById('hub-gh-rate-limits-summary');
+      if (!panel || !summary) return;
+      try {
+        var resp = await fetch('/api/gh-rate-limits');
+        if (!resp.ok) return;
+        var data = await resp.json();
+        var core = data.core || {};
+        var search = data.search || {};
+        var gql = data.graphql || {};
+        var consumers = data.top_consumers || [];
+        var top = consumers.length ? (' · top: ' + esc(consumers[0].caller || consumers[0].endpoint || 'unknown')) : '';
+        summary.innerHTML = 'core ' + esc(String(core.remaining ?? '?')) + '/' + esc(String(core.limit ?? '?')) +
+          ' · search ' + esc(String(search.remaining ?? '?')) + '/' + esc(String(search.limit ?? '?')) +
+          ' · graphql ' + esc(String(gql.remaining ?? '?')) + '/' + esc(String(gql.limit ?? '?')) + top;
+        panel.hidden = false;
+      } catch(e) {}
     }
 
 
@@ -11677,6 +11826,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">Assign placeholder hive</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeAssignModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
       wireGitHubHostChoice('assign', assignClusterHost);
       /* Retargeting the placeholder can change the cluster, and with it the
          default GitHub instance. Re-resolve so the note never claims the
@@ -11781,6 +11931,7 @@
         '<h3 style="margin:var(--sp-0) var(--sp-0) var(--sp-5) var(--sp-0);font-size:var(--fs-lg)">⚡ Fund with OpenRouter</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeOrFundModal(); });
       document.body.appendChild(overlay);
+      hiveHubRememberModalOpen(overlay);
     }
     function orfModelChange() {
       var sel = document.getElementById('orf-model');
@@ -11859,6 +12010,7 @@
       document.getElementById('f-name').value = btn.dataset.name || '';
       document.getElementById('f-level').value = btn.dataset.level || '1';
       document.getElementById('create-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('create-modal'));
       var dashUrl = (btn.dataset.dashUrl || '').replace(/\/$/, '');
       var dlLink = document.getElementById('yaml-download-link');
       var dlHref = document.getElementById('yaml-download-href');
@@ -12300,6 +12452,7 @@
       document.getElementById('timeline-hive-label').textContent = hiveName || hiveId;
       document.getElementById('timeline-list').innerHTML = '<div class="loading">Loading...</div>';
       document.getElementById('timeline-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('timeline-modal'));
       await loadTimeline();
     }
 
@@ -12359,6 +12512,7 @@
         urlEl.style.display = 'none';
       }
       document.getElementById('access-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('access-modal'));
       updateAccessRoleHint();
       _bulkAccessSel = {};
       updateBulkAccessBar();
@@ -13036,15 +13190,9 @@
           csvField(u.last_active || '')
         ].join(','));
       });
-      var blob = new Blob([lines.join('\r\n') + '\r\n'], {type: 'text/csv;charset=utf-8'});
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'hive-access-' + (_accessHiveId || 'unknown') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      hiveToast('Access list exported', 'success');
+      var name = 'hive-access-' + (_accessHiveId || 'unknown') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      showTextExport(name, lines.join('\r\n') + '\r\n');
+      hiveToast('Access list ready to copy', 'success');
     }
 
     /* expiryToDateInput maps a stored RFC3339 expiry to the value a
@@ -13380,6 +13528,7 @@
     function openBannerForHive(hiveId, hiveName) {
       _bannerTargetHive = hiveId;
       document.getElementById('banner-modal').style.display = 'flex';
+      hiveHubRememberModalOpen(document.getElementById('banner-modal'));
       /* Reset message + color to match the global open path's fresh state. */
       document.getElementById('banner-message').value = '';
       document.getElementById('banner-char-count').textContent = '0';

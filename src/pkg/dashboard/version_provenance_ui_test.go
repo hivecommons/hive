@@ -35,7 +35,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 func TestUpgradeBeeKeyframesCompositeOnly(t *testing.T) {
 	html := indexHTML(t)
 	declarationRE := regexp.MustCompile(`(?m)([a-zA-Z-]+)\s*:`)
-	for _, name := range []string{"ocBeeOrbit", "ocBeeWaggle", "ocHoneyPulse"} {
+	for _, name := range []string{"ocBeeOrbit", "ocHoneyPulse"} {
 		body := cssKeyframesBody(t, html, name)
 		for _, match := range declarationRE.FindAllStringSubmatch(body, -1) {
 			prop := strings.ToLower(match[1])
@@ -266,6 +266,9 @@ async function render(overrides = {}) {
   versionClearUpgradeProgress();
   out = await render({ behind: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'unknown', upgradeSupported: false, reason: 'deployment runtime is not explicitly configured' } });
   assert.ok(out.menu.includes('deployment runtime is not explicitly configured (unknown)'));
+  assert.ok(out.menu.includes('class="oc-version-upgrade-note"'), 'disabled upgrade reason must be visible text, not only a title');
+  assert.ok(out.menu.includes('manual update required (unknown)'));
+  assert.ok(out.menu.includes('</span> deployment runtime is not explicitly configured</div>'));
   assert.ok(out.menu.includes('disabled aria-disabled="true"'));
   assert.ok(!out.menu.includes('data-action="gh27"'));
   out = await render({ latestHash: 'a1b2c3d0123456789', tracking: 'floating' });

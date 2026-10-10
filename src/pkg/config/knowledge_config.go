@@ -1,5 +1,11 @@
 package config
 
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
 // DocSourceConfigYAML describes an external document to import as knowledge.
 type DocSourceConfigYAML struct {
 	Name     string `yaml:"name"`
@@ -15,10 +21,17 @@ type KnowledgeConfig struct {
 	Vaults          []VaultConfig         `yaml:"vaults"`
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
+	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
+	Publish         KnowledgePublish      `yaml:"publish,omitempty"`
 	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`
 	Primer          KnowledgePrimer       `yaml:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
+	CodeMaps        KnowledgeCodeMaps     `yaml:"code_maps,omitempty"`
+	// AgentScopes binds an agent (by name) to the knowledge it may see in its
+	// kick primer and through agent-identified TOC/entry reads. A missing
+	// entry or an empty field is unrestricted.
+	AgentScopes map[string]KnowledgeAgentScope `yaml:"agent_scopes,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
@@ -114,4 +127,64 @@ type KnowledgePrimer struct {
 	MaxFacts      int      `yaml:"max_facts"`
 	Priority      []string `yaml:"priority"`
 	MergeStrategy string   `yaml:"merge_strategy"`
+}
+
+// KnowledgeAgentScope is one `knowledge.agent_scopes` entry. Each field is an
+// allow-list; empty means unrestricted. The scope is intersected with any
+// request scope and can never widen it. IncludeStates lists the lifecycle
+// states the agent may be shown in addition to approved; empty defers to the
+// request (or primer) default, and a listed state is admitted only when the
+// request includes it too.
+type KnowledgeAgentScope struct {
+	Layers        []string `yaml:"layers,omitempty" json:"layers,omitempty"`
+	Repos         []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	Types         []string `yaml:"types,omitempty" json:"types,omitempty"`
+	Tags          []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	IncludeStates []string `yaml:"include_states,omitempty" json:"include_states,omitempty"`
+}
+
+var knowledgeLifecycleStateNames = map[string]bool{"draft": true, "approved": true, "deprecated": true, "superseded": true, "all": true}
+
+// ValidateKnowledgeAgentScopes checks every `knowledge.agent_scopes` entry:
+// agent names must be non-empty, layers must be personal, project, org or
+// community, and include_states must be draft, approved, deprecated,
+// superseded or all.
+func ValidateKnowledgeAgentScopes(scopes map[string]KnowledgeAgentScope) error {
+	names := make([]string, 0, len(scopes))
+	for name := range scopes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("knowledge.agent_scopes: agent name is required")
+		}
+		sc := scopes[name]
+		field := "knowledge.agent_scopes." + name
+		for i, l := range sc.Layers {
+			if !knowledgeLayerNames[strings.ToLower(strings.TrimSpace(l))] {
+				return fmt.Errorf("%s.layers[%d] %q must be personal, project, org or community", field, i, l)
+			}
+		}
+		for i, st := range sc.IncludeStates {
+			if !knowledgeLifecycleStateNames[strings.ToLower(strings.TrimSpace(st))] {
+				return fmt.Errorf("%s.include_states[%d] %q must be draft, approved, deprecated, superseded or all", field, i, st)
+			}
+		}
+	}
+	return nil
+}
+
+// KnowledgeAgentScope returns the knowledge scope bound to agent. A replica
+// without its own entry inherits its base agent's scope. ok is false when the
+// agent is unrestricted.
+func (c *Config) KnowledgeAgentScope(agent string) (KnowledgeAgentScope, bool) {
+	if c == nil || len(c.Knowledge.AgentScopes) == 0 || agent == "" {
+		return KnowledgeAgentScope{}, false
+	}
+	if sc, ok := c.Knowledge.AgentScopes[agent]; ok {
+		return sc, true
+	}
+	sc, ok := c.Knowledge.AgentScopes[c.BaseAgentName(agent)]
+	return sc, ok
 }

@@ -27,7 +27,9 @@ func TestContribModalScrollLock(t *testing.T) {
 		"document.body.style.overflow = 'hidden';",
 		// Backdrop click and Escape close paths.
 		"if(event.target===this)closeContribModal()",
-		"if (e.key === 'Escape' && document.getElementById('contrib-modal').style.display === 'flex') closeContribModal();",
+		"function hubLandingDismissTopModal() {",
+		"if (e.key !== 'Escape') return;",
+		"if (!hubLandingDismissTopModal()) return;",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("hub static/index.html is missing %q — contribute-modal scroll lock regressed (#4805)", snippet)

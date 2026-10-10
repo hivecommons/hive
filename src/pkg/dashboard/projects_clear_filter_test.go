@@ -15,6 +15,9 @@ func TestProjectsOverviewClearFilterBehaviour(t *testing.T) {
 	if !strings.Contains(html, `data-action="clearOverviewProjectFilter"`) {
 		t.Fatal("overview filter chip is missing the clearOverviewProjectFilter action")
 	}
+	if !strings.Contains(html, `.repo-filtered-chip[hidden] { display:none; }`) {
+		t.Fatal("overview filter chip hidden state is not enforced against its inline-flex class")
+	}
 	renderRepos := jsFunctionBody(t, html, "function renderRepos(repos)")
 	for _, want := range []string{
 		"clearFilterBtn.hidden = !(pillFilterIsActive || overviewFilter);",

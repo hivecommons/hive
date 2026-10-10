@@ -87,12 +87,106 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	switch event {
 	case "installation", "installation_repositories":
 		s.handleInstallationEvent(body)
+	case "pull_request", "pull_request_review", "check_suite", "check_run", "status", "issue_comment", "push":
+		s.relayWebhookToSpoke(event, r.Header, body)
 	default:
 		s.logger.Debug("ignoring webhook event", "event", event)
 	}
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// spokeWebhookPath is the spoke dashboard's GitHub webhook receiver.
+const spokeWebhookPath = "/api/webhook/github"
+
+// spokeWebhookRelayGuard refuses relay targets whose host is or resolves to a
+// private/internal address. DashboardURL is self-reported by the spoke over
+// the heartbeat, so without this any enrolled spoke could point the hub at a
+// cluster-internal service or the cloud metadata endpoint and have the hub
+// POST to it on every delivery for that spoke's repos. Same guard and same
+// test seam as the hive config proxy (hiveConfigSSRFGuard).
+var spokeWebhookRelayGuard = isPrivateURL
+
+// spokeWebhookRelayClient never follows redirects: a public DashboardURL that
+// answers 30x to an internal host would otherwise re-open the SSRF the guard
+// above closes. The spoke receiver is a fixed path, so a redirect is never
+// legitimate here.
+var spokeWebhookRelayClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// relayWebhookToSpoke forwards a verified PR-shaped delivery, byte for byte
+// and with its original signature, to the hive that manages the repository so
+// the spoke can invalidate its cached PR state (hivecommons/hive#11177). The
+// spoke re-verifies X-Hub-Signature-256 with the same App webhook secret.
+// Best effort and asynchronous: GitHub's delivery must not wait on a spoke.
+func (s *HubServer) relayWebhookToSpoke(event string, header http.Header, body []byte) {
+	var evt struct {
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &evt); err != nil || evt.Repository.FullName == "" {
+		s.logger.Debug("ignoring webhook without repository", "event", event)
+		return
+	}
+	org := evt.Repository.Owner.Login
+	if org == "" {
+		org, _, _ = strings.Cut(evt.Repository.FullName, "/")
+	}
+	repos := []string{evt.Repository.FullName}
+	if evt.Repository.Name != "" {
+		repos = append(repos, evt.Repository.Name)
+	}
+	hive := s.findHiveByOrgRepos(org, repos)
+	if hive == nil {
+		s.logger.Debug("ignoring webhook for unmanaged repository", "event", event, "repo", evt.Repository.FullName)
+		return
+	}
+	s.mu.RLock()
+	hiveID, dashboardURL := hive.ID, hive.DashboardURL
+	s.mu.RUnlock()
+	if dashboardURL == "" {
+		s.logger.Debug("ignoring webhook: managing hive has no dashboard URL", "event", event, "hive_id", hiveID)
+		return
+	}
+	spokeURL := strings.TrimRight(dashboardURL, "/") + spokeWebhookPath
+	forward := http.Header{}
+	for _, h := range []string{"X-GitHub-Event", "X-GitHub-Delivery", "X-GitHub-Hook-ID", "X-Hub-Signature-256", "Content-Type"} {
+		if v := header.Get(h); v != "" {
+			forward.Set(h, v)
+		}
+	}
+	payload := append([]byte(nil), body...)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
+		defer cancel()
+		if spokeWebhookRelayGuard(ctx, dashboardURL) {
+			s.logger.Warn("refusing webhook relay: spoke dashboard URL is private or unresolvable", "hive_id", hiveID, "event", event)
+			return
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, spokeURL, bytes.NewReader(payload))
+		if err != nil {
+			s.logger.Warn("failed to build spoke webhook relay request", "hive_id", hiveID, "error", err)
+			return
+		}
+		req.Header = forward
+		resp, err := spokeWebhookRelayClient.Do(req)
+		if err != nil {
+			s.logger.Warn("spoke webhook relay failed", "hive_id", hiveID, "event", event, "error", err)
+			return
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			s.logger.Warn("spoke rejected webhook relay", "hive_id", hiveID, "event", event, "status", resp.StatusCode)
+		}
+	}()
 }
 
 func (s *HubServer) handleInstallationEvent(body []byte) {

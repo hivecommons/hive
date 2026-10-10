@@ -81,7 +81,7 @@ Membership follows the same maintainer lifecycle documented in
   Maintainer Committee, and a pull request adding the person to both
   `OWNERS` and the upstream `GOVERNANCE-HIVE.md` maintainer table. The
   general path onto the committee runs through the
-  [Contributor Ladder](https://github.com/kubestellar/community/blob/main/CONTRIBUTOR_LADDER.md)
+  [Contributor Ladder](https://github.com/hivecommons/.github/blob/main/MAINTAINERS.md)
   (Contributor → Organization Member → Reviewer → Maintainer), reviewed
   monthly per `GOVERNANCE-HIVE.md`.
 - **Leaving / removal:** a maintainer may be removed by a 2/3 majority vote

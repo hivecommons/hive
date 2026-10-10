@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/terminalassert"
@@ -18,13 +19,15 @@ import (
 // GitHub users get two distinct sessions and each request resolves to the user
 // that owns ITS cookie — never a single shared identity.
 //
-// The GitHub OAuth token is intentionally NOT stored on the session; the token
-// lives only in the persisted userTokenPath file and is never exposed through
-// the session. The session carries only identity + role.
+// The GitHub OAuth token is stored only for the user session that completed the
+// device flow, so feedback issues can be authored by that submitter when GitHub
+// granted the public_repo scope. It is never shared across dashboard users.
 type userSession struct {
-	Username  string
-	Role      string
-	ExpiresAt time.Time
+	Username    string
+	Role        string
+	AccessToken string `json:"access_token,omitempty"`
+	TokenScope  string `json:"token_scope,omitempty"`
+	ExpiresAt   time.Time
 }
 
 // sessionIDBytes is the entropy of an opaque session id. 32 bytes (256 bits) is
@@ -113,6 +116,10 @@ func newSessionID() string {
 // createUserSession registers a new per-user session and returns its opaque id.
 // Returns "" if a secure id could not be generated.
 func (s *Server) createUserSession(username, role string) string {
+	return s.createUserSessionWithToken(username, role, "", "")
+}
+
+func (s *Server) createUserSessionWithToken(username, role, accessToken, tokenScope string) string {
 	id := newSessionID()
 	if id == "" {
 		return ""
@@ -128,9 +135,11 @@ func (s *Server) createUserSession(username, role string) string {
 		}
 	}
 	s.userSessions[id] = &userSession{
-		Username:  username,
-		Role:      role,
-		ExpiresAt: now.Add(sessionTTL),
+		Username:    username,
+		Role:        role,
+		AccessToken: strings.TrimSpace(accessToken),
+		TokenScope:  strings.TrimSpace(tokenScope),
+		ExpiresAt:   now.Add(sessionTTL),
 	}
 	s.persistSessionsLocked()
 	s.sessionMu.Unlock()

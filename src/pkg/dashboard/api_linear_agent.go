@@ -217,6 +217,9 @@ func (s *Server) registerLinearAgentRoutes() {
 	s.mux.HandleFunc("POST /api/linear/agent/disconnect", s.handleLinearAgentDisconnect)
 	s.mux.HandleFunc("GET "+linearAgentCallbackPath, s.handleLinearAgentCallback)
 	s.mux.HandleFunc("POST "+linearAgentWebhookPath, s.handleLinearAgentWebhook)
+	// The GitHub App webhook receiver is the other public, HMAC-verified
+	// forge webhook; it registers alongside Linear's.
+	s.registerGitHubWebhookRoutes()
 }
 
 // linearAgentCallbackURL builds this hive's redirect_uri from an allowlisted

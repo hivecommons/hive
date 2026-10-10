@@ -64,6 +64,7 @@ remove it while the incident is open.
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". A turn spent waiting is a turn the rest of the
+- If `gh` returns 429 'hourly cap reached', stop all GitHub reads for this session and finish with local work.
 work list did not get. The hive's automerge sweep merges your PR the moment its
 checks are green — waiting buys nothing.
 

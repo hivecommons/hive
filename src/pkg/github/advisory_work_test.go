@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAdvisoryWorkState(t *testing.T) {
@@ -24,6 +25,7 @@ func TestAdvisoryWorkState(t *testing.T) {
 		{name: "PR lookup failed", issue: `{"state":"closed","pull_request":{}}`, prStatus: 500, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(resetPRDetailCacheForTest(time.Now, prDetailCacheMaxEntries))
 			issueCalls, prCalls := 0, 0
 			mux := http.NewServeMux()
 			mux.HandleFunc("/repos/other/repo/issues/7", func(w http.ResponseWriter, r *http.Request) {

@@ -22,12 +22,14 @@ import (
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
+	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
@@ -108,6 +110,7 @@ type boot struct {
 	activityCollector             *collect.ActivityCollector
 	repoCostCollector             *collect.RepoCostCollector
 	lastActionable                atomic.Pointer[github.ActionableResult]
+	evalCycles                    uint64
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer
 	nousState                     *dashboard.NousState
@@ -164,6 +167,8 @@ type boot struct {
 
 	// bootKnowledge
 	gitSyncer            *knowledge.GitSyncer
+	knowledgeConnectors  *connector.Syncer
+	knowledgePublish     *connector.Mirror
 	promotionScheduler   *knowledge.PromotionScheduler
 	quotaAccount         string
 	quotaPoolDir         string
@@ -202,6 +207,12 @@ type boot struct {
 	lastDuplicateSweep    time.Time
 	lastSupersessionSweep time.Time
 	lastIssueUnparkSweep  time.Time
+	lastSentinelSweep     time.Time
+
+	// reviewEvents queues webhook-triggered review dispatch and reviewWake
+	// carries its wakes to the governor loop (hivecommons/hive#11091).
+	reviewEvents *eventdispatch.Dispatcher
+	reviewWake   chan struct{}
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

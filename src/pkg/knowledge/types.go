@@ -187,6 +187,9 @@ type PrimerConfig struct {
 	MaxFacts      int      `yaml:"max_facts"       json:"max_facts"`
 	Priority      []string `yaml:"priority"        json:"priority"`
 	MergeStrategy string   `yaml:"merge_strategy"  json:"merge_strategy"`
+	// IncludeStates admits non-approved lifecycle states (draft, deprecated,
+	// superseded) into primed knowledge. Empty means approved facts only.
+	IncludeStates []LifecycleState `yaml:"include_states" json:"include_states,omitempty"`
 }
 
 // FactType categorizes knowledge entries.
@@ -257,10 +260,23 @@ type Fact struct {
 	UsageCount       int       `json:"usage_count"`
 	LastUsed         time.Time `json:"last_used,omitempty"`
 
-	// Supersedes links to the fact this one replaced during L1→L2 evolution
-	// (e.g., acceptance → test_scaffold).
-	Supersedes string    `json:"supersedes,omitempty"`
-	Phase      FactPhase `json:"phase,omitempty"`
+	// State is the lifecycle state (draft, approved, deprecated, superseded).
+	// Empty means the fact predates lifecycle states; see EffectiveState.
+	State LifecycleState `json:"state,omitempty"`
+
+	// Supersedes links to the fact this one replaced — either during L1→L2
+	// evolution (e.g., acceptance → test_scaffold) or an explicit
+	// supersession. SupersededBy is the reverse link on the replaced fact.
+	Supersedes   string    `json:"supersedes,omitempty"`
+	SupersededBy string    `json:"superseded_by,omitempty"`
+	Phase        FactPhase `json:"phase,omitempty"`
+
+	// Updated, BodySize and Origin feed the table of contents (#11103). They
+	// are populated by file-backed stores only and never serialized, so
+	// existing fact payloads are unchanged.
+	Updated  time.Time `json:"-"`
+	BodySize int       `json:"-"`
+	Origin   string    `json:"-"`
 }
 
 // Source tracks where a fact was extracted from.

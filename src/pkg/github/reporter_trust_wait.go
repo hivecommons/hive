@@ -95,7 +95,25 @@ func trimNonEmpty(in []string) []string {
 	return out
 }
 
+// reporterTrustWaitComment renders the wait notice with github.com links; see
+// reporterTrustWaitCommentAt for the host-aware form the client posts.
 func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) string {
+	return reporterTrustWaitCommentAt("https://github.com", repo, addedLabel, ra)
+}
+
+// reporterTrustWebBase is the web base the wait notice links to, derived from
+// the client's API URL so a GHE hive does not send reporters to github.com.
+func (c *Client) reporterTrustWebBase() string {
+	if c == nil || c.client == nil || c.client.BaseURL == nil {
+		return "https://github.com"
+	}
+	if base := webBaseFromAPIURL(c.client.BaseURL.String()); base != "" {
+		return base
+	}
+	return "https://github.com"
+}
+
+func reporterTrustWaitCommentAt(webBase, repo, addedLabel string, ra ReporterAdmitter) string {
 	trusted := strings.Join(reporterTrustTrustedAssociationsForNotice(ra), ", ")
 	required := reporterTrustRequiredLabelsForNotice(ra)
 	labelText := "the label `" + required[0] + "`"
@@ -109,7 +127,8 @@ func reporterTrustWaitComment(repo, addedLabel string, ra ReporterAdmitter) stri
 	body := reporterTrustWaitMarker(repo, addedLabel) + "\n" +
 		"Thanks — this hive only works issues from " + trusted + " automatically. " +
 		"A maintainer can admit this one by adding " + labelText + " (configured in `issue_filter.reporter_trust.untrusted_require_labels`). " +
-		"Until then the hive will not claim, label, or open PRs for it."
+		"Until then the hive will not claim, label, or open PRs for it. " +
+		"See " + strings.TrimRight(webBase, "/") + "/" + repo + "/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation for what these terms mean and how to become a trusted reporter."
 	if cc, ok := reporterTrustClankerConfig(ra); ok {
 		body += "\n\n" + clankerRequestedPointer +
 			" Once your relay is connected, this issue will be offered to it like any other queued work." +
@@ -151,7 +170,7 @@ func (c *Client) markReporterTrustAwaiting(ctx context.Context, repo string, iss
 				WriteTarget{Repo: c.reporterTrustAuditRepo(repo), Number: number}, "label", label, "reason", "reporter_trust_wait")
 		}
 	}
-	if err := c.CreateIssueComment(ctx, repo, number, reporterTrustWaitComment(repo, addedLabel, ra)); err != nil {
+	if err := c.CreateIssueComment(ctx, repo, number, reporterTrustWaitCommentAt(c.reporterTrustWebBase(), repo, addedLabel, ra)); err != nil {
 		c.warnReporterTrustWait("comment post failed", repo, number, err)
 		if addedLabel != "" {
 			if removeErr := c.RemoveLabel(ctx, repo, number, addedLabel); removeErr != nil {

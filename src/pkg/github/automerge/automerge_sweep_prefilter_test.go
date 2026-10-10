@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -21,8 +22,13 @@ func newPrefilterEngine(t *testing.T) *Engine {
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "http://127.0.0.1:0")
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	client.SetExemptLabels([]string{"lfx"})
-	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1")})
-	return New(client, Options{})
+	client.SetHoldLabels([]string{hgithub.CanonicalHiveHoldLabel("h1"), "sentinel-alert"})
+	return New(client, Options{
+		SentinelLabel: func() string { return "sentinel-alert" },
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			return TrustedAuthorDecision{Allowed: strings.EqualFold(login, "alice"), Role: requireRole}
+		},
+	})
 }
 
 func selfAuthoredListPR(mutate func(*gh.PullRequest)) *gh.PullRequest {
@@ -52,15 +58,18 @@ func TestPrefilterSelfAuthoredPRReasons(t *testing.T) {
 		{"not app authored", func(pr *gh.PullRequest) { pr.User = &gh.User{Login: gh.Ptr("mallory")} }, "not-app-authored"},
 		{"held", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("do-not-merge/hold")}}
-		}, "held"},
+		}, "label:do-not-merge/hold"},
 		// The dashboard ⏸ Hold label is an exact, hive-scoped hold that the
 		// generic predicate cannot see; the sweep must gate on the
 		// transport's configured hold set (#8927).
 		{"hive-pause held", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("hive-pause/h1")}}
-		}, "held"},
+		}, "label:hold"},
 		{"hive provenance is not a hold", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr(hgithub.HiveProvenanceLabel("h1"))}}
+		}, ""},
+		{"sentinel alert", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr("Sentinel-Alert")}}
 		}, ""},
 		{"exempt label", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("LFX")}}
@@ -107,9 +116,10 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 		{"nil issue", nil, "not-pull-request"},
 		{"plain issue", &gh.Issue{Number: gh.Ptr(8), Labels: []*gh.Label{{Name: gh.Ptr(label)}}}, "not-pull-request"},
 		{"label removed since listing", queuedListIssue("kind/bug"), "label-removed"},
-		{"held", queuedListIssue(label, "hold"), "held"},
-		{"hive-pause held", queuedListIssue(label, "hive-pause/h1"), "held"},
+		{"held", queuedListIssue(label, "hold"), "label:hold"},
+		{"hive-pause held", queuedListIssue(label, "hive-pause/h1"), "label:hold"},
 		{"hive provenance is not a hold", queuedListIssue(label, hgithub.HiveProvenanceLabel("h1")), ""},
+		{"sentinel alert", queuedListIssue(label, "Sentinel-Alert"), "sentinel"},
 		{"exempt label", queuedListIssue(label, "LFX"), "exempt-label"},
 	}
 	for _, tc := range cases {
@@ -118,6 +128,18 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 				t.Fatalf("prefilterQueuedIssue = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPrefilterTrustedAuthorPRSentinelAlertAllowed(t *testing.T) {
+	c := newPrefilterEngine(t)
+	policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+	pr := selfAuthoredListPR(func(pr *gh.PullRequest) {
+		pr.User = &gh.User{Login: gh.Ptr("alice")}
+		pr.Labels = []*gh.Label{{Name: gh.Ptr("Sentinel-Alert")}}
+	})
+	if got := c.prefilterTrustedAuthorPR(pr, policy); got != "" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want trusted sentinel PR to pass", got)
 	}
 }
 

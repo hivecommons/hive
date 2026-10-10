@@ -725,6 +725,14 @@ a.nav-chip:active,
   font-size: var(--fs-sm);
 }
 
+.hv-upstream-watch-edit {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  margin-top: var(--sp-2);
+}
+
 .hv-upstream-watch-table {
   border-collapse: collapse;
   font-size: var(--fs-sm);

@@ -128,7 +128,15 @@ or the same files, comment on it instead of opening another.
 
 Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
-must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Closes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
+must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Fixes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
+
+**Park an issue that needs the maintainer's call.** If the issue body asks the
+maintainer to choose between options, or to approve before work can start, add
+`--needs-decision` to the issue-create command below (it is relayed to
+`hive-open-issue`). Hive then applies its configured needs-decision label
+itself, posts the "What to reply" notice offering `/hive approve` and
+`/hive decision`, and keeps the issue out of the work queue until the
+maintainer answers. Use the flag; do not name the label yourself.
 
 ${WRITING_GUIDE}
 
@@ -154,7 +162,7 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening Hold-Gated PRs
 
-If the PR body uses `Closes #N`, `Fixes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree cut from the branch the PR will target — the base this repository requires (its AGENTS.md, CONTRIBUTING or pull-request template may name one, and a repository on a promotion model takes PRs on an integration branch rather than on its released default), falling back to its default branch only when nothing names one, and never whatever branch the checkout happens to be on: `git worktree add /tmp/ci-fix-<slug> -b ci/fix-<slug> origin/<target-branch>`
 2. Implement the CI workflow fix
@@ -168,7 +176,7 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 hive-open-pr --repo "$HIVE_REPO" \
   --base "<target-branch>" \
   --title "fix: <short description>" \
-  --body "## CI Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Closes — GitHub closes it on merge. Use Refs #<issue-number> only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## CI Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use Refs #<issue-number> only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
   --issues <issue-number> \
   --label "ci,hold"
 ```
@@ -200,6 +208,7 @@ Priority: 0 (CI broken/blocking), 1 (persistent failure/coverage drop), 2 (flaky
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". A turn spent waiting is a turn the rest of the
+- If `gh` returns 429 'hourly cap reached', stop all GitHub reads for this session and finish with local work.
 work list did not get. The hive's automerge sweep merges your PR the moment its
 checks are green — waiting buys nothing.
 

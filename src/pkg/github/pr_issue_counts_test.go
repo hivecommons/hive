@@ -14,7 +14,7 @@ func TestComputePRIssueCounts(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		if !strings.Contains(q, "author:hive-bot[bot]") {
+		if !strings.Contains(q, "author:app/hive-bot") && !strings.Contains(q, "author:hive-bot[bot]") {
 			t.Fatalf("query missing hive author qualifier: %q", q)
 		}
 		total := 0
@@ -50,6 +50,59 @@ func TestComputePRIssueCounts(t *testing.T) {
 	}
 	if counts.Author != "hive-bot[bot]" || counts.Basis != "hive-attributed" {
 		t.Errorf("attribution metadata = (%q,%q), want hive author/basis", counts.Author, counts.Basis)
+	}
+	if counts.Status != "fresh" {
+		t.Errorf("Status = %q, want fresh", counts.Status)
+	}
+}
+
+func TestComputePRIssueCountsForReposAggregates(t *testing.T) {
+	since := time.Date(2026, 7, 31, 9, 17, 0, 0, time.UTC)
+	seen := map[string]bool{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		seen[q] = true
+		total := 0
+		switch {
+		case strings.Contains(q, "repo:org/repo1") && strings.Contains(q, "type:pr"):
+			total = 2
+		case strings.Contains(q, "repo:org/repo1") && strings.Contains(q, "type:issue"):
+			total = 3
+		case strings.Contains(q, "repo:other/repo2") && strings.Contains(q, "type:pr"):
+			total = 5
+		case strings.Contains(q, "repo:other/repo2") && strings.Contains(q, "type:issue"):
+			total = 7
+		default:
+			t.Fatalf("unexpected search query: %q", q)
+		}
+		if !strings.Contains(q, "author:app/hive-bot") {
+			t.Fatalf("bot authors must use app search syntax first: %q", q)
+		}
+		if strings.Contains(q, "type:pr") && !strings.Contains(q, "merged:>=2026-07-31") {
+			t.Fatalf("merged PR query missing window: %q", q)
+		}
+		if strings.Contains(q, "type:issue") && !strings.Contains(q, "closed:>=2026-07-31") {
+			t.Fatalf("closed issue query missing window: %q", q)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	counts, err := c.ComputePRIssueCountsForReposSince(context.Background(), []string{"repo1", "other/repo2", "repo1"}, "hive-bot[bot]", since)
+	if err != nil {
+		t.Fatalf("ComputePRIssueCountsForReposSince: %v", err)
+	}
+	if counts.MergedPRs != 7 || counts.ClosedIssues != 10 {
+		t.Fatalf("counts = %+v, want merged 7 closed 10", counts)
+	}
+	if counts.WindowStart != since.Format(time.RFC3339) {
+		t.Fatalf("WindowStart = %q, want %q", counts.WindowStart, since.Format(time.RFC3339))
+	}
+	if len(seen) != 4 {
+		t.Fatalf("queries = %d, want 4 unique repo/type searches: %#v", len(seen), seen)
 	}
 }
 
@@ -140,5 +193,48 @@ func TestComputePRIssueCounts_AppAuthorFallback(t *testing.T) {
 	}
 	if counts.MergedPRs != 9 || counts.ClosedIssues != 9 {
 		t.Errorf("app fallback counts = %+v, want both 9", counts)
+	}
+}
+
+func TestComputePRIssueCounts_UnsearchableAppQualifierIsTolerated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "author:app/alice") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid","message":"The listed users cannot be searched either because the users do not exist or you do not have permission to view the users."}]}`))
+			return
+		}
+		total := 5
+		if strings.Contains(q, "type:pr") {
+			total = 9
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	counts, err := c.ComputePRIssueCounts(context.Background(), "repo1", "alice")
+	if err != nil {
+		t.Fatalf("ComputePRIssueCounts: %v", err)
+	}
+	if counts.MergedPRs != 9 || counts.ClosedIssues != 5 {
+		t.Errorf("counts = %+v, want merged 9 closed 5", counts)
+	}
+}
+
+func TestComputePRIssueCounts_AllQualifiersRejected(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"message":"Validation Failed"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, "org", []string{"repo1"})
+	if _, err := c.ComputePRIssueCounts(context.Background(), "repo1", "alice"); err == nil {
+		t.Error("expected error when every qualifier is rejected")
 	}
 }

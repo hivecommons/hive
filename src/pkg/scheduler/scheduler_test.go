@@ -1016,7 +1016,7 @@ func TestPrimeKnowledge_NilPrimer(t *testing.T) {
 	issues := []github.Issue{
 		makeIssue("org/repo", 1, "test", "", 5, []string{"react"}, false),
 	}
-	result := s.primeKnowledge(issues)
+	result := s.primeKnowledge("", issues)
 	if result != "" {
 		t.Errorf("expected empty result with nil primer, got: %s", result)
 	}
@@ -1024,7 +1024,7 @@ func TestPrimeKnowledge_NilPrimer(t *testing.T) {
 
 func TestPrimeKnowledge_EmptyIssues(t *testing.T) {
 	s := newScheduler()
-	result := s.primeKnowledge(nil)
+	result := s.primeKnowledge("", nil)
 	if result != "" {
 		t.Errorf("expected empty result with nil issues, got: %s", result)
 	}
@@ -1090,7 +1090,7 @@ func TestPrimeKnowledge_WithMockWiki(t *testing.T) {
 		makeIssue("org/repo", 1, "Fix hook crash", "", 5, []string{"typescript", "hooks"}, false),
 	}
 
-	result := s.primeKnowledge(issues)
+	result := s.primeKnowledge("", issues)
 	if result == "" {
 		t.Fatal("expected non-empty knowledge section")
 	}

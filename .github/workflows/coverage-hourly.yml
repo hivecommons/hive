@@ -63,12 +63,24 @@ jobs:
         run: |
           set -euo pipefail
           since=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          recent=$(gh api "repos/${REPO}/actions/workflows/coverage-hourly.yml/runs?per_page=30&created=>=${since}" \
-            --jq "[.workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | select(.head_sha == env.SHA or (env.EVENT == \"schedule\"))] | length" || echo 0)
-          if [ "$EVENT" = "workflow_dispatch" ] || [ "${recent:-0}" = "0" ]; then
+          # runs[].head_sha is the v5 HEAD at trigger time, not the upstream
+          # build's SHA, and a run whose `coverage` job this gate skipped still
+          # concludes "success". Counting those as covering the commit made every
+          # gate-only run block the next real measurement. Only a run whose
+          # coverage job ran, or is still running, counts.
+          recent=0
+          for id in $(gh api "repos/${REPO}/actions/workflows/coverage-hourly.yml/runs?per_page=30&created=>=${since}" \
+              --jq "[.workflow_runs[] | select(.id != (env.SELF_RUN_ID | tonumber)) | select(.status != \"completed\" or .conclusion == \"success\") | select(.event == \"workflow_dispatch\" | not) | select(.head_sha == env.SHA or (env.EVENT == \"schedule\"))] | .[].id" || true); do
+            measured=$(gh api "repos/${REPO}/actions/runs/${id}/jobs" \
+              --jq '[.jobs[] | select(.name == "coverage") | select(.status != "completed" or .conclusion == "success")] | length' || echo 0)
+            if [ "${measured:-0}" != "0" ]; then
+              recent=$((recent + 1))
+            fi
+          done
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$recent" = "0" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::${recent} recent coverage-hourly.yml run(s) already cover ${SHA}; skipping"
+            echo "::notice::${recent} recent coverage-hourly.yml run(s) already measured ${SHA}; skipping"
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -112,6 +124,20 @@ jobs:
         with:
           ref: 'v5'
 
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        # The checkout above is pinned to the measured ref; skip when that ref
+        # does not carry the script yet (same reasoning as the cache guard below).
+        run: |
+          guard="$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+          if [ -f "$guard" ]; then
+            bash "$guard"
+          else
+            echo "::notice::go-toolcache-guard.sh not present on the measured ref; setup-go populates the tool cache itself"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/go.mod

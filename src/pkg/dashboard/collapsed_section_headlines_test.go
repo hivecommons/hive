@@ -14,6 +14,7 @@ func TestDiagnosticsCollapsedHeadlineRendersQuotaAndTokens(t *testing.T) {
 	html := indexHTML(t)
 	script := `const assert = require('node:assert/strict');
 process.env.TZ = 'America/New_York';
+let _navbarClockTimeZone = 'America/New_York';
 // Pin "now" before the fixture reset so the reset-passed branch does not fire.
 Date.now = () => 1791000000000;
 const GH_RATE_CRITICAL_REMAINING_PCT = 10;
@@ -38,12 +39,12 @@ const fixture = {
 };
 const out = debugDiagnosticsHeadlineHtml(fixture, 'healthy');
 assert.match(out, /class="debug-headline sec-headline" data-collapsed-keep/);
-assert.match(out, /GitHub API 4929\/5000 remaining \(99% free\) · resets 07:36 AM/);
+assert.match(out, /GitHub API 4929\/5000 remaining \(99% free\) · resets 07:36 AM EDT/);
 assert.match(out, /372M in · 2\.9M out · 340M cache/);
 assert.match(out, /debug-quota-ok/);
 assert.match(out, /debug-quota-strip/);
 assert.match(out, /debug-quota-chip ok/);
-assert.match(out, /GitHub API: 4929\/5000 remaining \(99% free\)\. resets 07:36 AM/);
+assert.match(out, /GitHub API: 4929\/5000 remaining \(99% free\)\. resets 07:36 AM EDT/);
 assert.match(out, /<span class="debug-quota-label">GitHub API<\/span>/);
 assert.match(out, /<span class="debug-quota-frac">4929\/5000<\/span>/);
 assert.doesNotMatch(out, /mini-health-dot/);

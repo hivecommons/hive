@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,9 +34,9 @@ type StablePromotionBuild struct {
 }
 
 type MaintainedHiveSummary struct {
-	ID               string `json:"id"`
-	ImageRef         string `json:"image_ref,omitempty"`
-	GitHash          string `json:"git_hash,omitempty"`
+	ID       string `json:"id"`
+	ImageRef string `json:"image_ref,omitempty"`
+	GitHash  string `json:"git_hash,omitempty"`
 	// Generation is the docker.yml run number of the build the hive is
 	// running (0 when unknown), so the promotion gate can accept a hive on a
 	// later candidate as smoke evidence for an older eligible build.
@@ -154,18 +155,21 @@ const stablePromotionRunPages = 5
 // stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
 // through stablePromotionRuns, which caches the answer.
 var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := hubGitHubHTTPClient()
 	var runs []stablePromotionWorkflowRun
 	for page := 1; page <= stablePromotionRunPages; page++ {
+		ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "stable_promotion"), 5*time.Second)
 		runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=%d&page=%d", githubAPIBase, stablePromotionRunsPerPage, page)
-		req, err := http.NewRequest(http.MethodGet, runsURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, runsURL, nil)
 		if err != nil {
+			cancel()
 			return runs
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		authGitHubRequest(req)
 		resp, err := client.Do(req)
 		if err != nil {
+			cancel()
 			logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
 			return runs
 		}
@@ -174,6 +178,7 @@ var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkfl
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body)
 		_ = resp.Body.Close()
+		cancel()
 		if resp.StatusCode != http.StatusOK {
 			logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
 			return runs
@@ -310,9 +315,33 @@ func (s *HubServer) stableNextPromotion(targets []ChannelTarget) (string, string
 	return "", stableNextUpdateStatusUnknown
 }
 
-func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) []ChannelTarget {
+func (s *HubServer) stableNextPromotionFromCachedTargets(targets []ChannelTarget) (string, string) {
+	if !loadStablePromotionState().AutoPromote {
+		return "", stableNextUpdateStatusPaused
+	}
+	var candidate, stable *ChannelTarget
+	for i := range targets {
+		switch targets[i].Channel {
+		case ReleaseChannelCandidate:
+			candidate = &targets[i]
+		case ReleaseChannelStable:
+			stable = &targets[i]
+		}
+	}
+	if candidate == nil || stable == nil || candidate.Digest == "" || stable.Digest == "" {
+		return "", stableNextUpdateStatusUnknown
+	}
+	if candidate.Digest == stable.Digest || sameCommit(candidate.SHA, stable.SHA) {
+		return "", stableNextUpdateStatusNone
+	}
+	if eligible := stablePromotionEligibleAt(candidate.CommittedAt); eligible != "" {
+		return eligible, stableNextUpdateStatusQueued
+	}
+	return "", stableNextUpdateStatusUnknown
+}
+
+func channelTargetsWithStablePromotionStatus(targets []ChannelTarget, status StablePromotionStatus) []ChannelTarget {
 	out := append([]ChannelTarget(nil), targets...)
-	status := s.stablePromotionStatus(out)
 	for i := range out {
 		if out[i].Channel == ReleaseChannelStable {
 			st := status
@@ -323,18 +352,40 @@ func (s *HubServer) channelTargetsWithStablePromotion(targets []ChannelTarget) [
 	return out
 }
 
-// stablePromotionFromTargets returns the status channelTargetsWithStablePromotion
-// already attached to the stable row, computing it only when there is none.
-func (s *HubServer) stablePromotionFromTargets(targets []ChannelTarget) StablePromotionStatus {
-	for _, t := range targets {
-		if t.Channel == ReleaseChannelStable && t.StablePromotion != nil {
-			return *t.StablePromotion
+func (s *HubServer) stablePromotionStatusFromCachedTargets(targets []ChannelTarget) StablePromotionStatus {
+	state := loadStablePromotionState()
+	status := StablePromotionStatus{
+		AutoPromote: state.AutoPromote,
+		SoakHours:   stablePromotionSoakHours,
+	}
+	if !state.AutoPromote {
+		status.PausedBy = state.UpdatedBy
+		if state.UpdatedAt != "" {
+			pausedAt := state.UpdatedAt
+			status.PausedAt = &pausedAt
 		}
 	}
-	return s.stablePromotionStatus(targets)
+	for _, t := range targets {
+		switch t.Channel {
+		case ReleaseChannelCandidate:
+			status.Candidate = StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, BuiltAt: t.CommittedAt}
+		case ReleaseChannelStable:
+			status.Stable = StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, PromotedAt: t.CommittedAt}
+		}
+	}
+	status.MaintainedHives = s.maintainedCandidateHivesCached(status.Candidate)
+	return status
 }
 
 func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []MaintainedHiveSummary {
+	return s.maintainedCandidateHivesWithGeneration(candidate, true)
+}
+
+func (s *HubServer) maintainedCandidateHivesCached(candidate StablePromotionBuild) []MaintainedHiveSummary {
+	return s.maintainedCandidateHivesWithGeneration(candidate, false)
+}
+
+func (s *HubServer) maintainedCandidateHivesWithGeneration(candidate StablePromotionBuild, resolveGeneration bool) []MaintainedHiveSummary {
 	s.mu.Lock()
 	hives := make([]RegistryEntry, len(s.registry.Hives))
 	copy(hives, s.registry.Hives)
@@ -361,7 +412,7 @@ func (s *HubServer) maintainedCandidateHives(candidate StablePromotionBuild) []M
 		// gate with no evidence at all (#10042). The hive's build generation
 		// lets the promotion script decide whether it is new enough.
 		generation := 0
-		if h.GitHash != "" {
+		if resolveGeneration && h.GitHash != "" {
 			generation = ghcrTagGeneration(ghcrRepoSpoke, shortSHA(h.GitHash), s.logger)
 		}
 		if generation == 0 && candidate.SHA != "" && h.GitHash != "" && sameCommit(h.GitHash, candidate.SHA) {

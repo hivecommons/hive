@@ -14,9 +14,8 @@ import (
 // ============================================================
 
 // TestManageAccessDialogHasCSVExport pins the client-side export affordance:
-// an Export button in the Manage Access dialog and a downloader that builds
-// the CSV entirely in the browser (Blob + synthetic anchor), so no access
-// list is ever written server-side.
+// an Export button in the Manage Access dialog and an in-app CSV viewer, so no
+// access list is ever written server-side or forced through a browser download.
 func TestManageAccessDialogHasCSVExport(t *testing.T) {
 	for _, want := range []string{
 		`id="access-export-btn"`,
@@ -25,9 +24,9 @@ func TestManageAccessDialogHasCSVExport(t *testing.T) {
 		`function csvField(v)`,
 		// The audit columns from #4152.
 		`username,role,granted_at,last_active`,
-		// Client-side download, no server round trip.
-		`new Blob([lines.join(`,
-		`URL.createObjectURL(blob)`,
+		// Client-side in-app viewer, no server round trip and no forced download.
+		`function showTextExport(name, text)`,
+		`showTextExport(name, lines.join(`,
 	} {
 		if !strings.Contains(dashboardHTML, want) {
 			t.Errorf("dashboardHTML missing %q", want)
