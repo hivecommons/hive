@@ -2050,7 +2050,9 @@ func parseHiveQueueReview(body string) string {
 // config, branch protection, the branch payload, or repository rulesets, the
 // sweep no longer treats arbitrary red check-runs as required. It waits only
 // while a check is still pending, then attempts the merge and lets GitHub's
-// merge endpoint enforce the actual required checks server-side.
+// merge endpoint enforce the actual required checks server-side. A known-empty
+// required set is not unknown: nothing is enforced server-side, so completed
+// failing check-runs and statuses block locally.
 func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
 	return c.commitGreenForPR(ctx, owner, repo, branch, sha, 0, time.Time{}, nil)
 }
@@ -2062,6 +2064,9 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 	configRequired, configKnown := c.configRequiredChecksForRepo(owner + "/" + repo)
 	required, requiredKnown, fromConfig, fallback, source := hgithub.RequiredStatusCheckContextsDetailedWithSource(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
 	actualRequired, actualKnown := required, requiredKnown && !fromConfig
+	// A known-empty required set means the branch enforces nothing, so the
+	// merge endpoint cannot be the source of truth: keep the positive-evidence
+	// requirement but evaluate completed failures locally.
 	positiveEvidenceGate := requiredKnown && len(required) == 0
 	if positiveEvidenceGate {
 		required, requiredKnown = nil, false
@@ -2079,7 +2084,7 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 		Required:                            required,
 		RequiredKnown:                       requiredKnown,
 		RequiredKnownFromConfig:             fromConfig,
-		UnknownRequiredChecksServerEnforced: !requiredKnown,
+		UnknownRequiredChecksServerEnforced: !requiredKnown && !positiveEvidenceGate,
 		RequireEvidence:                     !requiredKnown,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,

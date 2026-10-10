@@ -110,7 +110,9 @@ type CommitCIOptions struct {
 	// UnknownRequiredChecksServerEnforced means the caller will attempt the
 	// merge and rely on GitHub's merge endpoint to reject unsatisfied required
 	// checks when the required set cannot be discovered. In that mode,
-	// completed failures do not block locally; pending checks still do.
+	// completed failures do not block locally; pending checks still do. It must
+	// not be set when the required set is known to be empty: then nothing is
+	// enforced server-side.
 	UnknownRequiredChecksServerEnforced bool
 	MinHeadAge                          time.Duration
 	HeadPushedAt                        time.Time
