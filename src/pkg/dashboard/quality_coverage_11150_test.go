@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestQualityCoverageMetrics_KnownAndUnknown pins #11150: the quality agent's
@@ -67,6 +69,28 @@ func TestMetricsCollector_CollectQualityCoverageUnknownWithoutBadge(t *testing.T
 	}
 	if _, present := quality["coverage"]; present {
 		t.Errorf("no badge configured: quality coverage must be absent, got %v", quality["coverage"])
+	}
+}
+
+func TestBuildOverviewCoverageReusesQualityMetrics(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Org = "hivecommons"
+	cfg.Project.PrimaryRepo = "hive"
+	got := buildOverviewCoverage(map[string]any{
+		qualityAgentName: map[string]any{
+			"coverage":       87,
+			"coverageTarget": coverageTarget,
+			"coverageSource": qualityCoverageSource,
+		},
+	}, cfg)
+	if got == nil {
+		t.Fatal("overview coverage payload missing")
+	}
+	if got.Coverage != 87 || got.Target != coverageTarget || got.Source != qualityCoverageSource || got.Repo != "hivecommons/hive" {
+		t.Fatalf("overview coverage = %+v", got)
+	}
+	if missing := buildOverviewCoverage(map[string]any{qualityAgentName: map[string]any{}}, cfg); missing != nil {
+		t.Fatalf("missing coverage should hide overview tile, got %+v", missing)
 	}
 }
 

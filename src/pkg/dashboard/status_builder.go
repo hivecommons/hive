@@ -25,6 +25,7 @@ import (
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/upstreamwatch"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
@@ -285,39 +286,125 @@ func BuildFrontendStatus(
 
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
+	repos := buildRepos(cfg, actionable, govState)
 	payload := &StatusPayload{
-		Timestamp:           time.Now().UTC().Format(time.RFC3339),
-		TimeZone:            dashboardTimeZoneName(),
-		HiveID:              cfg.HiveID,
-		HiveIDEditable:      !hiveIDLocked,
-		HiveIDLockReason:    hiveIDLockReason,
-		Features:            buildFeatures(cfg),
-		Agents:              agents,
-		HiddenAgents:        hiddenAgents,
-		ConfiguredAgents:    buildConfiguredAgents(cfg),
-		Governor:            buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable)),
-		Tokens:              buildTokens(tokenCollector),
-		Repos:               buildRepos(cfg, actionable, govState),
-		Beads:               BuildBeadsFromConfig(beadStores, cfg),
-		Planning:            BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
-		Health:              health,
-		Budget:              buildBudget(gov, tokenCollector),
-		CadenceMatrix:       buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
-		GHRateLimits:        ghRateLimits,
-		APIBudget:           apiBudgetFromRateLimits(ghRateLimits),
-		AgentMetrics:        agentMetrics,
-		Hold:                buildHold(actionable),
-		IssueToMerge:        issueToMerge,
-		IssuesDisabledRepos: metricsCollector.GetIssuesDisabledRepos(),
-		ACMMLevel:           detectACMMLevel(cfg),
-		ACMMLevelConfigured: cfg.ACMMLevel != nil,
-		ACMMPackAgents:      buildACMMPackAgents(cfg),
-		SystemResources:     collectSystemResources(),
-		Platform:            buildPlatform(cfg),
-		Security:            buildSecurity(cfg),
-		ReleaseLineLag:      buildReleaseLineLag(),
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		TimeZone:              dashboardTimeZoneName(),
+		HiveID:                cfg.HiveID,
+		HiveIDEditable:        !hiveIDLocked,
+		HiveIDLockReason:      hiveIDLockReason,
+		Features:              buildFeatures(cfg),
+		Agents:                agents,
+		HiddenAgents:          hiddenAgents,
+		ConfiguredAgents:      buildConfiguredAgents(cfg),
+		Governor:              buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable)),
+		Tokens:                buildTokens(tokenCollector),
+		Repos:                 repos,
+		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
+		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
+		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
+		Health:                health,
+		Budget:                buildBudget(gov, tokenCollector),
+		CadenceMatrix:         buildCadenceMatrix(cfg, agentStatuses, strings.ToLower(string(govState.Mode))),
+		GHRateLimits:          ghRateLimits,
+		APIBudget:             apiBudgetFromRateLimits(ghRateLimits),
+		AgentMetrics:          agentMetrics,
+		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
+		Hold:                  buildHold(actionable),
+		IssueToMerge:          issueToMerge,
+		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
+		ACMMLevel:             detectACMMLevel(cfg),
+		ACMMLevelConfigured:   cfg.ACMMLevel != nil,
+		ACMMPackAgents:        buildACMMPackAgents(cfg),
+		SystemResources:       collectSystemResources(),
+		Platform:              buildPlatform(cfg),
+		Security:              buildSecurity(cfg),
+		ReleaseLineLag:        buildReleaseLineLag(),
 	}
+
 	return payload
+}
+
+func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResult) bool {
+	if cfg == nil || len(cfg.Project.Repos) == 0 {
+		return false
+	}
+	if actionable == nil {
+		return true
+	}
+	for _, repoName := range cfg.Project.Repos {
+		if _, paused := cfg.RepoPauseFor(repoName); paused {
+			continue
+		}
+		if actionable.TotalByRepo == nil {
+			return true
+		}
+		if _, ok := actionable.TotalByRepo[repoName]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func buildOverviewCoverage(agentMetrics map[string]any, cfg *config.Config) *FrontendOverviewCoverage {
+	quality, _ := agentMetrics[qualityAgentName].(map[string]any)
+	if quality == nil {
+		return nil
+	}
+	coverage, ok := overviewMetricInt(quality["coverage"])
+	if !ok {
+		return nil
+	}
+	target, ok := overviewMetricInt(quality["coverageTarget"])
+	if !ok || target <= 0 {
+		target = coverageTarget
+	}
+	source, _ := quality["coverageSource"].(string)
+	if strings.TrimSpace(source) == "" {
+		source = qualityCoverageSource
+	}
+	return &FrontendOverviewCoverage{
+		Coverage: coverage,
+		Target:   target,
+		Source:   source,
+		Repo:     overviewCoverageRepo(cfg),
+	}
+}
+
+func overviewMetricInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		if math.Trunc(n) == n {
+			return int(n), true
+		}
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
+}
+
+func overviewCoverageRepo(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	repo := strings.TrimSpace(cfg.Project.PrimaryRepo)
+	if repo == "" && len(cfg.Project.Repos) > 0 {
+		repo = strings.TrimSpace(cfg.Project.Repos[0])
+	}
+	if repo == "" {
+		return ""
+	}
+	if strings.Contains(repo, "/") || strings.TrimSpace(cfg.Project.Org) == "" {
+		return repo
+	}
+	return strings.TrimSpace(cfg.Project.Org) + "/" + repo
 }
 
 func buildFeatures(cfg *config.Config) FrontendFeatures {
@@ -768,11 +855,17 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			cadenceValue = lookupCadenceValue(name, cfg)
 		}
 		cadence := cadenceDisplay(cadenceValue)
-		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
+		nextKick := ""
+		nextKickAt := ""
+		if next, ok := computeNextKickTimeFromCadence(proc.LastKick, cadenceValue); ok {
+			nextKick = formatHumanTime(next)
+			nextKickAt = next.UTC().Format(time.RFC3339)
+		}
 		nextKickIn := computeNextKickETA(proc.LastKick, cadenceValue)
 		continuousState := govState.Continuous[name]
 		if agentCfg, ok := cfg.Agents[name]; ok && agentCfg.ContinuousInMode(currentMode, cadenceValue) && !continuousState.NextKick.IsZero() {
 			nextKick = formatHumanTime(continuousState.NextKick)
+			nextKickAt = continuousState.NextKick.UTC().Format(time.RFC3339)
 			if d := time.Until(continuousState.NextKick); d > 0 {
 				nextKickIn = formatETA(d)
 			} else {
@@ -893,6 +986,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
 			NextKick:        nextKick,
+			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,
 			Continuous:      continuousNow,
 			FrontendAgentContinuous: FrontendAgentContinuous{
@@ -1632,15 +1726,19 @@ func formatHumanTime(t time.Time) string {
 	return local.Format("1/2 3:04 PM MST")
 }
 
-func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+func computeNextKickTimeFromCadence(lastKick *time.Time, cadence config.Cadence) (time.Time, bool) {
 	if cadence == "" || cadence.IsPaused() {
-		return ""
+		return time.Time{}, false
 	}
 	base := time.Now()
 	if lastKick != nil && cadence.Mode() == config.CadenceModeInterval {
 		base = *lastKick
 	}
-	next, ok := cadence.NextAfter(base)
+	return cadence.NextAfter(base)
+}
+
+func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+	next, ok := computeNextKickTimeFromCadence(lastKick, cadence)
 	if !ok {
 		return ""
 	}
@@ -1948,6 +2046,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		repoRows[full] = repoName
 	}
 
+	var watchState upstreamwatch.State
+	if len(cfg.UpstreamWatch.Repos) > 0 {
+		// An unreadable state file only hides the last-check time.
+		watchState, _ = upstreamwatch.NewFileStore(upstreamWatchStatePath).Load()
+	}
+
 	issuesByRepo := make(map[string][]any)
 	prsByRepo := make(map[string][]any)
 	heldIssuesByRepo := make(map[string][]any)
@@ -2004,8 +2108,10 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		issueCount := 0
 		prCount := 0
 		var workBreakdown *github.RepoWorkBreakdown
+		countsPresent := false
 		if actionable != nil && actionable.TotalByRepo != nil {
 			if counts, ok := actionable.TotalByRepo[repoName]; ok {
+				countsPresent = true
 				issueCount = counts.Issues
 				prCount = counts.PRs
 			}
@@ -2042,6 +2148,27 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			if rp.At != nil && !rp.At.IsZero() {
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
 			}
+		}
+		watchKey := repoName
+		wc, watched := cfg.UpstreamWatch.Repos[watchKey]
+		if !watched {
+			watchKey = full
+			wc, watched = cfg.UpstreamWatch.Repos[watchKey]
+		}
+		if watched {
+			r.Upstream = strings.TrimSpace(wc.Upstream)
+			r.UpstreamWatchOn = cfg.UpstreamWatch.Enabled
+			if sum, ok := watchState.Summary(watchKey, 1); ok {
+				if sum.Upstream != "" {
+					r.Upstream = sum.Upstream
+				}
+				if !sum.LastRunAt.IsZero() {
+					r.UpstreamLastCheck = sum.LastRunAt.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+		if actionable != nil && !r.Paused && !countsPresent {
+			r.CountsIncomplete = true
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}

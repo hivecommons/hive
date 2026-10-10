@@ -202,6 +202,20 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 	}
 }
 
+func TestCandidateChannelBypassesDailyCadenceByDefault(t *testing.T) {
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "")
+	decision := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-07-15", ReleaseChannelCandidate, mustET(t, 2026, time.July, 15, 9, 0))
+	if !decision.Allowed || decision.Reason != "candidate channel tracks each published image" {
+		t.Fatalf("candidate decision = %+v, want immediate tracking", decision)
+	}
+
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "true")
+	decision = shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-07-15", ReleaseChannelCandidate, mustET(t, 2026, time.July, 15, 9, 0))
+	if decision.Allowed || decision.Reason != "already upgraded today" {
+		t.Fatalf("override decision = %+v, want daily schedule honored", decision)
+	}
+}
+
 // TestShouldAutoUpgradeNowDST is the reason autoUpgradeTimezone is a ZONE NAME
 // and not a fixed offset. On these dates a hardcoded UTC-5 or UTC-4 would put
 // the daily boundary an hour off, firing early or holding a hive an extra day.

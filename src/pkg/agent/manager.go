@@ -504,6 +504,10 @@ type ProjectContext struct {
 	// handed over without a token; the hub then refuses the agent's calls
 	// rather than falling back to a wider credential.
 	TaskMCPLaunchToken func(scope taskmcp.LaunchScope) string
+	// BobSessionPrefix mirrors governor.bob.session_prefix. Empty is
+	// default-off; bob launch commands remain byte-identical unless it or a
+	// per-agent bob.session_label is configured.
+	BobSessionPrefix string
 	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
 	// a live predicate rather than a snapshot list because ProjectContext is
 	// built once at boot and a pause is taken mid-run — a repo frozen for a

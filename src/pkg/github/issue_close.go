@@ -25,7 +25,11 @@ type IssueCloseOptions struct {
 const IssueStateReasonCompleted = "completed"
 
 func ReporterConfirmationCloseGateReason(issue *gh.Issue) string {
-	return humanFiledBugReason(issue)
+	return humanFiledBugReason(issue, false)
+}
+
+func (c *Client) reporterConfirmationCloseGateReason(issue *gh.Issue) string {
+	return humanFiledBugReason(issue, c.reporterConfirmationGateDefaultEnabled())
 }
 
 func (c *Client) CloseIssue(ctx context.Context, repo string, number int, opts IssueCloseOptions) error {
@@ -53,7 +57,7 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 		return false, fmt.Errorf("reading issue %s/%s#%d before close: %w", owner, repoName, number, err)
 	}
 	isPR := issue.IsPullRequest()
-	reason := ReporterConfirmationCloseGateReason(issue)
+	reason := c.reporterConfirmationCloseGateReason(issue)
 	overrideReason := strings.TrimSpace(opts.OverrideReason)
 	if reason != "" && overrideReason == "" {
 		// Ask ONCE. A blocked close is not necessarily a one-shot event: an
@@ -187,6 +191,6 @@ func reporterConfirmationRequestComment(issue *gh.Issue) string {
 	if reporter != "" {
 		reporter = " @" + reporter
 	}
-	return reporterConfirmationRequestMarker + " this looks like a human-filed bug-family issue, so the hive is leaving it open until the reporter confirms the symptom is gone." +
+	return reporterConfirmationRequestMarker + " this human-filed bug-family issue opted into reporter verification, so the hive is leaving it open until the reporter confirms the symptom is gone." +
 		reporter + ", please confirm when you have verified the fix. A maintainer can still close deliberately by recording an explicit override reason."
 }

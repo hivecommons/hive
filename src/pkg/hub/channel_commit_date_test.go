@@ -61,6 +61,7 @@ func TestCommitDateIsCachedPerSHA(t *testing.T) {
 		return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitDate = orig
 		resetChannelCommitDateCache()
 	})
@@ -88,7 +89,7 @@ func TestGitHubReadsCarryTheHubToken(t *testing.T) {
 	defer srv.Close()
 	oldBase := githubAPIBase
 	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); githubAPIBase = oldBase })
 	t.Setenv(hubGitHubAppIDEnv, "")
 	t.Setenv(hubGitHubInstallationIDEnv, "")
 	t.Setenv(hubGitHubAppKeyFileEnv, "")

@@ -90,17 +90,17 @@ func hasUnfinishedDelegatedWork(body string) bool {
 // permanent (retrying the same file cannot fix them) and both exist because of
 // the same observed failure: hive-open-pr silently dropped `--body-file`, so
 // PRs went out whose entire body was the attribution footer, and the
-// "Closes #N" line the agent had written never reached GitHub (the issue then
+// "Fixes #N" line the agent had written never reached GitHub (the issue then
 // stayed open after the fix merged).
 //
 //  1. An empty (or whitespace-only) body is refused outright. Every shipped
 //     policy requires a real body; an empty one here means the body was lost
 //     between the agent and the request. There is deliberately no larger size
-//     floor: "Closes #12" is a legitimate minimal body under
+//     floor: "Fixes #12" is a legitimate minimal body under
 //     scanner-automerge, so anything above "non-blank" would reject real work.
 //  2. When the request declares originating issues (req.IssueN, set by
 //     hive-open-pr --issues), the title+body must reference each one — as a
-//     closing keyword ("Closes #N") or an explicit non-closing reference
+//     closing keyword ("Fixes #N") or an explicit non-closing reference
 //     ("Refs #N"). A body that arrives without the reference it was supposed
 //     to carry is the same lost-content failure in partial form.
 //
@@ -131,7 +131,7 @@ func (c *Client) validatePRRequestBody(req PRRequest) string {
 	}
 	if len(missing) > 0 {
 		return fmt.Sprintf("request declares originating issue(s) %s but the PR body never references them — "+
-			"the body must carry a \"Closes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open; use \"Refs %s (needs-human: <reason>)\" when the remainder requires a human). "+
+			"the body must carry a \"Fixes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open; use \"Refs %s (needs-human: <reason>)\" when the remainder requires a human). "+
 			"A missing line usually means the body was truncated or replaced; re-run hive-open-pr with the full body",
 			strings.Join(missing, ", "), missing[0], missing[0], missing[0])
 	}
@@ -251,34 +251,31 @@ func incompleteIssueReason(issue *gh.Issue) string {
 	return ""
 }
 
-// humanFiledBugConfirmationMarker is the case-insensitive marker a reporter (or
-// a maintainer with write access) can drop into the issue body — or add as a
-// label — to explicitly permit the App bot to auto-close the issue via a PR's
-// closing keyword. When present, humanFiledBugReason returns "" and normal
-// Closes # → auto-close behaviour is preserved.
+// humanFiledBugConfirmationMarker is the legacy case-insensitive marker a
+// reporter (or a maintainer with write access) can drop into the issue body —
+// or add as a label — after verifying the fix. Close-on-merge is now the
+// default, so this marker is normally redundant; it still bypasses the
+// opt-in reporter-confirmation gate for parked historical issues.
 //
 // The marker is deliberately short and unambiguous so it can be pasted into a
 // comment quote-block or copied from CONTRIBUTING without transcription risk.
 const humanFiledBugConfirmationMarker = "hive: reporter-confirmed"
 
-// humanFiledBugCloseOnMergeMarker is the filing-time opt-in for human-filed
-// bugs whose merged fix IS the verification: code-sweep findings with no
-// observed symptom, and timing/failure-path/fleet-only bugs the reporter
-// cannot reproduce on demand (hivecommons/hive#10304). It goes in the issue
-// body or on the issue as a label, detected exactly like
-// humanFiledBugConfirmationMarker. When present, humanFiledBugReason returns ""
-// so the fix PR keeps "Closes #N" and the close path accepts the merge.
-//
-// It is a separate, honestly named marker rather than a documented use of
-// "hive: reporter-confirmed" at filing time: that name claims the reporter
-// verified a fix that does not exist yet. Without either marker the #6781
-// protection is unchanged.
+// humanFiledBugCloseOnMergeMarker is the legacy filing-time marker for
+// human-filed bugs whose merged fix IS the verification. Close-on-merge is now
+// default, so this marker is normally redundant; it remains accepted as a
+// bypass when the opt-in reporter-confirmation gate is active.
 const humanFiledBugCloseOnMergeMarker = "hive: close-on-merge"
 
+// humanFiledBugNeedsConfirmationMarker opts one human-filed bug issue into the
+// reporter-confirmation gate. It is accepted in the issue body or as a label.
+const humanFiledBugNeedsConfirmationMarker = "hive: needs-confirmation"
+
 // humanFiledBugReason returns a non-empty close-gate reason when issue is a
-// human-filed bug report that has NOT been marked as reporter-confirmed. The
-// issue close path uses this reason to ask for reporter confirmation rather
-// than closing the issue as completed.
+// human-filed bug report and reporter confirmation has been explicitly
+// requested by marker/label or by the operator config switch. The issue close
+// path uses this reason to ask for reporter confirmation rather than closing
+// the issue as completed.
 //
 // Why this exists. GitHub auto-closes an issue on the merge of a PR that
 // carries "Closes #N", attributed to whoever pushed the merge — for the hive,
@@ -291,27 +288,31 @@ const humanFiledBugCloseOnMergeMarker = "hive: close-on-merge"
 //
 // The philosophy mirrors isEvidenceLessCompletion in
 // pkg/dashboard/contribute_ws.go (#6730): do not close a human reporter's
-// issue on a weak signal. A merged PR is evidence the CODE landed; it is NOT
-// evidence the REPORTER'S SYMPTOM is gone. The reporter (or a maintainer)
-// confirms that by dropping
-// humanFiledBugConfirmationMarker on the issue.
+// issue on a weak signal. The default has since changed: fix merges close
+// issues, and /reopen is the backstop. For exceptional cases where the
+// reporter genuinely must verify a symptom, add
+// humanFiledBugNeedsConfirmationMarker or enable the operator config switch.
 //
 // Scope. This gate ONLY applies to bugs filed by HUMANS. An agent's own
 // bug-labeled finding — always stamped with AttributionTrailerPrefix, and
 // often authored by an App/Bot account — is not affected: the App bot may
 // still Closes # those, since the reporter is itself. See IsHumanFiledBugReport
 // for the exact detector.
-func humanFiledBugReason(issue *gh.Issue) string {
+func humanFiledBugReason(issue *gh.Issue, reporterConfirmationDefault bool) string {
 	if !IsHumanFiledBugReport(issue) {
 		return ""
 	}
 	if hasReporterConfirmation(issue) || hasCloseOnMergeOptIn(issue) {
 		return ""
 	}
-	return "human-filed bug: reporter must confirm the fix before auto-closing (add " +
-		strconv.Quote(humanFiledBugConfirmationMarker) + " to the issue body or apply the same label, or file with " +
+	if !reporterConfirmationDefault && !hasReporterConfirmationOptIn(issue) {
+		return ""
+	}
+	return "human-filed bug opted into reporter confirmation: reporter must confirm the fix before closing (remove " +
+		strconv.Quote(humanFiledBugNeedsConfirmationMarker) + ", add " +
+		strconv.Quote(humanFiledBugConfirmationMarker) + ", or apply " +
 		strconv.Quote(humanFiledBugCloseOnMergeMarker) + " when the merged fix is the verification); " +
-		"see kubestellar/hive#6781"
+		"see hivecommons/hive#11119"
 }
 
 // bugLabelNames is the small closed set of label names the hive treats as a
@@ -385,6 +386,12 @@ func hasReporterConfirmation(issue *gh.Issue) bool {
 // (hivecommons/hive#10304).
 func hasCloseOnMergeOptIn(issue *gh.Issue) bool {
 	return hasIssueMarker(issue, humanFiledBugCloseOnMergeMarker)
+}
+
+// hasReporterConfirmationOptIn reports whether the issue explicitly asks the
+// hive to wait for reporter verification before closing.
+func hasReporterConfirmationOptIn(issue *gh.Issue) bool {
+	return hasIssueMarker(issue, humanFiledBugNeedsConfirmationMarker)
 }
 
 // hasIssueMarker reports whether marker (lower-case) appears in the issue body

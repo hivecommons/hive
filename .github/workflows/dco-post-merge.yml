@@ -212,6 +212,39 @@ env:
   # the lost trailer, so the correct instrument is this per-commit waiver.
   # Accepted by maintainer disposition from clubanderson in #10767.
 
+  # a0de3f920ded7e0cfc287bb5009d542e5a14f014 — the squash of #11407 (goose
+  # pin bump), on v5, reported by the monitor in #11412. The d8f376e8 CLASS: a
+  # bot sign-off created BY the squash. cli-pin-bump.yml committed as
+  # hive-release[bot] <hive-release@hive.kubestellar.io> with `git commit -s` —
+  # internally consistent — but opened the PR with TOPUP_PUSH_TOKEN, a human
+  # maintainer's PAT, so the PR author was clubanderson. The squash wrote
+  # author=Andy Anderson <andy@clubanderson.com> over the bot's lone
+  # Signed-off-by. Earlier bumps opened with github.token squashed to
+  # github-actions[bot] and were skipped as bot-authored; the PAT changed that.
+  #
+  # The d8f376e8 note says a second entry of its shape means
+  # dco-squash-attribution.yml regressed. It did not: it is a COVERAGE GAP for
+  # this one address. hive-release@hive.kubestellar.io is not a GitHub account,
+  # so the commits API returns no author login, the gate takes its degraded
+  # path (fail only an unambiguous bot sign-off), and is_bot_identity did not
+  # recognise the address — run 38047850766 on #11407 passed. #11412 closes the
+  # gap (the address and any `[bot]`-named self-signer are now bot identities)
+  # and fixes the cause: cli-pin-bump.yml adds a second Signed-off-by naming
+  # the PAT owner whenever that PAT opens the PR, the shape hand-applied to
+  # #11409 (d00254b, which passes). This should therefore be the last of its
+  # kind. Protected v5 history cannot be re-signed in place. Accepted by
+  # maintainer disposition in #11412: the maintainer merging the PR that adds
+  # this entry IS that disposition.
+  #
+  # c6c78c3a26c33c6d1530996df20ead0a6b699dda — the squash of #11408 (claude
+  # pin bump), on v5. The IDENTICAL defect to a0de3f92 above, from the same
+  # workflow run shape: author=Andy Anderson <andy@clubanderson.com>, only
+  # sign-off hive-release@hive.kubestellar.io. Waived pre-emptively in the same
+  # change because the monitor's next run would report it, and the cause, the
+  # gate's blind spot and the fix are exactly those described for a0de3f92.
+  # Accepted by maintainer disposition in #11412: the maintainer merging the PR
+  # that adds this entry IS that disposition.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -223,7 +256,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that

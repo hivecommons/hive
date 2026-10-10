@@ -64,11 +64,12 @@ var clientSetterAllowlist = map[string]string{
 // a config reload or heartbeat claim. Each is also applied by
 // configureGitHubClient (or allowlisted above), so a rebuild still gets it.
 var clientResyncSetters = map[string]bool{
-	"SetRepos":          true,
-	"SetHoldLabels":     true,
-	"SetExemptLabels":   true,
-	"SetAutoMergeLabel": true,
-	"SetIssueFilter":    true,
+	"SetRepos":              true,
+	"SetHoldLabels":         true,
+	"SetSentinelAlertLabel": true,
+	"SetExemptLabels":       true,
+	"SetAutoMergeLabel":     true,
+	"SetIssueFilter":        true,
 }
 
 const (
@@ -239,8 +240,8 @@ func TestConfigureGitHubClientTiersWaitForDependencies(t *testing.T) {
 }
 
 // A rebuilt client must carry exactly the hold labels the boot client does:
-// the canonical hive-pause/<id> hold (the only hive-configured hold label;
-// the generic "hold" substrings are built into pkg/github). Before #9614 each
+// the canonical hive-pause/<id> hold plus the configured sentinel alert label
+// (the generic "hold" substrings are built into pkg/github). Before #9614 each
 // rebuild site re-typed this list by hand.
 func TestRebuiltGitHubClientGetsBootHoldLabels(t *testing.T) {
 	cfg := rebuildTestConfig(true)
@@ -254,7 +255,7 @@ func TestRebuiltGitHubClientGetsBootHoldLabels(t *testing.T) {
 	})
 	rebuilt := b.newConfiguredGitHubAppClient(testAppAuth(t, cfg))
 
-	canonical := []string{github.CanonicalHiveHoldLabel(rebuildTestHiveID)}
+	canonical := []string{github.CanonicalHiveHoldLabel(rebuildTestHiveID), config.DefaultSentinelLabel}
 	otherHive := []string{github.CanonicalHiveHoldLabel("some-other-hive")}
 	bare := github.NewClientFromAppWithBotLogin(testAppAuth(t, cfg), cfg.Project.Org, cfg.Project.Repos, b.logger, cfg.GitHub.BotLogin())
 	if bare.IsHeldLabels(canonical) {

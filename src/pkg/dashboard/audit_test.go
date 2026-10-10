@@ -224,6 +224,90 @@ func TestHandleAuditLogAllowsReadWriteRole(t *testing.T) {
 	}
 }
 
+func TestHandleAuditLogMarksSensitiveEntries(t *testing.T) {
+	server := &Server{audit: &AuditLog{}}
+	server.audit.Log("alice", "config_github", "updated token settings", "governor")
+	server.audit.Log("bob", "repos_rescan", "manual rescan", "scanner")
+	req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+	req.Header.Set("X-Hive-Role", config.RoleReadWrite)
+	rec := httptest.NewRecorder()
+
+	server.handleAuditLog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries []AuditEntry `json:"entries"`
+		Last    *AuditEntry  `json:"last"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v; body=%q", err, rec.Body.String())
+	}
+	var sensitive, ordinary *AuditEntry
+	for i := range body.Entries {
+		switch body.Entries[i].Action {
+		case "config_github":
+			sensitive = &body.Entries[i]
+		case "repos_rescan":
+			ordinary = &body.Entries[i]
+		}
+	}
+	if sensitive == nil || !sensitive.Sensitive {
+		t.Fatalf("sensitive entry flag = %#v, want sensitive=true", sensitive)
+	}
+	if ordinary == nil || ordinary.Sensitive {
+		t.Fatalf("ordinary entry flag = %#v, want sensitive=false", ordinary)
+	}
+	if body.Last == nil || body.Last.Sensitive {
+		t.Fatalf("last entry flag = %#v, want newest ordinary entry with sensitive=false", body.Last)
+	}
+}
+
+func TestHandleAuditLogSensitiveFilterUsesSummaryWindow(t *testing.T) {
+	now := time.Now().UTC()
+	server := &Server{audit: &AuditLog{}}
+	server.audit.ring = append(server.audit.ring, AuditEntry{
+		Timestamp: now.Add(-23 * time.Hour).Format(time.RFC3339),
+		User:      "alice",
+		Action:    "config_github",
+		Detail:    "older than the default page",
+	})
+	for i := 0; i <= auditMaxEntries; i++ {
+		server.audit.ring = append(server.audit.ring, AuditEntry{
+			Timestamp: now.Add(-time.Duration(auditMaxEntries-i) * time.Minute).Format(time.RFC3339),
+			User:      "system",
+			Action:    "repos_rescan",
+		})
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/audit?sensitive=1", nil)
+	req.Header.Set("X-Hive-Role", config.RoleReadWrite)
+	rec := httptest.NewRecorder()
+
+	server.handleAuditLog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries              []AuditEntry `json:"entries"`
+		Sensitive24h         int          `json:"sensitive_24h"`
+		SensitiveWindowHours int          `json:"sensitive_window_hours"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v; body=%q", err, rec.Body.String())
+	}
+	if body.Sensitive24h != 1 {
+		t.Fatalf("sensitive_24h = %d, want 1", body.Sensitive24h)
+	}
+	if body.SensitiveWindowHours != auditSummaryHours {
+		t.Fatalf("sensitive_window_hours = %d, want %d", body.SensitiveWindowHours, auditSummaryHours)
+	}
+	if len(body.Entries) != 1 || body.Entries[0].Action != "config_github" || !body.Entries[0].Sensitive {
+		t.Fatalf("filtered entries = %#v, want one sensitive config_github entry outside default page", body.Entries)
+	}
+}
+
 func TestAuditLogSummaryHistogramSensitiveTodayAndLast(t *testing.T) {
 	now := time.Date(2026, 10, 5, 15, 31, 0, 0, time.UTC)
 	entries := []AuditEntry{

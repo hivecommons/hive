@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // minimalValidYAML returns the smallest YAML that passes validate().
@@ -1246,26 +1248,83 @@ func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := AutoMergeConfig{RequiredChecks: tc.checks}
-			got, know := cfg.RequiredCheckSet()
-			if know != tc.wantKnow {
-				t.Fatalf("RequiredCheckSet() requiredKnown = %v, want %v", know, tc.wantKnow)
-			}
-			if !know {
-				if got != nil {
-					t.Fatalf("RequiredCheckSet() set = %v, want nil when not declared", got)
-				}
-				return
-			}
-			if len(got) != len(tc.wantSet) {
-				t.Fatalf("RequiredCheckSet() set = %v, want %v", got, tc.wantSet)
-			}
-			for k, v := range tc.wantSet {
-				if got[k] != v {
-					t.Errorf("RequiredCheckSet()[%q] = %v, want %v", k, got[k], v)
-				}
-			}
-
+			assertRequiredCheckSet(t, cfg.RequiredCheckSet, tc.wantSet, tc.wantKnow)
 		})
+	}
+}
+
+func TestAutoMergeConfigRequiredCheckSetForRepo(t *testing.T) {
+	cfg := AutoMergeConfig{
+		RequiredChecks: []string{"global-gate"},
+		Repos: map[string]AutoMergeRepoConfig{
+			"console":            {RequiredChecks: []string{"build-gate"}},
+			"kubestellar/docs":   {RequiredChecks: []string{}},
+			"owner/marketplace":  {RequiredChecks: []string{" static-validation ", "validate"}},
+			"fallback-to-global": {},
+		},
+	}
+	cases := []struct {
+		name     string
+		repo     string
+		wantSet  map[string]bool
+		wantKnow bool
+	}{
+		{"bare override", "console", map[string]bool{"build-gate": true}, true},
+		{"owner repo matches bare key", "kubestellar/console", map[string]bool{"build-gate": true}, true},
+		{"owner repo exact key", "kubestellar/docs", map[string]bool{}, true},
+		{"different owner same bare repo key", "other/marketplace", map[string]bool{"static-validation": true, "validate": true}, true},
+		{"repo entry without required_checks falls back", "fallback-to-global", map[string]bool{"global-gate": true}, true},
+		{"unlisted repo uses global", "kubestellar/homebrew-tap", map[string]bool{"global-gate": true}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertRequiredCheckSet(t, func() (map[string]bool, bool) { return cfg.RequiredCheckSetForRepo(tc.repo) }, tc.wantSet, tc.wantKnow)
+		})
+	}
+}
+
+func TestAutoMergeConfigRequiredCheckSetForRepoYAML(t *testing.T) {
+	var cfg struct {
+		AutoMerge AutoMergeConfig `yaml:"auto_merge"`
+	}
+	if err := yaml.Unmarshal([]byte(`
+auto_merge:
+  required_checks: [global-gate]
+  repos:
+    console:
+      required_checks: [build-gate]
+    kubestellar/homebrew-tap:
+      required_checks:
+        - brew-ci gate
+        - unit tests + drift check
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	assertRequiredCheckSet(t, func() (map[string]bool, bool) { return cfg.AutoMerge.RequiredCheckSetForRepo("console") }, map[string]bool{"build-gate": true}, true)
+	assertRequiredCheckSet(t, func() (map[string]bool, bool) {
+		return cfg.AutoMerge.RequiredCheckSetForRepo("kubestellar/homebrew-tap")
+	}, map[string]bool{"brew-ci gate": true, "unit tests + drift check": true}, true)
+}
+
+func assertRequiredCheckSet(t *testing.T, fn func() (map[string]bool, bool), wantSet map[string]bool, wantKnow bool) {
+	t.Helper()
+	got, know := fn()
+	if know != wantKnow {
+		t.Fatalf("requiredKnown = %v, want %v", know, wantKnow)
+	}
+	if !know {
+		if got != nil {
+			t.Fatalf("set = %v, want nil when not declared", got)
+		}
+		return
+	}
+	if len(got) != len(wantSet) {
+		t.Fatalf("set = %v, want %v", got, wantSet)
+	}
+	for k, v := range wantSet {
+		if got[k] != v {
+			t.Errorf("set[%q] = %v, want %v", k, got[k], v)
+		}
 	}
 }
 

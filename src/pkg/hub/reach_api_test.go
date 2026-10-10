@@ -225,6 +225,7 @@ func TestCompareAncestry(t *testing.T) {
 	}
 	commitOrderMu.Unlock()
 	defer func() {
+		waitChannelTargetRefreshes(t)
 		commitOrderMu.Lock()
 		fetchCommitCompareStatus = origFetch
 		commitOrderCache = origCache

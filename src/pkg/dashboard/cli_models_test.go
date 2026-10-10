@@ -5,7 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -227,6 +230,67 @@ func TestCLIModelCache_TTL(t *testing.T) {
 	c.mu.Unlock()
 	if _, ok := c.get("copilot"); ok {
 		t.Fatal("expected cache miss after TTL")
+	}
+}
+
+func TestHandleBackendsDoesNotBlockRoleOnCLIProbe(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-release:
+			return nil, context.Canceled
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	defer close(release)
+
+	s := NewServer(0, testLogger())
+	s.RegisterAPI(testDeps(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/config/backends", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/config/backends: %v", err)
+	}
+	closeHTTPBody(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/config/backends status = %d, want 200", resp.StatusCode)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("/api/config/backends waited for the blocked probe: %v", elapsed)
+	}
+	if got := resp.Header.Get("Server-Timing"); !strings.Contains(got, "dashboard_lock_wait") {
+		t.Fatalf("Server-Timing = %q, want dashboard_lock_wait metric", got)
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("background Copilot probe did not start")
+	}
+
+	start = time.Now()
+	resp, err = ts.Client().Get(ts.URL + "/api/role")
+	if err != nil {
+		t.Fatalf("GET /api/role: %v", err)
+	}
+	closeHTTPBody(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/role status = %d, want 200", resp.StatusCode)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("/api/role blocked behind the model discovery probe: %v", elapsed)
 	}
 }
 

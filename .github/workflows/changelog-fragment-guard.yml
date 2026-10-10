@@ -28,11 +28,16 @@
 # PR goes red here — still non-blocking — because a direct edit is exactly the
 # conflict generator this migration removes.
 #
-# REPORTING JOB — deliberately not a required context anywhere, same posture
-# as testutil-guard.yml; the operator can promote it later. If promoted,
-# beware that GitHub leaves path-filtered required checks pending forever on
-# PRs that don't trigger them: promotion means moving the path gate from
-# `on.paths` into the job itself.
+# REQUIRED CONTEXT — this check is a required status check on the protected
+# release lines (#11250), so it MUST report on every PR. GitHub leaves a
+# path-filtered required check "expected" forever on PRs whose diff never
+# matches `on.paths`, and such a PR can never merge (hivecommons/hive#11234, a
+# workflow-only change, was refused with `405 Required status check
+# "changelog-fragment-guard" is expected`). The path gate therefore lives in
+# the job, not in the trigger: check-changelog-fragment.sh exits 0 with "no
+# non-exempt code changes under src/" on docs-, test-, CI- and bin-only PRs,
+# which is the same exemption `on.paths` used to express. Do NOT reintroduce
+# an `on.paths` filter here while the context is required.
 #
 # Registered in .github/release-lines.yml (`[-v2]`): changelog.d/ and the
 # compiler exist only on v4, and v2 is sunset — a PR to v2 would run the v2
@@ -45,13 +50,8 @@ on:
     # Default types plus labeled/unlabeled: adding or removing `no-changelog`
     # must re-evaluate the verdict without waiting for a push.
     types: [opened, reopened, synchronize, labeled, unlabeled]
-    paths:
-      - 'src/**'
-      # Fragment-only PRs still get their fragments validated.
-      - 'changelog.d/**'
-      # An edit to the guard must run the guard (same rule testutil-guard.yml,
-      # v2-tests.yml and dashboard-lint apply to their own workflow files).
-      - '.github/workflows/changelog-fragment-guard.yml'
+    # No `paths:` filter on purpose — see REQUIRED CONTEXT above. The job
+    # itself decides whether the diff is changelog-relevant.
 
 permissions:
   # contents: write lets the autofix step push a generated fragment to

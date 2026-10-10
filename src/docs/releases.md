@@ -174,6 +174,23 @@ separate, deliberate policy described in
 silently couples to it, on purpose — the operator explicitly asked for these
 to stay decoupled.
 
+Hub-managed hives on the `candidate` channel are canaries: by default the hub
+does not hold them behind the daily/weekly auto-upgrade cadence. Once the
+candidate image for a newer commit is published, the hub may arm the hive on the
+next poll as long as the existing idle, health and wave gates allow it. Stable
+channel hives keep the slower soak/cadence rules. Operators who deliberately
+want candidate hives to obey their stored cadence can set
+`HIVE_CANDIDATE_RESPECT_AUTO_UPGRADE_SCHEDULE=true` on the hub.
+
+If a spoke was asked to upgrade to an immutable SHA whose image never appears
+(for example because a superseded build was cancelled), the visible upgrade
+attempt no longer stays "queued" indefinitely. After the
+`HIVE_UPGRADE_UNPUBLISHED_TARGET_GRACE` grace (default `20m`), `/api/version`
+marks the request as superseded by the newest published reachable image and
+shows the substitution reason; once the running pod has already landed at that
+newer published image, the stale queued state clears as superseded instead of
+continuing to report the cancelled SHA.
+
 Rolling a hive back to any of the immutable rows above, and proving by digest
 that the rollback landed, is documented in
 [release-rollback.md](release-rollback.md).
@@ -245,6 +262,15 @@ so it appears in the release PR's required-context rollup. This is a mirror,
 not a second source of truth: a missing or red docker gate prevents the status
 from being posted, a failed status POST prevents the PR from opening, and the
 SHA-keyed merge API still asks GitHub to enforce `v5` protection server-side.
+
+Required PR contexts that are expensive and path-sensitive still have to report
+on every head SHA. The release-line workflows therefore keep their
+`pull_request` triggers unfiltered for required contexts, broaden CI-sensitive
+`push` filters to `.github/workflows/**` and `.github/scripts/**`, and decide
+inside the job whether to run the real lane or report a successful out-of-scope
+result. Workflow-only PRs run the real CI because they can change the gate
+itself; docs-only or other exempt diffs get a same-named success/skipped result
+instead of leaving branch protection stuck on an "expected" check.
 
 **Getting `docker.yml` to actually run on the scratch branch (#5072):**
 `docker.yml`'s `push` trigger is `branches: ["**"]` (minus bot branches — see

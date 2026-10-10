@@ -33,12 +33,11 @@ name: CLI pin bump
 # images for both architectures, and the backend smoke's pinned lane picks the
 # new CLI up on its next run. See src/docs/cli-pins.md.
 #
-# Credentials: `gh pr create` runs with GITHUB_TOKEN under `pull-requests:
-# write`, exactly as v5-topup.yml does (that path opens PRs in this repo
-# today). The checkout uses TOPUP_PUSH_TOKEN when set — the same optional
-# fine-grained PAT v5-topup.yml uses — and GITHUB_TOKEN otherwise; a bump
-# never touches .github/workflows/, so GITHUB_TOKEN can push it (#7959 only
-# bites on workflow files). No new secret is introduced.
+# Credentials: checkout, push and `gh pr create` all prefer TOPUP_PUSH_TOKEN
+# when set — the same optional fine-grained PAT v5-topup.yml uses — and fall
+# back to GITHUB_TOKEN otherwise. A PAT-created PR emits the normal
+# pull_request_target event for required PR-verifier checks; the fallback still
+# works but may need the held-run release step below (#11343).
 
 on:
   schedule:
@@ -241,6 +240,7 @@ jobs:
         env:
           OLD: ${{ steps.bump.outputs.OLD }}
           NEW: ${{ steps.bump.outputs.NEW }}
+          PR_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "hive-release[bot]"
@@ -256,12 +256,33 @@ jobs:
             sed 's/^/  /' "$RUNNER_TEMP/resolved.kv"
           } > "$RUNNER_TEMP/commit-msg.txt"
           git commit -s -F "$RUNNER_TEMP/commit-msg.txt"
+          # Why this commit can carry TWO Signed-off-by trailers (#11412):
+          # with TOPUP_PUSH_TOKEN set, the next step opens the PR as that
+          # PAT's owner — a human. GitHub's squash writes the landing commit
+          # with the PR author's identity but keeps this message, so a lone
+          # hive-release[bot] sign-off lands as a mismatched-signoff
+          # (a0de3f92 / #11407, c6c78c3a / #11408). Adding the PAT owner's
+          # noreply sign-off makes the squash name its own author; keeping the
+          # bot as author and first signer keeps the branch commit self-signed
+          # for the pre-merge DCO app. Without the PAT, github.token opens the
+          # PR, the squash stays bot-authored, and the monitor skips it.
+          if [ -n "$PR_TOKEN" ]; then
+            owner="$(GH_TOKEN="$PR_TOKEN" gh api user --jq '"\(.login) \(.id)"')"
+            login="${owner% *}"
+            id="${owner##* }"
+            if [ -z "$login" ] || [ -z "$id" ] || [ "$login" = "$id" ]; then
+              echo "::error::Could not resolve the TOPUP_PUSH_TOKEN owner; a PR it opens would squash to a mismatched-signoff (#11412)."
+              exit 1
+            fi
+            git commit --amend --no-edit \
+              --trailer "Signed-off-by: ${login} <${id}+${login}@users.noreply.github.com>"
+          fi
           git push --force-with-lease origin "$HEAD_BRANCH"
 
       - name: Open or refresh the bump PR
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
           OLD: ${{ steps.bump.outputs.OLD }}
           NEW: ${{ steps.bump.outputs.NEW }}
           MAJOR: ${{ steps.bump.outputs.MAJOR }}

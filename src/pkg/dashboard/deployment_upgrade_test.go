@@ -75,6 +75,8 @@ func TestDetectDeploymentFallsBackToKubernetesOnlyWithServiceAccountEvidence(t *
 	kubernetesServiceAccountNamespacePath = filepath.Join(t.TempDir(), "missing")
 	if got := srv.detectDeployment(); got.Runtime != deploymentRuntimeUnknown || got.UpgradeSupported {
 		t.Fatalf("detectDeployment without service account evidence = %+v, want unknown unsupported", got)
+	} else if !strings.Contains(got.Reason, "bin/hive-podman-update.sh reconcile migrate --rootless") || strings.Contains(got.Reason, "hive-podman-setup.sh") {
+		t.Fatalf("unknown-runtime reason = %q, want the reconcile migrate command and not setup", got.Reason)
 	}
 
 	dir := t.TempDir()
@@ -473,7 +475,7 @@ func TestPodmanSelfUpgradeWritesRequestWithoutExecutingHelper(t *testing.T) {
 					t.Fatalf("request = %+v, timestamp error=%v", payload, err)
 				}
 				st, err := os.Stat(path)
-				if err != nil || st.Mode().Perm() != 0o600 || !strings.HasSuffix(path, ".json") {
+				if err != nil || st.Mode().Perm() != 0o644 || !strings.HasSuffix(path, ".json") {
 					t.Fatalf("published request permissions/name: %v, %v", st, err)
 				}
 			}
@@ -542,6 +544,37 @@ func TestUpgradeRequestsPublishedAtomically(t *testing.T) {
 	}
 	if err := writeUpgradeRequest(filepath.Join(dir, "missing"), "ghcr.io/hivecommons/hive:abcdef1", "owner"); err == nil {
 		t.Fatal("missing directory accepted")
+	}
+}
+
+// On rootless Podman the container uid maps to a host subuid, so the host
+// drain only reads the request through the "other" permission bits (#11291).
+func TestUpgradeRequestReadableByHostDrain(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeUpgradeRequest(dir, "ghcr.io/hivecommons/hive:abcdef1", "owner"); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("published requests = %v, %v; want exactly one", paths, err)
+	}
+	info, err := os.Stat(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm() & 0o777; mode != 0o644 {
+		t.Fatalf("request mode = %#o, want 0644", mode)
+	}
+}
+
+func TestPodmanRequestInProgressDetailNamesHostBridge(t *testing.T) {
+	st := &dashboardUpgradeState{State: dashboardUpgradeStateStarted, Action: "podman-quadlet-request"}
+	attempt := upgradeAttemptFromDashboardState(st)
+	if attempt == nil || attempt.State != upgradeAttemptInProgress {
+		t.Fatalf("attempt = %+v, want in progress", attempt)
+	}
+	if !strings.Contains(attempt.Detail, "hive-upgrade.service") || strings.Contains(attempt.Detail, "hub") {
+		t.Fatalf("podman request detail = %q, want host bridge wording", attempt.Detail)
 	}
 }
 

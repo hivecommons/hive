@@ -67,6 +67,7 @@ func interceptFeedbackGitHub(t *testing.T, handler http.HandlerFunc) *feedbackGi
 		return "hub-app-token", "hub-bot"
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		http.DefaultTransport = prevTransport
 		http.DefaultClient.Transport = prevClientTransport
 		lookupHubFeedbackTokenLogin = prevLogin

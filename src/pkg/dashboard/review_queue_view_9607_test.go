@@ -52,6 +52,18 @@ func TestReviewSectionNavAndSubsectionOrder(t *testing.T) {
 	if strings.Contains(card, `data-dashboard-section="review-pipeline-section"`) {
 		t.Fatal("Review Pipeline must not remain a standalone dashboard card")
 	}
+	for _, want := range []string{
+		`<div class="review-subsection-body dash-card-body section-body" id="review-pipeline-body">`,
+		`<div class="review-subsection-body dash-card-body section-body" id="review-queue-body">`,
+		`data-arg0="review-pipeline-subsection"`,
+		`data-arg0="review-queue-subsection"`,
+		`.review-subsection-body.dash-card-body { padding: var(--sp-4); }`,
+		`.review-subsection-body > .review-queue-panel { padding: 0; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("Review subsections must share padded body chrome; missing %q", want)
+		}
+	}
 }
 
 func TestReviewQueueViewStaticWiring(t *testing.T) {

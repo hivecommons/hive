@@ -12,6 +12,7 @@ import (
 const (
 	channelImageWalkbackDepth = 50
 	channelImageNegativeTTL   = 3 * time.Minute
+	channelImageTargetTTL     = 5 * time.Minute
 )
 
 type spokeImageTagAvailability struct {
@@ -19,9 +20,24 @@ type spokeImageTagAvailability struct {
 	at     time.Time
 }
 
+type channelImageTargetKey struct {
+	branch      string
+	channel     string
+	floatingSHA string
+}
+
+type channelImageTargetCached struct {
+	target behindTarget
+	at     time.Time
+}
+
 var (
-	spokeImageTagAvailabilityMu    sync.Mutex
-	spokeImageTagAvailabilityCache = map[string]spokeImageTagAvailability{}
+	spokeImageTagAvailabilityMu       sync.Mutex
+	spokeImageTagAvailabilityCache    = map[string]spokeImageTagAvailability{}
+	channelImageTargetMu              sync.Mutex
+	channelImageTargetCache           = map[channelImageTargetKey]channelImageTargetCached{}
+	channelImageTargetInFlight        = map[channelImageTargetKey]bool{}
+	channelImageTargetRefreshDisabled bool
 )
 
 var listChannelBranchCommits = func(branch string, logger *slog.Logger) []branchSHAInfo {
@@ -129,6 +145,7 @@ func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *sl
 		target.VerificationUnavailable = true
 		return target
 	}
+
 	var best branchSHAInfo
 	bestPending := 0
 	sawFloating := false
@@ -166,4 +183,38 @@ func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *sl
 	}
 	target.VerificationUnavailable = true
 	return target
+}
+
+func channelPublishedImageTargetNonBlocking(branch, channel, floatingSHA string, logger *slog.Logger) behindTarget {
+	target := behindTarget{SHA: shortSHA(floatingSHA), Ref: ":" + channel, Channel: true, FloatingSHA: shortSHA(floatingSHA)}
+	if branch == "" || target.FloatingSHA == "" {
+		return target
+	}
+	key := channelImageTargetKey{branch: branch, channel: channel, floatingSHA: target.FloatingSHA}
+	now := time.Now()
+
+	channelImageTargetMu.Lock()
+	if cached, ok := channelImageTargetCache[key]; ok {
+		if now.Sub(cached.at) < channelImageTargetTTL {
+			channelImageTargetMu.Unlock()
+			return cached.target
+		}
+		target = cached.target
+	}
+	if !channelImageTargetRefreshDisabled && !channelImageTargetInFlight[key] {
+		channelImageTargetInFlight[key] = true
+		go refreshChannelImageTarget(key, logger)
+	}
+	channelImageTargetMu.Unlock()
+
+	target.VerificationUnavailable = true
+	return target
+}
+
+func refreshChannelImageTarget(key channelImageTargetKey, logger *slog.Logger) {
+	target := channelPublishedImageTarget(key.branch, key.channel, key.floatingSHA, logger)
+	channelImageTargetMu.Lock()
+	defer channelImageTargetMu.Unlock()
+	delete(channelImageTargetInFlight, key)
+	channelImageTargetCache[key] = channelImageTargetCached{target: target, at: time.Now()}
 }

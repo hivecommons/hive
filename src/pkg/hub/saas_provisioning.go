@@ -567,6 +567,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.logger.Info("audit: provision request created", "user", username, "org", body.Org, "repos", body.Repos)
+	s.notifyDiscordNewProvisionRequest(pr)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": provisionStatusPending})
 }

@@ -33,7 +33,7 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
-			name:   "expected name missing waits for check-run to start",
+			name:   "expected name missing no longer blocks unknown required set",
 			checks: []map[string]string{{"name": "fast", "status": "completed", "conclusion": "success"}},
 			opts: CommitCIOptions{
 				ExpectedChecks: map[string]bool{"test (rest 1/4)": true},
@@ -41,7 +41,7 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 				HeadPushedAt:   now.Add(-10 * time.Minute),
 				Now:            func() time.Time { return now },
 			},
-			want: "pending: test (rest 1/4) has not started",
+			wantGreen: true,
 		},
 		{
 			name: "all expected present and old enough is green",
@@ -71,7 +71,7 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			wantGreen: true,
 		},
 		{
-			name:   "failure still fails before fresh-head guard",
+			name:   "failure with unknown required set is left to merge endpoint after fresh-head guard",
 			checks: []map[string]string{{"name": "build-gate", "status": "completed", "conclusion": "failure"}},
 			opts: CommitCIOptions{
 				ExpectedChecks: map[string]bool{"slow": true},
@@ -79,7 +79,24 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 				HeadPushedAt:   now.Add(-time.Minute),
 				Now:            func() time.Time { return now },
 			},
-			want: "check-failure",
+			want: "pending: head pushed 1m0s ago (< min_head_age)",
+		},
+		{
+			name: "require evidence refuses empty actual-required repos with no statuses",
+			opts: CommitCIOptions{
+				RequireEvidence: true,
+			},
+			want: "ci-unverified",
+		},
+		{
+			name:   "pending check still blocks unknown required set",
+			checks: []map[string]string{{"name": "build-gate", "status": "in_progress"}},
+			opts: CommitCIOptions{
+				MinHeadAge:   3 * time.Minute,
+				HeadPushedAt: now.Add(-10 * time.Minute),
+				Now:          func() time.Time { return now },
+			},
+			want: "check-pending",
 		},
 	}
 	for _, tt := range tests {
@@ -102,6 +119,7 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			}
 			client.BaseURL = base
 
+			tt.opts.UnknownRequiredChecksServerEnforced = true
 			st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", tt.opts)
 			if err != nil {
 				t.Fatalf("EvaluateCommitCI returned error: %v", err)
@@ -271,5 +289,16 @@ func TestWorkflowIsPostMergeOnly(t *testing.T) {
 				t.Fatalf("workflowIsPostMergeOnly(%q) = %v, want %v", tt.doc, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRequiredChecksMismatchNames(t *testing.T) {
+	got := requiredChecksMismatchNames(
+		map[string]bool{"build-gate": true, "observed-legacy": true, "validate": true},
+		map[string]bool{"validate": true},
+		map[string]bool{"observed-legacy": true},
+	)
+	if len(got) != 1 || got[0] != "build-gate" {
+		t.Fatalf("requiredChecksMismatchNames = %v, want [build-gate]", got)
 	}
 }

@@ -193,8 +193,8 @@ func TestValidatePRRequestClaims_LeavesCompleteIssueClosingReference(t *testing.
 
 // TestValidatePRRequestClaims_KeepsHumanFiledBugClosingReference pins the
 // scanner/contributor PR-body contract: a fix PR keeps its closing keyword, and
-// the reporter-confirmation policy is enforced by the issue close path instead
-// of by rewriting the PR to a non-closing Refs line.
+// the reporter-confirmation policy, when explicitly opted in, is enforced by
+// the issue close path instead of by rewriting the PR to a non-closing Refs line.
 func TestValidatePRRequestClaims_KeepsHumanFiledBugClosingReference(t *testing.T) {
 	// A maintainer-filed bug: has the "bug" label, no hive attribution
 	// trailer in the body, and User.Type is "User" (not "Bot").
@@ -217,7 +217,7 @@ func TestValidatePRRequestClaims_KeepsHumanFiledBugClosingReference(t *testing.T
 		t.Fatalf("validatePRRequestClaims: %v", err)
 	}
 	if body != "Closes #6500\n\nDetails" {
-		t.Fatalf("human-filed bug PR should keep its closing keyword; issue close gate handles reporter confirmation: got %q", body)
+		t.Fatalf("human-filed bug PR should keep its closing keyword; issue close gate handles any opt-in reporter confirmation: got %q", body)
 	}
 	if title != "fix copilot check" {
 		t.Fatalf("title mutated unexpectedly: %q", title)

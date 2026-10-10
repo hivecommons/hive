@@ -516,7 +516,7 @@ func auditLogSummary(entries []AuditEntry, now time.Time) auditSummary {
 		if !ts.Before(todayStart) && !ts.After(now) {
 			summary.Today++
 		}
-		if !ts.Before(sensitiveStart) && !ts.After(now) && auditSensitiveActions[entry.Action] {
+		if !ts.Before(sensitiveStart) && !ts.After(now) && auditEntryIsSensitive(entry) {
 			summary.Sensitive24h++
 		}
 		if ts.Before(histogramStart) || !ts.Before(histogramEnd) {
@@ -528,6 +528,45 @@ func auditLogSummary(entries []AuditEntry, now time.Time) auditSummary {
 		}
 	}
 	return summary
+}
+
+func auditEntryIsSensitive(entry AuditEntry) bool {
+	return auditSensitiveActions[entry.Action]
+}
+
+func auditEntryInWindow(entry AuditEntry, since, until time.Time) bool {
+	ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+	if err != nil {
+		return false
+	}
+	ts = ts.UTC()
+	return !ts.Before(since) && !ts.After(until)
+}
+
+func auditMarkSensitiveEntries(entries []AuditEntry) {
+	for i := range entries {
+		entries[i].Sensitive = auditEntryIsSensitive(entries[i])
+	}
+}
+
+func auditSensitiveWindowEntries(entries []AuditEntry, now time.Time) []AuditEntry {
+	now = now.UTC()
+	since := now.Add(-auditSummaryHours * time.Hour)
+	filtered := make([]AuditEntry, 0)
+	for i := range entries {
+		if !auditEntryIsSensitive(entries[i]) || !auditEntryInWindow(entries[i], since, now) {
+			continue
+		}
+		entry := entries[i]
+		entry.Sensitive = true
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func auditRequestSensitiveOnly(r *http.Request) bool {
+	v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("sensitive")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
@@ -550,13 +589,23 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 			summaryEntries[i].UserName = dn
 		}
 	}
-	summary := auditLogSummary(summaryEntries, time.Now())
+	now := time.Now()
+	summary := auditLogSummary(summaryEntries, now)
+	if auditRequestSensitiveOnly(r) {
+		entries = auditSensitiveWindowEntries(summaryEntries, now)
+	} else {
+		auditMarkSensitiveEntries(entries)
+	}
+	if summary.Last != nil {
+		summary.Last.Sensitive = auditEntryIsSensitive(*summary.Last)
+	}
 	jsonResponse(w, map[string]any{
-		"entries":       entries,
-		"histogram":     summary.Histogram,
-		"sensitive_24h": summary.Sensitive24h,
-		"today":         summary.Today,
-		"last":          summary.Last,
+		"entries":                entries,
+		"histogram":              summary.Histogram,
+		"sensitive_24h":          summary.Sensitive24h,
+		"sensitive_window_hours": auditSummaryHours,
+		"today":                  summary.Today,
+		"last":                   summary.Last,
 	})
 }
 

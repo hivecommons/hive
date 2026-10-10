@@ -107,6 +107,13 @@ For push-reported clusters where the hub cannot run `kubectl`, follow the manife
 
 A push-reported entry still needs its stable identity (for example `id`, `name`, `domain`, app/forge fields), but it does not need a usable `kubeconfig_path` for hub-side reads. If node stats are absent, upgrade the spokes to a build that sends heartbeat cluster health and then check the error reason shown in the Clusters panel.
 
+Each spoke must also know its hub registry cluster ID. Hosted provisioning writes
+both `hub.cluster_id` and `HIVE_CLUSTER_ID`; manual or older hosted manifests
+must set one of them to the cluster entry ID (for example `vllm-d`). Without
+that identity, the heartbeat still proves liveness but deliberately omits
+`cluster_health`, because the spoke cannot know which cluster row it is
+authoritative for.
+
 Heartbeat node health needs read-only cluster-scoped RBAC for:
 
 - core `nodes` `get,list` (capacity, allocatable, readiness, GPU labels)

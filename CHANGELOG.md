@@ -11,6 +11,136 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.159.1)
+
+### Fixed
+
+- Keep hub Fleet page channel-image lag checks off the /api/saas/my-hives request path. (#11427)
+
+## 2026-10-10 (v5.159.0)
+
+### Added
+
+- Dashboard Projects cards now draw pull requests that carry the configured sentinel alert label (`sentinel.label`, default `sentinel-alert`) as a red pill, ahead of the held, needs-human and merge colours, and the pill legend explains that Hive will not merge them until a maintainer reviews the PR and removes the label. `/api/role` now reports `sentinel_label` to every role ([#11416](https://github.com/hivecommons/hive/issues/11416)).
+- The supersession sweep can now close superseded human-authored PRs instead of only commenting. With `supersession_sweep.close_contributor_prs: true` at ACMM L6, a PR whose claimed issue was closed by a different merged PR is closed after a grace window (`supersession_sweep.grace_period`, default `24h`) when every file it touches was also changed by the merged PR, it is `size/XS`–`size/M`, the author has no unresolved review threads, and nobody commented after the notice. Closed PRs get the `hive/superseded` label and a comment naming the superseding PR and its merge time; hive-authored superseded PRs now get the same label when closed ([#11418](https://github.com/hivecommons/hive/issues/11418)).
+- Dashboard repository cards now show a fork badge naming the upstream, whether the upstream watch is on, and when the fork was last checked ([#11433](https://github.com/hivecommons/hive/issues/11433)).
+
+### Fixed
+
+- Make the Audit Log sensitive badge open a sensitive-only view and highlight matching entries. (#11271)
+- Keep dashboard backend model discovery off the initial API path by serving cached or fallback model lists immediately and refreshing slow probes in the background.
+- Fall forward from unpublished upgrade targets, clear stale queued state, and let candidate-channel hives track published images continuously (#11422)
+- Support per-repository `auto_merge.repos.<repo>.required_checks` overrides so heterogeneous hives do not wedge repos on another repo's required CI gate.
+- Serve the hub Fleet page hives payload from a short-lived snapshot and keep compatible browser cache paints working so "Loading your hives" does not linger. (#11427)
+- Push-reported hosted spokes now receive their cluster ID, keep recent non-empty heartbeat node data over empty spoke reports, and document the vLLM-d node-health RBAC/env repair (#11428)
+- The upstream watch no longer stops a backlog pass at GitHub's 30-searches-a-minute limit: the per-item marker search now waits for the rate-limit reset (up to two minutes, bounded by the pass context) and retries instead of failing the pass and leaving the rest of the backlog for a full `upstream_watch.interval` ([#11434](https://github.com/hivecommons/hive/issues/11434)). Upstream-watch passes are also single-flight, so concurrent eval cycles (for example a dashboard settings save during a governor tick) no longer race on the pass timer or run two passes over the same fork at once ([#11435](https://github.com/hivecommons/hive/issues/11435)).
+
+## 2026-10-10 (v5.158.3)
+
+### Changed
+
+- images: bump codex 0.160.0 -> 0.162.1 (#11409)
+
+### Fixed
+
+- **Dashboard keeps repainting Projects and later sections when token burn history is sparse.** `renderTokens()` dereferenced the result of `computeHourlyBurnRates()`, which is `null` on a quiet hive (too few history points or buckets), so `render()` threw before `renderRepos()` and every later section and the error was swallowed by `refreshStatus()`. A null history now falls back to the window-average tok/hr. ([#11410](https://github.com/hivecommons/hive/issues/11410))
+- Automated CLI pin-bump PRs now squash-merge DCO-clean ([#11412](https://github.com/hivecommons/hive/issues/11412)). When `cli-pin-bump.yml` opens the PR with `TOPUP_PUSH_TOKEN`, the commit now also carries a `Signed-off-by` naming that token's owner, because GitHub's squash attributes the landing commit to the PR author; previously the lone `hive-release[bot]` sign-off landed as a mismatched-signoff on v5 (the squashes of #11407 and #11408, now waived by maintainer disposition). The pre-merge "Sign-off survives the squash" gate also recognises `hive-release@hive.kubestellar.io` and any `[bot]`-named self-signer as a bot sign-off, so this shape fails at PR time instead of slipping through when GitHub cannot resolve the author's login.
+
+## 2026-10-10 (v5.158.2)
+
+### Fixed
+
+- The `hive-open-pr` content gate no longer rejects forward-merge/sync PRs that merely edit a line already carrying an attribution or run-metadata marker on the base; a marker that is only added is still rejected (#11404).
+
+## 2026-10-10 (v5.158.1)
+
+### Fixed
+
+- Drain release-channel target refresh goroutines before hub tests restore shared HTTP and registry hooks.
+- Make hub release-channel refresh goroutines awaitable so tests cannot restore stubbed globals while a refresh is still resolving.
+
+## 2026-10-10 (v5.158.0)
+
+### Added
+
+- Centralize dashboard upgrade release-note builds through the hub cache so hosted spokes reuse one fleet-wide GitHub fetch per revision pair.
+
+### Fixed
+
+- Make self-authored auto-merge honor `needs-human` as a live hold label.
+- Make the hub pending access-request banner name the requester and hive and link directly to Permissions. (#11357)
+- Keep tabbed dashboard modal shells fixed-size while tab panels scroll internally. (#11379)
+- Anchor dashboard help-mark tooltips to the hovered trigger instead of modal-contained coordinates. (#11380)
+- Dashboard: faster initial load (defer model discovery) (#11389)
+
+## 2026-10-10 (v5.157.0)
+
+### Added
+
+- Add optional Bob session labels/prefixes for Bobalytics attribution without renaming agents (#11273).
+- feat: spoke-level backend allow/deny list (#11334)
+- Notify Discord #requests when a new hosted-hive request is filed. (#11336)
+- Add an Overview test coverage KPI tile sourced from the existing quality coverage metric.
+
+### Changed
+
+- Container base images are now pulled from the ECR Public mirror of Docker Official Images (same pinned digests) to avoid Docker Hub anonymous rate limits.
+- Dashboard on/off switches now state their value unambiguously ([#11328](https://github.com/hivecommons/hive/issues/11328)). Every shared `config-toggle-switch` shows an adjacent "On"/"Off" text label alongside the green-vs-muted track and sliding knob, has a visible keyboard focus ring, and is exposed to assistive tech as `role="switch"` with a synced `aria-checked`, following Carbon's toggle guidance while keeping Hive's existing styling.
+- Removed the Review Pipeline and Queue explanatory body blurbs so subsection controls sit directly beneath their headers. (#11345)
+
+### Fixed
+
+- fix(dashboard): unify upgrade bee orbit sizing across status and header (#11295)
+- Reduce close-on-merge GitHub API quota burn by reusing cached PR details and listed issue data. (#11324)
+- Restore the original circular dashboard card settings button with a recognisable cog glyph. (#11355)
+- Fixed the Advisory Digest dashboard subsection so its header, help affordance, collapse chrome, and empty state align with the other advisory cards.
+- Keep automerge sweeps from attempting PR merges while required checks are missing, avoid wedging deterministic merge refusals in the effects ledger, ignore sentinel notices for trusted-author eligibility, and avoid treating date-stamped branches as issue numbers.
+- Update stale automerge PR branches when GitHub reports required checks are expected so newly required contexts can run before the next merge attempt.
+- The dashboard version popover now shows why "Upgrade to `<sha>`" is disabled on a Podman hive installed before the upgrade bridge, no longer blames only the image build in its Status row, and names `bin/hive-podman-update.sh reconcile migrate` (from an up-to-date `v5` or `v6` checkout) as the fix.
+- Keep the Hub My Hives API responsive by serving cached release-channel metadata while slow GitHub/GHCR refreshes run in the background.
+- **Release-notes cache honours the injected clock** — `GET /api/version/release-notes` expired cached entries against the wall clock even when the request path was running on the test clock seam, so `pkg/dashboard` went red on every branch once real time moved an hour past the test's frozen instant. Cache lookups now use the same clock as stores and the throttle window. (#11159 follow-up)
+- Fix automerge required-check discovery for GitHub App installations without administration permission by using branch/rules fallbacks and deferring unknown required-check failures to GitHub's merge enforcement.
+- Required CI contexts now report on every PR head, including workflow-only changes that previously left branch protection waiting forever.
+- Move the upgraded release-notes banner into the dashboard top notice stack so it appears with other warnings.
+
+## 2026-10-09 (v5.156.1)
+
+### Changed
+
+- Review Pipeline and Queue now render as separately collapsible tiles inside the Review dashboard section.
+- Align dashboard section settings gears with the section help mark instead of far-right header actions.
+
+## 2026-10-09 (v5.156.0)
+
+### Added
+
+- Add a dashboard display timezone preference so absolute timestamps can use browser local time, server time, UTC, or an IANA timezone. (#11276)
+- Add an optional per-agent `bob_display_name` reporting label for bob-backed agents, exported as `HIVE_BOB_DISPLAY_NAME`, so operators can tag Bob sessions (for example with a `hive-` prefix) without renaming the agent. (#11273)
+
+### Changed
+
+- Issues now close on fix merge by default while reporter confirmation is opt-in via `hive: needs-confirmation` or `issues.reporter_confirmation` (#11119)
+- Replace the Obsidian setup button with a Knowledge Integrations modal for Obsidian and all connector types. (#11266)
+- Consolidated the dashboard Review Pipeline and Review Queue into one Review section with Pipeline before Queue and matched their inner body padding (#11267, #11280)
+
+### Fixed
+
+- Reviewer, adjudicator and ci-maintainer no longer restart mid-review: the review prompt quoted "fetch failed", which the pane poller reads as a dead network, so no PR ever received a verdict (#11244).
+- changelog-fragment-guard no longer leaves cancelled required check-runs on a PR's head SHA: label events skip the job unless the label is `no-changelog`, and only a new push cancels an in-flight run, so green PRs are no longer reported BLOCKED by GitHub (#11250).
+- Upgrade indicators in the Version details card and the top toolbar now share one bee-orbit animation, so bees are consistently sized (about a third of the hive), circle the hive without overlapping it, and no longer restart or skip on status refreshes (#11253).
+- Render compliance and UI exports in-app instead of triggering native browser download prompts (#11261)
+- Let trusted authors keep sentinel notices (#11305)
+- Fixed self-authored and trusted-author automerge to gate on required branch-protection checks instead of GitHub's aggregate merge state, with per-PR skip reasons.
+- Hive now closes fixed issues itself after merged hive/trusted PRs, and backfills previously merged fixes that GitHub left open.
+- Roll hosted spokes to the newest GHCR-published image on fast-moving branches instead of waiting indefinitely for HEAD. (#11258)
+- Close dashboard and hub modal overlays with a central Escape handler that dismisses the topmost open modal first.
+- Skip incomplete Overview KPI snapshots when recording sparkline history so transient GitHub fetch failures no longer draw false dips.
+- `hive-podman-update.sh reconcile migrate` now records `HIVE_SELF_IMAGE` and `HIVE_SELF_IMAGE_TRACKING` in `hive.env` (skipped for digest-pinned units), so registry-tracked installs no longer get a dashboard upgrade button that fails with "registry tracking is ON", and rootless migrate checks the systemd user bus first, failing before any file is written instead of leaving a half-applied migration (#11296).
+- Rootless Podman: dashboard upgrade requests are now written `0644` so the host `hive-upgrade.service` can read them (it also retries through `podman unshare`), an unreadable request is reported as such instead of a `<missing>` ref, and the dashboard no longer describes a pending Podman upgrade with hub/Deployment wording (#11291).
+- Make the configured sentinel alert label a hard block for Hive approvals and every auto-merge lane.
+- Sentinel now treats trusted Hive authors as notice-only by default, remediates stale trusted-author alert labels, and offers `sentinel.trusted_authors_block` for operators who want the blocking label on trusted PRs too.
+- The upgrade confirmation now says it upgrades the Hive, not the runtime.
+
 ## 2026-10-09 (v5.155.3)
 
 ### Security

@@ -3174,6 +3174,10 @@
        drill-down until the first poll landed.
        v6: agent verdicts carry restart-storm telemetry and reset markers. */
     var HIVES_CACHE_VERSION = 6;
+    /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
+       fields being absent, so keep accepting a recent cache instead of showing
+       the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
+    var HIVES_CACHE_MIN_READ_VERSION = 5;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -3188,7 +3192,7 @@
         var raw = window.localStorage.getItem(LS_HIVES_CACHE);
         if (!raw) return null;
         var c = JSON.parse(raw);
-        if (!c || c.version !== HIVES_CACHE_VERSION) return null;
+        if (!c || c.version > HIVES_CACHE_VERSION || c.version < HIVES_CACHE_MIN_READ_VERSION) return null;
         if (!c.savedAt || (Date.now() - c.savedAt) > HIVES_CACHE_TTL_MS) return null;
         if (!Array.isArray(c.hives) || !c.hives.length) return null;
         return c;
@@ -7206,14 +7210,17 @@
                A daily-mode hive is NOT upgrading "shortly" — saying so would be
                a lie the operator would notice hours later, so the window is
                still named on the badge. */
-            var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY;
-            var queuedLabel = queuedDaily ? 'Queued for auto-upgrade · 1pm ET' : 'Queued for auto-upgrade';
+            var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY && h.trackedChannel !== 'candidate';
+            var behindLabel = behindKnown ? ('behind by ' + behindCount) : 'behind';
+            var nextCheck = h.nextUpdateAt ? ('next check ' + nextCheckIn(h.nextUpdateAt)) : (h.nextUpdateStatus === 'candidate-continuous' ? 'next hub poll' : 'next check soon');
+            var whyNotNow = h.upgradeWhyNotNow || (queuedDaily ? 'daily schedule' : 'waiting for idle/health gates');
+            var queuedLabel = behindLabel + ' · ' + nextCheck + ' · why not now: ' + whyNotNow;
             /* The tooltip names the TARGET — SHA plus the tracked
                branch/channel label — so "queued for what?" never needs a
                second click to answer. */
             var queuedTitle = queuedDaily
               ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint + pendingImageNote + floatingLagNote + verificationNote
-              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
+              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') as soon as the hub observes a published image and the hive is idle/healthy' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
             /* REFUSED, not queued. autoUpgradeBlocked is the hub's own evaluated
                decision (upgradeCollectible false), sent by the fleet API rather
                than re-derived here — the badge must never claim an upgrade is
@@ -7820,6 +7827,60 @@
       if (mins < 60) return mins + 'm ago';
       if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
       return Math.floor(mins / 1440) + 'd ago';
+    }
+    function nextCheckIn(iso) {
+      if (!iso) return '';
+      var t = Date.parse(iso);
+      if (isNaN(t)) return '';
+      var mins = Math.max(0, Math.ceil((t - Date.now()) / 60000));
+      if (mins < 1) return 'now';
+      if (mins < 60) return 'in ' + mins + 'm';
+      if (mins < 1440) return 'in ' + Math.ceil(mins / 60) + 'h';
+      return 'in ' + Math.ceil(mins / 1440) + 'd';
+    }
+    function accessRequestAge(iso) {
+      var age = stablePromotionAge(iso);
+      return age ? age : '';
+    }
+    function accessRequestRoleLabel(role) {
+      role = String(role || 'read');
+      if (role === 'read-write') return 'read-write';
+      if (role === 'merger') return 'merger';
+      if (role === 'owner') return 'owner';
+      return 'read';
+    }
+    function accessPermissionsHref(hiveId) {
+      return '/dashboard?manage_access=' + encodeURIComponent(hiveId || '');
+    }
+    function accessPermissionsLink(h) {
+      var id = h && h.id ? String(h.id) : '';
+      if (!id) return '';
+      return '<strong><a class="dash-link" href="' + escAttr(accessPermissionsHref(id)) + '" onclick="openAccessModal(' + escAttr(jsArg(id)) + ',' + escAttr(jsArg((h && h.dashboardUrl) || '')) + ');return false">Open Permissions ↗</a></strong>';
+    }
+    function pendingBannerHiveLink(h) {
+      var label = hiveLabel(h);
+      var text = label.line2 || label.line1 || h.name || h.id || 'this hive';
+      return '<strong><a class="dash-link" href="#" onclick="jumpToHiveRow(' + escAttr(jsArg(h.id || '')) + ',' + escAttr(jsArg(text)) + ');return false">' + esc(text) + '</a></strong>';
+    }
+    function pendingBannerLine(h) {
+      var reqs = h && Array.isArray(h.pending_requests) ? h.pending_requests : [];
+      var req = reqs.length ? reqs[0] : null;
+      var extra = Math.max(0, (Number(h && h.pendingRequestCount) || reqs.length || 0) - (req ? 1 : 0));
+      var hiveLink = pendingBannerHiveLink(h || {});
+      var permissions = accessPermissionsLink(h || {});
+      if (!req) {
+        var count = Number(h && h.pendingRequestCount) || 0;
+        return count + ' pending access request' + (count === 1 ? '' : 's') + ' for ' + hiveLink + (permissions ? ' — ' + permissions : '');
+      }
+      var rawUser = String(req.username || '');
+      var user = String(req.display_label || rawUser || 'Someone');
+      var role = accessRequestRoleLabel(req.role);
+      var when = accessRequestAge(req.requested_at);
+      var more = extra > 0 ? ' (and ' + extra + ' more)' : '';
+      return '<strong>' + esc(user) + '</strong>' +
+        (rawUser && rawUser !== user ? ' <span class="text-muted" title="Auth key">' + esc(rawUser) + '</span>' : '') +
+        ' requested <strong>' + esc(role) + '</strong> access to ' + hiveLink +
+        (when ? ' ' + esc(when) : '') + more + (permissions ? ' — ' + permissions : '');
     }
     function stablePromotionControlHTML(ct) {
       var st = _stablePromotion || {auto_promote: true, soak_hours: 24};
@@ -8516,10 +8577,15 @@
       var pending = (hives || []).filter(function(h) { return (roleAtLeast(h.role, 'read-write')) && h.pendingRequestCount > 0; });
       if (!pending.length) return;
       var total = pending.reduce(function(sum, h) { return sum + h.pendingRequestCount; }, 0);
+      var shown = pending.slice(0, 5);
+      var more = pending.length - shown.length;
       var banner = document.createElement('div');
       banner.id = 'pending-banner';
-      banner.style.cssText = 'background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:center;gap:10px';
-      banner.innerHTML = '<span style="font-size:1.1rem">📬</span><span style="font-size:0.85rem;color:var(--text)">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '. Open <strong>Permissions</strong> on each hive to approve or deny.</span>';
+      banner.style.cssText = 'background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:flex-start;gap:10px';
+      banner.innerHTML = '<span style="font-size:1.1rem">📬</span><span style="font-size:0.85rem;color:var(--text);line-height:1.55">' +
+        shown.map(pendingBannerLine).join('<br>') +
+        (more > 0 ? '<br><span class="text-muted">and ' + more + ' more hive' + (more === 1 ? '' : 's') + ' with pending access requests</span>' : '') +
+        '<br><span class="text-muted">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '.</span></span>';
       var container = document.getElementById('hives-container');
       container.parentNode.insertBefore(banner, container);
     }

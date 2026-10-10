@@ -54,6 +54,7 @@ func seedStablePromotionChannels(t *testing.T) {
 		}}
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		ghcrTagGeneration = origGen
 		stablePromotionFetchRuns = origRuns
 	})
@@ -119,7 +120,7 @@ func TestStablePromotionMaintainedSummaryKeepsLaggingCandidateHives(t *testing.T
 		}
 		return origGen(repo, tag, logger)
 	}
-	t.Cleanup(func() { ghcrTagGeneration = origGen })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagGeneration = origGen })
 	s := newHubServerForTest(t, withHubIdentity("hubsha", "v5"))
 	s.registry.Hives = []RegistryEntry{{
 		ID:            "lagging-hive",
@@ -214,6 +215,7 @@ func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testi
 		}
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		stablePromotionFetchRuns = origRuns
 		ghcrTagDigest = origDigest
 		ghcrTagGeneration = origGen

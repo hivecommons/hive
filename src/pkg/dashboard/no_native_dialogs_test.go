@@ -28,7 +28,7 @@ func TestNoNativeBrowserDialogsRatchet(t *testing.T) {
 }
 
 func TestNoForcedBrowserDownloadsRatchet(t *testing.T) {
-	forced := regexp.MustCompile(`(?i)(?:\.\s*download\s*=|<[^>]*\sdownload(?:\s*=|[\s>]))`)
+	forced := regexp.MustCompile(`(?i)(?:\.\s*download\s*=|<[^>]*\sdownload(?:\s*=|[\s>])|createObjectURL\s*\()`)
 	var offenders []string
 	for name, body := range servedUIFiles(t) {
 		for i, line := range strings.Split(body, "\n") {

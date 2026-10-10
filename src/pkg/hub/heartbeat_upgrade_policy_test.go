@@ -195,8 +195,8 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 		t.Errorf("NextUpdateAt %q is not RFC3339: %v", got.NextUpdateAt, err)
 	}
 
-	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" || got.NextUpdateStatus != "" {
-		t.Errorf("candidate hive NextUpdate = %q/%q, want empty — candidate moves on every green build", got.NextUpdateAt, got.NextUpdateStatus)
+	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" || got.NextUpdateStatus != "candidate-continuous" {
+		t.Errorf("candidate hive NextUpdate = %q/%q, want empty/candidate-continuous — candidate moves on every green build", got.NextUpdateAt, got.NextUpdateStatus)
 	}
 
 	if err := saveStablePromotionState(StablePromotionState{AutoPromote: false, UpdatedBy: hubAdminUsername}); err != nil {
@@ -245,7 +245,10 @@ func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	origGen, origRuns, origDigest := ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest
-	defer func() { ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest = origGen, origRuns, origDigest }()
+	defer func() {
+		waitChannelTargetRefreshes(t)
+		ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest = origGen, origRuns, origDigest
+	}()
 	resetStablePromotionCaches()
 	t.Cleanup(resetStablePromotionCaches)
 

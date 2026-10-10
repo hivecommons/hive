@@ -148,9 +148,14 @@ const channelDigestTTL = 5 * time.Minute
 const channelResolveTimeout = 8 * time.Second
 
 var (
-	channelTargetMu       sync.RWMutex
-	channelTargetCache    []ChannelTarget
-	channelTargetCachedAt time.Time
+	channelTargetMu              sync.RWMutex
+	channelTargetCache           []ChannelTarget
+	channelTargetCachedAt        time.Time
+	channelTargetRefreshInFlight bool
+	// Tests disable request-triggered background refreshes by default so a
+	// resolver cannot outlive the test that stubbed package-level hooks.
+	channelTargetRefreshDisabled bool
+	channelTargetRefreshWG       sync.WaitGroup
 )
 
 // ghcrTagDigest returns the registry digest that repo:tag currently resolves
@@ -325,6 +330,87 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 	channelTargetCachedAt = time.Now()
 	channelTargetMu.Unlock()
 	return append([]ChannelTarget(nil), fresh...)
+}
+
+func channelTargetPlaceholders() []ChannelTarget {
+	out := make([]ChannelTarget, 0, len(releaseChannels))
+	for _, ch := range releaseChannels {
+		out = append(out, ChannelTarget{Channel: ch})
+	}
+	return out
+}
+
+func cacheResolvedChannelTargets(fresh []ChannelTarget) bool {
+	resolvedAny := false
+	for _, t := range fresh {
+		if t.Digest != "" {
+			resolvedAny = true
+			break
+		}
+	}
+	if !resolvedAny {
+		return false
+	}
+	channelTargetMu.Lock()
+	channelTargetCache = fresh
+	channelTargetCachedAt = time.Now()
+	channelTargetMu.Unlock()
+	return true
+}
+
+func refreshChannelTargetsAsync(branchSHAs map[string]string, logger *slog.Logger) {
+	shas := make(map[string]string, len(branchSHAs))
+	for k, v := range branchSHAs {
+		shas[k] = v
+	}
+	channelTargetMu.Lock()
+	if channelTargetRefreshDisabled || channelTargetRefreshInFlight {
+		channelTargetMu.Unlock()
+		return
+	}
+	channelTargetRefreshInFlight = true
+	channelTargetRefreshWG.Add(1)
+	channelTargetMu.Unlock()
+
+	go func() {
+		defer channelTargetRefreshWG.Done()
+		defer func() {
+			channelTargetMu.Lock()
+			channelTargetRefreshInFlight = false
+			channelTargetMu.Unlock()
+		}()
+		fresh := resolveChannelTargets(shas, logger)
+		if !cacheResolvedChannelTargets(fresh) {
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Warn("channel resolve: async refresh resolved no images — keeping previous channel targets")
+		}
+	}()
+}
+
+func waitForChannelTargetRefreshes() {
+	channelTargetRefreshWG.Wait()
+}
+
+// getChannelTargetsNonBlocking returns the cached channel association without
+// waiting on GHCR or GitHub. If the cache is cold or stale it kicks a single
+// background refresh and returns either the stale answer or placeholder rows.
+// Request handlers use this path so an external registry/API stall cannot hang
+// the authenticated My Hives JSON response.
+func getChannelTargetsNonBlocking(branchSHAs map[string]string, logger *slog.Logger) []ChannelTarget {
+	channelTargetMu.RLock()
+	cached := append([]ChannelTarget(nil), channelTargetCache...)
+	fresh := channelTargetCache != nil && time.Since(channelTargetCachedAt) < channelDigestTTL
+	channelTargetMu.RUnlock()
+	if fresh {
+		return cached
+	}
+	refreshChannelTargetsAsync(branchSHAs, logger)
+	if len(cached) > 0 {
+		return cached
+	}
+	return channelTargetPlaceholders()
 }
 
 // peekChannelTargets returns the last resolved channel→image association

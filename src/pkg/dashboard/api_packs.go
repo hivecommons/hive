@@ -194,8 +194,16 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// unconditional replace-on-diff here silently reverted the
 			// operator's choice on the next pod restart — repeatedly, which is
 			// exactly the reported "they always come back".
-			if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
-				existing.Model = pa.Model
+			// A pack model names a model of the pack's backend; when the
+			// spoke's backends list replaced that backend (#11310) the model is
+			// not seeded, so the replacement backend launches its own default.
+			packBackend, backendReplaced := s.packAgentBackend(pa)
+			packModel := pa.Model
+			if backendReplaced {
+				packModel = ""
+			}
+			if packModel != "" && existing.Model != packModel && !existing.ModelIsOperatorOwned() {
+				existing.Model = packModel
 				existing.ModelOwner = config.FieldOwnerPack
 				changed = true
 			}
@@ -246,10 +254,23 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
-			// pack must not stomp a user's choice.
-			if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
-				existing.Backend = pa.Backend
+			// pack must not stomp a user's choice. The spoke's backends
+			// allow/deny list (#11310) replaces a denied pack backend, and moves
+			// a still pack-owned agent off a backend that has since been denied.
+			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
+				existing.Backend = packBackend
 				existing.BackendOwner = config.FieldOwnerPack
+				if backendReplaced && !existing.ModelIsOperatorOwned() {
+					existing.Model = ""
+				}
+				changed = true
+			} else if existing.Backend != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
+				s.logger.Info("moving pack-owned agent off backend denied by spoke backends config", "agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
+				existing.Backend = packBackend
+				existing.BackendOwner = config.FieldOwnerPack
+				if !existing.ModelIsOperatorOwned() {
+					existing.Model = ""
+				}
 				changed = true
 			}
 
@@ -323,9 +344,14 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			v := *pa.Converse
 			converse = &v
 		}
+		packBackend, backendReplaced := s.packAgentBackend(pa)
+		packModel := pa.Model
+		if backendReplaced {
+			packModel = ""
+		}
 		agentCfg := config.AgentConfig{
-			Backend: pa.Backend,
-			Model:   pa.Model,
+			Backend: packBackend,
+			Model:   packModel,
 			// A freshly created agent's model/backend come from the pack, so
 			// the pack owns them until an operator overrides in the grid.
 			ModelOwner:   config.FieldOwnerPack,
@@ -1026,4 +1052,15 @@ func (s *Server) ensureCPUTier(level int) {
 	if patched {
 		s.AuditLog("system", "cpu_tier_grow", auditDetail("level", strconv.Itoa(level)), "")
 	}
+}
+
+// packAgentBackend is the backend a pack agent is placed on: the pack's own
+// choice, unless the spoke's backends allow/deny list (#11310) disallows it,
+// in which case the list's fallback ("" = hive default) is used instead and
+// replaced reports true.
+func (s *Server) packAgentBackend(pa config.PackAgent) (backend string, replaced bool) {
+	if s.deps.Config.BackendAllowed(pa.Backend) {
+		return pa.Backend, false
+	}
+	return s.deps.Config.Backends.Fallback(), true
 }
