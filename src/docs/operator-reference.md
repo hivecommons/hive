@@ -298,6 +298,34 @@ calls stay within 25% of the App's hourly REST allowance — a 45-repo hive on a
 fixed 10s tick used to exceed the whole allowance on list calls alone and
 starve every other GitHub caller, including the agents.
 
+## Supersession sweep (`supersession_sweep`)
+
+The supersession sweep (`src/pkg/github/pr_supersession_sweep.go`) looks for
+open PRs whose claimed issue is already closed by a *different* merged PR. It
+keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
+
+- **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
+  touch was also touched by the merged PR and they claim no other open issue;
+  below L6 they get `needs-human`.
+- **Human-authored PRs** only get the notice unless
+  `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).
+  With it set, the sweep closes the PR only when **all** of these hold: every
+  file it touches was also touched by the merged PR; it claims no other open
+  issue; it is `size/XS`–`size/M` (or under 100 changed lines when unlabeled);
+  the author has no unresolved review threads; review threads could be read;
+  and `grace_period` has passed since the notice announced the window with no
+  human (author or maintainer) comment or review comment after the notice. Any
+  doubt keeps the PR open and rewrites the notice to say why.
+- A closed PR gets the `hive/superseded` label and one
+  `<!-- hive:pr-supersession-autoclose -->` comment naming the merged PR and
+  its merge time, with "reopen if that's wrong". Reopening and commenting
+  keeps it open on the next pass.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
+| `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps

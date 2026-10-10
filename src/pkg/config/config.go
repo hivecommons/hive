@@ -153,6 +153,9 @@ type Config struct {
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
 	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
+	// SupersessionSweep tunes the superseded-PR sweep. Closing human-authored
+	// PRs is opt-in (hivecommons/hive#11418); the default only comments.
+	SupersessionSweep SupersessionSweepConfig `yaml:"supersession_sweep,omitempty" json:"supersession_sweep,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
@@ -8033,6 +8036,26 @@ type DuplicateSweepConfig struct {
 	// to accounts whose login ends in "[bot]". A bot series gets one summary
 	// comment on the newest PR instead of one comment per PR.
 	BotAuthors []string `yaml:"bot_authors,omitempty" json:"bot_authors,omitempty"`
+}
+
+// SupersessionSweepConfig tunes the supersession sweep
+// (github.SweepSupersededOpenPRs), which finds open PRs whose claimed issue was
+// already closed by a different merged PR (hivecommons/hive#11418).
+//
+// Hive-authored PRs are closed at ACMM L6 regardless of this block. A
+// human-authored PR is only ever commented on unless CloseContributorPRs is
+// set; with it set (and the repo at L6) the sweep closes the PR once every
+// file it touches was also touched by the merged PR, it is size/XS–size/M,
+// the author has no unresolved review threads, and GracePeriod has passed
+// since the notice with no human reply.
+type SupersessionSweepConfig struct {
+	// CloseContributorPRs authorizes closing superseded human-authored PRs
+	// after the grace window. Default off.
+	CloseContributorPRs bool `yaml:"close_contributor_prs,omitempty" json:"close_contributor_prs,omitempty"`
+	// GracePeriod is how long a human-authored PR stays open after the
+	// supersession notice. Non-positive means
+	// github.DefaultSupersessionGracePeriod (24h).
+	GracePeriod time.Duration `yaml:"grace_period,omitempty" json:"grace_period,omitempty"`
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).
