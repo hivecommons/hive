@@ -62,6 +62,7 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 		return time.Time{}, fmt.Errorf("commit date not stubbed in this test")
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
 		ghcrTagGeneration = origGen
@@ -89,6 +90,7 @@ func stubChannelCommitDates(t *testing.T, by map[string]time.Time) {
 		return d, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitDate = orig
 		resetChannelCommitDateCache()
 	})
@@ -131,6 +133,7 @@ func stubChannelDistances(t *testing.T, by map[channelDistanceKey]channelDistanc
 		return d, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})
@@ -448,6 +451,7 @@ func TestGhcrTagDigestWarnsOnNonOK(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 		got := ghcrTagDigest(ghcrRepoSpoke, ReleaseChannelStable, logger)
+		waitChannelTargetRefreshes(t)
 		ghcrBase = oldBase
 		srv.Close()
 
@@ -478,7 +482,7 @@ func TestGhcrTagDigestSucceedsAndStaysQuiet(t *testing.T) {
 
 	oldBase := ghcrBase
 	ghcrBase = srv.URL
-	defer func() { ghcrBase = oldBase }()
+	defer func() { waitChannelTargetRefreshes(t); ghcrBase = oldBase }()
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))

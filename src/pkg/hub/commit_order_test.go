@@ -28,6 +28,7 @@ func resetCommitOrderState(t *testing.T) {
 	commitOrderInFlight = map[commitOrderKey]bool{}
 	commitOrderMu.Unlock()
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		commitOrderMu.Lock()
 		fetchCommitCompareStatus = origFetch
 		commitOrderCache = map[commitOrderKey]bool{}
@@ -384,7 +385,7 @@ func TestFetchCommitCompareStatusHTTP(t *testing.T) {
 			defer srv.Close()
 			oldBase := githubAPIBase
 			githubAPIBase = srv.URL
-			defer func() { githubAPIBase = oldBase }()
+			defer func() { waitChannelTargetRefreshes(t); githubAPIBase = oldBase }()
 
 			status, err := realFetchCommitCompareStatus("aaaaaaa", "bbbbbbb", slog.Default())
 			if tc.wantErr {

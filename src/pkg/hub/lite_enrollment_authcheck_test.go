@@ -62,7 +62,7 @@ func swapDefaultTransport(t *testing.T, srv *httptest.Server) {
 	}
 	prev := http.DefaultTransport
 	http.DefaultTransport = &defaultTransportRewrite{target: target, next: prev}
-	t.Cleanup(func() { http.DefaultTransport = prev })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); http.DefaultTransport = prev })
 }
 
 // repoAccessServer records the last request and answers with the given
