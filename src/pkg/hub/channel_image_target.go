@@ -11,6 +11,7 @@ import (
 
 const (
 	channelImageWalkbackDepth = 50
+	channelBranchCommitsTTL   = 45 * time.Second
 	channelImageNegativeTTL   = 3 * time.Minute
 	channelImageTargetTTL     = 5 * time.Minute
 )
@@ -31,6 +32,16 @@ type channelImageTargetCached struct {
 	at     time.Time
 }
 
+type channelBranchCommitsCached struct {
+	commits []branchSHAInfo
+	at      time.Time
+}
+
+type channelBranchCommitsCall struct {
+	done    chan struct{}
+	commits []branchSHAInfo
+}
+
 var (
 	spokeImageTagAvailabilityMu       sync.Mutex
 	spokeImageTagAvailabilityCache    = map[string]spokeImageTagAvailability{}
@@ -38,13 +49,67 @@ var (
 	channelImageTargetCache           = map[channelImageTargetKey]channelImageTargetCached{}
 	channelImageTargetInFlight        = map[channelImageTargetKey]bool{}
 	channelImageTargetRefreshDisabled bool
+
+	channelBranchCommitsMu       sync.Mutex
+	channelBranchCommitsCache    = map[string]channelBranchCommitsCached{}
+	channelBranchCommitsInFlight = map[string]*channelBranchCommitsCall{}
 )
 
-var listChannelBranchCommits = func(branch string, logger *slog.Logger) []branchSHAInfo {
-	return listRecentBranchCommits(hubGitHubHTTPClient(), branch, channelImageWalkbackDepth, logger)
-}
+var (
+	listChannelBranchCommits  = cachedListChannelBranchCommits
+	fetchChannelBranchCommits = func(branch string, logger *slog.Logger) []branchSHAInfo {
+		return listRecentBranchCommits(hubGitHubHTTPClient(), branch, channelImageWalkbackDepth, logger)
+	}
+)
 
 var channelSpokeImageTagExists = cachedSpokeImageTagExists
+
+func cachedListChannelBranchCommits(branch string, logger *slog.Logger) []branchSHAInfo {
+	now := time.Now()
+	channelBranchCommitsMu.Lock()
+	if cached, ok := channelBranchCommitsCache[branch]; ok && now.Sub(cached.at) < channelBranchCommitsTTL {
+		commits := cloneBranchSHAInfos(cached.commits)
+		channelBranchCommitsMu.Unlock()
+		return commits
+	}
+	if call := channelBranchCommitsInFlight[branch]; call != nil {
+		done := call.done
+		channelBranchCommitsMu.Unlock()
+		<-done
+		return cloneBranchSHAInfos(call.commits)
+	}
+	call := &channelBranchCommitsCall{done: make(chan struct{})}
+	channelBranchCommitsInFlight[branch] = call
+	channelBranchCommitsMu.Unlock()
+
+	commits := fetchChannelBranchCommits(branch, logger)
+
+	channelBranchCommitsMu.Lock()
+	call.commits = cloneBranchSHAInfos(commits)
+	delete(channelBranchCommitsInFlight, branch)
+	if commits != nil {
+		channelBranchCommitsCache[branch] = channelBranchCommitsCached{commits: cloneBranchSHAInfos(commits), at: time.Now()}
+	}
+	close(call.done)
+	channelBranchCommitsMu.Unlock()
+	return commits
+}
+
+func cloneBranchSHAInfos(in []branchSHAInfo) []branchSHAInfo {
+	if in == nil {
+		return nil
+	}
+	out := make([]branchSHAInfo, len(in))
+	copy(out, in)
+	return out
+}
+
+func resetChannelBranchCommitsCacheForTest() {
+	channelBranchCommitsMu.Lock()
+	channelBranchCommitsCache = map[string]channelBranchCommitsCached{}
+	channelBranchCommitsInFlight = map[string]*channelBranchCommitsCall{}
+	channelBranchCommitsMu.Unlock()
+}
 
 func cachedSpokeImageTagExists(tag string, logger *slog.Logger) (exists bool, verified bool) {
 	tag = shortSHA(tag)
