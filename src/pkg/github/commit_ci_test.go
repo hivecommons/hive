@@ -82,6 +82,13 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
+			name: "require evidence refuses empty actual-required repos with no statuses",
+			opts: CommitCIOptions{
+				RequireEvidence: true,
+			},
+			want: "ci-unverified",
+		},
+		{
 			name:   "pending check still blocks unknown required set",
 			checks: []map[string]string{{"name": "build-gate", "status": "in_progress"}},
 			opts: CommitCIOptions{
@@ -282,5 +289,16 @@ func TestWorkflowIsPostMergeOnly(t *testing.T) {
 				t.Fatalf("workflowIsPostMergeOnly(%q) = %v, want %v", tt.doc, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRequiredChecksMismatchNames(t *testing.T) {
+	got := requiredChecksMismatchNames(
+		map[string]bool{"build-gate": true, "observed-legacy": true, "validate": true},
+		map[string]bool{"validate": true},
+		map[string]bool{"observed-legacy": true},
+	)
+	if len(got) != 1 || got[0] != "build-gate" {
+		t.Fatalf("requiredChecksMismatchNames = %v, want [build-gate]", got)
 	}
 }

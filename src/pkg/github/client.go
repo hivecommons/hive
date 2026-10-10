@@ -99,10 +99,12 @@ type Client struct {
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
 	autoMergeLabel   string
-	// requiredChecks is the config-declared auto_merge.required_checks set the
+	// requiredChecks is the config-declared auto_merge.required_checks default the
 	// merge-request watcher's CI gate consults (#6173); see SetRequiredChecks.
-	requiredChecksMu sync.RWMutex
-	requiredChecks   map[string]bool
+	requiredChecksMu             sync.RWMutex
+	requiredChecks               map[string]bool
+	requiredChecksForRepo        func(repo string) (map[string]bool, bool)
+	requiredChecksMismatchWarned map[string]bool
 	// mergePolicyMu guards the merge-request watcher policy knobs below.
 	// Config reloads may replace them while a watcher tick is evaluating a
 	// request, so reads must be synchronized.

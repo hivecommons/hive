@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,8 +48,11 @@ type Options struct {
 	Logger           *slog.Logger
 	MergerAuthorizer MergerAuthorizer
 	RequiredChecks   map[string]bool
-	ApprovalDesk     hgithub.ApprovalDeskHook
-	MutationBoundary effects.Boundary
+	// RequiredChecksForRepo returns the config-declared fallback required-check
+	// set for owner/repo, including per-repo overrides.
+	RequiredChecksForRepo func(repo string) (map[string]bool, bool)
+	ApprovalDesk          hgithub.ApprovalDeskHook
+	MutationBoundary      effects.Boundary
 	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
 	// (#6258). nil installs no policy; see IntentGate for the semantics.
 	IntentGate *IntentGate
@@ -93,8 +97,9 @@ type Engine struct {
 	mergerAuthzMu sync.RWMutex
 	mergerAuthz   MergerAuthorizer
 
-	requiredChecksMu sync.RWMutex
-	requiredChecks   map[string]bool
+	requiredChecksMu      sync.RWMutex
+	requiredChecks        map[string]bool
+	requiredChecksForRepo func(repo string) (map[string]bool, bool)
 
 	approvalDesk hgithub.ApprovalDeskHook
 	mutation     effects.Boundary
@@ -132,6 +137,7 @@ func New(transport Transport, opts Options) *Engine {
 		logger:                            opts.Logger,
 		mergerAuthz:                       opts.MergerAuthorizer,
 		requiredChecks:                    opts.RequiredChecks,
+		requiredChecksForRepo:             opts.RequiredChecksForRepo,
 		approvalDesk:                      opts.ApprovalDesk,
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
@@ -452,6 +458,16 @@ func (c *Engine) SetRequiredChecks(set map[string]bool) {
 	c.requiredChecksMu.Lock()
 	defer c.requiredChecksMu.Unlock()
 	c.requiredChecks = set
+	c.requiredChecksForRepo = nil
+}
+
+func (c *Engine) SetRequiredChecksForRepo(fn func(repo string) (map[string]bool, bool)) {
+	if c == nil {
+		return
+	}
+	c.requiredChecksMu.Lock()
+	defer c.requiredChecksMu.Unlock()
+	c.requiredChecksForRepo = fn
 }
 
 // SetAutoMergeLabel updates the underlying transport label when it supports the setter.
@@ -468,15 +484,24 @@ func (c *Engine) SetAutoMergeLabel(label string) {
 // required-check set and whether one is installed. Mirrors isTrustedMerger's
 // nil-safe read pattern for c.mergerAuthz.
 func (c *Engine) configRequiredChecks() (map[string]bool, bool) {
+	return c.configRequiredChecksForRepo("")
+}
+
+func (c *Engine) configRequiredChecksForRepo(repo string) (map[string]bool, bool) {
 	if c == nil {
 		return nil, false
 	}
 	c.requiredChecksMu.RLock()
-	defer c.requiredChecksMu.RUnlock()
-	if len(c.requiredChecks) == 0 {
+	fn := c.requiredChecksForRepo
+	set := c.requiredChecks
+	c.requiredChecksMu.RUnlock()
+	if fn != nil {
+		return fn(repo)
+	}
+	if len(set) == 0 {
 		return nil, false
 	}
-	return c.requiredChecks, true
+	return set, true
 }
 
 // isTrustedMerger reports whether login may queue a merge. Fails CLOSED.
@@ -2034,8 +2059,13 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
-	configRequired, configKnown := c.configRequiredChecks()
+	configRequired, configKnown := c.configRequiredChecksForRepo(owner + "/" + repo)
 	required, requiredKnown, fromConfig, fallback, source := hgithub.RequiredStatusCheckContextsDetailedWithSource(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
+	actualRequired, actualKnown := required, requiredKnown && !fromConfig
+	positiveEvidenceGate := actualKnown && len(required) == 0
+	if positiveEvidenceGate {
+		required, requiredKnown = nil, false
+	}
 	if prNumber > 0 {
 		c.info("automerge required checks source", "repo", owner+"/"+repo, "pr", prNumber, "branch", branch, "source", source, "known", requiredKnown, "count", len(required))
 		if !requiredKnown {
@@ -2049,13 +2079,17 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 		Required:                            required,
 		RequiredKnown:                       requiredKnown,
 		RequiredKnownFromConfig:             fromConfig,
-		UnknownRequiredChecksServerEnforced: !requiredKnown,
+		UnknownRequiredChecksServerEnforced: !requiredKnown && !positiveEvidenceGate,
+		RequireEvidence:                     positiveEvidenceGate,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,
 		Now:                                 c.now,
 	})
 	if err != nil {
 		return false, st.Reason, err
+	}
+	if configKnown && actualKnown {
+		c.warnRequiredChecksMismatch(owner, repo, configRequired, actualRequired, st.Observed)
 	}
 	if !st.Green && isFreshHeadOrMissingExpectedReason(st.Reason) && prNumber > 0 {
 		c.info("automerge CI gate blocked PR", "repo", owner+"/"+repo, "pr", prNumber, "sha", sha, "reason", st.Reason)
@@ -2085,6 +2119,45 @@ func (c *Engine) warnRequiredChecksFallback(owner, repo, branch string) {
 	c.warn("branch protection required checks unavailable; falling back to configured automerge required checks", "repo", owner+"/"+repo, "branch", branch)
 }
 
+func (c *Engine) warnRequiredChecksMismatch(owner, repo string, declared, actual, observed map[string]bool) {
+	if c == nil {
+		return
+	}
+	missing := mismatchedDeclaredChecks(declared, actual, observed)
+	if len(missing) == 0 {
+		return
+	}
+	key := strings.ToLower("mismatch:" + owner + "/" + repo)
+	c.requiredChecksFallbackWarnedMu.Lock()
+	if c.requiredChecksFallbackWarned[key] {
+		c.requiredChecksFallbackWarnedMu.Unlock()
+		return
+	}
+	c.requiredChecksFallbackWarned[key] = true
+	c.requiredChecksFallbackWarnedMu.Unlock()
+	c.warn("automerge required_checks override does not match repo protection", "repo", owner+"/"+repo, "declared", sortedSetKeys(declared), "actual", sortedSetKeys(actual), "using", "actual", "mismatch", missing)
+}
+
+func mismatchedDeclaredChecks(declared, actual, observed map[string]bool) []string {
+	out := make([]string, 0)
+	for name := range declared {
+		if !actual[name] && !observed[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedSetKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // requiredStatusCheckContexts returns the set of status-check contexts /
 // check-run names that are actually required for branch, and whether that
 // set could be determined at all. It is the single source of truth
@@ -2106,7 +2179,7 @@ func (c *Engine) warnRequiredChecksFallback(owner, repo, branch string) {
 //     allowlist rather than treating "we don't know the required set" as
 //     "nothing is required" — see commitGreen's fail-closed comment.
 func (c *Engine) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
-	set, ok := c.configRequiredChecks()
+	set, ok := c.configRequiredChecksForRepo(owner + "/" + repo)
 	return hgithub.RequiredStatusCheckContexts(ctx, c.gh, owner, repo, branch, set, ok)
 }
 

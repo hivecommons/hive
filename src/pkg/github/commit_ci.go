@@ -88,6 +88,8 @@ type CommitCIState struct {
 	// exists on the SHA. A required check that has not been created yet is
 	// "expected" in GitHub's vocabulary: not failed, not passed, not present.
 	MissingRequired []string
+	// Observed names every status context/check-run name seen on the SHA.
+	Observed map[string]bool
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
@@ -105,6 +107,10 @@ type CommitCIOptions struct {
 	MinHeadAge                          time.Duration
 	HeadPushedAt                        time.Time
 	Now                                 func() time.Time
+	// RequireEvidence fails closed when no status or check-run evidence exists.
+	// It is used when GitHub reports a known empty required-check set, so Hive
+	// still requires positive CI evidence instead of treating absence as green.
+	RequireEvidence bool
 }
 
 func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (map[string]bool, bool) {
@@ -346,6 +352,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
+	st.Observed = seen
 	// block records the first blocker; later ones are still walked so that
 	// Evidence/seen are complete for the caller.
 	block := func(reason string) {
@@ -473,6 +480,10 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		if len(missingExpected) > 0 {
 			block("pending: " + missingExpected[0] + " has not started")
 		}
+	}
+
+	if st.Reason == "" && opts.RequireEvidence && st.Evidence == 0 {
+		block("ci-unverified")
 	}
 
 	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {

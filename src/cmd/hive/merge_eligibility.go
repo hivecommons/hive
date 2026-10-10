@@ -766,8 +766,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// the hold snapshot; both mean the same thing here.
 		held := cand.held || holdSet[key]
 		fullRepo := fullRepoName(pr.Repo, org)
+		prGates := gates
+		if cfg != nil {
+			if set, ok := cfg.AutoMerge.RequiredCheckSetForRepo(fullRepo); ok {
+				prGates.requiredChecks = set
+			} else {
+				prGates.requiredChecks = nil
+			}
+		}
 
-		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, gates)
+		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, prGates)
 		verdicts[github.MergeVerdictKey(pr)] = verdict
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
