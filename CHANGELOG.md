@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.158.1)
+
+### Fixed
+
+- Drain release-channel target refresh goroutines before hub tests restore shared HTTP and registry hooks.
+- Make hub release-channel refresh goroutines awaitable so tests cannot restore stubbed globals while a refresh is still resolving.
+
 ## 2026-10-10 (v5.158.0)
 
 ### Added
