@@ -152,6 +152,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 
 func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	var patched bool
+	var issueDetailGets int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -176,6 +177,7 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 				"base": map[string]any{"repo": map[string]string{"full_name": "o/r"}},
 			})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			issueDetailGets++
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": []map[string]string{}})
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
@@ -196,5 +198,46 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	}
 	if !patched {
 		t.Fatal("backfill did not close linked issue")
+	}
+	if issueDetailGets != 1 {
+		t.Fatalf("backfill issue detail GETs = %d, want 1 from final close only", issueDetailGets)
+	}
+}
+
+func TestCloseOnMergePRLookupUsesDetailCache(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	restore := resetPRDetailCacheForTest(func() time.Time { return now }, 0)
+	defer restore()
+
+	var pullGets int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != "GET" || r.URL.Path != "/repos/o/r/pulls/42" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		pullGets++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number": 42, "title": "fix", "body": "Refs #7", "merged": true, "mergeable_state": "unknown",
+			"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
+			"user": map[string]string{"login": "hive[bot]"},
+			"head": map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
+			"base": map[string]any{"repo": map[string]string{"full_name": "o/r"}},
+		})
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv, "o", []string{"r"})
+	c.SetPRDetailTTLFunc(func() time.Duration { return time.Hour })
+	for i := 0; i < 2; i++ {
+		pr, err := c.getPullRequestForCloseOnMerge(context.Background(), "o/r", 42)
+		if err != nil {
+			t.Fatalf("iteration %d lookup failed: %v", i, err)
+		}
+		if !closeOnMergePRClaimsIssue(pr, "o/r", "o/r", 7) {
+			t.Fatalf("iteration %d cached PR lost claim metadata: %+v", i, pr)
+		}
+	}
+	if pullGets != 1 {
+		t.Fatalf("pull detail GETs = %d, want 1", pullGets)
 	}
 }

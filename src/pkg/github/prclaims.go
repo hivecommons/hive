@@ -927,7 +927,7 @@ func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr 
 	fullRepo := owner + "/" + repo
 	// Claim history only annotates who merged an already-terminal PR; bounded
 	// staleness is fine and avoids repeating the detail lookup across scans.
-	if full, ok := c.cachedPRDetailAny(fullRepo, pr.GetNumber()); ok {
+	if full, ok := c.cachedPRDetailMergedBy(fullRepo, pr.GetNumber()); ok {
 		return safeGetLogin(full.GetMergedBy())
 	}
 	full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_terminal_merged_by"), owner, repo, pr.GetNumber())
