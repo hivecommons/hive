@@ -179,9 +179,9 @@ func TestSweepTrustedAuthorAutoMergesEligibility(t *testing.T) {
 			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
 		},
 		{
-			name:        "ci red",
+			name:        "ci red without successful check evidence",
 			pr:          sweepPR{number: 7, author: "alice", mergeableState: "clean", statusState: "failure", checkStatus: "completed", checkConclusion: "failure"},
-			roleAllowed: true, permission: "write", requirePermission: true, wantMerged: true,
+			roleAllowed: true, permission: "write", requirePermission: true, wantSkipped: 1,
 		},
 		{
 			name:        "draft",
@@ -796,20 +796,20 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 		wantGreen  bool
 		wantReason string
 	}{
-		{name: "failure status is left to merge endpoint", statuses: []status{{"ci/build", "failure"}}, wantGreen: true},
-		{name: "error status is left to merge endpoint", statuses: []status{{"ci/build", "error"}}, wantGreen: true},
+		{name: "failure status without real check-run success is unverified", statuses: []status{{"ci/build", "failure"}}, wantReason: "ci-unverified"},
+		{name: "error status without real check-run success is unverified", statuses: []status{{"ci/build", "error"}}, wantReason: "ci-unverified"},
 		{name: "pending status blocks until CI completes", statuses: []status{{"ci/build", "pending"}}, wantReason: "status-pending"},
 		{name: "in-progress check blocks until CI completes", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "in_progress", ""}}, wantReason: "check-pending"},
 		{name: "queued check blocks until CI completes", checks: []check{{"build", "queued", ""}}, wantReason: "check-pending"},
-		{name: "check failure is left to merge endpoint", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "completed", "failure"}}, wantGreen: true},
-		{name: "pending meta status still blocks until CI completes", statuses: []status{{"tide", "pending"}, {"ci/build", "success"}}, checks: []check{{"tide", "in_progress", ""}, {"build", "completed", "success"}}, wantReason: "status-pending"},
-		{name: "no statuses or checks is green after mergeable gate", wantGreen: true},
+		{name: "check failure without a separate real check-run success is unverified", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "completed", "failure"}}, wantReason: "ci-unverified"},
+		{name: "pending meta status is ignored with real CI evidence", statuses: []status{{"tide", "pending"}, {"ci/build", "success"}}, checks: []check{{"tide", "in_progress", ""}, {"build", "completed", "success"}}, wantGreen: true},
+		{name: "no statuses or checks is not enough evidence", wantReason: "ci-unverified"},
 		{name: "cancelled Playwright check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Playwright", "completed", "cancelled"}}, wantGreen: true},
 		{name: "cancelled Mobile Browser Tests check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Mobile Browser Tests", "completed", "cancelled"}}, wantGreen: true},
 		{name: "cancelled chromium shard check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Test (chromium, shard 3)", "completed", "cancelled"}}, wantGreen: true},
-		{name: "in-progress chromium shard blocks until CI completes", checks: []check{{"build-gate", "completed", "success"}, {"Test (chromium, shard 1)", "in_progress", ""}}, wantReason: "check-pending"},
-		{name: "cancelled build-gate is left to merge endpoint", checks: []check{{"build-gate", "completed", "cancelled"}}, wantGreen: true},
-		{name: "failing build-gate is left to merge endpoint alongside cancelled Playwright", checks: []check{{"build-gate", "completed", "failure"}, {"Playwright", "completed", "cancelled"}}, wantGreen: true},
+		{name: "in-progress chromium shard is ignored with green build-gate", checks: []check{{"build-gate", "completed", "success"}, {"Test (chromium, shard 1)", "in_progress", ""}}, wantGreen: true},
+		{name: "cancelled build-gate without real check-run success is unverified", checks: []check{{"build-gate", "completed", "cancelled"}}, wantReason: "ci-unverified"},
+		{name: "failing build-gate plus cancelled Playwright without real check-run success is unverified", checks: []check{{"build-gate", "completed", "failure"}, {"Playwright", "completed", "cancelled"}}, wantReason: "ci-unverified"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1194,6 +1194,15 @@ func TestCommitGreenRequiredChecksOnly(t *testing.T) {
 			wantReason: "required-check-failing:build-gate",
 		},
 		{
+			name:             "required DCO check failure still blocks",
+			requiredContexts: []string{"DCO"},
+			checks: []struct{ name, status, conclusion string }{
+				{"DCO", "completed", "action_required"},
+				{"dco", "completed", "success"},
+			},
+			wantReason: "required-check-failing:DCO",
+		},
+		{
 			name:             "non-required failing status context never blocks",
 			requiredContexts: []string{"build-gate"},
 			statuses: []struct{ context, state string }{
@@ -1295,12 +1304,12 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 			wantReason: "check-pending",
 		},
 		{
-			name:           "unprotected branch (no required checks) is a known empty set, everything ignorable",
+			name:           "unprotected branch with no real successful CI is unverified",
 			protectionCode: 0,
 			checks: []struct{ name, status, conclusion string }{
 				{"anything", "completed", "failure"},
 			},
-			wantGreen: true,
+			wantReason: "ci-unverified",
 		},
 	}
 	for _, tt := range tests {
@@ -1320,6 +1329,65 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 					json.NewEncoder(w).Encode([]any{})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
 					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+					runs := []map[string]string{}
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+					}
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+			if err != nil {
+				t.Fatalf("commitGreen returned error: %v", err)
+			}
+			if green != tt.wantGreen || reason != tt.wantReason {
+				t.Fatalf("commitGreen = (%v,%q), want (%v,%q)", green, reason, tt.wantGreen, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestCommitGreenUnprotectedBaseIgnoresMetaWithEvidence(t *testing.T) {
+	tests := []struct {
+		name       string
+		checks     []struct{ name, status, conclusion string }
+		wantGreen  bool
+		wantReason string
+	}{
+		{
+			name: "tide and DCO do not block real green CI",
+			checks: []struct{ name, status, conclusion string }{
+				{"tide", "in_progress", ""},
+				{"DCO", "completed", "action_required"},
+				{"dco", "completed", "success"},
+				{"build", "completed", "success"},
+			},
+			wantGreen: true,
+		},
+		{
+			name: "metadata alone is zero CI evidence",
+			checks: []struct{ name, status, conclusion string }{
+				{"tide", "in_progress", ""},
+				{"DCO", "completed", "action_required"},
+				{"dco", "completed", "success"},
+			},
+			wantReason: "ci-unverified",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+					w.WriteHeader(http.StatusNotFound)
+					json.NewEncoder(w).Encode(map[string]any{"message": "Branch not protected"})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+					json.NewEncoder(w).Encode(map[string]any{"state": "pending", "total_count": 1, "statuses": []map[string]string{{"context": "tide", "state": "pending"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
 					runs := []map[string]string{}
 					for _, c := range tt.checks {

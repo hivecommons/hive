@@ -2234,7 +2234,7 @@ func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owne
 	configRequired, configKnown := c.configRequiredChecksForRepo(owner + "/" + repo)
 	required, requiredKnown, fromConfig, fallback, source := hgithub.RequiredStatusCheckContextsDetailedWithSource(ctx, c.gh, owner, repo, branch, configRequired, configKnown)
 	actualRequired, actualKnown := required, requiredKnown && !fromConfig
-	positiveEvidenceGate := actualKnown && len(required) == 0
+	positiveEvidenceGate := requiredKnown && len(required) == 0
 	if positiveEvidenceGate {
 		required, requiredKnown = nil, false
 	}
@@ -2252,13 +2252,16 @@ func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owne
 		RequiredKnown:                       requiredKnown,
 		RequiredKnownFromConfig:             fromConfig,
 		UnknownRequiredChecksServerEnforced: serverEnforceUnknown && !requiredKnown,
-		RequireEvidence:                     positiveEvidenceGate,
+		RequireEvidence:                     !requiredKnown,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,
 		Now:                                 c.now,
 	})
 	if err != nil {
 		return false, st.Reason, err
+	}
+	if prNumber > 0 && len(st.IgnoredMetaContexts) > 0 {
+		c.info("automerge ignoring meta contexts on unprotected base", "pr", prNumber, "contexts", st.IgnoredMetaContexts)
 	}
 	if configKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, repo, configRequired, actualRequired, st.Observed)
