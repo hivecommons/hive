@@ -7821,6 +7821,50 @@
       if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
       return Math.floor(mins / 1440) + 'd ago';
     }
+    function accessRequestAge(iso) {
+      var age = stablePromotionAge(iso);
+      return age ? age : '';
+    }
+    function accessRequestRoleLabel(role) {
+      role = String(role || 'read');
+      if (role === 'read-write') return 'read-write';
+      if (role === 'merger') return 'merger';
+      if (role === 'owner') return 'owner';
+      return 'read';
+    }
+    function accessPermissionsHref(hiveId) {
+      return '/dashboard?manage_access=' + encodeURIComponent(hiveId || '');
+    }
+    function accessPermissionsLink(h) {
+      var id = h && h.id ? String(h.id) : '';
+      if (!id) return '';
+      return '<strong><a class="dash-link" href="' + escAttr(accessPermissionsHref(id)) + '" onclick="openAccessModal(' + escAttr(jsArg(id)) + ',' + escAttr(jsArg((h && h.dashboardUrl) || '')) + ');return false">Open Permissions ↗</a></strong>';
+    }
+    function pendingBannerHiveLink(h) {
+      var label = hiveLabel(h);
+      var text = label.line2 || label.line1 || h.name || h.id || 'this hive';
+      return '<strong><a class="dash-link" href="#" onclick="jumpToHiveRow(' + escAttr(jsArg(h.id || '')) + ',' + escAttr(jsArg(text)) + ');return false">' + esc(text) + '</a></strong>';
+    }
+    function pendingBannerLine(h) {
+      var reqs = h && Array.isArray(h.pending_requests) ? h.pending_requests : [];
+      var req = reqs.length ? reqs[0] : null;
+      var extra = Math.max(0, (Number(h && h.pendingRequestCount) || reqs.length || 0) - (req ? 1 : 0));
+      var hiveLink = pendingBannerHiveLink(h || {});
+      var permissions = accessPermissionsLink(h || {});
+      if (!req) {
+        var count = Number(h && h.pendingRequestCount) || 0;
+        return count + ' pending access request' + (count === 1 ? '' : 's') + ' for ' + hiveLink + (permissions ? ' — ' + permissions : '');
+      }
+      var rawUser = String(req.username || '');
+      var user = String(req.display_label || rawUser || 'Someone');
+      var role = accessRequestRoleLabel(req.role);
+      var when = accessRequestAge(req.requested_at);
+      var more = extra > 0 ? ' (and ' + extra + ' more)' : '';
+      return '<strong>' + esc(user) + '</strong>' +
+        (rawUser && rawUser !== user ? ' <span class="text-muted" title="Auth key">' + esc(rawUser) + '</span>' : '') +
+        ' requested <strong>' + esc(role) + '</strong> access to ' + hiveLink +
+        (when ? ' ' + esc(when) : '') + more + (permissions ? ' — ' + permissions : '');
+    }
     function stablePromotionControlHTML(ct) {
       var st = _stablePromotion || {auto_promote: true, soak_hours: 24};
       var on = st.auto_promote !== false;
@@ -8516,10 +8560,15 @@
       var pending = (hives || []).filter(function(h) { return (roleAtLeast(h.role, 'read-write')) && h.pendingRequestCount > 0; });
       if (!pending.length) return;
       var total = pending.reduce(function(sum, h) { return sum + h.pendingRequestCount; }, 0);
+      var shown = pending.slice(0, 5);
+      var more = pending.length - shown.length;
       var banner = document.createElement('div');
       banner.id = 'pending-banner';
-      banner.style.cssText = 'background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:center;gap:10px';
-      banner.innerHTML = '<span style="font-size:1.1rem">📬</span><span style="font-size:0.85rem;color:var(--text)">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '. Open <strong>Permissions</strong> on each hive to approve or deny.</span>';
+      banner.style.cssText = 'background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-6);display:flex;align-items:flex-start;gap:10px';
+      banner.innerHTML = '<span style="font-size:1.1rem">📬</span><span style="font-size:0.85rem;color:var(--text);line-height:1.55">' +
+        shown.map(pendingBannerLine).join('<br>') +
+        (more > 0 ? '<br><span class="text-muted">and ' + more + ' more hive' + (more === 1 ? '' : 's') + ' with pending access requests</span>' : '') +
+        '<br><span class="text-muted">' + total + ' pending access request' + (total > 1 ? 's' : '') + ' across ' + pending.length + ' hive' + (pending.length > 1 ? 's' : '') + '.</span></span>';
       var container = document.getElementById('hives-container');
       container.parentNode.insertBefore(banner, container);
     }

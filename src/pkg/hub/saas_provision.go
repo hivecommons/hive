@@ -539,6 +539,8 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 type PendingAccessRequest struct {
 	Username    string `json:"username"`
 	RequestedAt string `json:"requested_at"`
+	Role        string `json:"role,omitempty"`
+	HiveID      string `json:"hive_id,omitempty"`
 	// DisplayLabel is the human-facing name resolved at serve time for opaque
 	// OIDC identities. Username remains the raw auth key used by approve/deny.
 	DisplayLabel string `json:"display_label,omitempty"`
