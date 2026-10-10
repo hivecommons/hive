@@ -23067,8 +23067,8 @@ function burnAreaChart() {
       var endsText = 'grace window end unknown';
       if (ends && !isNaN(ends.getTime())) {
         endsText = ends.getTime() <= Date.now()
-          ? 'grace window ended ' + esc(ends.toLocaleString()) + '; closes on the next sweep'
-          : 'auto-closes ' + esc(ends.toLocaleString()) + ' unless someone replies';
+          ? 'grace window ended ' + esc(formatDashboardDateTime(ends)) + '; closes on the next sweep'
+          : 'auto-closes ' + esc(formatDashboardDateTime(ends)) + ' unless someone replies';
       }
       var actions = '';
       if (e.repo && e.number && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
