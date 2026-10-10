@@ -24009,6 +24009,276 @@
         }
       }
     },
+    "/api/config/agent/{name}/variables": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List one agent's variables and inherited hive-level variables",
+        "description": "Returns the agent's own ${VAR} definitions plus the hive-level variables it inherits (read-only here; edit those on the hive Variables tab). Never returns values - only name, type, scope and a non-secret source hint. Inherited variables the agent redefines are flagged overridden.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent variables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "variables": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "inherited": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string"
+                              },
+                              "scope": {
+                                "type": "string"
+                              },
+                              "source": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "overridden": {
+                                "type": "boolean",
+                                "description": "True when the agent defines a variable of the same name; the agent's definition wins in its kick."
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "exec_enabled": {
+                      "type": "boolean"
+                    },
+                    "http_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found"
+          },
+          "500": {
+            "description": "Config not loaded"
+          }
+        }
+      }
+    },
+    "/api/config/agent/{name}/variables/{var}": {
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Create or update a per-agent variable",
+        "description": "Creates/updates a single static or env variable on one agent (script/http are seed-only and rejected with 403). Rejects static values that look like secrets. Persisted via the dashboard config overlay. Requires owner role.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name"
+          },
+          {
+            "name": "var",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "description": "Variable name"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "static",
+                      "env"
+                    ]
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "",
+                      "template",
+                      "config",
+                      "both"
+                    ]
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "env": {
+                    "type": "string"
+                  },
+                  "default": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "saved"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name/type/scope, or value looks like a secret"
+          },
+          "403": {
+            "description": "Requires owner role, or script/http type"
+          },
+          "404": {
+            "description": "Agent not found"
+          },
+          "500": {
+            "description": "Config not loaded or save failed"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Delete a per-agent variable",
+        "description": "Removes one variable defined on the agent itself. Inherited hive-level variables are not deletable here (404); they belong to the hive Variables tab. Requires owner role.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name"
+          },
+          {
+            "name": "var",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "description": "Variable name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "deleted"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "404": {
+            "description": "Agent or variable not found"
+          },
+          "500": {
+            "description": "Config not loaded or save failed"
+          }
+        }
+      }
+    },
     "/api/cost": {
       "get": {
         "tags": [
