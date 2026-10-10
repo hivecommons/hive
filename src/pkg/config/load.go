@@ -541,6 +541,58 @@ func (c *Config) ResolveRegistry(logger *slog.Logger) *resolve.Registry {
 	return resolve.Build(specs, pol, logger)
 }
 
+// AgentVarTypeAllowed reports whether a per-agent variable of the given type is
+// honoured. Only static and env (and the empty type, which infers one of the
+// two) are: script/http stay hive-level and seed-only.
+func AgentVarTypeAllowed(typ string) bool {
+	switch typ {
+	case "", "static", "env":
+		return true
+	}
+	return false
+}
+
+// EffectiveVariableDefs returns the variable definitions that apply to
+// agentName's kick prompt: the hive-level variables.defs with the agent's own
+// `variables:` merged over them (agent wins on a name clash). Per-agent defs
+// with an invalid name or a type other than static/env are ignored here even
+// if they slipped past validation, and any script/http-only fields are
+// stripped, so a per-agent entry can never introduce a code-executing or
+// network-reaching resolver. With no per-agent defs the hive-level map is
+// returned unchanged.
+func (c *Config) EffectiveVariableDefs(agentName string) map[string]VarDef {
+	ac, ok := c.Agents[agentName]
+	if !ok || len(ac.Variables) == 0 {
+		return c.Variables.Defs
+	}
+	out := make(map[string]VarDef, len(c.Variables.Defs)+len(ac.Variables))
+	for name, def := range c.Variables.Defs {
+		out[name] = def
+	}
+	for name, def := range ac.Variables {
+		if !ValidVariableName(name) || !AgentVarTypeAllowed(def.Type) {
+			continue
+		}
+		def.Command, def.URL, def.Headers = nil, "", nil
+		out[name] = def
+	}
+	return out
+}
+
+// ResolveRegistryForAgent is ResolveRegistry for one agent's kick prompt: the
+// registry is built from EffectiveVariableDefs(agentName), so per-agent
+// variables override hive-level ones. The trust policy is always the
+// hive-level (seed-only) variables.security block. An unknown agent, or one
+// with no per-agent variables, gets exactly ResolveRegistry's registry.
+func (c *Config) ResolveRegistryForAgent(agentName string, logger *slog.Logger) *resolve.Registry {
+	defs := c.EffectiveVariableDefs(agentName)
+	if len(defs) == 0 {
+		return resolve.EnvOnly()
+	}
+	specs, pol := VariablesConfig{Security: c.Variables.Security, Defs: defs}.toResolveSpecs()
+	return resolve.Build(specs, pol, logger)
+}
+
 // GitHubPromptAllowed reports whether an agent's prompt_source pointing at the
 // given "owner/repo" slug is permitted to be fetched. This mirrors the seed-only
 // gating used for exec/http resolvers: it consults c.Variables.Security, which

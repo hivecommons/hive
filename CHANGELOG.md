@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.160.0)
+
+### Added
+
+- Agents can now carry their own `${VAR}` substitutions ([#11458](https://github.com/hivecommons/hive/issues/11458), part of [#11453](https://github.com/hivecommons/hive/issues/11453)). A new per-agent `variables:` map (same entry shape as `variables.defs`, `static`/`env` only) is merged over the hive-level variables when that agent's kick prompt is built — the agent wins on a name clash — so per-repo paths or per-lane goals no longer mean duplicating a whole prompt template. The agent editor gains a **Variables** tab (backed by `GET/PUT/DELETE /api/config/agent/{name}/variables[/{var}]`) that edits the agent's own variables and shows the inherited hive-level ones read-only, flagging any the agent overrides. Like the hive-level tab it never returns values, and `script`/`http` variables and `variables.security` stay seed-only.
+
+### Changed
+
+- The quality coverage goal is now configurable: set `governor.coverage_target` (percent, 1–100, default 91) in config or on the Governor config Thresholds tab, and the quality card, ci-maintainer coverage bar, `[COVERAGE]` agent preamble, and ACMM full-autonomy coverage gate all follow it ([#11459](https://github.com/hivecommons/hive/issues/11459)).
+
+### Fixed
+
+- Ignore metadata-only tide/DCO blockers on unprotected automerge bases while still requiring real CI evidence.
+
 ## 2026-10-10 (v5.159.2)
 
 ### Changed

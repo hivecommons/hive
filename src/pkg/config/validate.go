@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -231,6 +233,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if apiCritical >= apiReserve {
 		return fmt.Errorf("github.api_critical must be less than github.api_reserve")
 	}
+	if !ValidateCoverageTarget(c.Governor.CoverageTarget) {
+		return fmt.Errorf("governor.coverage_target must be between 1 and 100 (got %d)", c.Governor.CoverageTarget)
+	}
 	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
 		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
 	}
@@ -416,6 +421,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			return err
 		}
 		if err := validateConnections(name, agent.Connections); err != nil {
+			return err
+		}
+		if err := validateAgentVariables(name, agent.Variables); err != nil {
 			return err
 		}
 		if err := validateAgentSpecRef(name, agent.AgentSpec); err != nil {
@@ -634,6 +642,44 @@ func validateConnections(agentName string, conns []ConnectionConfig) error {
 			if conn.Auth.Type == "file" && conn.Auth.File == "" {
 				return fmt.Errorf("agent %s: connections[%d]: auth.file is required when auth.type is file", agentName, i)
 			}
+		}
+	}
+	return nil
+}
+
+// variableNamePattern is the ${NAME} identifier shape a variable name must
+// have: letters, digits and underscore, not starting with a digit. The
+// dashboard's variable endpoints enforce the same shape.
+var variableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ValidVariableName reports whether name is usable as a ${NAME} variable.
+func ValidVariableName(name string) bool {
+	return variableNamePattern.MatchString(name)
+}
+
+// validateAgentVariables checks an agent's per-agent `variables:` block. Only
+// static and env variables are allowed (script/http and the security policy
+// are hive-level and seed-only), and the scope must be template or both — a
+// per-agent variable only ever feeds that agent's kick prompt, never the
+// config-load expansion, so scope "config" would silently do nothing.
+func validateAgentVariables(agentName string, vars map[string]VarDef) error {
+	names := make([]string, 0, len(vars))
+	for name := range vars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		def := vars[name]
+		if !ValidVariableName(name) {
+			return fmt.Errorf("agent %s: variables.%s: invalid name (use letters, digits, underscore; not starting with a digit)", agentName, name)
+		}
+		if !AgentVarTypeAllowed(def.Type) {
+			return fmt.Errorf("agent %s: variables.%s: type %q is not allowed per agent (only static or env; script/http are hive-level variables.defs in the seed config)", agentName, name, def.Type)
+		}
+		switch def.Scope {
+		case "", "template", "both":
+		default:
+			return fmt.Errorf("agent %s: variables.%s: scope %q is invalid for a per-agent variable (must be template or both)", agentName, name, def.Scope)
 		}
 	}
 	return nil

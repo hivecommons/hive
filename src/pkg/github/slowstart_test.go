@@ -1,6 +1,9 @@
 package github
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -139,5 +142,161 @@ func TestSlowStart_BodySniffEngagesCaution(t *testing.T) {
 	tr.state.mu.Unlock()
 	if !cautious {
 		t.Fatal("body-sniffed secondary 403 must engage the caution window")
+	}
+}
+
+func TestSlowStart_CancelledWaiterReclaimsSlot(t *testing.T) {
+	starts := make(chan time.Time, 2)
+	tr := newSlowStartTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		starts <- time.Now()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+	}))
+	tr.state.gap = 120 * time.Millisecond
+	tr.state.jitter = 0
+	tr.state.deadlineMargin = time.Millisecond
+	now := time.Now()
+	tr.state.cautiousUntil = now.Add(time.Second)
+	initialSlot := now.Add(80 * time.Millisecond)
+	tr.state.nextSlot = initialSlot
+	client := &http.Client{Transport: tr}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.test/repos/hivecommons/hive", nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		_, err = client.Do(req)
+		done <- err
+	}()
+
+	waitForSlowStartSlotClaim(t, tr.state, initialSlot)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled waiter unexpectedly reached inner transport")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for cancelled waiter")
+	}
+
+	followStart := time.Now()
+	go func() {
+		resp, err := client.Get("https://api.github.test/repos/hivecommons/hive")
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
+	}()
+	select {
+	case started := <-starts:
+		if elapsed := started.Sub(followStart); elapsed > tr.state.gap {
+			t.Fatalf("follow-on request waited %v; abandoned slot was not reclaimed", elapsed)
+		}
+	case <-time.After(tr.state.gap):
+		t.Fatal("follow-on request missed the reclaimed slot")
+	}
+}
+
+func TestSlowStart_DeadlineMissFailsFastWithoutClaimingSlot(t *testing.T) {
+	innerCalls := make(chan struct{}, 1)
+	tr := newSlowStartTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		innerCalls <- struct{}{}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+	}))
+	tr.state.gap = 100 * time.Millisecond
+	tr.state.jitter = 0
+	tr.state.deadlineMargin = 10 * time.Millisecond
+	now := time.Now()
+	tr.state.cautiousUntil = now.Add(time.Second)
+	tr.state.nextSlot = now.Add(80 * time.Millisecond)
+	wantNextSlot := tr.state.nextSlot
+
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(40*time.Millisecond))
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.test/repos/hivecommons/hive", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (&http.Client{Transport: tr}).Do(req)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got error %v, want context deadline exceeded", err)
+	}
+	tr.state.mu.Lock()
+	gotNextSlot := tr.state.nextSlot
+	tr.state.mu.Unlock()
+	if !gotNextSlot.Equal(wantNextSlot) {
+		t.Fatalf("nextSlot advanced to %v, want unchanged %v", gotNextSlot, wantNextSlot)
+	}
+	select {
+	case <-innerCalls:
+		t.Fatal("hopeless request reached inner transport")
+	default:
+	}
+}
+
+func TestSlowStart_OverCapacityDemandStillMakesProgress(t *testing.T) {
+	tr := newSlowStartTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil)), Header: make(http.Header)}, nil
+	}))
+	tr.state.gap = 20 * time.Millisecond
+	tr.state.jitter = 0
+	tr.state.deadlineMargin = time.Millisecond
+	tr.state.cautiousUntil = time.Now().Add(time.Second)
+	client := &http.Client{Transport: tr}
+
+	const requests = 20
+	var wg sync.WaitGroup
+	successes := make(chan struct{}, requests)
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.test/repos/hivecommons/hive", nil)
+			if err != nil {
+				return
+			}
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				successes <- struct{}{}
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("over-capacity demand did not drain")
+	}
+	if got := len(successes); got == 0 {
+		t.Fatal("over-capacity demand completed with zero successful paced requests")
+	}
+}
+
+func waitForSlowStartSlotClaim(t *testing.T, st *slowStartState, initialSlot time.Time) {
+	t.Helper()
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		st.mu.Lock()
+		claimed := st.nextSlot.After(initialSlot) && len(st.abandonedSlots) == 0
+		st.mu.Unlock()
+		if claimed {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for slow-start slot claim")
+		case <-time.After(time.Millisecond):
+		}
 	}
 }

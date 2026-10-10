@@ -119,6 +119,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if err := validateTools(name, agent.Tools); err != nil {
 		return err
 	}
+	if err := validateAgentVariables(name, agent.Variables); err != nil {
+		return err
+	}
 	return validateConnections(name, agent.Connections)
 }
 
