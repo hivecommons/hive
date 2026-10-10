@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.159.1)
+
+### Fixed
+
+- Keep hub Fleet page channel-image lag checks off the /api/saas/my-hives request path. (#11427)
+
 ## 2026-10-10 (v5.159.0)
 
 ### Added
