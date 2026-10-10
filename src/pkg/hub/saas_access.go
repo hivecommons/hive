@@ -572,6 +572,10 @@ type AccessRequest struct {
 	Username    string `json:"username"`
 	RequestedAt string `json:"requested_at"`
 	Status      string `json:"status"`
+	// Role is the role the requester asked for. Empty legacy records and the
+	// current request form both mean the baseline read role; approvers can still
+	// grant a higher role explicitly at approval time.
+	Role string `json:"role,omitempty"`
 	// Note is the free-text justification the requester must supply
 	// explaining why they should be granted access. Shown to the
 	// owner/approver when they review the request. May be empty on
@@ -692,6 +696,7 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 		Username:    username,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:      "pending",
+		Role:        config.RoleRead,
 		Note:        note,
 	})
 	saveAccessRequests(hiveID, reqs)
@@ -734,6 +739,8 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 			pending = append(pending, PendingAccessRequest{
 				Username:    req.Username,
 				RequestedAt: req.RequestedAt,
+				Role:        pendingAccessRequestRole(req.Role),
+				HiveID:      hiveID,
 				Note:        req.Note,
 			})
 		}
@@ -742,6 +749,13 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"requests": pending})
+}
+
+func pendingAccessRequestRole(role string) string {
+	if config.ValidRole(role) {
+		return role
+	}
+	return config.RoleRead
 }
 
 func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request) {

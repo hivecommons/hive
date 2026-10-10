@@ -37,12 +37,11 @@
 # — write the order here, not only in a comment. A blocker that cannot be
 # linked is reported in the result and does not stop the create.
 #
-# --close-on-merge appends the `hive: close-on-merge` marker to the new issue's
-# body (hivecommons/hive#10304): the filer states up front that the merged fix
-# IS the verification, so a fix PR keeps `Closes #N` and the close path accepts
-# the merge instead of waiting for reporter confirmation. Use it for code-sweep
-# findings and bugs the reporter cannot reproduce on demand. Only meaningful for
-# a create; the marker is not added twice if the body already carries it.
+# --close-on-merge appends the legacy `hive: close-on-merge` marker to the new
+# issue's body (hivecommons/hive#10304). Close-on-merge is now the default, so
+# the marker is usually redundant; it remains accepted as a bypass when a hive
+# has opted back into reporter confirmation. Only meaningful for a create; the
+# marker is not added twice if the body already carries it.
 #
 # --needs-decision parks the new issue on a maintainer decision
 # (hivecommons/hive#11215): the watcher applies the hive's configured
@@ -79,9 +78,11 @@
 # (hivecommons/hive#9587) instead of a direct `gh pr edit --add-reviewer`.
 # The watcher audits it as agent_review_requested.
 #
-# "close" routes manual issue closes through the same reporter-confirmation gate
-# as PR-request closing keywords. Human-filed bug-family issues stay open unless
-# they carry the reporter-confirmed marker or the request includes an explicit
+# "close" routes manual issue closes through the same opt-in
+# reporter-confirmation gate as merge closes. Human-filed bug-family issues
+# close by default; issues carrying `hive: needs-confirmation` (or hives with
+# reporter_confirmation enabled) stay open unless they carry the
+# reporter-confirmed marker or the request includes an explicit
 # --override-reason for legitimate duplicate/not-a-bug/reporter-requested closes.
 #
 # On success it prints the request path and returns 0. The issue/comment/close is

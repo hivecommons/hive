@@ -2099,6 +2099,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
 		TaskMCPURL:         b.taskMCPURLForAgents(),
 		TaskMCPLaunchToken: b.taskMCPLaunchTokenForAgents,
+		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
 }
@@ -2391,6 +2392,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		MergerAuthorizer:    trustedMergerFunc(b.cfg),
 		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
 		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
+		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2601,6 +2603,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
 				b.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
@@ -5799,6 +5802,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
+				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 
@@ -8875,6 +8879,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
 	}
 	if cfg != nil {
+		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
@@ -9231,6 +9236,8 @@ var (
 	claimLedger       *github.ClaimLedger
 	claimLedgerPath   = github.ClaimLedgerPath
 	claimLedgerLoader = github.LoadClaimLedger
+	closeOnMergeMu    sync.Mutex
+	closeOnMergeLast  time.Time
 )
 
 // hiveIdentity determines which PR authors count as "this hive", so only our
@@ -9270,6 +9277,58 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
+}
+
+func runCloseOnMergeSweep(ctx context.Context, cfg *config.Config, ghClient *github.Client, ledger *github.ClaimLedger, logger *slog.Logger) {
+	if cfg == nil || ghClient == nil || ledger == nil || !cfg.Issues.CloseOnMergeEnabled() {
+		return
+	}
+	opts := github.CloseOnMergeOptions{
+		Identity: hiveIdentity(cfg),
+		Logger:   logger,
+		TrustedAuthor: func(repo, login string) bool {
+			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
+			return decision.Allowed
+		},
+	}
+	results := ghClient.CloseOnMergeForLedger(ctx, ledger, opts)
+	logCloseOnMergeResults(logger, "close-on-merge ledger sweep", results)
+
+	interval := cfg.Issues.EffectiveCloseOnMergeBackfillInterval()
+	closeOnMergeMu.Lock()
+	due := closeOnMergeLast.IsZero() || time.Since(closeOnMergeLast) >= interval
+	if due {
+		closeOnMergeLast = time.Now()
+	}
+	closeOnMergeMu.Unlock()
+	if !due {
+		return
+	}
+	backfill := ghClient.CloseOnMergeBackfill(ctx, opts)
+	logCloseOnMergeResults(logger, "close-on-merge backfill sweep", backfill)
+}
+
+func logCloseOnMergeResults(logger *slog.Logger, msg string, results []github.CloseOnMergeResult) {
+	if logger == nil || len(results) == 0 {
+		return
+	}
+	var closed, awaiting, skipped, noop int
+	for _, r := range results {
+		switch r.Action {
+		case github.CloseOnMergeClosed:
+			closed++
+		case github.CloseOnMergeAwaiting:
+			awaiting++
+		case github.CloseOnMergeSkipped:
+			skipped++
+		default:
+			noop++
+		}
+	}
+	if closed > 0 || awaiting > 0 || skipped > 0 {
+		logger.Info(msg, "closed", closed, "awaiting_confirmation", awaiting, "skipped", skipped, "noop", noop)
+	}
 }
 
 // getClaimLedger lazily loads the persisted claim ledger on first use (and

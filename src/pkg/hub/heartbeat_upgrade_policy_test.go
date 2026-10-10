@@ -245,7 +245,10 @@ func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	origGen, origRuns, origDigest := ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest
-	defer func() { ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest = origGen, origRuns, origDigest }()
+	defer func() {
+		waitChannelTargetRefreshes(t)
+		ghcrTagGeneration, stablePromotionFetchRuns, ghcrTagDigest = origGen, origRuns, origDigest
+	}()
 	resetStablePromotionCaches()
 	t.Cleanup(resetStablePromotionCaches)
 

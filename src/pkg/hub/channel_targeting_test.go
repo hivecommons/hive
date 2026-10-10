@@ -39,6 +39,7 @@ func stubChannelRevisions(t *testing.T, byTag map[string]string) *int32 {
 		return byTag[tag]
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		ghcrTagRevision = orig
 		resetChannelRevisionCache(t)
 	})
@@ -356,6 +357,7 @@ func TestChannelRevisionSHARetriesAfterFailure(t *testing.T) {
 		return answer
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		ghcrTagRevision = orig
 		resetChannelRevisionCache(t)
 	})
@@ -405,7 +407,7 @@ func TestGhcrTagRevisionWalksIndexToRevisionLabel(t *testing.T) {
 
 	savedBase := ghcrBase
 	ghcrBase = srv.URL
-	t.Cleanup(func() { ghcrBase = savedBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 	got := ghcrTagRevision(ghcrRepoSpoke, ReleaseChannelStable, targetingLogger())
 	if got != shortSHA(fullSHA) {
@@ -434,7 +436,7 @@ func TestGhcrTagRevisionHandlesSinglePlatformManifest(t *testing.T) {
 
 	savedBase := ghcrBase
 	ghcrBase = srv.URL
-	t.Cleanup(func() { ghcrBase = savedBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 	if got := ghcrTagRevision(ghcrRepoSpoke, ReleaseChannelCandidate, targetingLogger()); got != shortSHA(fullSHA) {
 		t.Errorf("ghcrTagRevision = %q, want %q", got, shortSHA(fullSHA))
@@ -459,7 +461,7 @@ func TestGhcrTagRevisionMissingLabelResolvesEmpty(t *testing.T) {
 
 	savedBase := ghcrBase
 	ghcrBase = srv.URL
-	t.Cleanup(func() { ghcrBase = savedBase })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 	if got := ghcrTagRevision(ghcrRepoSpoke, ReleaseChannelStable, targetingLogger()); got != "" {
 		t.Errorf("ghcrTagRevision = %q, want \"\" when the revision label is absent", got)
@@ -488,7 +490,7 @@ func TestGhcrManifestBodyFailureModes(t *testing.T) {
 
 			savedBase := ghcrBase
 			ghcrBase = srv.URL
-			t.Cleanup(func() { ghcrBase = savedBase })
+			t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 			if got := ghcrManifestBody(srv.Client(), "t", ghcrRepoSpoke, ReleaseChannelStable, targetingLogger()); got != nil {
 				t.Errorf("ghcrManifestBody() = %+v, want nil", got)
@@ -527,7 +529,7 @@ func TestGhcrTagRevisionBlobFailureModes(t *testing.T) {
 
 			savedBase := ghcrBase
 			ghcrBase = srv.URL
-			t.Cleanup(func() { ghcrBase = savedBase })
+			t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 			if got := ghcrTagRevision(ghcrRepoSpoke, ReleaseChannelStable, targetingLogger()); got != "" {
 				t.Errorf("ghcrTagRevision = %q, want \"\" when config blob cannot be read", got)
@@ -707,7 +709,7 @@ func TestGhcrTagRevisionFailsClosed(t *testing.T) {
 			t.Cleanup(srv.Close)
 			savedBase := ghcrBase
 			ghcrBase = srv.URL
-			t.Cleanup(func() { ghcrBase = savedBase })
+			t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrBase = savedBase })
 
 			if got := ghcrTagRevision(ghcrRepoSpoke, ReleaseChannelStable, targetingLogger()); got != "" {
 				t.Errorf("ghcrTagRevision = %q, want \"\" — an unresolvable channel must never produce a target", got)

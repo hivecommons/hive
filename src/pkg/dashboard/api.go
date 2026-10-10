@@ -1063,6 +1063,7 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 			"busy":       a.Busy,
 			"next_kick":  a.NextKick,
 			"nextKick":   a.NextKick,
+			"nextKickAt": a.NextKickAt,
 			"nextKickIn": a.NextKickIn,
 		})
 	}

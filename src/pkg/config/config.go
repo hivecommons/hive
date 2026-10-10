@@ -64,9 +64,15 @@ type Config struct {
 	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
 	Hub                         HubConfig           `yaml:"hub"`
 	Fleet                       FleetConfig         `yaml:"fleet,omitempty" json:"fleet,omitempty"`
-	Contribute                  ContributeConfig    `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID                      string              `yaml:"hive_id"`
-	ACMMLevel                   *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
+	// at pack apply and by PUT /api/config/agent/{name}/models.
+	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Issues tunes issue lifecycle automation. Zero value keeps the safe
+	// defaults: close issues after their fix PR merges, and backfill hourly.
+	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
+	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID     string           `yaml:"hive_id"`
+	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	// ModelRoles is the named model-roles map (#9722): a small set of names,
 	// each naming a backend, a model and a reasoning effort, referenced as
 	// "@<role>" wherever hive asks for a model (today: agents' model and the

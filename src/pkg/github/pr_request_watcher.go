@@ -53,7 +53,7 @@ type PRRequest struct {
 	Agent string `json:"agent,omitempty"`
 	// IssueN declares the originating issue(s) this PR is for (hive-open-pr
 	// --issues). When set, the watcher verifies the body actually references
-	// each one (Closes #N / Refs #N) and rejects the request otherwise — a
+	// each one (Fixes #N / Refs #N) and rejects the request otherwise — a
 	// body that lost its issue line is lost content (see validatePRRequestBody).
 	IssueN []int `json:"issues,omitempty"`
 	// RunKey and PlanRef are long-running run trailers appended to implementation PR bodies.

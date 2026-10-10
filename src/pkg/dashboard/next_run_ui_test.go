@@ -31,6 +31,7 @@ func TestGovernorNextRunDoesNotRenderPastTimestamp(t *testing.T) {
 	script.WriteString(jsFunc(t, html, "formatStatusPayloadAge") + "\n")
 	script.WriteString(jsFunc(t, html, "formatGovernorNextRun") + "\n")
 	script.WriteString(`
+let _navbarClockTimeZone = 'America/New_York';
 const now = Date.parse('2026-09-25T16:15:00Z');
 assert.equal(formatGovernorNextRun({
   nextKick: '9/25 12:11 PM EDT',

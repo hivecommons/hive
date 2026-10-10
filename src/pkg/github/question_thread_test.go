@@ -51,11 +51,11 @@ func TestIssueThreadReadsIssueAndComments(t *testing.T) {
 	}
 }
 
-func TestIssueThreadFlagsHumanFiledBug(t *testing.T) {
+func TestIssueThreadFlagsOptedInHumanFiledBug(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/o/r/issues/6":
-			_ = json.NewEncoder(w).Encode(closeGateIssue("human", "User", "Bug: broken", "body", []string{"bug", "question"}))
+			_ = json.NewEncoder(w).Encode(closeGateIssue("human", "User", "Bug: broken", "body\n\nhive: needs-confirmation", []string{"bug", "question"}))
 		case "/repos/o/r/issues/6/comments":
 			_ = json.NewEncoder(w).Encode([]any{})
 		default:
@@ -68,7 +68,7 @@ func TestIssueThreadFlagsHumanFiledBug(t *testing.T) {
 		t.Fatalf("IssueThread: %v", err)
 	}
 	if !thread.BugFamily {
-		t.Fatal("a human-filed bug must be flagged BugFamily so the auto-closer skips it")
+		t.Fatal("an opted-in human-filed bug must be flagged BugFamily so the auto-closer skips it")
 	}
 }
 

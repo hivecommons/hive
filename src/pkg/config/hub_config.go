@@ -105,6 +105,9 @@ type HubConfig struct {
 	// entries (issue #9619). Hub-only and a secret: never logged, and excluded
 	// from JSON. HIVE_NPS_RELAY_PULL_SECRET overrides it.
 	NPSRelayPullSecret string `yaml:"nps_relay_pull_secret,omitempty" json:"-"`
+	// Notifications contains hub-only notification sinks. Secrets below this
+	// node are intentionally excluded from JSON/status output.
+	Notifications HubNotificationsConfig `yaml:"notifications,omitempty" json:"-"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;
@@ -316,6 +319,14 @@ type HubConfig struct {
 	// open a PUBLIC issue from their NPS feedback, with explicit consent.
 	// Default OFF. See nps_options_config.go.
 	NPSDetractorIssues NPSDetractorIssuesConfig `yaml:"nps_detractor_issues,omitempty"`
+}
+
+type HubNotificationsConfig struct {
+	Discord HubDiscordNotificationsConfig `yaml:"discord,omitempty" json:"-"`
+}
+
+type HubDiscordNotificationsConfig struct {
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the

@@ -55,7 +55,7 @@ func (s *Server) detectDeployment() deploymentInfo {
 	if s != nil && s.deps != nil {
 		cfg = s.deps.Config
 	}
-	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured; if this is a Podman/Quadlet host, upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful), or rerun bin/hive-podman-setup.sh to add HIVE_DEPLOYMENT_RUNTIME"}
+	info := deploymentInfo{Runtime: deploymentRuntimeUnknown, UpgradeSupported: false, Reason: "deployment runtime is not explicitly configured; if this is a Podman/Quadlet host, upgrade from the host with `systemctl --user start podman-auto-update.service` (rootless, as the hive user) or `systemctl start podman-auto-update.service` (rootful), or enable dashboard upgrades by running `bin/hive-podman-update.sh reconcile migrate --rootless` (or `--rootful`) from an up-to-date v5 or v6 checkout"}
 	rawRuntime := firstNonEmpty(os.Getenv("HIVE_DEPLOYMENT_RUNTIME"), deploymentConfigValue(cfg, "runtime"))
 	if rawRuntime != "" {
 		switch normalizeDeploymentRuntime(rawRuntime) {
@@ -200,11 +200,20 @@ func writeUpgradeRequest(dir, targetRef, requester string) error {
 		_ = f.Close()
 		return fmt.Errorf("writing upgrade request: %w", err)
 	}
+	// CreateTemp uses mode 0600. On rootless Podman the container uid maps to
+	// a host subuid, so the host drain (hive-upgrade.service, running as the
+	// hive user) could not read a 0600 file. The payload is an image ref, a
+	// login and a timestamp, so 0644 exposes nothing secret; the directory
+	// mode still limits who can reach it.
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("making upgrade request readable: %w", err)
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("closing upgrade request: %w", err)
 	}
 	// Publish only after close, in the same directory/filesystem. CreateTemp
-	// gives each request a unique name and mode 0600.
+	// gives each request a unique name.
 	final := filepath.Join(dir, strings.TrimPrefix(filepath.Base(temp), ".")+".json")
 	if err := os.Rename(temp, final); err != nil {
 		return fmt.Errorf("publishing upgrade request: %w", err)

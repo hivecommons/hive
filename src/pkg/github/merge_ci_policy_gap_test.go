@@ -204,17 +204,101 @@ func TestRequiredStatusCheckContexts(t *testing.T) {
 		}
 	})
 
+	t.Run("forbidden protection falls back to branch payload", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/branches/main":
+				_, _ = io.WriteString(w, `{"protected":true,"protection":{"required_status_checks":{"contexts":["branch-status"],"checks":[{"context":"branch-check"}]}}}`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		set, known, fromConfig, fallback, source := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, "o", "r", "main", nil, false)
+		want := map[string]bool{"branch-status": true, "branch-check": true}
+		if !known || fromConfig || fallback || source != "branch" || !reflect.DeepEqual(set, want) {
+			t.Fatalf("branch fallback: got set=%v known=%v fromConfig=%v fallback=%v source=%q, want %v true false false branch", set, known, fromConfig, fallback, source, want)
+		}
+	})
+
+	t.Run("forbidden protection and branch falls back to rules endpoint", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/branches/main":
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/rules/branches/main":
+				_, _ = io.WriteString(w, `[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"rules-check"}]}}]`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		set, known, fromConfig, fallback, source := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, "o", "r", "main", nil, false)
+		want := map[string]bool{"rules-check": true}
+		if !known || fromConfig || fallback || source != "rules" || !reflect.DeepEqual(set, want) {
+			t.Fatalf("rules fallback: got set=%v known=%v fromConfig=%v fallback=%v source=%q, want %v true false false rules", set, known, fromConfig, fallback, source, want)
+		}
+	})
+
+	t.Run("all API sources unavailable leaves source none", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/branches/main":
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/rules/branches/main":
+				_, _ = io.WriteString(w, `[]`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
+		set, known, fromConfig, fallback, source := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, "o", "r", "main", nil, false)
+		if known || set != nil || fromConfig || fallback || source != "none" {
+			t.Fatalf("unavailable sources: got set=%v known=%v fromConfig=%v fallback=%v source=%q, want nil false false false none", set, known, fromConfig, fallback, source)
+		}
+	})
+
 	t.Run("forbidden branch protection lookup is negative cached", func(t *testing.T) {
 		now := time.Unix(1700000000, 0)
 		restore := resetRequiredChecksForbiddenCacheForTest(func() time.Time { return now }, time.Hour)
 		defer restore()
 
-		calls := 0
+		protectionCalls := 0
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls++
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				protectionCalls++
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/branches/main":
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"message":"Resource not accessible by integration"}`)
+			case r.URL.Path == "/repos/o/r/rules/branches/main":
+				_, _ = io.WriteString(w, `[]`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
 		}))
 		defer srv.Close()
 
@@ -225,14 +309,14 @@ func TestRequiredStatusCheckContexts(t *testing.T) {
 		if set, known := RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false); known || set != nil {
 			t.Fatalf("cached 403: got (%v,%v), want (nil,false)", set, known)
 		}
-		if calls != 1 {
-			t.Fatalf("forbidden lookup calls = %d, want 1", calls)
+		if protectionCalls != 1 {
+			t.Fatalf("forbidden protection lookup calls = %d, want 1", protectionCalls)
 		}
 
 		now = now.Add(time.Hour + time.Second)
 		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
-		if calls != 2 {
-			t.Fatalf("expired forbidden cache calls = %d, want 2", calls)
+		if protectionCalls != 2 {
+			t.Fatalf("expired forbidden protection lookup calls = %d, want 2", protectionCalls)
 		}
 	})
 
@@ -240,18 +324,27 @@ func TestRequiredStatusCheckContexts(t *testing.T) {
 		restore := resetRequiredChecksForbiddenCacheForTest(time.Now, time.Hour)
 		defer restore()
 
-		calls := 0
+		protectionCalls := 0
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls++
-			w.WriteHeader(http.StatusInternalServerError)
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/protection/required_status_checks"):
+				protectionCalls++
+				w.WriteHeader(http.StatusInternalServerError)
+			case r.URL.Path == "/repos/o/r/branches/main":
+				w.WriteHeader(http.StatusInternalServerError)
+			case r.URL.Path == "/repos/o/r/rules/branches/main":
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
 		}))
 		defer srv.Close()
 
 		c := NewClientForTest(srv.URL, "o", []string{"o/r"}, nil)
 		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
 		RequiredStatusCheckContexts(ctx, c.client, "o", "r", "main", nil, false)
-		if calls != 2 {
-			t.Fatalf("transient lookup calls = %d, want 2", calls)
+		if protectionCalls != 2 {
+			t.Fatalf("transient protection lookup calls = %d, want 2", protectionCalls)
 		}
 	})
 

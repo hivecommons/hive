@@ -637,6 +637,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					pending = append(pending, PendingAccessRequest{
 						Username:    req.Username,
 						RequestedAt: req.RequestedAt,
+						Role:        pendingAccessRequestRole(req.Role),
+						HiveID:      h.ID,
 						Note:        req.Note,
 					})
 				}
@@ -685,14 +687,19 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	channelTargets := s.channelTargetsWithStablePromotion(getChannelTargets(getDisplaySHAs(), s.logger))
-	stablePromotion := s.stablePromotionFromTargets(channelTargets)
-	stableNextUpdateAt, stableNextUpdateStatus := s.stableNextPromotion(channelTargets)
+	displaySHAs := getDisplaySHAs()
+	rawChannelTargets := getChannelTargetsNonBlocking(displaySHAs, s.logger)
+	stablePromotion := s.stablePromotionStatusFromCachedTargets(rawChannelTargets)
+	channelTargets := channelTargetsWithStablePromotionStatus(rawChannelTargets, stablePromotion)
+	stableNextUpdateAt, stableNextUpdateStatus := s.stableNextPromotionFromCachedTargets(channelTargets)
 
 	// Attach the user-journey stage to every row so the table can show who is
 	// stalled where. Derived on read; never persisted on the registry entry.
 	journeyNow := time.Now()
-	stableLine := stableReleaseLine(s.logger)
+	stableLine := activeReleaseLine(channelTargets, displaySHAs)
+	if stableLine == "" {
+		stableLine = fallbackReleaseLine
+	}
 	for i := range result {
 		if count, known := commitsBehindStableLine(result[i].GitHash, stableLine, s.logger); known {
 			result[i].CommitsBehindStableV4 = &count

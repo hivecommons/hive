@@ -40,6 +40,8 @@ env:
   # Older than this and still queued is a GitHub-side zombie (runs from
   # 2026-08-06 were found queued on 2026-10-02, uncancellable), not a pool
   # outage; the pool cannot have been dead that long unnoticed.
+  # Younger runs with no queued job at all (e.g. zero jobs, #10987) never
+  # requested a runner and are ignored the same way.
   QUEUE_ZOMBIE_HOURS: "6"
   MIN_FREE_DISK_GB: "20"
 
@@ -159,8 +161,20 @@ jobs:
               {owner, repo, status: 'queued', per_page: 100});
             const age = r => Date.now() - Date.parse(r.created_at);
             const zombies = queued.filter(r => age(r) > zombieMs);
-            const stalled = queued.filter(r => age(r) > stallMs && age(r) <= zombieMs);
-            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
+            const candidates = queued.filter(r => age(r) > stallMs && age(r) <= zombieMs);
+            const stalled = [];
+            let noJobs = 0;
+            for (const r of candidates) {
+              const runJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+                {owner, repo, run_id: r.id, per_page: 100});
+              if (runJobs.some(j => j.status === 'queued')) {
+                stalled.push(r);
+              } else {
+                noJobs++;
+                core.warning(`ignoring queued run ${r.html_url} (${r.name}, created ${r.created_at}): no queued jobs — never requested a runner`);
+              }
+            }
+            core.info(`queued runs: ${queued.length}, stalled > ${process.env.QUEUE_STALL_MINUTES}m: ${stalled.length}, discarded for no queued jobs: ${noJobs}, ignored zombies > ${process.env.QUEUE_ZOMBIE_HOURS}h: ${zombies.length}`);
             for (const z of zombies) core.warning(`ignoring zombie queued run ${z.html_url} (${z.name}, created ${z.created_at})`);
             if (stalled.length > 0) {
               const oldest = Math.min(...stalled.map(r => Date.parse(r.created_at)));

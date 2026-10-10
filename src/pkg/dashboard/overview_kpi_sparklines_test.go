@@ -16,7 +16,8 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 	s := &Server{}
 	start := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	status := &StatusPayload{
-		Hold: FrontendHold{Total: 1},
+		Hold:             FrontendHold{Total: 1},
+		OverviewCoverage: &FrontendOverviewCoverage{Coverage: 87, Target: coverageTarget, Source: qualityCoverageSource, Repo: "hivecommons/hive"},
 		Repos: []FrontendRepo{{
 			Name:   "hive",
 			Issues: 3, PRs: 1,
@@ -34,7 +35,7 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 		t.Fatalf("history len = %d, want cap %d", len(got), trendHistoryMaxEntries)
 	}
 	last := got[len(got)-1]
-	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 || last.OverviewOutside != 0 {
+	if last.OverviewOpenIssues != 3 || last.OverviewOpenPRs != 1 || last.OverviewActionable != 1 || last.OverviewHeld != 2 || last.OverviewBlockedHuman != 1 || last.OverviewOutside != 0 || !last.OverviewCoverageOK || last.OverviewCoverage != 87 {
 		t.Fatalf("overview KPI sample = %+v", last)
 	}
 	dir := t.TempDir()
@@ -66,6 +67,9 @@ func TestOverviewKPIHistoryAppendCapPersistRestoreDownsample(t *testing.T) {
 	if downsampled[len(downsampled)-1].Timestamp != got[len(got)-1].Timestamp {
 		t.Fatalf("downsample kept last timestamp %d, want %d", downsampled[len(downsampled)-1].Timestamp, got[len(got)-1].Timestamp)
 	}
+	if downsampled[len(downsampled)-1].OverviewCoverage == nil || *downsampled[len(downsampled)-1].OverviewCoverage != 87 {
+		t.Fatalf("downsampled overview coverage = %+v, want 87", downsampled[len(downsampled)-1].OverviewCoverage)
+	}
 }
 
 func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
@@ -89,6 +93,40 @@ func TestOverviewKPIHistoryJSONIncludesZeroOverviewFields(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"overviewMedianAgeSec"`) {
 		t.Fatalf("marshaled overview history reported unavailable median as zero: %s", data)
+	}
+	if strings.Contains(string(data), `"overviewCoverage"`) {
+		t.Fatalf("marshaled overview history must omit unavailable coverage: %s", data)
+	}
+}
+
+func TestOverviewKPIHistorySkipsIncompleteSamples(t *testing.T) {
+	s := &Server{}
+	start := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	complete := &StatusPayload{Repos: []FrontendRepo{{Name: "hive", Issues: 33, PRs: 14}}}
+	incomplete := &StatusPayload{
+		OverviewKPIIncomplete: true,
+		Repos:                 []FrontendRepo{{Name: "hive", Issues: 2, PRs: 1, CountsIncomplete: true}},
+	}
+
+	s.appendTrendHistoryAt(complete, start)
+	s.appendTrendHistoryAt(incomplete, start.Add(timeHistoryStep()))
+	s.appendTrendHistoryAt(complete, start.Add(2*timeHistoryStep()))
+
+	history := s.OverviewKPIHistory(0)
+	if len(history) != 3 {
+		t.Fatalf("history len = %d, want 3 trend rows", len(history))
+	}
+	if history[1].OverviewOpenIssues != nil || history[1].OverviewOpenPRs != nil {
+		t.Fatalf("incomplete sample should omit KPI values, got %+v", history[1])
+	}
+	values := make([]int, 0, 2)
+	for _, row := range history {
+		if row.OverviewOpenIssues != nil {
+			values = append(values, *row.OverviewOpenIssues)
+		}
+	}
+	if len(values) != 2 || values[0] != 33 || values[1] != 33 {
+		t.Fatalf("persisted overview issue values = %v, want flat last-good samples", values)
 	}
 }
 
@@ -145,6 +183,7 @@ function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l =
 		"overviewKPITerm", "dashboardDocsHref", "dashboardDocsHrefFromPath", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionSummaryLine", "overviewPartitionGloss", "overviewPartitionPreferredDocs", "overviewPartitionPreferredSettings", "overviewPartitionRowHTML", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
 		"overviewEquationTermCount", "overviewOutsideBreakdownText", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
 		"overviewKPIEquation", "overviewKPIKindEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample",
+		"overviewCoverageInfo", "overviewCoverageState", "overviewCoverageColor", "overviewCoverageInfoHTML", "overviewCoverageBar", "overviewCoverageCard", "renderOverviewCoverageKPI",
 		"overviewProjectFilterSpec", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries", "overviewProjectBucketCount",
 		"overviewProjectOutsideIssueCount", "overviewProjectOutsidePRCount", "overviewProjectFilterMatchesEntry", "overviewProjectFilterRepoMatches",
 		"overviewProjectFilterSummary", "renderOverviewKPIs",

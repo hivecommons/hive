@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,42 @@ func TestQueuePRAutoMergeUsesConfiguredLabel(t *testing.T) {
 	}
 	if !sawLabel {
 		t.Fatal("configured label was not applied")
+	}
+}
+
+func TestQueuePRAutoMergeBlockedBySentinelLabel(t *testing.T) {
+	var sawReview, sawLabel bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{
+				"head":   map[string]string{"sha": "head7"},
+				"labels": []map[string]string{{"name": "Sentinel-Alert"}},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			sawReview = true
+			t.Fatalf("sentinel-labelled PR must not be approved")
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			sawLabel = true
+			t.Fatalf("sentinel-labelled PR must not be labelled for auto-merge")
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c.SetSentinelAlertLabel("sentinel-alert")
+	var gotAction, gotDetail string
+	c.SetAttributionAudit(func(action, detail, agent string) { gotAction, gotDetail = action, detail })
+	if err := c.QueuePRAutoMerge(context.Background(), "acme/widget", 7, "alice"); err == nil {
+		t.Fatal("QueuePRAutoMerge returned nil error for sentinel-labelled PR")
+	}
+	if sawReview || sawLabel {
+		t.Fatalf("sawReview=%v sawLabel=%v, want neither", sawReview, sawLabel)
+	}
+	if gotAction != AuditActionSentinelBlockedApproval || !strings.Contains(gotDetail, "label=sentinel-alert") {
+		t.Fatalf("audit = %q %q, want sentinel-blocked-approval with label", gotAction, gotDetail)
 	}
 }
 

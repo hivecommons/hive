@@ -26,8 +26,10 @@ hand.
 
 ## Upgrading an existing Podman install
 
-From a current `v5` checkout containing the host request bridge, run **one**
-command as the account that owns the install (choose the matching manager):
+From an up-to-date `v5` or `v6` checkout (both branches carry the host request
+bridge assets), run **one** command as the account that owns the install
+(choose the matching manager). An older checkout, such as one still on `v4`,
+lacks these assets: update it (`git switch v5 && git pull`, or `v6`) first.
 
 ```sh
 # Rootless: run as the user who installed Hive, not with sudo.
@@ -62,6 +64,12 @@ repo-owned file copying to its existing `reconcile apply` path. Ordinary
 `reconcile check` remains read-only and `reconcile apply` still leaves
 `hive.env` and the running Hive container untouched. Do not use `setup --force`
 for this migration: that can replace operator configuration and tokens.
+
+Migration also records `HIVE_SELF_IMAGE` and `HIVE_SELF_IMAGE_TRACKING` in
+`hive.env` from the effective unit image (skipped when the unit is
+digest-pinned). A rootless run first checks the systemd user bus and, if it is
+unreachable, stops before writing anything; export
+`XDG_RUNTIME_DIR=/run/user/$(id -u)` or use `machinectl shell hive@`.
 
 ## Upgrade target
 
@@ -119,7 +127,7 @@ channel/tag/digest image reference, or a legacy 7–40 character hexadecimal
 commit normalized to the first seven lowercase characters.
 `requester` is the authenticated request's audit user (`local` for local token
 access), not a value supplied in the JSON body. `requested_at` is UTC RFC3339.
-Files have mode `0600` and are written and closed under a hidden temporary name
+Files have mode `0644` and are written and closed under a hidden temporary name
 in the same directory before an atomic rename. The host must watch **only
 `*.json`** in the directory's top level, ignoring `.hive-upgrade-*` temporary
 files and `.hive-upgrade-probe-*` write probes.
@@ -128,7 +136,10 @@ This is an asynchronous trust boundary: the host bridge validates references
 and request age before invoking the host lifecycle, then archives results in
 `done/` or `failed/`. No Docker, Podman, or systemd socket is exposed to Hive.
 Only the authorized Hive container and host bridge should have access to the
-request directory; the host consumer must be able to read its `0600` files.
+request directory; the host consumer must be able to read its files. They are
+`0644` because on rootless Podman the container uid maps to a host subuid, so
+the host user reads them only through the "other" bits; the payload holds no
+secrets, and the `770` request directory still limits who can reach them.
 Rootless bridges run as the hive user, rootful bridges under the system manager.
 The host installation, units, age limit, and result handling belong to #10416;
 this dashboard change alone does not install a consumer.
@@ -223,7 +234,12 @@ Unknown fields are ignored.
 
 Each handled request is **moved** into `done/` or `failed/` beside a
 `.result` file before its outcome is recorded, so neither a success nor a
-failure can be replayed by the watch re-triggering. Inspect either with:
+failure can be replayed by the watch re-triggering. Archive directories the
+bridge creates are `0700`. A request the host user cannot read is retried
+through `podman unshare cat` on a rootless host; if it is still unreadable the
+bridge reports `cannot read request: permission denied (owner uid …, drain uid
+…)`, archives it as `rejected: unreadable request` and exits `78`. Inspect
+either archive with:
 
 ```sh
 hive-upgrade-request.sh status
@@ -290,8 +306,11 @@ see [podman-auto-update.md](podman-auto-update.md) and gap 3 of
 ## Release notes before and after an upgrade
 
 The dashboard Upgrade button does not start the upgrade immediately. It opens a
-"What's new" modal headed `Upgrade <runtime>: <current> → <target>` (channel
-targets keep the caveat that the channel may advance before the host pulls it).
+"What's new" modal headed `Upgrade Hive: <current> → <target>` (or the Hive
+display name when the status payload includes one), with the deployment runtime
+called out in the caveat so operators know the runtime deployment restarts but
+the cluster itself is not changed. Channel targets keep the caveat that the
+channel may advance before the host pulls it.
 The body is read from `GET /api/version/release-notes`: one collapsible block
 per release, newest first with the first expanded, grouped Added / Changed /
 Fixed / Security / Deprecated, `#NNNN` references linked to the repository, and

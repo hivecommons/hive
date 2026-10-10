@@ -195,5 +195,6 @@ func newHubServerForTest(t *testing.T, opts ...hubTestOption) *HubServer {
 
 	s := NewHubServer(cfg.port, cfg.logger, cfg.gitHash, cfg.gitBranch)
 	t.Cleanup(s.StopSaveLoop)
+	t.Cleanup(func() { waitChannelTargetRefreshes(t) })
 	return s
 }

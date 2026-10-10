@@ -24,6 +24,7 @@ type dashboardUpgradeState struct {
 	StartedAt   time.Time `json:"startedAt,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	Reason      string    `json:"reason,omitempty"`
+	Action      string    `json:"action,omitempty"`
 }
 
 func readDashboardUpgradeState() *dashboardUpgradeState {
@@ -74,6 +75,10 @@ func upgradeAttemptFromDashboardState(st *dashboardUpgradeState) *UpgradeAttempt
 		}
 	case dashboardUpgradeStateStarted:
 		out.State = upgradeAttemptInProgress
+		if st.Action == "podman-quadlet-request" {
+			out.Detail = "Upgrade request written; waiting for hive-upgrade.service on the host to apply it."
+			break
+		}
 		out.Detail = "Upgrade request accepted by the hub; waiting for this spoke to collect the instruction on heartbeat and roll its Deployment."
 		if st.Target != "" {
 			out.Detail = "Upgrade to " + st.Target + " was accepted by the hub; waiting for this spoke to collect the instruction on heartbeat and roll its Deployment."

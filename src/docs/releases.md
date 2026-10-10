@@ -246,6 +246,15 @@ not a second source of truth: a missing or red docker gate prevents the status
 from being posted, a failed status POST prevents the PR from opening, and the
 SHA-keyed merge API still asks GitHub to enforce `v5` protection server-side.
 
+Required PR contexts that are expensive and path-sensitive still have to report
+on every head SHA. The release-line workflows therefore keep their
+`pull_request` triggers unfiltered for required contexts, broaden CI-sensitive
+`push` filters to `.github/workflows/**` and `.github/scripts/**`, and decide
+inside the job whether to run the real lane or report a successful out-of-scope
+result. Workflow-only PRs run the real CI because they can change the gate
+itself; docs-only or other exempt diffs get a same-named success/skipped result
+instead of leaving branch protection stuck on an "expected" check.
+
 **Getting `docker.yml` to actually run on the scratch branch (#5072):**
 `docker.yml`'s `push` trigger is `branches: ["**"]` (minus bot branches — see
 `.github/release-lines.yml`'s `unpinned` entry for it), which on paper covers

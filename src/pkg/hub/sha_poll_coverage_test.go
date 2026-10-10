@@ -25,6 +25,7 @@ func fakeGitHubGHCR(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	githubAPIBase = srv.URL
 	ghcrBase = srv.URL
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		waitForCommitOrderResolvers(t)
 		waitForCommitBehindResolvers(t)
 		githubAPIBase, ghcrBase = oldGH, oldGHCR

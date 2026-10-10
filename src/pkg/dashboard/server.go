@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bufio"
 	"compress/gzip"
 	"context"
 	"crypto/subtle"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -442,11 +444,16 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
-	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
-	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
-	Timestamp      string                 `json:"timestamp"`
-	TimeZone       string                 `json:"timeZone,omitempty"`
+	OverviewBands    *OverviewBands            `json:"overview_bands,omitempty"`
+	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
+	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
+	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
+	// OverviewKPIIncomplete means at least one configured repo did not produce
+	// forge totals for this status snapshot, so Overview KPI history must not
+	// record it as a real point.
+	OverviewKPIIncomplete bool   `json:"overviewKPIIncomplete"`
+	Timestamp             string `json:"timestamp"`
+	TimeZone              string `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -567,6 +574,13 @@ type FrontendInception struct {
 	Phase     knowledge.InceptionPhase `json:"phase,omitempty"`
 	Questions []knowledge.Question     `json:"questions,omitempty"`
 	Answers   map[string]string        `json:"answers,omitempty"`
+}
+
+type FrontendOverviewCoverage struct {
+	Coverage int    `json:"coverage"`
+	Target   int    `json:"target"`
+	Source   string `json:"source"`
+	Repo     string `json:"repo,omitempty"`
 }
 
 type FrontendOverviewTotals struct {
@@ -727,6 +741,7 @@ type FrontendAgent struct {
 	LastKick          string `json:"lastKick,omitempty"`
 	LastKickAt        string `json:"lastKickAt,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
+	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
@@ -955,12 +970,13 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name          string                    `json:"name"`
-	Full          string                    `json:"full"`
-	Issues        int                       `json:"issues"`
-	PRs           int                       `json:"prs"`
-	Mode          string                    `json:"mode,omitempty"`
-	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	Name             string                    `json:"name"`
+	Full             string                    `json:"full"`
+	Issues           int                       `json:"issues"`
+	PRs              int                       `json:"prs"`
+	Mode             string                    `json:"mode,omitempty"`
+	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
+	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the
@@ -1213,6 +1229,8 @@ type TrendHistoryEntry struct {
 	OverviewHeld         int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      int  `json:"overviewOutside,omitempty"`
+	OverviewCoverageOK   bool `json:"overviewCoverageOK,omitempty"`
+	OverviewCoverage     int  `json:"overviewCoverage,omitempty"`
 	// Beads worker/supervisor counts.
 	BeadsWorkers    int `json:"beadsWorkers"`
 	BeadsSupervisor int `json:"beadsSupervisor"`
@@ -1437,7 +1455,7 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	handler := s.withServerTiming(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -1459,6 +1477,72 @@ func (s *Server) Start() error {
 		go idx.Precompress()
 	}
 	return srv.Serve(ln)
+}
+
+type serverTimingResponseWriter struct {
+	http.ResponseWriter
+	start time.Time
+	wrote bool
+}
+
+func (w *serverTimingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *serverTimingResponseWriter) WriteHeader(status int) {
+	if !w.wrote {
+		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
+		w.wrote = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serverTimingResponseWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *serverTimingResponseWriter) Flush() {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *serverTimingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
+}
+
+func (w *serverTimingResponseWriter) Push(target string, opts *http.PushOptions) error {
+	p, ok := w.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+	return p.Push(target, opts)
+}
+
+func (w *serverTimingResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(w.ResponseWriter, r)
+}
+
+func (s *Server) withServerTiming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&serverTimingResponseWriter{ResponseWriter: w, start: time.Now()}, r)
+	})
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -3747,7 +3831,9 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
 	}
-	s.attachOverviewKPI(&entry, status, at)
+	if overviewKPISnapshotComplete(status) {
+		s.attachOverviewKPI(&entry, status, at)
+	}
 	if len(status.Repos) > 0 {
 		repos := make(map[string]TrendRepoSnap, len(status.Repos))
 		for _, r := range status.Repos {
@@ -3767,6 +3853,18 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 	if len(s.trendHistory) > trendHistoryMaxEntries {
 		s.trendHistory = s.trendHistory[len(s.trendHistory)-trendHistoryMaxEntries:]
 	}
+}
+
+func overviewKPISnapshotComplete(status *StatusPayload) bool {
+	if status == nil || status.OverviewKPIIncomplete {
+		return false
+	}
+	for _, repo := range status.Repos {
+		if repo.CountsIncomplete {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, now time.Time) {
@@ -3818,6 +3916,10 @@ func (s *Server) attachOverviewKPI(e *TrendHistoryEntry, status *StatusPayload, 
 	// Match the tile: needs-human and reporter-confirmation issues are blocked, not outside.
 	e.OverviewBlockedHuman += totals.Issues.Breakdown["needs_human"] + totals.Issues.Breakdown["reporter_confirmation"]
 	e.OverviewOutside = max(0, e.OverviewOpenIssues+e.OverviewOpenPRs-e.OverviewActionable-e.OverviewHeld-e.OverviewBlockedHuman)
+	if status.OverviewCoverage != nil {
+		e.OverviewCoverageOK = true
+		e.OverviewCoverage = status.OverviewCoverage.Coverage
+	}
 }
 
 func overviewKPIExcludedBand(band string) bool {
@@ -3849,6 +3951,7 @@ type OverviewKPIHistoryEntry struct {
 	OverviewHeld         *int  `json:"overviewHeld,omitempty"`
 	OverviewBlockedHuman *int  `json:"overviewBlockedHuman,omitempty"`
 	OverviewOutside      *int  `json:"overviewOutside,omitempty"`
+	OverviewCoverage     *int  `json:"overviewCoverage,omitempty"`
 }
 
 // OverviewKPIHistory returns the recent overview KPI samples downsampled to a
@@ -3868,6 +3971,9 @@ func overviewKPIHistoryPayload(entries []TrendHistoryEntry) []OverviewKPIHistory
 			row.OverviewHeld = intPtr(e.OverviewHeld)
 			row.OverviewBlockedHuman = intPtr(e.OverviewBlockedHuman)
 			row.OverviewOutside = intPtr(e.OverviewOutside)
+		}
+		if e.OverviewCoverageOK {
+			row.OverviewCoverage = intPtr(e.OverviewCoverage)
 		}
 		out = append(out, row)
 	}

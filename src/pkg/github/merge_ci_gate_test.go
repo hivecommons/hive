@@ -39,6 +39,8 @@ type ciFixture struct {
 	// /branches/{branch}. It exercises fail-closed handling when the readable
 	// Branch.protected field cannot be fetched.
 	branchStatus int
+	// requiredChecks are exposed through the readable branch payload fallback.
+	requiredChecks []string
 	// mergeStatus, when non-zero, is the HTTP status PUT /merge answers with
 	// (to exercise the GitHub-side refusal paths); zero merges successfully.
 	mergeStatus  int
@@ -66,10 +68,11 @@ type ciRun struct {
 
 func greenFixture() *ciFixture {
 	return &ciFixture{
-		defaultHead: "abc",
-		heads:       map[int]string{100: "abc123"},
-		checks:      []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
-		runs:        []ciRun{{id: 1, name: "CI", status: "completed", conc: "success", jobs: 1}},
+		defaultHead:    "abc",
+		heads:          map[int]string{100: "abc123"},
+		checks:         []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
+		runs:           []ciRun{{id: 1, name: "CI", status: "completed", conc: "success", jobs: 1}},
+		requiredChecks: []string{"build"},
 	}
 }
 
@@ -117,7 +120,15 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "branch unavailable"})
 			return true
 		}
-		enc(map[string]any{"name": p[strings.LastIndex(p, "/")+1:], "protected": !f.baseUnprotected})
+		branch := map[string]any{"name": p[strings.LastIndex(p, "/")+1:], "protected": !f.baseUnprotected}
+		if len(f.requiredChecks) > 0 {
+			checks := make([]map[string]string, 0, len(f.requiredChecks))
+			for _, name := range f.requiredChecks {
+				checks = append(checks, map[string]string{"context": name})
+			}
+			branch["protection"] = map[string]any{"required_status_checks": map[string]any{"checks": checks}}
+		}
+		enc(branch)
 	case strings.HasSuffix(p, "/status"):
 		statuses := []map[string]string{}
 		for _, s := range f.statuses {
@@ -348,7 +359,7 @@ func TestMergeCIGate_PendingBudgetExhausts(t *testing.T) {
 // check, the terminal attempt re-engages the fix loop exactly as a
 // branch-protection refusal would.
 func TestMergeCIGate_MixedSuccessAndFailureRefuses(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "success"}, {name: "test", status: "completed", conclusion: "failure"}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "success"}, {name: "test", status: "completed", conclusion: "failure"}}, requiredChecks: []string{"build", "test"}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -361,7 +372,7 @@ func TestMergeCIGate_MixedSuccessAndFailureRefuses(t *testing.T) {
 		t.Fatalf("INVARIANT VIOLATED: PR with a failed check was merged (%d)", got)
 	}
 	resp := readMergeResult(t, reqPath)
-	if resp.OK || resp.Attempts != mergeRequestMaxAttempts || !strings.Contains(resp.Error, "check-failure") {
+	if resp.OK || resp.Attempts != mergeRequestMaxAttempts || !strings.Contains(resp.Error, "required-check-failing:test") {
 		t.Fatalf("expected refusal naming the failed check, got %+v", resp)
 	}
 	if !isRequiredCheckMergeBlocker(resp.Error) {
@@ -404,10 +415,11 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 		later = "2026-09-27T22:45:01Z"
 	)
 	tests := []struct {
-		name       string
-		checks     []ciCheck
-		wantMerge  bool
-		wantReason string
+		name           string
+		checks         []ciCheck
+		requiredChecks []string
+		wantMerge      bool
+		wantReason     string
 	}{
 		{
 			name: "superseded cancelled latest success passes",
@@ -415,7 +427,8 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 				{id: 108724704279, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "cancelled", startedAt: older},
 				{id: 108724738287, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "success", startedAt: later},
 			},
-			wantMerge: true,
+			requiredChecks: []string{"changelog-fragment-guard"},
+			wantMerge:      true,
 		},
 		{
 			name: "latest cancelled still fails",
@@ -423,7 +436,8 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 				{id: 108724704279, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "success", startedAt: older},
 				{id: 108724738287, appID: 15368, name: "changelog-fragment-guard", status: "completed", conclusion: "cancelled", startedAt: later},
 			},
-			wantReason: "check-cancelled",
+			requiredChecks: []string{"changelog-fragment-guard"},
+			wantReason:     "required-check-failing:changelog-fragment-guard",
 		},
 		{
 			name: "different names remain independent",
@@ -431,7 +445,8 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 				{id: 1, appID: 15368, name: "build", status: "completed", conclusion: "success", startedAt: later},
 				{id: 2, appID: 15368, name: "lint", status: "completed", conclusion: "cancelled", startedAt: later},
 			},
-			wantReason: "check-cancelled",
+			requiredChecks: []string{"build", "lint"},
+			wantReason:     "required-check-failing:lint",
 		},
 		{
 			name: "same start time tiebreaks by highest id",
@@ -439,7 +454,8 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 				{id: 10, appID: 15368, name: "build", status: "completed", conclusion: "cancelled", startedAt: later},
 				{id: 11, appID: 15368, name: "build", status: "completed", conclusion: "success", startedAt: later},
 			},
-			wantMerge: true,
+			requiredChecks: []string{"build"},
+			wantMerge:      true,
 		},
 		{
 			name: "same name different app remains independent",
@@ -447,12 +463,13 @@ func TestMergeCIGate_DedupesSupersededCheckRuns(t *testing.T) {
 				{id: 10, appID: 1, name: "build", status: "completed", conclusion: "success", startedAt: later},
 				{id: 11, appID: 2, name: "build", status: "completed", conclusion: "cancelled", startedAt: later},
 			},
-			wantReason: "check-cancelled",
+			requiredChecks: []string{"build"},
+			wantReason:     "required-check-failing:build",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &ciFixture{defaultHead: "abc", checks: tt.checks}
+			f := &ciFixture{defaultHead: "abc", checks: tt.checks, requiredChecks: tt.requiredChecks}
 			var merges atomic.Int32
 			srv := ciGateServer(t, f, &merges)
 			defer srv.Close()
@@ -522,6 +539,7 @@ func TestMergeRequestBaseProtection_DeprecatedAllowlistDoesNotOverrideFailingCI(
 		defaultHead:     "abc",
 		checks:          []ciCheck{{name: "build", status: "completed", conclusion: "failure"}},
 		baseUnprotected: true,
+		requiredChecks:  []string{"build"},
 	}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
@@ -823,7 +841,7 @@ func TestMergeCIGate_NoCIOKOptInMergesUnverifiedRepo(t *testing.T) {
 }
 
 func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
-	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "failure"}}}
+	f := &ciFixture{defaultHead: "abc", checks: []ciCheck{{name: "build", status: "completed", conclusion: "failure"}}, requiredChecks: []string{"build"}}
 	var merges atomic.Int32
 	srv := ciGateServer(t, f, &merges)
 	defer srv.Close()
@@ -837,7 +855,7 @@ func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
 		t.Fatalf("INVARIANT VIOLATED: no_ci_ok overrode a failing check")
 	}
 	resp := readMergeResult(t, reqPath)
-	if resp.OK || !strings.Contains(resp.Error, "check-failure") {
+	if resp.OK || !strings.Contains(resp.Error, "required-check-failing:build") {
 		t.Fatalf("expected failing check refusal, got %+v", resp)
 	}
 }

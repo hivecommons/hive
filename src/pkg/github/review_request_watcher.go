@@ -323,6 +323,41 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	sentinelBlockNote := ""
+	if apiEvent == "APPROVE" {
+		if blocked, err := c.sentinelReviewBlockReason(ctx, req.Repo, req.Number); err != nil {
+			c.denyReviewRequest(path, req, "sentinel approval block could not read PR labels: "+err.Error(), nowFn)
+			return
+		} else if blocked != "" {
+			meta := c.attributionMeta(req.Agent)
+			c.recordWriteAudit(AuditActionSentinelBlockedApproval, meta,
+				WriteTarget{Repo: req.Repo, Number: req.Number},
+				"state", "approved", "label", blocked)
+			if strings.TrimSpace(req.Body) == "" {
+				c.recordReviewEvidence(ctx, req, nil, nil, nowFn())
+				c.writeReviewResult(path, ReviewResponse{
+					OK:     true,
+					Number: req.Number,
+					State:  ReviewEventRecordVerdict,
+					Note:   fmt.Sprintf("approval suppressed: %s label requires human review", blocked),
+					At:     nowFn().UTC().Format(time.RFC3339),
+				})
+				_ = os.Remove(path)
+				c.reviewRetries.clear(path)
+				c.logger.Warn("review-request watcher: approval suppressed by sentinel label",
+					slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+					slog.Int("number", req.Number), slog.String("label", blocked))
+				return
+			}
+			apiEvent, state, _ = reviewEventToAPI("comment")
+			req.Report = ""
+			sentinelBlockNote = fmt.Sprintf("approval downgraded to COMMENT: %s label requires human review", blocked)
+			c.logger.Warn("review-request watcher: approval downgraded by sentinel label",
+				slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+				slog.Int("number", req.Number), slog.String("label", blocked))
+		}
+	}
+
 	// COMMENT-only on contributor PRs (hivecommons/hive#9590). The hive
 	// reviews everyone's work but adjudicates only its own: an APPROVE or
 	// REQUEST_CHANGES aimed at a PR this hive did not open becomes a COMMENT
@@ -458,6 +493,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	resp.State = state
 	if commentOnlyNote != "" {
 		resp.Note = commentOnlyNote
+	}
+	if sentinelBlockNote != "" {
+		resp.Note = sentinelBlockNote
 	}
 
 	// Record where the review landed so the queue views can link to it. A
