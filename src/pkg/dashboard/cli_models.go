@@ -31,7 +31,7 @@ const (
 
 	// cliModelQueryTimeout limits each outbound discovery HTTP call so a slow
 	// or hanging upstream cannot stall the /api/config/backends response.
-	cliModelQueryTimeout = 5 * time.Second
+	cliModelQueryTimeout = 3 * time.Second
 
 	// cliModelDropAfterMisses is how many consecutive successful live
 	// discovery probes a previously-seen model must be missing from before
@@ -71,11 +71,11 @@ const (
 	// is invoked explicitly (not via shebang) so no exec bit is needed.
 	copilotSDKNodeBinary = "node"
 
-	// copilotSDKProbeTimeout bounds the helper exec. The helper enforces its
-	// OWN hard deadline (INTERNAL_TIMEOUT_MS = 15s in copilot-models.mjs);
-	// this sits slightly above it so the helper always gets to report its own
-	// error on stderr instead of being killed mid-flight.
-	copilotSDKProbeTimeout = 20 * time.Second
+	// copilotSDKProbeTimeout bounds the helper exec on dashboard request paths.
+	// The helper has its own longer internal deadline, but the dashboard must
+	// not park a boot-time model-list request behind it; a stale/static list is
+	// safer than a frozen page.
+	copilotSDKProbeTimeout = 3 * time.Second
 
 	// copilotSDKAgentHome is the shared agent HOME the copilot CLI's stored
 	// device-flow auth lives under ($HOME/.copilot). Agents launch with
@@ -281,7 +281,7 @@ var copilotStaticModels = []string{
 	"gpt-4o",
 	// The -5 family is DASHED in copilot CLI nomenclature; the 4.x family is
 	// DOTTED, including 5.5 (the dashed -5-5 spelling is rejected by the CLI,
-// #9927). Keep in sync with agent.copilotCLIAcceptedModels (#4262).
+	// #9927). Keep in sync with agent.copilotCLIAcceptedModels (#4262).
 	"claude-opus-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
@@ -577,8 +577,9 @@ type cliModelCacheEntry struct {
 // cliModelCache is a short-TTL per-backend cache guarding the discovery probes.
 // It also carries the live-list retention state (see stabilize).
 type cliModelCache struct {
-	mu      sync.Mutex
-	entries map[string]cliModelCacheEntry
+	mu         sync.Mutex
+	entries    map[string]cliModelCacheEntry
+	refreshing map[string]bool
 	// retained tracks, per backend, every model id seen in a successful live
 	// probe together with its consecutive-miss count (0 = present in the
 	// latest probe). Used by stabilize() to smooth nondeterministic upstream
@@ -597,6 +598,7 @@ type cliModelCache struct {
 func newCLIModelCache() *cliModelCache {
 	return &cliModelCache{
 		entries:       make(map[string]cliModelCacheEntry),
+		refreshing:    make(map[string]bool),
 		retained:      make(map[string]map[string]int),
 		retainedOrder: make(map[string][]string),
 		audited:       make(map[string]string),
@@ -678,6 +680,35 @@ func (c *cliModelCache) get(backend string) (cliModelResult, bool) {
 		return cliModelResult{}, false
 	}
 	return e.result, true
+}
+
+func (c *cliModelCache) getStale(backend string) (cliModelResult, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[backend]
+	if !ok {
+		return cliModelResult{}, false
+	}
+	return e.result, true
+}
+
+func (c *cliModelCache) startRefresh(backend string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refreshing == nil {
+		c.refreshing = make(map[string]bool)
+	}
+	if c.refreshing[backend] {
+		return false
+	}
+	c.refreshing[backend] = true
+	return true
+}
+
+func (c *cliModelCache) finishRefresh(backend string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.refreshing, backend)
 }
 
 func (c *cliModelCache) set(backend string, r cliModelResult) {
@@ -775,6 +806,46 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		s.cliModels.set(backend, r)
 	}
 	return r
+}
+
+func (s *Server) queryCLIModelsForBoot(backend string) cliModelResult {
+	if s.cliModels != nil {
+		if r, ok := s.cliModels.get(backend); ok {
+			return r
+		}
+		if r, ok := s.cliModels.getStale(backend); ok {
+			s.refreshCLIModelsAsync(backend)
+			return r
+		}
+		s.refreshCLIModelsAsync(backend)
+	}
+	return s.staticCLIModelResult(backend)
+}
+
+func (s *Server) refreshCLIModelsAsync(backend string) {
+	if s == nil || s.cliModels == nil || !s.cliModels.startRefresh(backend) {
+		return
+	}
+	go func() {
+		defer s.cliModels.finishRefresh(backend)
+		_ = s.queryCLIModels(backend)
+	}()
+}
+
+func (s *Server) staticCLIModelResult(backend string) cliModelResult {
+	switch backend {
+	case bobBackendID:
+		return cliModelResult{models: dedupeModels(bobStaticModels), fallback: false}
+	default:
+		models := filterPinnedCLIModels(backend, dedupeModels(cliStaticFallback(backend)))
+		if backend == "copilot" {
+			models = dedupeModels(append(models, copilotAlwaysIncludeModels...))
+		}
+		if backend == "claude" {
+			models = dedupeModels(append(models, claudeAlwaysIncludeModels...))
+		}
+		return cliModelResult{models: models, fallback: true, discoveryErr: "discovery refresh running in background"}
+	}
 }
 
 // Audit actions for model discovery (#7384). Recorded under the "system"
