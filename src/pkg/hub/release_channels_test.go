@@ -18,6 +18,7 @@ func testChannelLogger() *slog.Logger {
 
 func init() {
 	channelTargetRefreshDisabled = true
+	channelImageTargetRefreshDisabled = true
 }
 
 // stubChannelDigests points ghcrTagDigest at a fixed tag→digest table for the

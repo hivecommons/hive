@@ -1721,6 +1721,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.registerSaaSRoutes()
 	s.registerOpenRouterRoutes()
 	go s.saveLoop()
+	go s.refreshActiveMyHivesSnapshotsLoop()
 
 	return s
 }

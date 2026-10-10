@@ -1,0 +1,1 @@
+- Keep hub Fleet page channel-image lag checks off the /api/saas/my-hives request path. (#11427)
