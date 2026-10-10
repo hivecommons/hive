@@ -4165,6 +4165,18 @@
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
     .review-priority-low { border-color: var(--muted); }
+    .var-empty{color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)}
+    .var-section{margin-top:var(--sp-6);border-top:1px solid var(--border);padding-top:var(--sp-5)}
+    .var-heading{font-weight:600;font-size:var(--fs-sm);margin-bottom:var(--sp-4)}
+    .var-summary{cursor:pointer;font-weight:600;font-size:var(--fs-sm)}
+    .var-row{align-items:center;gap:var(--sp-4)}
+    .var-code{flex:0 0 auto}
+    .var-meta{color:var(--muted);font-size:var(--fs-xs)}
+    .var-source{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:var(--fs-xs)}
+    .var-badge{color:var(--muted);font-size:var(--fs-xs);white-space:nowrap}
+    .var-badge-warn{color:var(--amber)}
+    .var-intro{font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-4);line-height:1.5}
+    .var-upper{text-transform:uppercase}
   </style>
   <link rel="stylesheet" href="/api/theme.css" id="hive-theme-css">
 </head>
@@ -17370,7 +17382,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : '';
 
       return `<div class="advisor-section">
-        <div class="advisor-title">Cadence Advisor <span style="color:var(--muted);font-size:0.7rem">weekly projection at current cadence</span></div>
+        <div class="advisor-title">Cadence Advisor <span class="var-meta">weekly projection at current cadence</span></div>
         <div class="advisor-total">Projected: <b>${fmtTokens(totalWeeklyBurn)}</b> tokens/week</div>
         <div class="advisor-bars">${barRows}</div>
         ${excludedHtml}
@@ -20190,7 +20202,7 @@ function burnAreaChart() {
       for (const knob of controllables) {
         const enabled = knob.enabled !== false;
         const rangeInfo = knob.type === 'int' ? ` (${knob.min}–${knob.max})` : knob.type === 'enum' ? ` (${(knob.values || []).length} options)` : '';
-        h += `<label class="nous-config-check"><input type="checkbox" data-knob="${escapeHtml(knob.name)}" ${enabled ? 'checked' : ''}> <code>${escapeHtml(knob.name)}</code><span style="color:var(--muted);font-size:0.7rem">${escapeHtml(rangeInfo)}</span></label>`;
+        h += `<label class="nous-config-check"><input type="checkbox" data-knob="${escapeHtml(knob.name)}" ${enabled ? 'checked' : ''}> <code>${escapeHtml(knob.name)}</code><span class="var-meta">${escapeHtml(rangeInfo)}</span></label>`;
       }
       h += '</div>';
       h += '</div>';
@@ -30036,7 +30048,7 @@ function burnAreaChart() {
     // single most-recent prompt into a browsable history; kept to one short
     // word because it sits in a crowded tab strip.
     const AGENT_PROMPTS_TAB = 'Prior Prompts';
-    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
+    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Variables', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
     const AGENT_QUICK_START_TEMPLATES = [
       { id: 'scanner', name: 'scanner', displayName: 'Scanner', role: 'scanner', emoji: '🔎', backend: 'copilot', kickTemplate: 'scanner-advisory.md', description: 'Finds bugs, triages issues, and turns actionable findings into work.' },
@@ -30888,6 +30900,7 @@ function burnAreaChart() {
         case 'Channels': return renderAgentChannels(d.channels || []);
         case 'Tools': return renderAgentTools(d.tools || null);
         case 'Connections': return renderAgentConnections(d.connections || []);
+        case 'Variables': return renderAgentVariables();
         case 'Stats': return renderAgentStatsTab(d.stats || []);
         case 'Prompt Template': return renderAgentPromptTemplate();
         case AGENT_PROMPTS_TAB: return renderAgentPromptHistoryShell();
@@ -31579,13 +31592,13 @@ function burnAreaChart() {
     function renderGovAccess() {
       loadAuthorizedUsers();
       return `
-        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+        <div class="var-intro">
           Users permitted to sign in to this hive, and their roles. Access is managed
           on the hub's <b>Manage Access</b> screen and syncs here automatically — this
           view is read-only.
         </div>
         <div id="access-users-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)"></div>
-        <div id="access-users-list" tabindex="-1"><div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">Loading…</div></div>`;
+        <div id="access-users-list" tabindex="-1"><div class="var-empty">Loading…</div></div>`;
     }
 
     async function loadAuthorizedUsers() {
@@ -31609,7 +31622,7 @@ function burnAreaChart() {
         }
         const users = d.users || [];
         if (!users.length) {
-          listEl.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">No authorized users.</div>';
+          listEl.innerHTML = '<div class="var-empty">No authorized users.</div>';
           return;
         }
         listEl.innerHTML = users.map(function(u) {
@@ -31627,7 +31640,7 @@ function burnAreaChart() {
           var secondary = hasName
             ? '<span style="display:block;font-size:var(--fs-xs);color:var(--muted);word-break:break-word" title="Auth key">' + esc(u.username) + '</span>'
             : '';
-          return '<div class="config-list-item" style="align-items:center;gap:var(--sp-4)">' +
+          return '<div class="config-list-item var-row">' +
             accessRowAvatar(u.username, u.display_name || '', ACCESS_LIST_AVATAR_PX) +
             '<span style="flex:1;min-width:0;font-size:0.85rem" title="' + esc(u.username) + '">' + esc(primary) + secondary + '</span>' +
             '<span class="role-badge ' + roleCls + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
@@ -31645,41 +31658,20 @@ function burnAreaChart() {
     function renderGovVariables() {
       loadVariables();
       return `
-        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+        <div class="var-intro">
           Define your own <code>\${NAME}</code> substitutions for kick templates and config.
           Four types are supported: <b>static</b>, <b>env</b>, <b>script</b>, and <b>http</b>.
           <b>static</b> and <b>env</b> can be managed here; <b>script</b> and <b>http</b> (which run
           commands or fetch URLs) are seed-only — see <i>Advanced</i> below.
         </div>
         <div id="variables-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)"></div>
-        <div id="variables-list"><div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">Loading variables…</div></div>
-        <div style="margin-top:var(--sp-6);border-top:1px solid var(--border,#2a2a2a);padding-top:var(--sp-5)">
-          <div style="font-weight:600;font-size:0.78rem;margin-bottom:var(--sp-4)">Add a variable</div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Name</label><input id="var-add-name" placeholder="MY_VAR" style="text-transform:uppercase"></div>
-            <div class="config-field"><label>Type</label>
-              <select id="var-add-type" data-change-action="onVarAddTypeChange">
-                <option value="static">static (fixed value)</option>
-                <option value="env">env (environment variable)</option>
-              </select>
-            </div>
-            <div class="config-field"><label>Scope</label>
-              <select id="var-add-scope">
-                <option value="template">template</option>
-                <option value="config">config</option>
-                <option value="both">both</option>
-              </select>
-            </div>
-          </div>
-          <div class="config-field-row">
-            <div class="config-field" id="var-add-value-field"><label>Value</label><input id="var-add-value" placeholder="production"></div>
-            <div class="config-field" id="var-add-env-field" style="display:none"><label>Env var name</label><input id="var-add-env" placeholder="HIVE_REGION"></div>
-            <div class="config-field"><label>Default (optional)</label><input id="var-add-default" placeholder="fallback if unset"></div>
-          </div>
-          <button class="hv-btn config-btn btn-primary" data-action="saveNewVariable">Add variable</button>
+        <div id="variables-list"><div class="var-empty">Loading variables…</div></div>
+        <div class="var-section">
+          <div class="var-heading">Add a variable</div>
+          ${variableAddFormHtml('var', 'saveNewVariable', ['template', 'config', 'both'])}
         </div>
-        <details style="margin-top:var(--sp-6);border-top:1px solid var(--border,#2a2a2a);padding-top:var(--sp-5)">
-          <summary style="cursor:pointer;font-weight:600;font-size:0.78rem">Advanced — script &amp; http variables (seed config only)</summary>
+        <details class="var-section">
+          <summary class="var-summary">Advanced — script &amp; http variables (seed config only)</summary>
           <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;margin-top:var(--sp-4)">
             Two more variable types back a <code>\${NAME}</code> with a live value:
             <ul style="margin:6px 0 6px 18px;padding:var(--sp-0)">
@@ -31722,12 +31714,76 @@ function burnAreaChart() {
         </details>`;
     }
 
-    function onVarAddTypeChange() {
-      const t = document.getElementById('var-add-type').value;
-      const vf = document.getElementById('var-add-value-field');
-      const ef = document.getElementById('var-add-env-field');
-      if (t === 'env') { vf.style.display = 'none'; ef.style.display = ''; }
-      else { vf.style.display = ''; ef.style.display = 'none'; }
+    // Shared "Add a variable" form for the hive-level Variables tab (prefix
+    // 'var') and the per-agent editor's Variables tab (prefix 'agent-var').
+    // Field ids are `${prefix}-add-*`; saveAction is the data-action the button
+    // dispatches; scopes lists the allowed scope options (a per-agent variable
+    // only feeds its kick prompt, so it has no 'config' scope).
+    function variableAddFormHtml(prefix, saveAction, scopes) {
+      const p = esc(prefix);
+      const scopeOpts = scopes.map(sc => `<option value="${esc(sc)}">${esc(sc)}</option>`).join('');
+      return `
+          <div class="config-field-row">
+            <div class="config-field"><label>Name</label><input id="${p}-add-name" placeholder="MY_VAR" class="var-upper"></div>
+            <div class="config-field"><label>Type</label>
+              <select id="${p}-add-type" data-change-action="onVarAddTypeChange" data-arg0="${p}">
+                <option value="static">static (fixed value)</option>
+                <option value="env">env (environment variable)</option>
+              </select>
+            </div>
+            <div class="config-field"><label>Scope</label>
+              <select id="${p}-add-scope">${scopeOpts}</select>
+            </div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field" id="${p}-add-value-field"><label>Value</label><input id="${p}-add-value" placeholder="production"></div>
+            <div class="config-field" id="${p}-add-env-field" hidden><label>Env var name</label><input id="${p}-add-env" placeholder="HIVE_REGION"></div>
+            <div class="config-field"><label>Default (optional)</label><input id="${p}-add-default" placeholder="fallback if unset"></div>
+          </div>
+          <button class="hv-btn config-btn btn-primary" data-action="${esc(saveAction)}">Add variable</button>`;
+    }
+
+    function onVarAddTypeChange(prefix) {
+      const p = prefix || 'var';
+      const t = document.getElementById(p + '-add-type').value;
+      const vf = document.getElementById(p + '-add-value-field');
+      const ef = document.getElementById(p + '-add-env-field');
+      vf.hidden = t === 'env';
+      ef.hidden = t !== 'env';
+    }
+
+    // Reads the shared add form into { name, body } for a PUT, or toasts and
+    // returns null when the name is missing.
+    function readVariableAddForm(prefix) {
+      const name = (document.getElementById(prefix + '-add-name').value || '').trim().toUpperCase();
+      const type = document.getElementById(prefix + '-add-type').value;
+      const scope = document.getElementById(prefix + '-add-scope').value;
+      const def = (document.getElementById(prefix + '-add-default').value || '').trim();
+      if (!name) { showToast('Enter a variable name', 'error'); return null; }
+      const body = { type, scope };
+      if (def) body.default = def;
+      if (type === 'env') body.env = (document.getElementById(prefix + '-add-env').value || '').trim() || name;
+      else body.value = document.getElementById(prefix + '-add-value').value || '';
+      return { name, body };
+    }
+
+    function resetVariableAddForm(prefix) {
+      ['name', 'value', 'env', 'default'].forEach(f => {
+        const el = document.getElementById(prefix + '-add-' + f);
+        if (el) el.value = '';
+      });
+    }
+
+    // One value-free variable row (name/type/scope/source) with caller-supplied
+    // trailing actions; shared by the hive-level and per-agent lists.
+    function variableRowHtml(v, actionsHtml) {
+      return `<div class="config-list-item var-row">
+          <code class="var-code">\${${esc(v.name)}}</code>
+          <span class="var-meta">${esc(v.type)}</span>
+          <span class="var-meta">${esc(v.scope)}</span>
+          <span class="var-source" title="${esc(v.source)}">${esc(v.source)}</span>
+          ${actionsHtml}
+        </div>`;
     }
 
     async function loadVariables() {
@@ -31753,44 +31809,30 @@ function burnAreaChart() {
       const el = document.getElementById('variables-list');
       if (!el) return;
       if (vars.length === 0) {
-        el.innerHTML = '<div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">No variables defined.</div>';
+        el.innerHTML = '<div class="var-empty">No variables defined.</div>';
         return;
       }
       el.innerHTML = vars.map(v => {
         const seedOnly = (v.type === 'script' || v.type === 'http');
         const del = seedOnly
-          ? '<span style="color:var(--muted);font-size:var(--fs-xs);white-space:nowrap" title="script/http variables are managed in the seed config">seed-managed</span>'
+          ? '<span class="var-badge" title="script/http variables are managed in the seed config">seed-managed</span>'
           : `<button class="hv-btn config-btn btn-danger btn-sm" data-action="deleteVariable" data-arg0="${esc(v.name)}">delete</button>`;
-        return `<div class="config-list-item" style="align-items:center;gap:var(--sp-4)">
-          <code style="flex:0 0 auto">\${${esc(v.name)}}</code>
-          <span style="color:var(--muted);font-size:0.7rem">${esc(v.type)}</span>
-          <span style="color:var(--muted);font-size:0.7rem">${esc(v.scope)}</span>
-          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:0.7rem" title="${esc(v.source)}">${esc(v.source)}</span>
-          ${del}
-        </div>`;
+        return variableRowHtml(v, del);
       }).join('');
     }
 
     async function saveNewVariable() {
-      const name = (document.getElementById('var-add-name').value || '').trim().toUpperCase();
-      const type = document.getElementById('var-add-type').value;
-      const scope = document.getElementById('var-add-scope').value;
-      const def = (document.getElementById('var-add-default').value || '').trim();
-      if (!name) { showToast('Enter a variable name', 'error'); return; }
-      const body = { type, scope };
-      if (def) body.default = def;
-      if (type === 'env') body.env = (document.getElementById('var-add-env').value || '').trim() || name;
-      else body.value = document.getElementById('var-add-value').value || '';
+      const form = readVariableAddForm('var');
+      if (!form) return;
+      const name = form.name;
       try {
         const r = await fetch('/api/config/variables/' + encodeURIComponent(name), {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.body)
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
         showToast('Variable ${' + name + '} saved', 'success');
-        document.getElementById('var-add-name').value = '';
-        document.getElementById('var-add-value').value = '';
-        document.getElementById('var-add-default').value = '';
+        resetVariableAddForm('var');
         loadVariables();
       } catch (e) { showToast('Failed to save variable', 'error'); }
     }
@@ -31802,6 +31844,114 @@ function burnAreaChart() {
         if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
         showToast('Variable ${' + name + '} deleted', 'success');
         loadVariables();
+      } catch (e) { showToast('Failed to delete variable', 'error'); }
+    }
+
+    // ── Per-agent editor → Variables tab (#11458) ──
+    // Same model as the hive-level Variables tab above and the same shared
+    // form/row helpers, backed by GET/PUT/DELETE
+    // /api/config/agent/{name}/variables[/{var}]. The agent's own static/env
+    // variables are editable; hive-level variables are listed read-only as
+    // inherited, flagged when this agent overrides them (the agent's
+    // definition wins in its kick prompt). Values are never returned.
+    function renderAgentVariables() {
+      loadAgentVariables();
+      return `
+        <div class="var-intro">
+          <code>\${NAME}</code> substitutions for <b>this agent's</b> kick prompt only. An agent variable
+          overrides a hive-level variable of the same name; everything else is inherited from the hive
+          <i>Variables</i> tab. Only <b>static</b> and <b>env</b> variables can be set per agent.
+        </div>
+        <div class="var-heading">Agent variables</div>
+        <div id="agent-variables-list"><div class="var-empty">Loading variables…</div></div>
+        <div class="var-section">
+          <div class="var-heading">Add or update an agent variable</div>
+          ${variableAddFormHtml('agent-var', 'saveNewAgentVariable', ['template', 'both'])}
+        </div>
+        <div class="var-section">
+          <div class="var-heading">Inherited from the hive (read-only)</div>
+          <div id="agent-variables-inherited"></div>
+        </div>`;
+    }
+
+    async function loadAgentVariables() {
+      // Same ordering hazard as loadVariables(): the tab markup is assigned
+      // into the DOM after this starts, so resolve the elements after the await.
+      const agent = _configState.agent || '';
+      let listEl = null;
+      try {
+        const r = await fetch('/api/config/agent/' + encodeURIComponent(agent) + '/variables');
+        listEl = document.getElementById('agent-variables-list');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderAgentVariablesList(d.variables || [], d.inherited || []);
+      } catch (e) {
+        if (listEl) listEl.innerHTML = '<div class="text-muted fs-sm">Could not load variables.</div>';
+      }
+    }
+
+    function renderAgentVariablesList(vars, inherited) {
+      const el = document.getElementById('agent-variables-list');
+      const inhEl = document.getElementById('agent-variables-inherited');
+      const empty = (msg) => `<div class="var-empty">${msg}</div>`;
+      if (el) {
+        el.innerHTML = vars.length === 0 ? empty('No agent variables — this agent uses the hive-level ones below.') : vars.map(v => {
+          const envName = (v.type === 'env' && (v.source || '').startsWith('env:')) ? v.source.slice(4) : '';
+          const actions = `<button class="hv-btn config-btn btn-sm" data-action="editAgentVariable" data-arg0="${esc(v.name)}" data-arg1="${esc(v.type)}" data-arg2="${esc(v.scope)}" data-arg3="${esc(envName)}">edit</button>
+            <button class="hv-btn config-btn btn-danger btn-sm" data-action="deleteAgentVariable" data-arg0="${esc(v.name)}">delete</button>`;
+          return variableRowHtml(v, actions);
+        }).join('');
+      }
+      if (inhEl) {
+        inhEl.innerHTML = inherited.length === 0 ? empty('No hive-level variables defined.') : inherited.map(v => {
+          const tag = v.overridden
+            ? '<span class="var-badge var-badge-warn" title="this agent defines a variable with the same name, which wins">overridden</span>'
+            : '<span class="var-badge" title="edit on the hive Variables tab">inherited</span>';
+          return variableRowHtml(v, tag);
+        }).join('');
+      }
+    }
+
+    // Prefills the add form from an existing agent variable. Values are never
+    // returned by the API, so a static value has to be re-entered.
+    function editAgentVariable(name, type, scope, envName) {
+      const set = (f, v) => { const el = document.getElementById('agent-var-add-' + f); if (el) el.value = v; };
+      set('name', name);
+      set('type', type === 'env' ? 'env' : 'static');
+      set('scope', scope === 'both' ? 'both' : 'template');
+      set('env', envName || '');
+      set('value', '');
+      onVarAddTypeChange('agent-var');
+      const focus = document.getElementById(type === 'env' ? 'agent-var-add-env' : 'agent-var-add-value');
+      if (focus) focus.focus();
+      showToast('Editing ${' + name + '} — the current value is not shown; enter the new one', 'info');
+    }
+
+    async function saveNewAgentVariable() {
+      const agent = _configState.agent || '';
+      const form = readVariableAddForm('agent-var');
+      if (!form) return;
+      const name = form.name;
+      try {
+        const r = await fetch('/api/config/agent/' + encodeURIComponent(agent) + '/variables/' + encodeURIComponent(name), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.body)
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
+        showToast('Variable ${' + name + '} saved for ' + agent, 'success');
+        resetVariableAddForm('agent-var');
+        loadAgentVariables();
+      } catch (e) { showToast('Failed to save variable', 'error'); }
+    }
+
+    async function deleteAgentVariable(name) {
+      const agent = _configState.agent || '';
+      try {
+        const r = await fetch('/api/config/agent/' + encodeURIComponent(agent) + '/variables/' + encodeURIComponent(name), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
+        showToast('Variable ${' + name + '} deleted from ' + agent, 'success');
+        loadAgentVariables();
       } catch (e) { showToast('Failed to delete variable', 'error'); }
     }
 
@@ -35919,7 +36069,7 @@ function burnAreaChart() {
         </div>
         <div class="config-field" style="margin-top:14px">
           <label>Per-Agent Exemptions ${settingHelpMark('settings', 'budget', 'Per-Agent Exemptions', `Exempt agents keep getting kicked even while an exhausted budget suppresses everyone else. Toggles apply immediately (no Save needed). The governor panel's global "ignore budget" checkbox bypasses enforcement for ALL agents; these exemptions are per-agent.`)}</label>
-          <div id="budget-exempt-list"><div style="color:var(--muted);font-size:var(--fs-sm);padding:var(--sp-2) var(--sp-0)">Loading exemptions...</div></div>
+          <div id="budget-exempt-list"><div class="var-empty">Loading exemptions...</div></div>
         </div>
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
@@ -35956,7 +36106,7 @@ function burnAreaChart() {
       const rows = agents.map(a => {
         const burn = byAgent[a.name] || 0;
         const exempt = _budgetExemptAgents.has(a.name);
-        return `<div class="config-list-item" style="align-items:center;gap:var(--sp-4)">
+        return `<div class="config-list-item var-row">
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}</span>
           <span style="color:var(--muted);font-size:0.7rem;white-space:nowrap" title="Tokens recorded for this agent by the governor's budget tracker">${burn > 0 ? formatNumber(burn) + ' tok' : '—'}</span>
           <label style="display:flex;align-items:center;gap:var(--sp-2);font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap">

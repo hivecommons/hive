@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
+	"sort"
 	"strings"
 
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
@@ -326,6 +328,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := validateConnections(name, agent.Connections); err != nil {
 			return err
 		}
+		if err := validateAgentVariables(name, agent.Variables); err != nil {
+			return err
+		}
 		if err := validateAgentSpecRef(name, agent.AgentSpec); err != nil {
 			return err
 		}
@@ -390,6 +395,44 @@ func validateAPIURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("must include a host")
+	}
+	return nil
+}
+
+// variableNamePattern is the ${NAME} identifier shape a variable name must
+// have: letters, digits and underscore, not starting with a digit. The
+// dashboard's variable endpoints enforce the same shape.
+var variableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ValidVariableName reports whether name is usable as a ${NAME} variable.
+func ValidVariableName(name string) bool {
+	return variableNamePattern.MatchString(name)
+}
+
+// validateAgentVariables checks an agent's per-agent `variables:` block. Only
+// static and env variables are allowed (script/http and the security policy
+// are hive-level and seed-only), and the scope must be template or both — a
+// per-agent variable only ever feeds that agent's kick prompt, never the
+// config-load expansion, so scope "config" would silently do nothing.
+func validateAgentVariables(agentName string, vars map[string]VarDef) error {
+	names := make([]string, 0, len(vars))
+	for name := range vars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		def := vars[name]
+		if !ValidVariableName(name) {
+			return fmt.Errorf("agent %s: variables.%s: invalid name (use letters, digits, underscore; not starting with a digit)", agentName, name)
+		}
+		if !AgentVarTypeAllowed(def.Type) {
+			return fmt.Errorf("agent %s: variables.%s: type %q is not allowed per agent (only static or env; script/http are hive-level variables.defs in the seed config)", agentName, name, def.Type)
+		}
+		switch def.Scope {
+		case "", "template", "both":
+		default:
+			return fmt.Errorf("agent %s: variables.%s: scope %q is invalid for a per-agent variable (must be template or both)", agentName, name, def.Scope)
+		}
 	}
 	return nil
 }
