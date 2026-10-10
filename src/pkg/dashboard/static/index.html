@@ -1744,6 +1744,11 @@
        instead of blending into the purple PR list — nine escalated PRs were
        invisible to the operator for a week without this. */
     .repo-pr-pill.needs-human { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
+    /* sentinel: the sentinel labelled this PR (sentinel.label, default
+       `sentinel-alert`) as a possible security override, privilege
+       escalation or codebase damage; Hive will not merge it until a
+       maintainer removes the label. Red wins over every other row tint. */
+    .repo-pr-pill.sentinel-flagged { --component-status: var(--status-error); --pill-c: var(--status-error); }
     .pill-needs-human-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
     /* The hive's own review on a PR. Deliberately muted and NOT one of the
        merge-state tints: it reports that the hive looked, which is evidence
@@ -13244,6 +13249,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mergeState === 'eligible') kinds.push('pr:eligible');
       if (mergeState === 'outstanding') kinds.push('pr:outstanding');
       if (labels.has('needs-human')) kinds.push('needs-human', 'pr:needs-human');
+      if (prSentinelFlagged(pr || {})) kinds.push('pr:sentinel');
       if (held || holdLabels((pr && pr.labels) || []).length) kinds.push('pr:held');
       if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('pr:needs-decision');
       if ((pr && pr.review_class) === 'fix') kinds.push('pr:fix');
@@ -13303,6 +13309,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           entries: [
             { cls: 'repo-pr-pill mergeable', kind: 'pr:eligible', glyph: '✓', glyphCls: 'pill-merge-icon', label: 'eligible', caption: 'sweep would merge now', tip: 'Merge-eligible on the sweep verdict' },
             { cls: 'repo-pr-pill merge-outstanding', kind: 'pr:outstanding', glyph: '◐', glyphCls: 'pill-merge-icon', label: 'outstanding', caption: 'mergeable, sweep still wants something', tip: 'GitHub says mergeable, but the sweep still wants something' },
+            { cls: 'repo-pr-pill sentinel-flagged', kind: 'pr:sentinel', label: 'sentinel', caption: 'sentinel flagged it (possible security override, privilege escalation or codebase damage) — Hive will not merge it until a maintainer reviews it and removes the label; trusted-author PRs usually get a comment, not red', tip: 'The sentinel flagged this PR for a possible security override, privilege escalation or codebase damage. Hive will not merge it until a maintainer reviews it and removes the sentinel label. Red means the PR carries the label, so trusted-author PRs (which normally get a sentinel comment instead of the label) are usually not red.' },
             { cls: 'repo-pr-pill needs-human pill-icon', kind: 'needs-human', glyph: '⚠', caption: 'fix attempts exhausted — review it', tip: 'Automated fix attempts exhausted — human review required' },
             { cls: 'repo-pr-pill pill-icon', kind: 'pr:held', glyph: '⏸', caption: 'waiting on a human', tip: 'Held / waiting on a human' },
             { cls: 'repo-pr-pill pill-icon', kind: 'pr:ci', label: '✗ CI', caption: 'failing checks (hover lists them)', tip: 'Failing CI; tooltip lists failing checks' },
@@ -13759,6 +13766,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function prLabelSet(pr) {
       return new Set(((pr && pr.labels) || []).map(l => String(l).toLowerCase()));
+    }
+
+    // The configured sentinel label comes from /api/role; until it is known
+    // no PR is treated as flagged rather than guessing a name.
+    function prSentinelFlagged(pr) {
+      const want = String(window._hiveSentinelLabel || '').trim().toLowerCase();
+      return !!want && prLabelSet(pr).has(want);
     }
 
     function prQueued(pr) {
@@ -15709,6 +15723,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // of truth — the same signal the ledger writes to GitHub — so this
           // view cannot drift from the ledger.
           const needsHuman = labels.map(l => l.toLowerCase()).includes('needs-human');
+          const sentinelFlagged = prSentinelFlagged(p);
           // review_class is the presentational triage class the snapshot is
           // ordered by (fix > refactor-docs > tests, then age; #6183). It is
           // derived server-side from the title prefix and lane label only.
@@ -15728,7 +15743,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const linkedIssues = prLinkedIssues(p);
           const linkedIssueText = linkedIssues.map(i => (i.repo && i.repo !== cardRepo ? i.repo : '') + '#' + i.number + (i.state ? ' ' + i.state : '')).join(', ');
           const linkedTip = linkedIssueText ? ' [closes: ' + linkedIssueText + ']' : '';
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + reviewDecisionTip + requestedTip + convoTip + linkedTip + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + bandTip + activityTip + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + reviewDecisionTip + requestedTip + convoTip + linkedTip + prMergeNote(p) + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '') + (sentinelFlagged ? ' (sentinel flagged — not merged until a maintainer removes the label)' : '') + (held ? ' (' + heldReason(p) + ')' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
@@ -15771,11 +15786,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see. Held adds the dashed outline without making
           // the PR a trailing append; it bands with other human gates.
-          const tintClass = needsHuman ? ' needs-human' : mergeClass;
-          const prStatusText = reviewClass ? (reviewClass === 'refactor-docs' ? 'refactor' : reviewClass) : (held ? 'held' : 'PR');
-          const prStatusTip = reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request');
+          // A sentinel flag wins over everything, held included: Hive will
+          // not merge the PR until a maintainer removes the label.
+          const tintClass = sentinelFlagged ? ' sentinel-flagged' : (needsHuman ? ' needs-human' : mergeClass);
+          const prStatusText = reviewClass ? (reviewClass === 'refactor-docs' ? 'refactor' : reviewClass) : (sentinelFlagged ? 'sentinel' : (held ? 'held' : 'PR'));
+          const sentinelTip = sentinelFlagged ? 'Sentinel flagged: possible security override, privilege escalation or codebase damage — Hive will not merge it until a maintainer reviews it and removes the label. ' : '';
+          const prStatusTip = sentinelTip + (reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request'));
           const rowKinds = repoPRFilterKinds(p, held, bandInfo);
-          const statusKind = held ? 'pr:held' : (needsHuman ? 'needs-human' : (mergeState === 'eligible' ? 'pr:eligible' : (mergeState === 'outstanding' ? 'pr:outstanding' : ((reviewClass === 'fix') ? 'pr:fix' : 'pr:open'))));
+          const statusKind = sentinelFlagged ? 'pr:sentinel' : held ? 'pr:held' : (needsHuman ? 'needs-human' : (mergeState === 'eligible' ? 'pr:eligible' : (mergeState === 'outstanding' ? 'pr:outstanding' : ((reviewClass === 'fix') ? 'pr:fix' : 'pr:open'))));
           return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button><a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
         const prPills = groupedRepoPRs(r.openPrs || [], r.heldPrs || []).map(g => {
@@ -41177,6 +41195,7 @@ function burnAreaChart() {
       try {
         const roleResp = await fetch('/api/role');
         const roleData = await roleResp.json();
+        if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
         if (roleData.user) {
           if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
           /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't

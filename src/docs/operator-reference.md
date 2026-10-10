@@ -342,6 +342,13 @@ Every alert is also written to the dashboard audit log as `sentinel-alert`,
 and, when `evidence.enabled` is on, recorded under `sentinel` in the flagged
 head's [review evidence bundle](review-evidence.md).
 
+On the dashboard's Projects cards, every open PR that carries the configured
+sentinel label is drawn as a red pill (status chip and main pill), taking
+precedence over the held, needs-human and merge colours, and the pill legend
+has a matching entry. The red clears on the next status refresh after a
+maintainer removes the label. Trusted-author PRs that only received a sentinel
+comment are not red.
+
 ## Image provenance and tags
 
 Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/hivecommons/hive` (plus `hive-contributor` and `hive-hub`) and mirrored **by digest** into the matching `ghcr.io/kubestellar/*` packages. Post-transfer, `hivecommons` is the native publishing org; the workflow retags the already-built digest into `kubestellar` so that spokes still pinned to the old org keep resolving, and both orgs serve digest-identical manifest lists for the same tag. (A missing cross-org credential is a hard failure in that direction precisely because a one-sided publish would leave `kubestellar` serving stale tags to live spokes.)
