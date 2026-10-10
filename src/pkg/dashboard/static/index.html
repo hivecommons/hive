@@ -15831,7 +15831,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const forkPill = r.upstream || r.upstreamWatchOn ? (() => {
           const checked = r.upstreamLastCheck ? 'last checked ' + r.upstreamLastCheck : 'never checked';
           const tip = 'Fork of ' + (r.upstream || 'its upstream') + '. Upstream watch is ' + (r.upstreamWatchOn ? 'on' : 'off') + (r.upstreamWatchOn ? '; ' + checked : '') + '.';
-          const label = '🍴 ' + (r.upstream || 'fork') + (r.upstreamWatchOn ? ' · watch on · ' + (r.upstreamLastCheck ? new Date(r.upstreamLastCheck).toLocaleString() : 'never checked') : ' · watch off');
+          const label = '🍴 ' + (r.upstream || 'fork') + (r.upstreamWatchOn ? ' · watch on · ' + (r.upstreamLastCheck ? formatDashboardDateTime(r.upstreamLastCheck) : 'never checked') : ' · watch off');
           return `<span class="repo-fork-pill${r.upstreamWatchOn ? '' : ' off'}" title="${esc(tip)}">${esc(label)}</span>`;
         })() : '';
         const autoMergeOn = r.autoMerge !== false;
