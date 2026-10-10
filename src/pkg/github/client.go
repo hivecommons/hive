@@ -641,7 +641,12 @@ type PullRequest struct {
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
 	CIStatus       string `json:"ci_status"`
-	HeadSHA        string `json:"head_sha,omitempty"`
+	// CIRealCheckRuns is the count of non-meta check runs observed on the head.
+	// CIRealCheckRunsKnown distinguishes an observed metadata-only head from
+	// older/test payloads that did not collect this evidence.
+	CIRealCheckRuns      int    `json:"ci_real_check_runs,omitempty"`
+	CIRealCheckRunsKnown bool   `json:"ci_real_check_runs_known,omitempty"`
+	HeadSHA              string `json:"head_sha,omitempty"`
 	// HeadRef is the PR's head branch name; HeadRepo is the "owner/name" the
 	// head branch lives in. FromFork is true when HeadRepo differs from the
 	// PR's base repository (GitHub's isCrossRepository) — or when the head
@@ -1918,10 +1923,12 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	hasFail := false
 	allDone := true
 	ciChecksFound := 0
+	pr.CIRealCheckRunsKnown = true
+	dcoSatisfied := dcoContextSucceeded(nil, latestCheckRuns)
 	var failingNames []string
 	var failingIDs []int64
 	for _, cr := range latestCheckRuns {
-		if isMetaCheck(cr.GetName()) {
+		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
 			continue
 		}
 		ciChecksFound++
@@ -1936,6 +1943,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 			failingIDs = append(failingIDs, cr.GetID())
 		}
 	}
+	pr.CIRealCheckRuns = ciChecksFound
 	if ciChecksFound == 0 {
 		pr.CIStatus = ciStatusPending
 		return reported

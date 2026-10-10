@@ -211,6 +211,15 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 			guarding: "2026-08-04: three green console PRs frozen for hours waiting on tide/coverage that never complete",
 		},
 		{
+			name: "metadata-only pending is not eligible even when mergeable",
+			pr: github.PullRequest{
+				Repo: "hivecommons/hive", Number: 80, CIStatus: "pending", Mergeable: github.MergeableYes,
+				CIRealCheckRunsKnown: true, CIRealCheckRuns: 0,
+			},
+			want:     bucketNeither,
+			guarding: "unprotected bases still require at least one real successful CI check-run; tide/DCO alone are metadata",
+		},
+		{
 			name: "pending with unknown mergeability is neither",
 			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 9, CIStatus: "pending", Mergeable: github.MergeableUnknown},
 			want: bucketNeither,
