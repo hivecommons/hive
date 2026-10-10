@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.160.1)
+
+### Fixed
+
+- The hub now keeps GitHub slow-start pacing productive after rate-limit bursts by rejecting hopeless paced requests before they consume slots, reclaiming cancelled slots, logging caution windows, and coalescing duplicate channel commit lookups so hosted hive auto-upgrades can keep resolving targets ([#11468](https://github.com/hivecommons/hive/issues/11468)).
+
 ## 2026-10-10 (v5.160.0)
 
 ### Added
