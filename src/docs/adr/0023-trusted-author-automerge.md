@@ -23,9 +23,12 @@ positive permission check so non-member forks never merge through this path.
 The tier reuses the self-authored sweep's merge mechanics: required CI green,
 mergeable state, no hold/exempt/excluded labels, no outstanding
 `CHANGES_REQUESTED` review, expected-head-SHA pinning immediately before merge,
-and the same merge method selection as `hive-merge`. Each merge records
-`tier=trusted-author` and comments with the author's role, GitHub permission,
-and green head SHA.
+and the same merge method selection as `hive-merge`. If the base branch's
+required-check set is unknown or empty/unprotected, metadata contexts such as
+Prow `tide` and probot `DCO` are not treated as CI evidence or blockers; Hive
+still requires at least one real successful check-run on the head SHA before
+trying the server-side merge. Each merge records `tier=trusted-author` and
+comments with the author's role, GitHub permission, and green head SHA.
 
 ## Consequences
 

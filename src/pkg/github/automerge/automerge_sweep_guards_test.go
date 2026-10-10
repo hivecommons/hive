@@ -124,7 +124,11 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				"statuses":    []map[string]string{{"context": "ci/build", "state": fx.statusState}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
-			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]string{}})
+			runs := []map[string]string{}
+			if fx.statusState == "success" {
+				runs = append(runs, map[string]string{"name": "build", "status": "completed", "conclusion": "success"})
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			if fx.mergeCalls != nil {
 				*fx.mergeCalls++
