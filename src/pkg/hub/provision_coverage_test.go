@@ -45,6 +45,8 @@ func TestProvisionHiveSuccess(t *testing.T) {
 
 func TestProvisionManifestIncludesNodeHealthRBAC(t *testing.T) {
 	for _, want := range []string{
+		"cluster_id: {{.ClusterID}}",
+		"name: HIVE_CLUSTER_ID",
 		"kind: ClusterRole",
 		"name: hive-node-health-reader-{{.Namespace}}",
 		`resources: ["nodes"]`,

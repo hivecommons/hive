@@ -963,6 +963,21 @@ Verify the resulting role has only the two node rules; it must have no
 other bindings to the tenant ServiceAccount: narrowing this role cannot undo
 grants from independently installed roles.
 
+Existing push-reported spokes also need the cluster identity that enables the
+heartbeat `cluster_health` block. If a hive was provisioned before
+`hub.cluster_id`/`HIVE_CLUSTER_ID` were emitted, patch the Deployment and then
+restart the pod (repeat for each namespace):
+
+```bash
+CLUSTER_ID=vllm-d
+kubectl --request-timeout=15s -n "${NS}" set env deploy/hive HIVE_CLUSTER_ID="${CLUSTER_ID}"
+kubectl --request-timeout=15s -n "${NS}" rollout restart deploy/hive
+```
+
+This is in addition to the read-only ClusterRole/ClusterRoleBinding above; RBAC
+alone cannot help if the spoke omits `cluster_health` because its cluster ID is
+blank.
+
 ---
 
 ## Path B — Manual provisioning (heartbeat-only cluster)
@@ -1219,6 +1234,7 @@ data:
     hub:
       enabled: true
       url: https://hive.hivecommons.dev
+      cluster_id: vllm-d
       dashboard_url: https://${ROUTE_HOST}
       hive_type: hosted
       is_public: false
