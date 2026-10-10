@@ -75,6 +75,12 @@ type GovernorConfig struct {
 	// default.
 	ThresholdScaling string `yaml:"threshold_scaling,omitempty" json:"threshold_scaling,omitempty"`
 
+	// CoverageTarget is the test-coverage goal, in percent (1–100), that the
+	// quality card, the ci-maintainer pct-bar, the agent coverage preamble, and
+	// the ACMM advisor's full-autonomy coverage gate measure against. 0 means
+	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
+	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
+
 	// CadenceOwners records WHO last set each governor mode cadence, keyed
 	// mode → agent → owner (FieldOwnerOperator). It is the cadence analogue of
 	// AgentConfig.ModelOwner/BackendOwner (#5558): a pack could never stomp an

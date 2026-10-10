@@ -26,51 +26,65 @@ func (s *Server) handleVariablesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.deps.Config.Variables
-	type varView struct {
-		Name  string `json:"name"`
-		Type  string `json:"type"`
-		Scope string `json:"scope"`
-		// Source is a non-secret provenance hint: for env, the source env var
-		// name; for static, "static"; for script, "script"; for http, the host.
-		Source string `json:"source"`
-	}
-	out := make([]varView, 0, len(v.Defs))
-	for name, def := range v.Defs {
-		typ := def.Type
-		if typ == "" {
-			if def.Value != "" {
-				typ = "static"
-			} else {
-				typ = "env"
-			}
-		}
-		scope := def.Scope
-		if scope == "" {
-			scope = "template"
-		}
-		source := typ
-		switch typ {
-		case "env":
-			if def.Env != "" {
-				source = "env:" + def.Env
-			} else {
-				source = "env:" + name
-			}
-		case "http":
-			if u, err := url.Parse(def.URL); err == nil && u.Host != "" {
-				source = "http:" + u.Host
-			} else {
-				source = "http"
-			}
-		}
-		out = append(out, varView{Name: name, Type: typ, Scope: scope, Source: source})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	out := variableViews(v.Defs)
 	jsonResponse(w, map[string]any{
 		"variables":    out,
 		"exec_enabled": v.Security.AllowExec,
 		"http_enabled": v.Security.AllowHTTP,
 	})
+}
+
+// varView is the value-free JSON view of one variable definition shared by
+// the hive-level and per-agent variable lists. It never carries a value.
+type varView struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Scope string `json:"scope"`
+	// Source is a non-secret provenance hint: for env, the source env var
+	// name; for static, "static"; for script, "script"; for http, the host.
+	Source string `json:"source"`
+}
+
+// newVarView builds the value-free view of def (see varView).
+func newVarView(name string, def config.VarDef) varView {
+	typ := def.Type
+	if typ == "" {
+		if def.Value != "" {
+			typ = "static"
+		} else {
+			typ = "env"
+		}
+	}
+	scope := def.Scope
+	if scope == "" {
+		scope = "template"
+	}
+	source := typ
+	switch typ {
+	case "env":
+		if def.Env != "" {
+			source = "env:" + def.Env
+		} else {
+			source = "env:" + name
+		}
+	case "http":
+		if u, err := url.Parse(def.URL); err == nil && u.Host != "" {
+			source = "http:" + u.Host
+		} else {
+			source = "http"
+		}
+	}
+	return varView{Name: name, Type: typ, Scope: scope, Source: source}
+}
+
+// variableViews returns the value-free views of defs, sorted by name.
+func variableViews(defs map[string]config.VarDef) []varView {
+	out := make([]varView, 0, len(defs))
+	for name, def := range defs {
+		out = append(out, newVarView(name, def))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // variableNamePattern restricts dashboard-created variable names to the safe
@@ -160,6 +174,59 @@ func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// decodeVariableDef validates the variable name and decodes a dashboard
+// variable upsert body into a VarDef, writing the error response and
+// returning false on failure. Only static and env are accepted — script/http
+// are seed-only. A per-agent variable (agentScoped) only feeds that agent's
+// kick prompt, so its scope must be template or both.
+func decodeVariableDef(w http.ResponseWriter, r *http.Request, name string, agentScoped bool) (config.VarDef, bool) {
+	if !variableNamePattern.MatchString(name) {
+		jsonError(w, "invalid variable name (use letters, digits, underscore; not starting with a digit)", http.StatusBadRequest)
+		return config.VarDef{}, false
+	}
+	var body struct {
+		Type    string  `json:"type"`
+		Scope   string  `json:"scope"`
+		Value   string  `json:"value"`
+		Env     string  `json:"env"`
+		Default *string `json:"default"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return config.VarDef{}, false
+	}
+	switch body.Type {
+	case "static", "env":
+		// allowed
+	case "script", "http":
+		jsonError(w, "script and http variables can only be defined in the seed config (GitOps), not from the dashboard", http.StatusForbidden)
+		return config.VarDef{}, false
+	default:
+		jsonError(w, "type must be 'static' or 'env'", http.StatusBadRequest)
+		return config.VarDef{}, false
+	}
+	switch {
+	case body.Scope == "" || body.Scope == "template" || body.Scope == "both":
+		// allowed
+	case body.Scope == "config" && !agentScoped:
+		// allowed
+	case agentScoped:
+		jsonError(w, "scope must be 'template' or 'both' for a per-agent variable", http.StatusBadRequest)
+		return config.VarDef{}, false
+	default:
+		jsonError(w, "scope must be 'template', 'config', or 'both'", http.StatusBadRequest)
+		return config.VarDef{}, false
+	}
+	// Guard against a secret value being pasted into a static var (it would be
+	// persisted to hive.yaml in plaintext). Reuse the same heuristic the LiteLLM
+	// key fields use.
+	if body.Type == "static" && looksLikeApiKeyValue(body.Value) {
+		jsonError(w, "that value looks like an API key or secret; use type 'env' pointing at an environment variable instead of inlining a secret", http.StatusBadRequest)
+		return config.VarDef{}, false
+	}
+	return config.VarDef{Type: body.Type, Scope: body.Scope, Value: body.Value, Env: body.Env, Default: body.Default}, true
+}
+
 // handleVariableUpsert creates or updates a single operator variable via the
 // dashboard. It is deliberately restricted to the two SAFE resolver types —
 // static and env — which cannot execute code or reach the network. script and
@@ -177,47 +244,10 @@ func (s *Server) handleVariableUpsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if !variableNamePattern.MatchString(name) {
-		jsonError(w, "invalid variable name (use letters, digits, underscore; not starting with a digit)", http.StatusBadRequest)
+	def, ok := decodeVariableDef(w, r, name, false)
+	if !ok {
 		return
 	}
-	var body struct {
-		Type    string  `json:"type"`
-		Scope   string  `json:"scope"`
-		Value   string  `json:"value"`
-		Env     string  `json:"env"`
-		Default *string `json:"default"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	switch body.Type {
-	case "static", "env":
-		// allowed
-	case "script", "http":
-		jsonError(w, "script and http variables can only be defined in the seed config (GitOps), not from the dashboard", http.StatusForbidden)
-		return
-	default:
-		jsonError(w, "type must be 'static' or 'env'", http.StatusBadRequest)
-		return
-	}
-	switch body.Scope {
-	case "", "template", "config", "both":
-		// allowed
-	default:
-		jsonError(w, "scope must be 'template', 'config', or 'both'", http.StatusBadRequest)
-		return
-	}
-	// Guard against a secret value being pasted into a static var (it would be
-	// persisted to hive.yaml in plaintext). Reuse the same heuristic the LiteLLM
-	// key fields use.
-	if body.Type == "static" && looksLikeApiKeyValue(body.Value) {
-		jsonError(w, "that value looks like an API key or secret; use type 'env' pointing at an environment variable instead of inlining a secret", http.StatusBadRequest)
-		return
-	}
-
-	def := config.VarDef{Type: body.Type, Scope: body.Scope, Value: body.Value, Env: body.Env, Default: body.Default}
 
 	if s.deps.Config.Variables.Defs == nil {
 		s.deps.Config.Variables.Defs = map[string]config.VarDef{}
@@ -227,7 +257,7 @@ func (s *Server) handleVariableUpsert(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.auditFromRequest(r, "variable_upsert", auditDetail("name", name, "type", body.Type), "")
+	s.auditFromRequest(r, "variable_upsert", auditDetail("name", name, "type", def.Type), "")
 	jsonResponse(w, map[string]any{"status": "saved", "name": name})
 }
 
@@ -260,4 +290,134 @@ func (s *Server) handleVariableDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditFromRequest(r, "variable_delete", auditDetail("name", name), "")
 	jsonResponse(w, map[string]any{"status": "deleted", "name": name})
+}
+
+// registerAgentVariableRoutes registers the per-agent Variables tab endpoints.
+// Called last from RegisterAPI so the api-reference citations do not shift.
+func (s *Server) registerAgentVariableRoutes() {
+	s.mux.HandleFunc("GET /api/config/agent/{name}/variables", s.handleAgentVariablesList)
+	s.mux.HandleFunc("PUT /api/config/agent/{name}/variables/{var}", s.handleAgentVariableUpsert)
+	s.mux.HandleFunc("DELETE /api/config/agent/{name}/variables/{var}", s.handleAgentVariableDelete)
+}
+
+// inheritedVarView is a hive-level variable as seen from one agent: the same
+// value-free view plus whether the agent's own definition overrides it.
+type inheritedVarView struct {
+	varView
+	Overridden bool `json:"overridden"`
+}
+
+// handleAgentVariablesList returns one agent's own ${VAR} definitions plus the
+// hive-level ones it inherits (read-only here; edit them on the hive Variables
+// tab). Like handleVariablesList it never returns a value — only name, type,
+// scope and a non-secret source hint. An inherited variable the agent
+// redefines is flagged overridden: the agent's definition wins in its kick.
+func (s *Server) handleAgentVariablesList(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	name := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	v := s.deps.Config.Variables
+	inherited := make([]inheritedVarView, 0, len(v.Defs))
+	for _, view := range variableViews(v.Defs) {
+		_, overridden := agentCfg.Variables[view.Name]
+		inherited = append(inherited, inheritedVarView{varView: view, Overridden: overridden})
+	}
+	jsonResponse(w, map[string]any{
+		"agent":        name,
+		"variables":    variableViews(agentCfg.Variables),
+		"inherited":    inherited,
+		"exec_enabled": v.Security.AllowExec,
+		"http_enabled": v.Security.AllowHTTP,
+	})
+}
+
+// handleAgentVariableUpsert creates or updates one per-agent variable. Same
+// rules as handleVariableUpsert — static/env only, no secret-looking static
+// values — plus a template/both scope. The agent entry is persisted the same
+// way the hive-level handler persists its edit (saveConfig), so it lands in
+// the dashboard overlay's agent and survives reloads.
+func (s *Server) handleAgentVariableUpsert(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	agent := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[agent]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	name := r.PathValue("var")
+	def, ok := decodeVariableDef(w, r, name, true)
+	if !ok {
+		return
+	}
+	vars := make(map[string]config.VarDef, len(agentCfg.Variables)+1)
+	for k, v := range agentCfg.Variables {
+		vars[k] = v
+	}
+	vars[name] = def
+	agentCfg.Variables = vars
+	s.deps.Config.Agents[agent] = agentCfg
+	if err := s.saveConfig(); err != nil {
+		jsonError(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.auditFromRequest(r, "agent_variable_upsert", auditDetail("name", name, "type", def.Type), agent)
+	s.refreshAsync()
+	jsonResponse(w, map[string]any{"status": "saved", "agent": agent, "name": name})
+}
+
+// handleAgentVariableDelete removes one per-agent variable. Inherited
+// hive-level variables are not deletable here (404): they belong to the hive
+// Variables tab.
+func (s *Server) handleAgentVariableDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	agent := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[agent]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	name := r.PathValue("var")
+	if _, ok := agentCfg.Variables[name]; !ok {
+		jsonError(w, "variable not found on this agent", http.StatusNotFound)
+		return
+	}
+	vars := make(map[string]config.VarDef, len(agentCfg.Variables))
+	for k, v := range agentCfg.Variables {
+		if k != name {
+			vars[k] = v
+		}
+	}
+	if len(vars) == 0 {
+		vars = nil
+	}
+	agentCfg.Variables = vars
+	s.deps.Config.Agents[agent] = agentCfg
+	if err := s.saveConfig(); err != nil {
+		jsonError(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.auditFromRequest(r, "agent_variable_delete", auditDetail("name", name), agent)
+	s.refreshAsync()
+	jsonResponse(w, map[string]any{"status": "deleted", "agent": agent, "name": name})
 }

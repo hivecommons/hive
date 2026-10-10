@@ -216,6 +216,7 @@ func (s *Server) buildACMMStatusInputsFromStatus(status *StatusPayload) acmmadvi
 	if cfg != nil {
 		in.CurrentLevel = detectACMMLevel(cfg)
 		in.HasQualityAgent = hasQualityAgent(cfg)
+		in.CoverageTarget = float64(cfg.Governor.EffectiveCoverageTarget())
 	}
 
 	// Baseline merge-success rate (#3972), read from the fleet-stats collector

@@ -284,3 +284,43 @@ func TestGovernorCadenceScopePut_RejectsNonOwner(t *testing.T) {
 		t.Fatal("refused write still mutated cadence scope")
 	}
 }
+
+func TestGovernorCoverageTargetPut_ValidatesAndApplies(t *testing.T) {
+	s := covApiServer(t)
+
+	if rec := doPutRaw(s, "/api/config/governor/coverage-target", "{nope"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+	for _, v := range []int{101, -5} {
+		if rec := doPut(s, "/api/config/governor/coverage-target", map[string]any{"coverageTarget": v}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("coverageTarget %d: expected 400, got %d", v, rec.Code)
+		}
+	}
+	if s.deps.Config.Governor.CoverageTarget != 0 {
+		t.Fatalf("rejected write still mutated coverage target: %d", s.deps.Config.Governor.CoverageTarget)
+	}
+
+	if rec := doPut(s, "/api/config/governor/coverage-target", map[string]any{"coverageTarget": 80}); rec.Code != http.StatusOK {
+		t.Fatalf("put 80: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := s.deps.Config.Governor.EffectiveCoverageTarget(); got != 80 {
+		t.Fatalf("coverage target = %d, want 80", got)
+	}
+
+	if rec := doPut(s, "/api/config/governor/coverage-target", map[string]any{"coverage_target": 60}); rec.Code != http.StatusOK {
+		t.Fatalf("snake_case put: expected 200, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CoverageTarget != 60 {
+		t.Fatalf("snake_case alias not applied: %d", s.deps.Config.Governor.CoverageTarget)
+	}
+}
+
+func TestGovernorCoverageTargetPut_RejectsNonOwner(t *testing.T) {
+	s := covApiServer(t)
+	if rec := doPutNoRole(s, "/api/config/governor/coverage-target", `{"coverageTarget":50}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("un-gated PUT coverage-target: expected 403, got %d", rec.Code)
+	}
+	if s.deps.Config.Governor.CoverageTarget == 50 {
+		t.Fatal("refused write still mutated coverage target")
+	}
+}

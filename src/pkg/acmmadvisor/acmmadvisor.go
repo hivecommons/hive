@@ -45,13 +45,15 @@ const (
 // ── Coverage thresholds ─────────────────────────────────────────────────────
 //
 // The coverage bar is anchored on the real 90% gate the hive codebase enforces
-// (see pkg/dashboard/metrics_collector.go collectCoverage, coverageTarget=91).
+// (see pkg/dashboard/metrics_collector.go collectCoverage). The hive overrides
+// it with governor.coverage_target via Signals.CoverageTarget.
 // Lower levels use gentler coverage bars so that a young project can still make
 // early progress; the bar tightens as the level (and the trust it grants)
 // rises, culminating at the real 90% gate for the fully-automated levels.
 const (
-	// coverageGate is the project's real, enforced coverage target. Proposing
-	// the highest-trust levels requires meeting it in full.
+	// coverageGate is the fallback coverage target used when Signals does not
+	// carry a configured one. Proposing the highest-trust levels requires
+	// meeting it in full.
 	coverageGate = 90.0
 
 	// Per-level coverage floors required to PROPOSE raising *to* the target
@@ -127,6 +129,9 @@ type Signals struct {
 	CurrentLevel int
 	// CoveragePct is the current test-coverage percentage (0–100).
 	CoveragePct float64
+	// CoverageTarget is the configured coverage goal (percent) the highest-trust
+	// level must meet. 0 falls back to coverageGate.
+	CoverageTarget float64
 	// GreenStreak is the number of consecutive green CI runs with no red.
 	GreenStreak int
 	// MergeSuccessRate is the fraction (0.0–1.0) of recent PRs that merged
@@ -323,7 +328,7 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 		return []Criterion{
 			boolCriterion("Quality agent present", s.HasQualityAgent,
 				"Full autonomy requires an active quality agent."),
-			floorPctCriterion("Test coverage", s.CoveragePct, coverageFloorL6,
+			floorPctCriterion("Test coverage", s.CoveragePct, s.l6CoverageFloor(),
 				"Full autonomy requires meeting the enforced coverage gate."),
 			floorIntCriterion("Green-CI streak", s.GreenStreak, greenStreakL6,
 				"A long, stable streak before auto-merge is granted."),
@@ -340,6 +345,15 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 // ── Criterion builders ──────────────────────────────────────────────────────
 
 // floorPctCriterion builds a >= criterion over a percentage signal.
+// l6CoverageFloor is the L5→L6 coverage floor: the configured target when set,
+// otherwise the package default gate.
+func (s Signals) l6CoverageFloor() float64 {
+	if s.CoverageTarget > 0 {
+		return s.CoverageTarget
+	}
+	return coverageFloorL6
+}
+
 func floorPctCriterion(name string, actual, required float64, detail string) Criterion {
 	return Criterion{
 		Name:       name,

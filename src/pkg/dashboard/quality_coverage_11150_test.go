@@ -16,7 +16,7 @@ import (
 // metrics carry the measured coverage percentage, and omit it (rendering "—")
 // when no badge reading is available rather than reporting a fabricated 0%.
 func TestQualityCoverageMetrics_KnownAndUnknown(t *testing.T) {
-	known := qualityCoverageMetrics(87, true)
+	known := qualityCoverageMetrics(87, true, coverageTarget)
 	if known["coverage"] != 87 {
 		t.Errorf("coverage = %v, want 87", known["coverage"])
 	}
@@ -27,7 +27,7 @@ func TestQualityCoverageMetrics_KnownAndUnknown(t *testing.T) {
 		t.Errorf("coverageSource = %v, want %q", known["coverageSource"], qualityCoverageSource)
 	}
 
-	unknown := qualityCoverageMetrics(0, false)
+	unknown := qualityCoverageMetrics(0, false, coverageTarget)
 	if _, present := unknown["coverage"]; present {
 		t.Errorf("unknown coverage must be omitted, got %v", unknown["coverage"])
 	}

@@ -438,5 +438,5 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		}
 		rt.Vars[name] = fn
 	}
-	return s.registry().Expand(context.Background(), template, resolve.ScopeTemplate, rt), false
+	return s.registryFor(agentName).Expand(context.Background(), template, resolve.ScopeTemplate, rt), false
 }
