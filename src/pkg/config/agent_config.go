@@ -412,14 +412,9 @@ type AgentConfig struct {
 	Skills []string `yaml:"skills,omitempty" json:"skills,omitempty"`
 
 	// Variables declares per-agent ${NAME} substitutions for this agent's kick
-	// prompt. They are merged over the hive-level variables.defs (the agent
-	// wins on a name clash) by ResolveRegistryForAgent. Only the two SAFE
-	// resolver types — static and env — are honoured here: an agent entry can
-	// come from the user-writable dashboard overlay, so script/http defs (and
-	// the exec/http security policy, which has no per-agent form at all) stay
-	// hive-level and seed-only. json:"-" keeps static values out of the
-	// generic agent-config JSON; GET /api/config/agent/{name}/variables is the
-	// value-free view.
+	// prompt. They merge over hive-level variables.defs for this agent only,
+	// and only safe static/env resolvers are honored from this user-writable
+	// overlay surface. json:"-" keeps values out of generic agent-config JSON.
 	Variables map[string]VarDef `yaml:"variables,omitempty" json:"-"`
 
 	// Managed is true for agents loaded from the overlay directory (not base config).

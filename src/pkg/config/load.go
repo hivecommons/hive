@@ -553,13 +553,8 @@ func AgentVarTypeAllowed(typ string) bool {
 }
 
 // EffectiveVariableDefs returns the variable definitions that apply to
-// agentName's kick prompt: the hive-level variables.defs with the agent's own
-// `variables:` merged over them (agent wins on a name clash). Per-agent defs
-// with an invalid name or a type other than static/env are ignored here even
-// if they slipped past validation, and any script/http-only fields are
-// stripped, so a per-agent entry can never introduce a code-executing or
-// network-reaching resolver. With no per-agent defs the hive-level map is
-// returned unchanged.
+// agentName's kick prompt: hive-level variables.defs with the agent's own
+// `variables:` merged over them. The agent wins on a name clash.
 func (c *Config) EffectiveVariableDefs(agentName string) map[string]VarDef {
 	ac, ok := c.Agents[agentName]
 	if !ok || len(ac.Variables) == 0 {
@@ -581,9 +576,7 @@ func (c *Config) EffectiveVariableDefs(agentName string) map[string]VarDef {
 
 // ResolveRegistryForAgent is ResolveRegistry for one agent's kick prompt: the
 // registry is built from EffectiveVariableDefs(agentName), so per-agent
-// variables override hive-level ones. The trust policy is always the
-// hive-level (seed-only) variables.security block. An unknown agent, or one
-// with no per-agent variables, gets exactly ResolveRegistry's registry.
+// variables override hive-level ones. The trust policy is always hive-level.
 func (c *Config) ResolveRegistryForAgent(agentName string, logger *slog.Logger) *resolve.Registry {
 	defs := c.EffectiveVariableDefs(agentName)
 	if len(defs) == 0 {
