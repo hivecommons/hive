@@ -184,12 +184,6 @@ func cachedHubReleaseNotes(key string) (hubReleaseNotesResponse, bool) {
 	return e.resp, true
 }
 
-func storeHubReleaseNotes(key string, resp hubReleaseNotesResponse, now time.Time) {
-	hubReleaseNotesCache.Lock()
-	defer hubReleaseNotesCache.Unlock()
-	storeHubReleaseNotesLocked(key, resp, now)
-}
-
 func storeHubReleaseNotesLocked(key string, resp hubReleaseNotesResponse, now time.Time) {
 	for k, e := range hubReleaseNotesCache.entries {
 		if now.Sub(e.at) > hubReleaseNotesCacheTTL {
