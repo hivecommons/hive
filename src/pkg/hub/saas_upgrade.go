@@ -1276,17 +1276,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				"hive_id", h.ID, "status", h.Status, "assigned_at", h.AssignedAt)
 			continue
 		}
-		// Scheduling gate. Instant-mode hives (and every legacy record, whose
-		// mode is empty) pass straight through, so this changes nothing for the
-		// existing fleet. Daily-mode hives are held until the first cycle at or
-		// after autoUpgradeDailyHour ET and released only once per ET day.
-		// Evaluated BEFORE any of the work below so a held hive costs nothing.
-		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
-		if !decision.Allowed {
-			s.logger.Debug("auto-upgrade held by schedule",
-				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
-			continue
-		}
+		decision := autoUpgradeDecision{Allowed: true, Reason: "not evaluated"}
 		// Skip hives that are actively provisioning or in error state.
 		// Empty status means the hive predates the provisioning system — treat as eligible.
 		if h.Status == "provisioning" || h.Status == "error" {
@@ -1303,6 +1293,16 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// run (2026-09-25).
 		reach := s.reachableUpgradeTarget(branch, imageRef, h.TrackedChannel)
 		if !reach.Resolved {
+			continue
+		}
+		// Scheduling gate. Candidate-channel hives are canaries whose job is to
+		// follow each published image, so by default they bypass daily/weekly
+		// cadence and move as soon as the ordinary idle/health/wave gates below
+		// allow it. Stable and branch-tracking hives keep their stored cadence.
+		decision = shouldAutoUpgradeNowForChannel(h.AutoUpgradeMode, h.AutoUpgradeLastFired, reach.Channel, time.Now())
+		if !decision.Allowed {
+			s.logger.Debug("auto-upgrade held by schedule",
+				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "channel", reach.Channel, "reason", decision.Reason)
 			continue
 		}
 		latestSHA := reach.SHA

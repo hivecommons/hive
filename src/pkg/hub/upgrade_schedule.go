@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"os"
+	"strings"
 	"sync"
 	"time"
 	_ "time/tzdata"
@@ -74,6 +76,8 @@ const autoUpgradeTimezone = "America/New_York"
 // is evaluated in autoUpgradeTimezone, not UTC, so "at most once per day" means
 // once per ET day as the operator experiences it.
 const autoUpgradeDateFormat = "2006-01-02"
+
+const candidateRespectAutoUpgradeScheduleEnv = "HIVE_CANDIDATE_RESPECT_AUTO_UPGRADE_SCHEDULE"
 
 // validAutoUpgradeModes is the allowlist the API validates against. Unknown
 // values are rejected with 400 rather than silently falling back, so a typo in
@@ -200,6 +204,22 @@ func shouldAutoUpgradeNow(mode, lastFiredDate string, now time.Time) autoUpgrade
 		return autoUpgradeDecision{Reason: "before the daily window"}
 	}
 	return autoUpgradeDecision{Allowed: true, FireDate: today, Reason: "daily window open"}
+}
+
+func shouldAutoUpgradeNowForChannel(mode, lastFiredDate, channel string, now time.Time) autoUpgradeDecision {
+	if channel == ReleaseChannelCandidate && !candidateAutoUpgradeScheduleOverride() {
+		return autoUpgradeDecision{Allowed: true, Reason: "candidate channel tracks each published image"}
+	}
+	return shouldAutoUpgradeNow(mode, lastFiredDate, now)
+}
+
+func candidateAutoUpgradeScheduleOverride() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(candidateRespectAutoUpgradeScheduleEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // defaultUpgradeWaveSize bounds concurrent auto-upgrades per cluster (the
