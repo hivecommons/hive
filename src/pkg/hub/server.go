@@ -970,6 +970,7 @@ type HubServer struct {
 	githubActivityCancel context.CancelFunc
 	configPath           string
 	envGitHubToken       string
+	discordRequests      discordRequestNotificationState
 	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
 	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
 	// forever: in tests, the loop could wake up to registrySaveDelay after the
@@ -4181,6 +4182,9 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 		"image_statuses":   getImageStatuses(),
 		"image_build_urls": getImageBuildURLs(),
 		"upgrade_state":    s.hubUpgradeState(),
+	}
+	if discordRequestNotifications := s.discordRequestsNotificationSnapshot(); discordRequestNotifications != nil {
+		resp["discord_request_notifications"] = discordRequestNotifications
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
