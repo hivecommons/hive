@@ -2663,17 +2663,24 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// Store heartbeat-reported cluster health so the hub can use it as a
 	// fallback when it cannot reach the cluster directly via kubectl.
 	if payload.ClusterHealth != nil && entry.ClusterID != "" {
+		now := time.Now()
+		stored := false
 		s.heartbeatHealthMu.Lock()
-		s.heartbeatHealth[entry.ClusterID] = &HeartbeatHealthEntry{
-			Report:     payload.ClusterHealth,
-			ReceivedAt: time.Now(),
+		prev := s.heartbeatHealth[entry.ClusterID]
+		if shouldReplaceHeartbeatHealth(prev, payload.ClusterHealth, now) {
+			s.heartbeatHealth[entry.ClusterID] = &HeartbeatHealthEntry{
+				Report:     payload.ClusterHealth,
+				ReceivedAt: now,
+			}
+			stored = true
 		}
 		s.heartbeatHealthMu.Unlock()
-		s.logger.Debug("stored heartbeat cluster health",
+		s.logger.Debug("received heartbeat cluster health",
 			"hive_id", payload.HiveID,
 			"cluster_id", entry.ClusterID,
 			"nodes", len(payload.ClusterHealth.Nodes),
 			"node_health_error", payload.ClusterHealth.NodeHealthError,
+			"stored", stored,
 		)
 	}
 
@@ -3179,6 +3186,26 @@ const (
 	// implausibly large active-session list (defensive; a real hive has a handful).
 	maxActiveSessionUsers = 200
 )
+
+func shouldReplaceHeartbeatHealth(prev *HeartbeatHealthEntry, next *HeartbeatClusterHealthReport, now time.Time) bool {
+	if next == nil {
+		return false
+	}
+	if prev == nil || prev.Report == nil {
+		return true
+	}
+	if len(next.Nodes) > 0 {
+		if next.NodeHealthError != "" && len(prev.Report.Nodes) > 0 && prev.Report.NodeHealthError == "" &&
+			now.Sub(prev.ReceivedAt) <= heartbeatHealthStaleness {
+			return false
+		}
+		return true
+	}
+	if len(prev.Report.Nodes) == 0 {
+		return true
+	}
+	return now.Sub(prev.ReceivedAt) > heartbeatHealthStaleness
+}
 
 // creditActiveSessionTime accumulates per-user "time in hive" from one heartbeat's
 // active-session report. Each distinct, valid username that had a live session on

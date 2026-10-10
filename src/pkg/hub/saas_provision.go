@@ -2600,6 +2600,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"InviteKey": provisionInviteKey(h.ID),
 		// Cluster-aware fields.
 		"HubPublicURL":       hubPublicURL(),
+		"ClusterID":          cluster.ID,
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
 		"DashboardPort":      dashboardPort,
@@ -3255,6 +3256,7 @@ data:
     hub:
       enabled: true
       url: {{.HubPublicURL}}
+      cluster_id: {{.ClusterID}}
       dashboard_url: {{.DashboardURL}}
       hive_type: {{.HiveType}}
       is_public: {{.IsPublic}}
@@ -3519,6 +3521,13 @@ spec:
           value: "{{.ACMMLevel}}"
         - name: HIVE_HUB_URL
           value: {{.HubPublicURL}}
+        # The spoke must know the hub registry cluster it belongs to before it
+        # can include cluster_health in its heartbeat. Push-reported clusters
+        # cannot be inferred from the hub side because the hub cannot kubectl
+        # into them; this env also repairs older ConfigMaps that lack
+        # hub.cluster_id after a pod restart.
+        - name: HIVE_CLUSTER_ID
+          value: "{{.ClusterID}}"
         # C2 domain separation: derived per-domain sub-keys ONLY — never the
         # master HIVE_HUB_SECRET. HEARTBEAT authenticates beats to the hub;
         # SESSION verifies hub-minted cookies. SSO is ASYMMETRIC (C2 follow-up):

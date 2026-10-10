@@ -180,9 +180,29 @@ func TestBuildClusterHealthPushReportedCurrentSpokeExplainsMissingHealth(t *test
 		t.Fatalf("clusters = %+v, want one push-reported cluster", resp.Clusters)
 	}
 	got := resp.Clusters[0]
-	want := "push-reported · heartbeat carries no node health — check spoke node-metrics RBAC and metrics-server (last seen just now)"
+	want := "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; set hub.cluster_id or HIVE_CLUSTER_ID, then check node-metrics RBAC and metrics-server (last seen just now)"
 	if got.Note != want {
 		t.Fatalf("note = %q, want %q", got.Note, want)
+	}
+}
+
+func TestHeartbeatHealthKeepsRecentNodeDataOverEmptyReport(t *testing.T) {
+	now := time.Now()
+	withNodes := &HeartbeatHealthEntry{Report: sampleHeartbeatReport(), ReceivedAt: now}
+	empty := &HeartbeatClusterHealthReport{NodeHealthError: "nodes API failed: forbidden"}
+	if shouldReplaceHeartbeatHealth(withNodes, empty, now.Add(time.Minute)) {
+		t.Fatal("empty report replaced recent node data; one broken spoke must not blank a push-reported cluster")
+	}
+	if !shouldReplaceHeartbeatHealth(withNodes, empty, now.Add(heartbeatHealthStaleness+time.Minute)) {
+		t.Fatal("stale node data should yield to a current empty/error report")
+	}
+	if !shouldReplaceHeartbeatHealth(withNodes, sampleHeartbeatReport(), now.Add(time.Minute)) {
+		t.Fatal("fresh node data should replace previous data")
+	}
+	degradedWithNodes := sampleHeartbeatReport()
+	degradedWithNodes.NodeHealthError = "metrics API failed: forbidden"
+	if shouldReplaceHeartbeatHealth(withNodes, degradedWithNodes, now.Add(time.Minute)) {
+		t.Fatal("partial node data replaced recent complete node data")
 	}
 }
 
