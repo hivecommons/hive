@@ -220,6 +220,23 @@ func TestHandleMyHivesIncludesCommitsBehind(t *testing.T) {
 	defer cleanup()
 	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", Org: "acme", Status: "running"})
+
+	// handleMyHives resolves the stable line from the process-global channel
+	// target cache, not resolveStableReleaseLine. Pin it fresh so earlier tests'
+	// (or an async refresh's) leftovers cannot pick a line other than the one
+	// seeded below.
+	waitChannelTargetRefreshes(t)
+	channelTargetMu.Lock()
+	origTargets, origTargetsAt := channelTargetCache, channelTargetCachedAt
+	channelTargetCache = []ChannelTarget{{Channel: ReleaseChannelStable, Branch: fallbackReleaseLine, SHA: "head999"}}
+	channelTargetCachedAt = time.Now()
+	channelTargetMu.Unlock()
+	t.Cleanup(func() {
+		channelTargetMu.Lock()
+		channelTargetCache, channelTargetCachedAt = origTargets, origTargetsAt
+		channelTargetMu.Unlock()
+	})
+
 	commitBehindMu.Lock()
 	commitBehindCache[commitBehindKey{base: "base111", head: "head999"}] = commitBehindValue{count: 3, known: true}
 	// handleMyHives also compares against behindTargetFor's target (the "v2"
