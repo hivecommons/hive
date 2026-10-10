@@ -81,3 +81,29 @@ func TestTabbedModalPanelsDoNotUseInlineHeights11268(t *testing.T) {
 		t.Fatal("tab panels must not carry inline height styles that can override the fixed modal shell")
 	}
 }
+
+func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		"const CONFIG_TOOLTIP_EDGE_PAD_PX = 8",
+		"const CONFIG_TOOLTIP_GAP_PX = 6",
+		"portal.id = 'config-tooltip-portal'",
+		"document.body.appendChild(portal)",
+		"const rect = info.getBoundingClientRect()",
+		"window.addEventListener('scroll', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); }, true)",
+		"window.addEventListener('resize', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); })",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("tooltip anchoring regression guard missing %q", want)
+		}
+	}
+	portalRule := cssRule(t, html, ".config-tooltip-portal")
+	for _, want := range []string{"display: block", "position: fixed"} {
+		if !strings.Contains(portalRule, want) {
+			t.Fatalf("tooltip portal must be body-level fixed positioning, missing %q in %s", want, portalRule)
+		}
+	}
+	if strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "pageX") || strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "offsetParent") {
+		t.Fatal("tooltip positioning must use trigger viewport rects, not page coordinates or offset parents")
+	}
+}

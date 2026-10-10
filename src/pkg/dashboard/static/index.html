@@ -2892,7 +2892,8 @@
     .theme-desc { color:var(--muted); font-size:.72rem; line-height:1.35; margin-top:3px; min-height:2.1em; }
     .theme-actions { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:center; margin:10px 0; }
     .theme-byte-count { font-family:var(--font-mono); font-size:.72rem; color:var(--muted); text-align:right; margin-top:var(--sp-2); }
-    .config-info .config-tooltip {
+    .config-tooltip-portal { display: block; position: fixed; }
+    .config-info .config-tooltip, .config-tooltip-portal {
       display: none; position: fixed; background: var(--bg); border: 1px solid var(--border);
       border-radius: var(--r); padding: 6px 10px;
       font-family: var(--font-ui);
@@ -2901,7 +2902,8 @@
       box-shadow: 0 4px 12px rgba(0,0,0,0.4); line-height: 1.4;
       pointer-events: none;
     }
-    .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: block; }
+    .config-tooltip-portal { display: block; position: fixed; }
+    .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
     .overview-partition-tooltip {
@@ -25864,31 +25866,74 @@ function burnAreaChart() {
         .replace(/\r/g, '');
     }
 
+    const CONFIG_TOOLTIP_EDGE_PAD_PX = 8;
+    const CONFIG_TOOLTIP_GAP_PX = 6;
+    const CONFIG_TOOLTIP_DEFAULT_WIDTH_PX = 240;
+    let _configTooltipTrigger = null;
+    let _configTooltipOriginalDescribedBy = '';
+
+    function configTooltipPortal() {
+      let portal = document.getElementById('config-tooltip-portal');
+      if (!portal) {
+        portal = document.createElement('div');
+        portal.id = 'config-tooltip-portal';
+        portal.className = 'config-tooltip config-tooltip-portal';
+        portal.setAttribute('role', 'tooltip');
+        document.body.appendChild(portal);
+      }
+      return portal;
+    }
+
     function positionConfigTooltip(info) {
       if (!info) return;
-      const tip = info.querySelector('.config-tooltip');
-      if (!tip) return;
+      const sourceTip = info.querySelector('.config-tooltip');
+      if (!sourceTip) return;
+      const portal = configTooltipPortal();
+      const extraClasses = Array.from(sourceTip.classList).filter(c => c !== 'config-tooltip').join(' ');
+      portal.className = ('config-tooltip config-tooltip-portal ' + extraClasses).trim();
+      portal.innerHTML = sourceTip.innerHTML;
+      portal.hidden = false;
+      if (_configTooltipTrigger !== info) {
+        if (_configTooltipTrigger) hideConfigTooltip(_configTooltipTrigger);
+        _configTooltipTrigger = info;
+        _configTooltipOriginalDescribedBy = info.getAttribute('aria-describedby') || '';
+      }
+      info.setAttribute('aria-describedby', portal.id);
       const rect = info.getBoundingClientRect();
-      const tipW = tip.offsetWidth || 240;
+      const tipW = portal.offsetWidth || CONFIG_TOOLTIP_DEFAULT_WIDTH_PX;
       let left = rect.left + rect.width / 2 - tipW / 2;
-      const EDGE_PAD = 8;
-      const TIP_GAP = 6;
-      if (left < EDGE_PAD) left = EDGE_PAD;
-      if (left + tipW > window.innerWidth - EDGE_PAD) left = window.innerWidth - EDGE_PAD - tipW;
-      const tipH = tip.offsetHeight || 0;
-      const below = rect.bottom + TIP_GAP;
-      const above = rect.top - TIP_GAP - tipH;
+      if (left < CONFIG_TOOLTIP_EDGE_PAD_PX) left = CONFIG_TOOLTIP_EDGE_PAD_PX;
+      if (left + tipW > window.innerWidth - CONFIG_TOOLTIP_EDGE_PAD_PX) left = window.innerWidth - CONFIG_TOOLTIP_EDGE_PAD_PX - tipW;
+      const tipH = portal.offsetHeight || 0;
+      const below = rect.bottom + CONFIG_TOOLTIP_GAP_PX;
+      const above = rect.top - CONFIG_TOOLTIP_GAP_PX - tipH;
       let top = below;
-      if (tipH && below + tipH > window.innerHeight - EDGE_PAD && above >= EDGE_PAD) top = above;
-      if (tipH && top + tipH > window.innerHeight - EDGE_PAD) top = Math.max(EDGE_PAD, window.innerHeight - EDGE_PAD - tipH);
-      tip.style.left = left + 'px';
-      tip.style.top = top + 'px';
+      if (tipH && below + tipH > window.innerHeight - CONFIG_TOOLTIP_EDGE_PAD_PX && above >= CONFIG_TOOLTIP_EDGE_PAD_PX) top = above;
+      if (tipH && top + tipH > window.innerHeight - CONFIG_TOOLTIP_EDGE_PAD_PX) top = Math.max(CONFIG_TOOLTIP_EDGE_PAD_PX, window.innerHeight - CONFIG_TOOLTIP_EDGE_PAD_PX - tipH);
+      portal.style.left = left + 'px';
+      portal.style.top = top + 'px';
     }
-    document.addEventListener('mouseover', (e) => {
-      const info = e.target.closest('.config-info');
-      positionConfigTooltip(info);
-    });
+
+    function hideConfigTooltip(info) {
+      if (!info || info !== _configTooltipTrigger) return;
+      const portal = document.getElementById('config-tooltip-portal');
+      if (portal) portal.hidden = true;
+      if (_configTooltipOriginalDescribedBy) info.setAttribute('aria-describedby', _configTooltipOriginalDescribedBy);
+      else info.removeAttribute('aria-describedby');
+      _configTooltipTrigger = null;
+      _configTooltipOriginalDescribedBy = '';
+    }
+
+    document.addEventListener('mouseover', (e) => positionConfigTooltip(e.target.closest('.config-info')));
     document.addEventListener('focusin', (e) => positionConfigTooltip(e.target.closest('.config-info')));
+    document.addEventListener('mouseout', (e) => {
+      const info = e.target.closest('.config-info');
+      if (!info || (e.relatedTarget && info.contains(e.relatedTarget))) return;
+      hideConfigTooltip(info);
+    });
+    document.addEventListener('focusout', (e) => hideConfigTooltip(e.target.closest('.config-info')));
+    window.addEventListener('scroll', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); }, true);
+    window.addEventListener('resize', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); });
 
     // ── Event delegation for actions with user-controlled data ──
     // Eliminates XSS via inline data-action="func" data-arg0="${unsafeValue}" injection.
