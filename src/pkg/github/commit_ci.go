@@ -114,9 +114,15 @@ type CommitCIOptions struct {
 	// not be set when the required set is known to be empty: then nothing is
 	// enforced server-side.
 	UnknownRequiredChecksServerEnforced bool
-	MinHeadAge                          time.Duration
-	HeadPushedAt                        time.Time
-	Now                                 func() time.Time
+	// RequiredKnownEmpty means the required set was discovered and is empty:
+	// nothing is enforced server-side, so completed failures on real CI
+	// check-runs block locally. Metadata contexts (tide, a DCO context once a
+	// sibling DCO context succeeded, ignorable checks) are still skipped exactly
+	// as in server-enforced mode so they cannot block or count as evidence.
+	RequiredKnownEmpty bool
+	MinHeadAge         time.Duration
+	HeadPushedAt       time.Time
+	Now                func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
 	// the set is unknown, so Hive still requires positive CI evidence instead of
@@ -362,6 +368,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	required := opts.Required
 	requiredKnown := opts.RequiredKnown
 	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
+	// Metadata contexts are skipped whenever the required set is not a concrete
+	// list: either the server will enforce it, or it is known to be empty.
+	ignoreMetaContexts := serverEnforcedUnknown || opts.RequiredKnownEmpty
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
@@ -424,7 +433,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if !required[ctxName] {
 				continue
 			}
-		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, serverEnforcedUnknown, dcoSatisfied) {
+		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, ignoreMetaContexts, dcoSatisfied) {
 			if s.GetState() != "success" {
 				rememberIgnoredMeta(ctxName)
 			}
@@ -460,7 +469,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if !required[name] {
 				continue
 			}
-		} else if shouldIgnoreMetaContextForServerEnforcement(name, serverEnforcedUnknown, dcoSatisfied) {
+		} else if shouldIgnoreMetaContextForServerEnforcement(name, ignoreMetaContexts, dcoSatisfied) {
 			if cr.GetStatus() != "completed" || (cr.GetConclusion() != "success" && cr.GetConclusion() != "neutral" && cr.GetConclusion() != "skipped") {
 				rememberIgnoredMeta(name)
 			}
@@ -559,8 +568,8 @@ func dcoContextSucceeded(statuses []*gh.RepoStatus, checkRuns []*gh.CheckRun) bo
 	return false
 }
 
-func shouldIgnoreMetaContextForServerEnforcement(name string, serverEnforcedUnknown, dcoSatisfied bool) bool {
-	if !serverEnforcedUnknown {
+func shouldIgnoreMetaContextForServerEnforcement(name string, ignoreMetaContexts, dcoSatisfied bool) bool {
+	if !ignoreMetaContexts {
 		return false
 	}
 	if isMetaCheck(name) || isIgnorableCICheck(name) {

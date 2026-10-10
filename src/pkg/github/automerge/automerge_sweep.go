@@ -2085,6 +2085,7 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 		RequiredKnown:                       requiredKnown,
 		RequiredKnownFromConfig:             fromConfig,
 		UnknownRequiredChecksServerEnforced: !requiredKnown && !positiveEvidenceGate,
+		RequiredKnownEmpty:                  positiveEvidenceGate,
 		RequireEvidence:                     !requiredKnown,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,

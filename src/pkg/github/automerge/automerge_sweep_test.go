@@ -869,6 +869,7 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures(t *testing.T
 		{name: "failure status next to a green check-run still blocks", statuses: []status{{"ci/build", "failure"}}, checks: []check{{"links", "completed", "success"}}, wantReason: "status-failure"},
 		{name: "pending check still blocks", checks: []check{{"links", "completed", "success"}, {"test", "in_progress", ""}}, wantReason: "check-pending"},
 		{name: "pending meta context is ignored with real CI evidence", statuses: []status{{"tide", "pending"}}, checks: []check{{"links", "completed", "success"}}, wantGreen: true},
+		{name: "failed DCO check-run is ignored once a sibling DCO context succeeded", checks: []check{{"DCO", "completed", "action_required"}, {"dco", "completed", "success"}, {"links", "completed", "success"}}, wantGreen: true},
 		{name: "all green", checks: []check{{"links", "completed", "success"}, {"test", "completed", "success"}}, wantGreen: true},
 	}
 	for _, tt := range tests {
@@ -1362,12 +1363,14 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 			wantReason: "check-pending",
 		},
 		{
-			name:           "unprotected branch with no real successful CI is unverified",
+			// Known-empty required set: nothing is enforced server-side, so
+			// the completed failure itself is the blocker (#11477).
+			name:           "unprotected branch with a completed failure blocks on the failure",
 			protectionCode: 0,
 			checks: []struct{ name, status, conclusion string }{
 				{"anything", "completed", "failure"},
 			},
-			wantReason: "ci-unverified",
+			wantReason: "check-failure",
 		},
 	}
 	for _, tt := range tests {
