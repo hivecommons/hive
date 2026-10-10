@@ -64,10 +64,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	// attempt (#7092), and dashboard-initiated upgrades use it to distinguish a
 	// floating-tag overshoot that actually landed from a superseded request.
 	upgradeOutcomeRec := readUpgradeOutcome()
-	manualUpgrade := s.reconcileDashboardUpgradeState(readDashboardUpgradeState(), versionHash, time.Now().UTC(), upgradeOutcomeRec)
-	if manualUpgrade != nil {
-		resp["manualUpgrade"] = manualUpgrade
-	}
+	dashboardUpgradeRec := readDashboardUpgradeState()
 
 	s.versionMu.RLock()
 	cached := s.cachedLatestHash
@@ -128,6 +125,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["target"] = target
+	manualUpgrade := s.reconcileDashboardUpgradeState(dashboardUpgradeRec, versionHash, time.Now().UTC(), upgradeOutcomeRec, target.SHA)
+	if manualUpgrade != nil {
+		resp["manualUpgrade"] = manualUpgrade
+	}
 	if target.SHA != "" {
 		// stableV4* are the legacy key names the top bar reads; they now carry
 		// the resolved target rather than the v4 tip. Kept so a newer hub UI
@@ -245,6 +246,8 @@ const dashboardHeartbeatStaleAfter = 6 * time.Minute
 
 const dashboardVersionTipCacheTTL = 5 * time.Minute
 const dashboardUpgradeInProgressMaxAge = 15 * time.Minute
+const dashboardUnpublishedTargetGraceDefault = 20 * time.Minute
+const dashboardUnpublishedTargetGraceEnv = "HIVE_UPGRADE_UNPUBLISHED_TARGET_GRACE"
 
 // upgradeTargetSource labels where /api/version's target came from (#7262).
 const (
@@ -467,12 +470,13 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	return count, true
 }
 
-func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runningSHA string, now time.Time, outcome *upgradeOutcome) *dashboardUpgradeState {
-	if st == nil || st.State != dashboardUpgradeStateStarted {
+func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runningSHA string, now time.Time, outcome *upgradeOutcome, latestReachable string) *dashboardUpgradeState {
+	if st == nil || (st.State != dashboardUpgradeStateStarted && st.State != dashboardUpgradeStateQueued) {
 		return st
 	}
 	runningSHA = strings.TrimSpace(runningSHA)
 	target := strings.TrimSpace(st.Target)
+	latestReachable = strings.TrimSpace(latestReachable)
 	next := *st
 	markDone := func(reason string) *dashboardUpgradeState {
 		next.State = dashboardUpgradeStateDone
@@ -497,10 +501,35 @@ func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runni
 	if target != "" && s.dashboardCommitAtOrAhead(runningSHA, target) {
 		return markDone("running commit " + shortSHADashboard(runningSHA) + " is at or ahead of requested target " + shortSHADashboard(target))
 	}
+	if st.State == dashboardUpgradeStateQueued {
+		grace := dashboardUnpublishedTargetGrace()
+		queuedAt := st.UpdatedAt
+		if queuedAt.IsZero() {
+			queuedAt = st.StartedAt
+		}
+		if latestReachable != "" && runningSHA != "" && sameCommitDashboard(runningSHA, latestReachable) {
+			return markSuperseded("unpublished target " + shortSHADashboard(target) + " was superseded because this hive is already running latest published image " + shortSHADashboard(latestReachable))
+		}
+		if target != "" && latestReachable != "" && !sameCommitDashboard(target, latestReachable) &&
+			!queuedAt.IsZero() && now.Sub(queuedAt) >= grace {
+			next.State = dashboardUpgradeStateSuperseded
+			next.Target = latestReachable
+			next.UpdatedAt = now
+			next.Reason = "unpublished target " + shortSHADashboard(target) + " exceeded " + grace.String() + "; falling forward to newest published image " + shortSHADashboard(latestReachable)
+			s.rememberDashboardUpgradeState(next)
+			if s != nil && s.logger != nil {
+				s.logger.Info("dashboard self-upgrade fell forward from unpublished target",
+					"old_target", target, "new_target", latestReachable, "grace", grace.String())
+			}
+			return &next
+		}
+		return st
+	}
 	if outcome != nil && !outcome.CompletedAt.IsZero() && !outcome.CompletedAt.Before(st.StartedAt) &&
 		runningSHA != "" && sameCommitDashboard(runningSHA, outcome.TargetSHA) {
 		return markDone("floating tag landed " + shortSHADashboard(outcome.TargetSHA) + " after the request")
 	}
+
 	if st.StartedFrom != "" && runningSHA != "" && !sameCommitDashboard(runningSHA, st.StartedFrom) {
 		reason := "running commit changed from " + shortSHADashboard(st.StartedFrom) + " to " + shortSHADashboard(runningSHA)
 		if target == "" {
@@ -520,6 +549,18 @@ func (s *Server) reconcileDashboardUpgradeState(st *dashboardUpgradeState, runni
 		return &next
 	}
 	return st
+}
+
+func dashboardUnpublishedTargetGrace() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(dashboardUnpublishedTargetGraceEnv))
+	if raw == "" {
+		return dashboardUnpublishedTargetGraceDefault
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return dashboardUnpublishedTargetGraceDefault
+	}
+	return d
 }
 
 func (s *Server) dashboardCommitAtOrAhead(runningSHA, targetSHA string) bool {

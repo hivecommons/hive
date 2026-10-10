@@ -46,6 +46,7 @@ type MyHiveEntry struct {
 	AutoUpgradeMode     string                 `json:"autoUpgradeMode,omitempty"`
 	NextUpdateAt        string                 `json:"nextUpdateAt,omitempty"`
 	NextUpdateStatus    string                 `json:"nextUpdateStatus,omitempty"`
+	UpgradeWhyNotNow    string                 `json:"upgradeWhyNotNow,omitempty"`
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
@@ -710,6 +711,17 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if result[i].TrackedChannel == ReleaseChannelStable && result[i].AutoUpgrade {
 			result[i].NextUpdateAt = stableNextUpdateAt
 			result[i].NextUpdateStatus = stableNextUpdateStatus
+			if stableNextUpdateStatus == stableNextUpdateStatusQueued {
+				result[i].UpgradeWhyNotNow = "stable channel is still soaking"
+			}
+		} else if result[i].TrackedChannel == ReleaseChannelCandidate && result[i].AutoUpgrade && !candidateAutoUpgradeScheduleOverride() {
+			result[i].NextUpdateStatus = "candidate-continuous"
+			result[i].UpgradeWhyNotNow = "waiting for the hub's next poll and the idle/health gates"
+		} else if result[i].AutoUpgrade {
+			decision := shouldAutoUpgradeNow(result[i].AutoUpgradeMode, "", time.Now())
+			if !decision.Allowed {
+				result[i].UpgradeWhyNotNow = decision.Reason
+			}
 		}
 		if bt := s.behindTargetFor(&result[i].RegistryEntry, result[i].TrackedChannel); bt.SHA != "" {
 			result[i].BehindTargetRef = bt.Ref

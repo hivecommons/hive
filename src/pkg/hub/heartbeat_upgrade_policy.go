@@ -44,7 +44,10 @@ func (s *HubServer) heartbeatUpgradePolicy(payload *HeartbeatPayload, saasHive *
 	if reach.Channel == ReleaseChannelStable && reach.Resolved {
 		policy.NextUpdateAt, policy.NextUpdateStatus = s.stableNextPromotion(peekChannelTargets())
 	}
-	if schedule == AutoUpgradeModeDaily || schedule == AutoUpgradeModeWeekly {
+	if reach.Channel == ReleaseChannelCandidate && !candidateAutoUpgradeScheduleOverride() {
+		policy.NextUpdateAt = ""
+		policy.NextUpdateStatus = "candidate-continuous"
+	} else if schedule == AutoUpgradeModeDaily || schedule == AutoUpgradeModeWeekly {
 		policy.ScheduleHour = autoUpgradeDailyHour
 		policy.ScheduleTimezone = autoUpgradeTimezone
 		if policy.NextUpdateAt == "" && reach.Channel != ReleaseChannelStable {
