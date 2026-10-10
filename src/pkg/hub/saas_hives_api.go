@@ -297,6 +297,7 @@ const (
 	myHivesSnapshotTTL          = 5 * time.Second
 	myHivesSnapshotMaxStale     = 30 * time.Second
 	myHivesSnapshotMaxEntries   = 256
+	myHivesSnapshotRefreshEvery = 5 * time.Second
 	myHivesServerTimingCacheHit = "myhives-cache-hit"
 	myHivesServerTimingStale    = "myhives-cache-stale"
 	myHivesServerTimingMiss     = "myhives-cache-miss"
@@ -351,6 +352,18 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 
 func myHivesSnapshotKey(username, rawQuery string) string {
 	return username + "\x00" + rawQuery
+}
+
+func splitMyHivesSnapshotKey(key string) (string, url.Values, bool) {
+	username, rawQuery, ok := strings.Cut(key, "\x00")
+	if !ok || username == "" {
+		return "", nil, false
+	}
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", nil, false
+	}
+	return username, query, true
 }
 
 func (s *HubServer) myHivesCachedResponse(key string, allowStale bool) ([]byte, time.Duration, bool) {
@@ -433,6 +446,39 @@ func (s *HubServer) refreshMyHivesSnapshot(key, username string, query url.Value
 		s.evictMyHivesSnapshotsLocked()
 		s.myHivesCache[key] = myHivesSnapshot{body: append([]byte(nil), body...), storedAt: time.Now()}
 	}()
+}
+
+func (s *HubServer) refreshActiveMyHivesSnapshotsLoop() {
+	ticker := time.NewTicker(myHivesSnapshotRefreshEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.refreshActiveMyHivesSnapshots()
+		case <-s.saveLoopStop:
+			return
+		}
+	}
+}
+
+func (s *HubServer) refreshActiveMyHivesSnapshots() {
+	s.myHivesCacheMu.Lock()
+	keys := make([]string, 0, len(s.myHivesCache))
+	for key, snap := range s.myHivesCache {
+		if snap.refreshing || time.Since(snap.storedAt) < myHivesSnapshotTTL {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	s.myHivesCacheMu.Unlock()
+
+	for _, key := range keys {
+		username, query, ok := splitMyHivesSnapshotKey(key)
+		if !ok {
+			continue
+		}
+		s.refreshMyHivesSnapshot(key, username, query)
+	}
 }
 
 func cloneURLValues(in url.Values) url.Values {
