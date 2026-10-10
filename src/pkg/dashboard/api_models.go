@@ -13,6 +13,7 @@ import (
 )
 
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	vllmModels := s.queryInferenceModels("vllm")
 	llmdModels := s.queryInferenceModels("llm-d")
 	litellmModels := s.queryInferenceModels("litellm")
@@ -21,17 +22,17 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	// provider HTTP APIs, vendor CLI protocols/subcommands, or a deliberately
 	// authoritative single option. Every probe is best-effort and falls back to
 	// a current static list, so a dropdown is never empty.
-	claudeCLI := s.queryCLIModels("claude")
-	copilotCLI := s.queryCLIModels("copilot")
-	geminiCLI := s.queryCLIModels("gemini")
-	gooseCLI := s.queryCLIModels("goose")
-	codexCLI := s.queryCLIModels("codex")
-	agyCLI := s.queryCLIModels(agyBackendID)
-	ompCLI := s.queryCLIModels(ompBackendID)
+	claudeCLI := s.queryCLIModelsForBoot("claude")
+	copilotCLI := s.queryCLIModelsForBoot("copilot")
+	geminiCLI := s.queryCLIModelsForBoot("gemini")
+	gooseCLI := s.queryCLIModelsForBoot("goose")
+	codexCLI := s.queryCLIModelsForBoot("codex")
+	agyCLI := s.queryCLIModelsForBoot(agyBackendID)
+	ompCLI := s.queryCLIModelsForBoot(ompBackendID)
 	// bob has no discovery source and no usable --model flag: it selects its
 	// own model. Served explicitly so the client never falls through to the
 	// copilot catalog and offers models bob cannot honor (see bobStaticModels).
-	bobCLI := s.queryCLIModels(bobBackendID)
+	bobCLI := s.queryCLIModelsForBoot(bobBackendID)
 
 	// cliBackendEntry renders one CLI backend, attaching the discovery notice
 	// when there is one. A notice means the fallback list is being served
@@ -69,6 +70,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		return entry
 	}
 
+	w.Header().Add("Server-Timing", fmt.Sprintf("dashboard_config_backends;dur=%.1f, dashboard_lock_wait;dur=0", float64(time.Since(start).Microseconds())/1000))
 	jsonResponse(w, []map[string]interface{}{
 		cliBackendEntry("claude", "Claude Code", claudeCLI),
 		cliBackendEntry("copilot", "GitHub Copilot", copilotCLI),
@@ -365,7 +367,7 @@ func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
 	return inferenceStaticModelAliases, true
 }
 
-const inferenceModelQueryTimeout = 5 * time.Second
+const inferenceModelQueryTimeout = 3 * time.Second
 
 // fetchModelsFromEndpointsDetailed additionally reports whether EVERY endpoint
 // answered. A PARTIAL sweep — one gateway of several timing out or answering

@@ -222,6 +222,7 @@ func TestHandleBackends_SurfacesCopilotNotice(t *testing.T) {
 		return nil, errors.New("upstream returned 403 (unauthorized: not licensed to use Copilot)")
 	})
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	s.queryCLIModels("copilot")
 
 	rec := httptest.NewRecorder()
 	s.handleBackends(rec, httptest.NewRequest(http.MethodGet, "/api/config/backends", nil))
@@ -436,6 +437,7 @@ func TestDiscoverCopilotModels_NoticeNamesCredentialSource(t *testing.T) {
 		t.Setenv("COPILOT_GITHUB_TOKEN", "ghp_machine")
 		swapCopilotLoginLookup(t, "svc-bot")
 		s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+		s.queryCLIModels("copilot")
 
 		rec := httptest.NewRecorder()
 		s.handleBackends(rec, httptest.NewRequest(http.MethodGet, "/api/config/backends", nil))

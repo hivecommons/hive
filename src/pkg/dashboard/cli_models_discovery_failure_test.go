@@ -124,6 +124,7 @@ func TestHandleBackends_CarriesDiscoveryFailure(t *testing.T) {
 	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) { return nil, arm64Failure })
 	healthyCopilotAPI(t, "gpt-4o-mini-2024-07-18", "gpt-4o")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	s.queryCLIModels("copilot")
 
 	rec := httptest.NewRecorder()
 	s.handleBackends(rec, httptest.NewRequest(http.MethodGet, "/api/config/backends", nil))
