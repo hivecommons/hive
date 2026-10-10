@@ -46,6 +46,12 @@ func TestPendingAccessRequestsCarryDisplayLabels(t *testing.T) {
 	if got.Username != requester {
 		t.Fatalf("username = %q, want raw key %q", got.Username, requester)
 	}
+	if got.Role != "read" {
+		t.Fatalf("role = %q, want read", got.Role)
+	}
+	if got.HiveID != hiveID {
+		t.Fatalf("hive_id = %q, want %q", got.HiveID, hiveID)
+	}
 	if got.DisplayLabel != "Ada Lovelace" {
 		t.Fatalf("display_label = %q, want Ada Lovelace", got.DisplayLabel)
 	}
@@ -81,6 +87,25 @@ func TestPendingAccessPanelExpansionSurvivesFleetRefresh(t *testing.T) {
 	for _, snippet := range checks {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML missing pending access expansion snippet %q", snippet)
+		}
+	}
+}
+
+func TestPendingAccessBannerNamesRequesterHiveAndPermissionsLink(t *testing.T) {
+	checks := []string{
+		"function pendingBannerLine(h) {",
+		"req.display_label || rawUser || 'Someone'",
+		"requested <strong>' + esc(role) + '</strong> access to",
+		"accessPermissionsHref(id)",
+		"Open Permissions ↗",
+		"jumpToHiveRow(",
+		"escAttr(jsArg(text))",
+		"pending access request' + (count === 1 ? '' : 's') + ' for ' + hiveLink",
+		"and ' + more + ' more hive",
+	}
+	for _, snippet := range checks {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML missing actionable pending banner snippet %q", snippet)
 		}
 	}
 }

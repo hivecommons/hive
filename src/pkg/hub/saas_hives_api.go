@@ -636,6 +636,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					pending = append(pending, PendingAccessRequest{
 						Username:    req.Username,
 						RequestedAt: req.RequestedAt,
+						Role:        pendingAccessRequestRole(req.Role),
+						HiveID:      h.ID,
 						Note:        req.Note,
 					})
 				}
