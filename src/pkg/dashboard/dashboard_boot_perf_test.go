@@ -20,6 +20,30 @@ func TestServerTimingHeaderIsEmitted(t *testing.T) {
 	}
 }
 
+func TestBootModelDiscoveryIsDeferred(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading static index: %v", err)
+	}
+	html := string(b)
+	fn := strings.Index(html, "function refreshBackendDiscovery")
+	deferred := strings.Index(html, "const deferred = [")
+	call := strings.Index(html, "() => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig())")
+	if fn < 0 || deferred < 0 || call < 0 {
+		t.Fatalf("backend discovery must be defined and scheduled in deferred init")
+	}
+	if fn > deferred {
+		t.Fatalf("refreshBackendDiscovery definition must precede deferred init")
+	}
+	if call < deferred {
+		t.Fatalf("backend discovery is not deferred")
+	}
+	immediate := html[fn:deferred]
+	if strings.Contains(immediate, "fetchBackendsConfig();") || strings.Contains(immediate, "INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));") {
+		t.Fatalf("model discovery still starts on the parser path before deferred init")
+	}
+}
+
 func TestBootPerfSummaryIsOptIn(t *testing.T) {
 	b, err := staticFS.ReadFile("static/index.html")
 	if err != nil {

@@ -16773,10 +16773,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return INFERENCE_MODELS[backend] || [];
       }
     }
-    INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
-    // Load configured gateway names so the backend/method pickers list them
-    // (e.g. openrouter) alongside KNOWN_BACKENDS on first paint.
-    fetchConfiguredGateways();
+    function refreshBackendDiscovery(force) {
+      INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b, force));
+      // Load configured gateway names so the backend/method pickers list them
+      // (e.g. openrouter) alongside KNOWN_BACKENDS after the first paint.
+      fetchConfiguredGateways();
+    }
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;
     let _cliModelsFetchedAt = 0;
@@ -16879,7 +16881,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Leave BACKEND_MODELS / fallbacks untouched — retried on next refresh hook.
       }
     }
-    fetchBackendsConfig();
+
 
     // reconcileModelsAfterDiscovery auto-heals selections that a key swap
     // (or endpoint change) stripped out: when a REAL discovery (not the
@@ -42646,6 +42648,7 @@ function burnAreaChart() {
     _deferredLoadPromise = new Promise(function(resolveAll) {
       setTimeout(() => {
         const deferred = [
+          () => Promise.resolve(refreshBackendDiscovery()).then(() => fetchBackendsConfig()),
           () => fetchFactHistory(),
           () => fetchOverviewKPIHistory().then(() => { dashboardSetInterval('overview-kpi-history', fetchOverviewKPIHistory, HISTORY_REFRESH_MS); }),
           () => fetchTrendHistory().then(() => fetchHistory()).then(() => { dashboardSetInterval('history', fetchHistory, HISTORY_REFRESH_MS); }),
