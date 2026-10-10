@@ -158,7 +158,7 @@ space-separated `key=value` pairs, e.g. `agent=quality backend=bob model=auto
 bobshell=1.0.6 requested_by=@octocat`. (A verbatim trailer line is not
 reproduced here on purpose: the watcher's content check rejects a request whose
 *committed files* contain one — run metadata belongs in the PR body or commit
-trailer, not in the tree.)
+trailer, not in the tree. A line that merely edits an existing marker line, so the same marker also appears on a removed line of that file's diff, is tolerated.)
 
 Fields the hive does not know at launch are omitted rather than guessed; the
 possible fields are `agent`, `backend`, `model`, `effort`, `<tool>=<version>`,
