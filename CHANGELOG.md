@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.159.0)
+
+### Added
+
+- Dashboard Projects cards now draw pull requests that carry the configured sentinel alert label (`sentinel.label`, default `sentinel-alert`) as a red pill, ahead of the held, needs-human and merge colours, and the pill legend explains that Hive will not merge them until a maintainer reviews the PR and removes the label. `/api/role` now reports `sentinel_label` to every role ([#11416](https://github.com/hivecommons/hive/issues/11416)).
+- The supersession sweep can now close superseded human-authored PRs instead of only commenting. With `supersession_sweep.close_contributor_prs: true` at ACMM L6, a PR whose claimed issue was closed by a different merged PR is closed after a grace window (`supersession_sweep.grace_period`, default `24h`) when every file it touches was also changed by the merged PR, it is `size/XS`–`size/M`, the author has no unresolved review threads, and nobody commented after the notice. Closed PRs get the `hive/superseded` label and a comment naming the superseding PR and its merge time; hive-authored superseded PRs now get the same label when closed ([#11418](https://github.com/hivecommons/hive/issues/11418)).
+- Dashboard repository cards now show a fork badge naming the upstream, whether the upstream watch is on, and when the fork was last checked ([#11433](https://github.com/hivecommons/hive/issues/11433)).
+
+### Fixed
+
+- Make the Audit Log sensitive badge open a sensitive-only view and highlight matching entries. (#11271)
+- Keep dashboard backend model discovery off the initial API path by serving cached or fallback model lists immediately and refreshing slow probes in the background.
+- Fall forward from unpublished upgrade targets, clear stale queued state, and let candidate-channel hives track published images continuously (#11422)
+- Support per-repository `auto_merge.repos.<repo>.required_checks` overrides so heterogeneous hives do not wedge repos on another repo's required CI gate.
+- Serve the hub Fleet page hives payload from a short-lived snapshot and keep compatible browser cache paints working so "Loading your hives" does not linger. (#11427)
+- Push-reported hosted spokes now receive their cluster ID, keep recent non-empty heartbeat node data over empty spoke reports, and document the vLLM-d node-health RBAC/env repair (#11428)
+- The upstream watch no longer stops a backlog pass at GitHub's 30-searches-a-minute limit: the per-item marker search now waits for the rate-limit reset (up to two minutes, bounded by the pass context) and retries instead of failing the pass and leaving the rest of the backlog for a full `upstream_watch.interval` ([#11434](https://github.com/hivecommons/hive/issues/11434)). Upstream-watch passes are also single-flight, so concurrent eval cycles (for example a dashboard settings save during a governor tick) no longer race on the pass timer or run two passes over the same fork at once ([#11435](https://github.com/hivecommons/hive/issues/11435)).
+
 ## 2026-10-10 (v5.158.3)
 
 ### Changed

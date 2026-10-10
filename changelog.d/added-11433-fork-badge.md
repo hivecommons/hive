@@ -1,1 +1,0 @@
-- Dashboard repository cards now show a fork badge naming the upstream, whether the upstream watch is on, and when the fork was last checked ([#11433](https://github.com/hivecommons/hive/issues/11433)).
