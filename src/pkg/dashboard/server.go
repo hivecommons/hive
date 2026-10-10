@@ -942,6 +942,14 @@ type FrontendRepo struct {
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
 	AutoMerge   bool   `json:"autoMerge"`
+	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):
+	// the repo's upstream_watch entry, resolved to the fork parent once the
+	// watch has run. Empty for a repo that is not in the watch. UpstreamWatchOn
+	// says whether the watch is switched on, and UpstreamLastCheck is the RFC3339
+	// time of the last check, empty when the fork was never checked.
+	Upstream          string `json:"upstream,omitempty"`
+	UpstreamWatchOn   bool   `json:"upstreamWatchOn,omitempty"`
+	UpstreamLastCheck string `json:"upstreamLastCheck,omitempty"`
 }
 
 type FrontendBeads struct {

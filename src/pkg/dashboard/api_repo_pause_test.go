@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/upstreamwatch"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -320,5 +323,28 @@ func TestRepoCards_UnpausedCarryNoPauseFields(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "paused") {
 		t.Errorf("pause fields are not omitempty in the status payload: %s", raw)
+	}
+}
+
+func TestBuildReposForkBadge11433(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "upstream-watch.json")
+	checked := time.Date(2026, 10, 10, 10, 6, 10, 0, time.UTC)
+	state := upstreamwatch.State{"testrepo": &upstreamwatch.RepoState{Upstream: "up/testrepo", LastRunAt: checked}}
+	if err := upstreamwatch.NewFileStore(statePath).Save(state); err != nil {
+		t.Fatal(err)
+	}
+	SetUpstreamWatchStatePathForTest(t, statePath)
+	cfg := &config.Config{}
+	cfg.Project.Org = "acme"
+	cfg.Project.Repos = []string{"testrepo", "plain"}
+	cfg.UpstreamWatch.Enabled = true
+	cfg.UpstreamWatch.Repos = map[string]config.UpstreamWatchRepo{"testrepo": {}}
+
+	repos := buildRepos(cfg, nil, governor.State{})
+	if got := repos[0]; got.Upstream != "up/testrepo" || !got.UpstreamWatchOn || got.UpstreamLastCheck != checked.Format(time.RFC3339) {
+		t.Errorf("fork card = %+v, want upstream, watch on and last check", got)
+	}
+	if got := repos[1]; got.Upstream != "" || got.UpstreamWatchOn || got.UpstreamLastCheck != "" {
+		t.Errorf("non-fork card carries fork fields: %+v", got)
 	}
 }
