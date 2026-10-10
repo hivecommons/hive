@@ -2148,6 +2148,12 @@ type GovernorConfig struct {
 	// default.
 	ThresholdScaling string `yaml:"threshold_scaling,omitempty" json:"threshold_scaling,omitempty"`
 
+	// CoverageTarget is the test-coverage goal, in percent (1–100), that the
+	// quality card, the ci-maintainer pct-bar, the agent coverage preamble, and
+	// the ACMM advisor's full-autonomy coverage gate measure against. 0 means
+	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
+	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
+
 	// CadenceOwners records WHO last set each governor mode cadence, keyed
 	// mode → agent → owner (FieldOwnerOperator). It is the cadence analogue of
 	// AgentConfig.ModelOwner/BackendOwner (#5558): a pack could never stomp an
@@ -2794,6 +2800,26 @@ var ValidThresholdScalings = map[string]bool{
 	ThresholdScalingLinear: true,
 	ThresholdScalingSqrt:   true,
 	ThresholdScalingNone:   true,
+}
+
+// DefaultCoverageTarget is the coverage goal (percent) used when
+// governor.coverage_target is unset: the hivecommons/hive project's own gate.
+const DefaultCoverageTarget = 91
+
+// ValidateCoverageTarget reports whether v is an accepted coverage goal: 0
+// (unset, resolves to the default) or a percentage in 1..100.
+func ValidateCoverageTarget(v int) bool {
+	return v == 0 || (v >= 1 && v <= 100)
+}
+
+// EffectiveCoverageTarget returns the configured coverage goal, falling back to
+// DefaultCoverageTarget when unset or out of range. Resolved lazily (rather
+// than via applyDefaults) so a nil-safe caller always gets a usable percentage.
+func (g GovernorConfig) EffectiveCoverageTarget() int {
+	if g.CoverageTarget >= 1 && g.CoverageTarget <= 100 {
+		return g.CoverageTarget
+	}
+	return DefaultCoverageTarget
 }
 
 // ValidateThresholdScaling reports whether v is an accepted scaling curve.

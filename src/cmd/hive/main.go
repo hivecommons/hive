@@ -2864,6 +2864,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector = dashboard.NewMetricsCollector(nil, b.cfg.Project.Org, primaryRepo, badgeURL, b.cfg.EffectiveAIAuthor(), b.cfg.Project.Name, b.logger)
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
+	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
 	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
 		history := b.dashSrv.CostHistory()
 		if len(history) == 0 || history[0].Timestamp <= 0 {

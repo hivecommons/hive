@@ -46,6 +46,11 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+
+	// coverageTargetFn supplies the configured coverage goal on every collect so
+	// an edit from the hub applies without a restart; nil means the default.
+	coverageTargetFn func() int
+
 	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
 	prIssueCachePath string
 	// prIssueWindowStart, when set, returns the first cost-history timestamp so
@@ -87,6 +92,26 @@ func (mc *MetricsCollector) SetGitHubClientProvider(fn func() *ghpkg.Client) {
 		return
 	}
 	mc.clientFn = fn
+}
+
+// SetCoverageTargetProvider makes the collector read the coverage goal
+// (governor.coverage_target) through fn on every collect.
+func (mc *MetricsCollector) SetCoverageTargetProvider(fn func() int) {
+	if mc == nil {
+		return
+	}
+	mc.coverageTargetFn = fn
+}
+
+// effectiveCoverageTarget is the configured goal, or the default when no
+// provider is installed or it reports a non-positive value.
+func (mc *MetricsCollector) effectiveCoverageTarget() int {
+	if mc != nil && mc.coverageTargetFn != nil {
+		if t := mc.coverageTargetFn(); t > 0 {
+			return t
+		}
+	}
+	return coverageTarget
 }
 
 func (mc *MetricsCollector) SetPRIssueWindowStartProvider(fn func() time.Time) {
@@ -169,9 +194,10 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 	metrics["outreach"] = outreach
 
 	coveragePct, coverageOK := mc.measureCoverage(ctx)
-	ciMaintainer := ciMaintainerCoverageMetrics(coveragePct, coverageOK)
+	target := mc.effectiveCoverageTarget()
+	ciMaintainer := ciMaintainerCoverageMetrics(coveragePct, coverageOK, target)
 	metrics["ci-maintainer"] = ciMaintainer
-	metrics[qualityAgentName] = qualityCoverageMetrics(coveragePct, coverageOK)
+	metrics[qualityAgentName] = qualityCoverageMetrics(coveragePct, coverageOK, target)
 
 	architect := mc.collectArchitect()
 	metrics["architect"] = architect
@@ -400,7 +426,8 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 // file from the hive's own repo via the App client. Nothing configured, or
 // anything unreadable, reports 0 — never a number for some OTHER project.
 func (mc *MetricsCollector) collectCoverage(ctx context.Context) map[string]any {
-	return ciMaintainerCoverageMetrics(mc.measureCoverage(ctx))
+	pct, ok := mc.measureCoverage(ctx)
+	return ciMaintainerCoverageMetrics(pct, ok, mc.effectiveCoverageTarget())
 }
 
 // measureCoverage reads the coverage badge once and reports the parsed
@@ -418,10 +445,10 @@ func (mc *MetricsCollector) measureCoverage(ctx context.Context) (int, bool) {
 
 // ciMaintainerCoverageMetrics is the ci-maintainer card's coverage map; an
 // unknown reading stays 0 there for backwards compatibility.
-func ciMaintainerCoverageMetrics(pct int, ok bool) map[string]any {
+func ciMaintainerCoverageMetrics(pct int, ok bool, target int) map[string]any {
 	result := map[string]any{
 		"coverage":       0,
-		"coverageTarget": coverageTarget,
+		"coverageTarget": target,
 	}
 	if ok {
 		result["coverage"] = pct
@@ -436,9 +463,9 @@ const qualityCoverageSource = "coverage badge (HIVE_COVERAGE_BADGE_URL)"
 // reading (#11150): the figure the ACMM Level 3 coverage loop drives toward
 // the target. Unlike the ci-maintainer map, an unknown reading omits
 // "coverage" entirely so the card renders "—" instead of a fabricated 0%.
-func qualityCoverageMetrics(pct int, ok bool) map[string]any {
+func qualityCoverageMetrics(pct int, ok bool, target int) map[string]any {
 	result := map[string]any{
-		"coverageTarget": coverageTarget,
+		"coverageTarget": target,
 		"coverageSource": qualityCoverageSource,
 	}
 	if ok {
@@ -655,7 +682,7 @@ var coveragePercentPattern = regexp.MustCompile(`(\d{1,3})(?:\.\d+)?\s*%`)
 // rendered figure.
 var markupTagPattern = regexp.MustCompile(`<[^>]*>`)
 
-// coverageTarget is the pct-bar target the ci-maintainer card renders against.
+// coverageTarget is the default pct-bar target (governor.coverage_target unset).
 const coverageTarget = 91
 
 // fetchCoverageBadge returns the raw badge body for badgeURL, dispatching on

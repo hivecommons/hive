@@ -349,3 +349,54 @@ func TestValidate_AcceptsEveryCadenceScope(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveCoverageTarget(t *testing.T) {
+	if got := (GovernorConfig{}).EffectiveCoverageTarget(); got != DefaultCoverageTarget || got != 91 {
+		t.Fatalf("default coverage target = %d, want 91", got)
+	}
+	if got := (GovernorConfig{CoverageTarget: 75}).EffectiveCoverageTarget(); got != 75 {
+		t.Fatalf("override coverage target = %d, want 75", got)
+	}
+	if got := (GovernorConfig{CoverageTarget: 101}).EffectiveCoverageTarget(); got != DefaultCoverageTarget {
+		t.Fatalf("out-of-range coverage target = %d, want default", got)
+	}
+}
+
+func TestValidateCoverageTarget(t *testing.T) {
+	for _, v := range []int{0, 1, 91, 100} {
+		if !ValidateCoverageTarget(v) {
+			t.Errorf("ValidateCoverageTarget(%d) = false, want true", v)
+		}
+	}
+	for _, v := range []int{-1, 101} {
+		if ValidateCoverageTarget(v) {
+			t.Errorf("ValidateCoverageTarget(%d) = true, want false", v)
+		}
+	}
+}
+
+func TestValidate_CoverageTarget(t *testing.T) {
+	for _, v := range []int{101, -1} {
+		c := &Config{
+			Project:  ProjectConfig{Org: "my-org"},
+			GitHub:   GitHubConfig{Token: "t"},
+			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Governor: GovernorConfig{CoverageTarget: v},
+		}
+		err := c.validate()
+		if err == nil || !strings.Contains(err.Error(), "coverage_target") {
+			t.Errorf("validate() with coverage_target=%d: err = %v, want coverage_target error", v, err)
+		}
+	}
+	for _, v := range []int{0, 1, 80, 100} {
+		c := &Config{
+			Project:  ProjectConfig{Org: "my-org"},
+			GitHub:   GitHubConfig{Token: "t"},
+			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			Governor: GovernorConfig{CoverageTarget: v},
+		}
+		if err := c.validate(); err != nil {
+			t.Errorf("validate() with coverage_target=%d: unexpected error %v", v, err)
+		}
+	}
+}

@@ -10184,7 +10184,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       /* A percentage with no underlying metric renders as "—", the same way
          LAST KICK / AVG/PASS do on the card. `v || 0` turned an absent value
          into a hard 0% — indistinguishable from a real, catastrophic result
-         (#7411: a reviewer with no coverage at all showed "0% vs goal 91%"). */
+         (#7411: a reviewer with no coverage at all showed "0% vs goal N%"). */
       const hasValue = v !== undefined && v !== null && v !== '';
 
       if (style === 'pct') {
@@ -10196,7 +10196,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
       if (style === 'pct-bar') {
         const pct = hasValue ? v : 0;
-        const target = stat.target || 100;
+        // The configured goal (governor.coverage_target) rides in the agent's own
+        // metrics; the layout's static target is only the fallback.
+        const metricTarget = (currentAgentMetrics[name] || {}).coverageTarget;
+        const target = (typeof metricTarget === 'number' && metricTarget > 0) ? metricTarget : (stat.target || 100);
         const TARGET_WARN_OFFSET = 10;
         const covCls = !hasValue ? '' : pct >= target ? 'ind-ok' : pct >= target - TARGET_WARN_OFFSET ? 'ind-warn' : 'ind-err';
         const barColor = pct >= target ? 'var(--green)' : pct >= target - TARGET_WARN_OFFSET ? 'var(--yellow)' : 'var(--red)';
@@ -35183,6 +35186,8 @@ function burnAreaChart() {
       const scaling = ((d && d.thresholdScaling) || 'linear');
       const scalingDirty = (_configState.dirty['threshold-scaling'] || {}).thresholdScaling;
       const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
+      const coverageTargetDirty = (_configState.dirty['coverage-target'] || {}).coverageTarget;
+      const activeCoverageTarget = coverageTargetDirty !== undefined ? coverageTargetDirty : ((d && d.coverageTarget) || 91);
       const scaled = activeScaling !== 'none' && repoCount > 1 && activeScope !== 'per_repo';
       const effective = governorEffectiveThresholds(d, base, activeScope, activeScaling);
       const scalingSummary = governorScalingSummary(repoCount, activeScaling, activeScope);
@@ -35238,6 +35243,10 @@ function burnAreaChart() {
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
           ${activeScope === 'per_repo' ? '<p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Scaling is ignored when cadence mode scope is per repo.</p>' : ''}
+        </div>
+        <div class="config-field mb-7">
+          <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM full-autonomy gate measure against (1-100, default 91).`)}</label>
+          <input type="number" min="1" max="100" id="cfg-coverage-target" value="${activeCoverageTarget}" data-input-action="markDirty" data-arg0="coverage-target" data-arg1="coverageTarget" data-arg-types="s,s,N">
         </div>
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}
