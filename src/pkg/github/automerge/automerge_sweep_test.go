@@ -852,6 +852,65 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 	}
 }
 
+// TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures covers a
+// branch whose payload reports required_status_checks.contexts: [] — nothing is
+// enforced server-side, so a completed failure must block locally (#11477).
+func TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures(t *testing.T) {
+	type status struct{ context, state string }
+	type check struct{ name, status, conclusion string }
+	tests := []struct {
+		name       string
+		statuses   []status
+		checks     []check
+		wantGreen  bool
+		wantReason string
+	}{
+		{name: "completed failure next to a green sibling still blocks", checks: []check{{"links", "completed", "success"}, {"test", "completed", "failure"}}, wantReason: "check-failure"},
+		{name: "failure status next to a green check-run still blocks", statuses: []status{{"ci/build", "failure"}}, checks: []check{{"links", "completed", "success"}}, wantReason: "status-failure"},
+		{name: "pending check still blocks", checks: []check{{"links", "completed", "success"}, {"test", "in_progress", ""}}, wantReason: "check-pending"},
+		{name: "pending meta context is ignored with real CI evidence", statuses: []status{{"tide", "pending"}}, checks: []check{{"links", "completed", "success"}}, wantGreen: true},
+		{name: "failed DCO check-run is ignored once a sibling DCO context succeeded", checks: []check{{"DCO", "completed", "action_required"}, {"dco", "completed", "success"}, {"links", "completed", "success"}}, wantGreen: true},
+		{name: "all green", checks: []check{{"links", "completed", "success"}, {"test", "completed", "success"}}, wantGreen: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+					json.NewEncoder(w).Encode(map[string]any{"strict": true, "contexts": []string{}})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+					statuses := []map[string]string{}
+					combined := "success"
+					for _, s := range tt.statuses {
+						statuses = append(statuses, map[string]string{"context": s.context, "state": s.state})
+						if s.state != "success" {
+							combined = s.state
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]any{"state": combined, "total_count": len(statuses), "statuses": statuses})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+					runs := []map[string]string{}
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+					}
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+			if err != nil {
+				t.Fatalf("commitGreen returned error: %v", err)
+			}
+			if green != tt.wantGreen || reason != tt.wantReason {
+				t.Fatalf("commitGreen = (%v,%q), want (%v,%q)", green, reason, tt.wantGreen, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1304,12 +1363,14 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 			wantReason: "check-pending",
 		},
 		{
-			name:           "unprotected branch with no real successful CI is unverified",
+			// Known-empty required set: nothing is enforced server-side, so
+			// the completed failure itself is the blocker (#11477).
+			name:           "unprotected branch with a completed failure blocks on the failure",
 			protectionCode: 0,
 			checks: []struct{ name, status, conclusion string }{
 				{"anything", "completed", "failure"},
 			},
-			wantReason: "ci-unverified",
+			wantReason: "check-failure",
 		},
 	}
 	for _, tt := range tests {

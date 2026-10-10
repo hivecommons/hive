@@ -305,13 +305,14 @@ repo warning (`automerge required_checks override does not match repo
 protection`) and uses the actual set. If the actual set is unknown, Hive keeps
 waiting on the configured list rather than silently weakening the gate.
 
-When the branch reports no required checks, or when the required-check source
-remains unknown after the protection/branch/ruleset/config chain, Hive does not
+When the branch reports no required checks (nothing is enforced server-side, so
+a completed failing check-run or status on the head still blocks), or when the
+required-check source remains unknown after the protection/branch/ruleset/config chain, Hive does not
 let metadata-only contexts wedge trusted-author or self-authored merges. Known
 merge/deploy metadata such as Prow `tide`, probot `DCO` when the lowercase prow
 `dco` context has succeeded, and the existing ignorable allowlist are ignored
-for the local status gate; the merge endpoint still enforces any server-side
-branch rule. Hive still fails closed with `ci-unverified` unless at least one
+for the local status gate; when the source is unknown the merge endpoint still
+enforces any server-side branch rule. Hive still fails closed with `ci-unverified` unless at least one
 real, non-meta check-run has succeeded on the head SHA, so an unprotected branch
 with only tide/DCO and no CI does not merge. The sweep logs the carve-out once
 per PR as `automerge ignoring meta contexts on unprotected base`.
