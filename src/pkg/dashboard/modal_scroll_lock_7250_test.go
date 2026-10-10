@@ -72,7 +72,7 @@ func TestConfigBodyCanAlwaysScroll(t *testing.T) {
 	}
 	rule := html[start : start+end]
 
-	for _, decl := range []string{"overflow-y: auto", "min-height: 0", "overscroll-behavior: contain"} {
+	for _, decl := range []string{"overflow: auto", "min-height: 0", "overscroll-behavior: contain"} {
 		if !strings.Contains(rule, decl) {
 			t.Errorf(".config-body is missing %q — modal body may stop being a scroll container (#7250)", decl)
 		}
