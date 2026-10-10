@@ -4076,7 +4076,6 @@
     .review-subsection-body.dash-card-body { padding: var(--sp-4); }
     .review-subsection-body > .review-queue-panel { padding: 0; }
     .review-queue-count { font-size: var(--fs-xs); color: var(--muted); margin-left: var(--sp-4); }
-    .review-queue-desc { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); }
     .review-queue-panel { padding: var(--sp-4); max-height: 520px; overflow-y: auto; }
     .review-queue-paging { display: none; align-items: center; gap: var(--sp-4); margin-top: var(--sp-4); }
     .review-queue-range { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
@@ -4110,7 +4109,6 @@
     .review-queue-priority-line.low { stroke: var(--muted); }
     .review-queue-collapsed-range { position: static; flex: 0 0 auto; }
     /* Review pipeline kanban (#11087) */
-    .review-pipeline-desc { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); }
     .review-pipeline-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-4); }
     .review-pipeline-board { display: flex; gap: var(--sp-4); overflow-x: auto; align-items: flex-start; padding-bottom: var(--sp-4); }
     .review-pipeline-col { flex: 0 0 240px; min-width: 0; border: 1px solid var(--terminal-line); border-radius: var(--r-sm); padding: var(--sp-3); }
@@ -4863,7 +4861,6 @@
         <div class="dash-card" data-section-card-shell="1">
           <h2 class="dash-card-header section-label section-header-toggle mb-4" id="review-pipeline-heading" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="review-pipeline-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="review-pipeline-subsection" data-arg1="review-pipeline-subsection" data-keys="*" title="Collapse / expand this section"><span class="section-chevron" aria-hidden="true">▼</span><span class="dash-card-title">Pipeline<span data-section-help="review-pipeline-subsection"></span></span><span class="dash-card-badges"><span id="review-pipeline-count" class="review-queue-count"></span></span><span class="dash-card-actions"></span><span class="dash-card-summary" id="review-pipeline-subsection-summary" title="Collapsed summary" aria-label="Collapsed summary">—</span></h2>
           <div class="review-subsection-body dash-card-body section-body" id="review-pipeline-body">
-            <div class="review-pipeline-desc">Each open PR in the stage the review pipeline derived for it (<code>GET /api/review/pipeline</code>), with reviewers, P0–P3 findings, the fix-loop counter and the next action.</div>
             <div class="review-pipeline-filters">
               <select id="review-pipeline-repo" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="repo" data-arg-types="s,v" title="Filter by repo"><option value="">All repos</option></select>
               <select id="review-pipeline-author" class="hv-btn btn-secondary btn" data-change-action="reviewPipelineFilter" data-arg0="author" data-arg-types="s,v" title="Filter by author kind"><option value="">All authors</option><option value="agent">Agent</option><option value="contributor">Contributor</option></select>
@@ -4877,7 +4874,6 @@
         <div class="dash-card" data-section-card-shell="1">
           <h2 class="dash-card-header section-label section-header-toggle mb-4" id="review-queue-heading" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="review-queue-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="review-queue-subsection" data-arg1="review-queue-subsection" data-keys="*" title="Collapse / expand this section"><span class="section-chevron" aria-hidden="true">▼</span><span class="dash-card-title">Queue<span data-section-help="review-queue-subsection"></span></span><span class="dash-card-badges"><span id="review-queue-count" class="review-queue-count"></span></span><span class="dash-card-actions"></span><span class="dash-card-summary" id="review-queue-subsection-summary" title="Collapsed summary" aria-label="Collapsed summary">—</span></h2>
           <div class="review-subsection-body dash-card-body section-body" id="review-queue-body">
-            <div class="review-queue-desc">Every open PR across the governed repos in one deterministic rank order (<code>GET /api/review/queue</code>), agent- or contributor-authored, with the reasons for each position.</div>
             <div id="review-queue-panel" class="review-queue-panel">
               <div class="loading">Loading review queue…</div>
             </div>
@@ -5768,8 +5764,8 @@
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
       'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first.' },
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
-      'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'The same open pull requests laid out as a board, one column per review stage, with reviewers, findings and the next action for each.' },
-      'review-queue-subsection': { heading: 'Queue', help: 'Every open pull request in your projects, in the order Hive suggests reviewing them, with the reasons for each position.' },
+      'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
+      'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
       'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
