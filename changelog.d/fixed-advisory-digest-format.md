@@ -1,1 +1,0 @@
-- Fixed the Advisory Digest dashboard subsection so its header, help affordance, collapse chrome, and empty state align with the other advisory cards.

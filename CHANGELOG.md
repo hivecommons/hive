@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.157.0)
+
+### Added
+
+- Add optional Bob session labels/prefixes for Bobalytics attribution without renaming agents (#11273).
+- feat: spoke-level backend allow/deny list (#11334)
+- Notify Discord #requests when a new hosted-hive request is filed. (#11336)
+- Add an Overview test coverage KPI tile sourced from the existing quality coverage metric.
+
+### Changed
+
+- Container base images are now pulled from the ECR Public mirror of Docker Official Images (same pinned digests) to avoid Docker Hub anonymous rate limits.
+- Dashboard on/off switches now state their value unambiguously ([#11328](https://github.com/hivecommons/hive/issues/11328)). Every shared `config-toggle-switch` shows an adjacent "On"/"Off" text label alongside the green-vs-muted track and sliding knob, has a visible keyboard focus ring, and is exposed to assistive tech as `role="switch"` with a synced `aria-checked`, following Carbon's toggle guidance while keeping Hive's existing styling.
+- Removed the Review Pipeline and Queue explanatory body blurbs so subsection controls sit directly beneath their headers. (#11345)
+
+### Fixed
+
+- fix(dashboard): unify upgrade bee orbit sizing across status and header (#11295)
+- Reduce close-on-merge GitHub API quota burn by reusing cached PR details and listed issue data. (#11324)
+- Restore the original circular dashboard card settings button with a recognisable cog glyph. (#11355)
+- Fixed the Advisory Digest dashboard subsection so its header, help affordance, collapse chrome, and empty state align with the other advisory cards.
+- Keep automerge sweeps from attempting PR merges while required checks are missing, avoid wedging deterministic merge refusals in the effects ledger, ignore sentinel notices for trusted-author eligibility, and avoid treating date-stamped branches as issue numbers.
+- Update stale automerge PR branches when GitHub reports required checks are expected so newly required contexts can run before the next merge attempt.
+- The dashboard version popover now shows why "Upgrade to `<sha>`" is disabled on a Podman hive installed before the upgrade bridge, no longer blames only the image build in its Status row, and names `bin/hive-podman-update.sh reconcile migrate` (from an up-to-date `v5` or `v6` checkout) as the fix.
+- Keep the Hub My Hives API responsive by serving cached release-channel metadata while slow GitHub/GHCR refreshes run in the background.
+- **Release-notes cache honours the injected clock** — `GET /api/version/release-notes` expired cached entries against the wall clock even when the request path was running on the test clock seam, so `pkg/dashboard` went red on every branch once real time moved an hour past the test's frozen instant. Cache lookups now use the same clock as stores and the throttle window. (#11159 follow-up)
+- Fix automerge required-check discovery for GitHub App installations without administration permission by using branch/rules fallbacks and deferring unknown required-check failures to GitHub's merge enforcement.
+- Required CI contexts now report on every PR head, including workflow-only changes that previously left branch protection waiting forever.
+- Move the upgraded release-notes banner into the dashboard top notice stack so it appears with other warnings.
+
 ## 2026-10-09 (v5.156.1)
 
 ### Changed

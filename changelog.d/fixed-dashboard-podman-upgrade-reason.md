@@ -1,1 +1,0 @@
-- The dashboard version popover now shows why "Upgrade to `<sha>`" is disabled on a Podman hive installed before the upgrade bridge, no longer blames only the image build in its Status row, and names `bin/hive-podman-update.sh reconcile migrate` (from an up-to-date `v5` or `v6` checkout) as the fix.
