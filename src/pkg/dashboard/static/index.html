@@ -17626,7 +17626,7 @@ function burnAreaChart() {
       }).join('');
 
       const tokenRates = computeHourlyBurnRates();
-      const currentTokHr = tokenRates.length ? tokenRates[tokenRates.length - 1].rate : Math.round(totalTokens / Math.max(1, tokens.lookbackHours || 24));
+      const currentTokHr = tokenRates && tokenRates.length ? tokenRates[tokenRates.length - 1].rate : Math.round(totalTokens / Math.max(1, tokens.lookbackHours || 24));
       const tokenSummary = `${fmtTokens(currentTokHr)} tok/hr · ${t.sessions} sessions (${tokens.lookbackHours || 24}h)`;
       const tokenBody = `        <div class="sec-headline" data-collapsed-keep style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-8);padding-bottom:var(--sp-6);border-bottom:1px solid var(--border)">
           <div style="flex:1;min-width:0">${intensityGauge()}</div>
