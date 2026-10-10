@@ -8088,9 +8088,10 @@ type AutoMergeConfig struct {
 	// GitHub Actions check-runs have not registered yet. Non-positive values
 	// use DefaultAutoMergeMinHeadAge.
 	MinHeadAge time.Duration `yaml:"min_head_age,omitempty" json:"min_head_age,omitempty"`
-	// RequiredChecks is the operator-declared list of status-check
+	// RequiredChecks is the default operator-declared list of status-check
 	// contexts/check-run names that the self-merge sweep's commitGreen must
-	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
+	// gate on for repos without an auto_merge.repos.<repo>.required_checks
+	// override, e.g. ["build-gate"]. This is the scope-free alternative to
 	// asking GitHub's branch-protection API (Repositories.GetRequiredStatusChecks)
 	// which one, and only one, of these checks are actually required: older Hive
 	// App installations often lacked administration:read, so that call failed
@@ -8105,8 +8106,13 @@ type AutoMergeConfig struct {
 	// API, and if that also cannot determine the set, to the allowlist. There
 	// is deliberately no hardcoded default here: the required-checks set is
 	// per-repo (e.g. console's main branch requires only "build-gate"), so
-	// the operator must declare it per-hive in `auto_merge.required_checks`.
+	// heterogeneous hives should prefer `auto_merge.repos.<repo>.required_checks`
+	// and leave this as a default only.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+	// Repos carries per-repository auto-merge overrides. Keys may be bare repo
+	// names from project.repos ("console") or fully qualified owner/repo names
+	// ("kubestellar/console").
+	Repos map[string]AutoMergeRepoConfig `yaml:"repos,omitempty" json:"repos,omitempty"`
 	// AllowUnprotectedBase is deprecated and no longer changes merge-request
 	// behavior. It remains in the schema so existing configs keep loading; the
 	// watcher now merges into any protected or unprotected branch the App can
@@ -8140,6 +8146,14 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+}
+
+// AutoMergeRepoConfig carries per-repository auto-merge overrides.
+type AutoMergeRepoConfig struct {
+	// RequiredChecks overrides auto_merge.required_checks for this repository.
+	// An explicit empty list means the repo declares no required checks; an
+	// omitted field falls back to the global default.
+	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
 }
 
 type TrustedAuthorAutoMergeConfig struct {
@@ -8255,27 +8269,67 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 	return nil
 }
 
-// RequiredCheckSet returns the config-declared required-status-check set as a
-// membership map, and whether the config actually declared one. An
-// empty/unset RequiredChecks list returns (nil, false) — "not config-declared"
-// — so callers can distinguish that from a genuinely empty required set (e.g.
-// an unprotected branch) and fall through to their next source (the
-// branch-protection API, then the allowlist fallback). A non-empty list
-// always returns requiredKnown=true; entries are matched by exact string
-// equality against status-context / check-run names.
+// RequiredCheckSet returns the global config-declared required-status-check set
+// as a membership map, and whether the global config actually declared one.
+// Empty/unset RequiredChecks returns (nil, false) — "not config-declared" — so
+// callers can distinguish that from a genuinely empty required set discovered
+// from GitHub. Entries are matched by exact string equality against
+// status-context / check-run names.
 func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
-	if len(a.RequiredChecks) == 0 {
+	return requiredCheckSetFromList(a.RequiredChecks, false)
+}
+
+// RequiredCheckSetForRepo returns the per-repo required-check override for repo
+// when one is configured, otherwise the global RequiredCheckSet. Repo may be a
+// bare name or owner/repo; configured keys are matched case-insensitively by
+// exact owner/repo or by bare repo name. An explicit per-repo empty list is a
+// known empty set.
+func (a AutoMergeConfig) RequiredCheckSetForRepo(repo string) (map[string]bool, bool) {
+	repo = strings.TrimSpace(repo)
+	bare := repo
+	if i := strings.LastIndex(bare, "/"); i >= 0 {
+		bare = bare[i+1:]
+	}
+	for key, cfg := range a.Repos {
+		if strings.EqualFold(strings.TrimSpace(key), repo) {
+			return requiredCheckSetFromRepoConfig(a, cfg)
+		}
+	}
+	for key, cfg := range a.Repos {
+		kBare := strings.TrimSpace(key)
+		if i := strings.LastIndex(kBare, "/"); i >= 0 {
+			kBare = kBare[i+1:]
+		}
+		if bare != "" && strings.EqualFold(kBare, bare) {
+			return requiredCheckSetFromRepoConfig(a, cfg)
+		}
+	}
+	return a.RequiredCheckSet()
+}
+
+func requiredCheckSetFromRepoConfig(a AutoMergeConfig, cfg AutoMergeRepoConfig) (map[string]bool, bool) {
+	if cfg.RequiredChecks == nil {
+		return a.RequiredCheckSet()
+	}
+	return requiredCheckSetFromList(cfg.RequiredChecks, true)
+}
+
+func requiredCheckSetFromList(checks []string, declaredEmptyKnown bool) (map[string]bool, bool) {
+	if len(checks) == 0 {
+		if declaredEmptyKnown {
+			return map[string]bool{}, true
+		}
 		return nil, false
 	}
-	set := make(map[string]bool, len(a.RequiredChecks))
-	for _, name := range a.RequiredChecks {
+	set := make(map[string]bool, len(checks))
+	for _, name := range checks {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		set[name] = true
 	}
-	if len(set) == 0 {
+	if len(set) == 0 && !declaredEmptyKnown {
 		return nil, false
 	}
 	return set, true

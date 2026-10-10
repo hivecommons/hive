@@ -2316,6 +2316,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	if set, ok := b.cfg.AutoMerge.RequiredCheckSet(); ok {
 		autoMergeOpts.RequiredChecks = set
 	}
+	autoMergeOpts.RequiredChecksForRepo = b.cfg.AutoMerge.RequiredCheckSetForRepo
 
 	// Issue relay: agents request issue creation and comments by dropping a
 	// file (hive-open-issue via the gh wrapper) instead of calling GitHub
@@ -6563,7 +6564,7 @@ func runEvalCycle(
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
 	recordReviewOutcomes(ctx, cfg, ghClient, actionable, logger)
-	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSet()
+	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSetForRepo("")
 
 	// Hold guard (#5589): snapshot hold-gated PR heads, and when a hold lifts
 	// on a branch that moved, block the merge lanes and force a fresh review.
@@ -8434,6 +8435,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 			opts.RequiredChecks = set
 		}
+		opts.RequiredChecksForRepo = cfg.AutoMerge.RequiredCheckSetForRepo
 		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }

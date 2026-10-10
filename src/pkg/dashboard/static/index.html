@@ -37650,8 +37650,9 @@ function burnAreaChart() {
             <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.`)}</label>
+            <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
             <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" data-change-action="gh72">
+            <p class="config-help">Applies to repos without an override. Use <code>auto_merge.repos.&lt;repo&gt;.required_checks</code> for per-repo required checks.</p>
           </div>
           <div class="config-field am-trusted-bots" id="am-trusted-bots">
             <label>Trusted bot authors ${settingHelpMark('hive-merge', 'trusted-bot-authors', 'Trusted bot authors', `PRs from these bots are merged by the self-authored sweep through exactly the same gates as Hive&apos;s own PRs: required CI green, mergeable, no hold label, intent tier, approval desk, head SHA re-verified at merge. Known bots are listed first; bots currently authoring open PRs in your repos are discovered automatically. Turn every bot off to keep the sweep App-only.`)}</label>

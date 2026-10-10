@@ -323,6 +323,7 @@ func syncAutoMergePolicyToGitHubClient(cfg *config.Config, ghClient *ghpkg.Clien
 	}
 	set, _ := cfg.AutoMerge.RequiredCheckSet()
 	ghClient.SetRequiredChecks(set)
+	ghClient.SetRequiredChecksForRepo(cfg.AutoMerge.RequiredCheckSetForRepo)
 	ghClient.SetMergeRequestAllowUnprotectedBaseRepos(cfg.AutoMerge.AllowUnprotectedBaseSet())
 	ghClient.SetMergeRequestNoCIAllowedRepos(cfg.AutoMerge.NoCIOKSet())
 	ghClient.SetAutoMergeMinHeadAge(cfg.AutoMerge.EffectiveMinHeadAge())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -145,9 +146,10 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
-	cfgSet, cfgKnown := c.configRequiredChecks()
-	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
-	if !cfgKnown && requiredKnown && len(required) == 0 {
+	cfgSet, cfgKnown := c.configRequiredChecksForRepo(owner + "/" + name)
+	required, requiredKnown, fromConfig, _, _ := RequiredStatusCheckContextsDetailedWithSource(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
+	actualRequired, actualKnown := required, requiredKnown && !fromConfig
+	if actualKnown && len(required) == 0 {
 		// GitHub reports both "branch not protected" and "protected but no
 		// required checks" as a known empty set. For the merge-request watcher
 		// that must not mean "ignore failing CI": absent required-check config
@@ -166,13 +168,16 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
 		Required:                required,
 		RequiredKnown:           requiredKnown,
-		RequiredKnownFromConfig: cfgKnown,
+		RequiredKnownFromConfig: fromConfig,
 		ExpectedChecks:          expected,
 		MinHeadAge:              c.configuredAutoMergeMinHeadAge(),
 		HeadPushedAt:            headPushedAt,
 	})
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
+	}
+	if cfgKnown && actualKnown {
+		c.warnRequiredChecksMismatch(owner, name, cfgSet, actualRequired, st.Observed)
 	}
 	if !st.Green && (strings.HasPrefix(st.Reason, "pending: head pushed ") || (strings.HasPrefix(st.Reason, "pending: ") && strings.HasSuffix(st.Reason, " has not started"))) {
 		c.info("merge-request CI gate blocked fresh or incomplete head", "repo", owner+"/"+name, "pr", number, "sha", sha, "reason", st.Reason)
@@ -214,6 +219,48 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
 	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
+}
+
+func (c *Client) warnRequiredChecksMismatch(owner, repo string, declared, actual, observed map[string]bool) {
+	if c == nil {
+		return
+	}
+	missing := requiredChecksMismatchNames(declared, actual, observed)
+	if len(missing) == 0 {
+		return
+	}
+	key := strings.ToLower(owner + "/" + repo)
+	c.requiredChecksMu.Lock()
+	if c.requiredChecksMismatchWarned == nil {
+		c.requiredChecksMismatchWarned = make(map[string]bool)
+	}
+	if c.requiredChecksMismatchWarned[key] {
+		c.requiredChecksMu.Unlock()
+		return
+	}
+	c.requiredChecksMismatchWarned[key] = true
+	c.requiredChecksMu.Unlock()
+	c.warn("automerge required_checks override does not match repo protection", "repo", owner+"/"+repo, "declared", requiredChecksSortedKeys(declared), "actual", requiredChecksSortedKeys(actual), "using", "actual", "mismatch", missing)
+}
+
+func requiredChecksMismatchNames(declared, actual, observed map[string]bool) []string {
+	out := make([]string, 0)
+	for name := range declared {
+		if !actual[name] && !observed[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func requiredChecksSortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type opaqueWorkflowRunResult struct {
