@@ -3501,6 +3501,8 @@
     .audit-last-entry { min-width: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 700; }
     .audit-today-count { flex: 0 0 auto; color: var(--muted); font-weight: 700; }
     .audit-sensitive-chip { flex: 0 0 auto; display: inline-flex; align-items: center; height: 22px; padding: 0 var(--sp-3); border: 1px solid var(--line-subtle); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+    .audit-sensitive-chip[role="button"] { cursor: pointer; }
+    .audit-sensitive-chip[role="button"]:hover, .audit-sensitive-chip[role="button"]:focus-visible { border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 22%, transparent); color: var(--yellow); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--yellow) 24%, transparent); }
     .audit-sensitive-chip.warning { border-color: color-mix(in srgb, var(--yellow) 55%, transparent); background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
     .audit-sensitive-chip.muted { color: var(--muted); }
     .agents-collapsed-tiles, .repos-collapsed-tiles { display: flex; align-items: stretch; gap: var(--sp-2); width: min(820px, 56vw); max-width: 820px; height: 26px; overflow-x: auto; overflow-y: hidden; color: var(--muted); scrollbar-width: thin; }
@@ -3638,6 +3640,11 @@
     .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
     #audit-panel.audit-resizable { min-height: 320px; height: var(--audit-panel-height, 640px); max-height: 80vh; overflow-y: auto; resize: vertical; position: relative; }
     #audit-panel.audit-resizable::after { content: '↕ drag to resize'; position: sticky; bottom: 0; float: right; margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-2xs); background: color-mix(in srgb, var(--surface-1) 92%, transparent); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-0) var(--sp-2); pointer-events: none; }
+    .audit-filter-chip { display: inline-flex; align-items: center; gap: var(--sp-1); min-height: 24px; border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--yellow) 55%, var(--line-subtle)); background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
+    .audit-filter-chip:hover, .audit-filter-chip:focus-visible { border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 22%, transparent); outline: none; }
+    .audit-filter-chip[aria-pressed="false"] { border-color: var(--line-subtle); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); }
+    .audit-entry-sensitive { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--yellow) 72%, transparent); background: color-mix(in srgb, var(--yellow) 7%, transparent); }
+    .audit-entry-sensitive-tag { display: inline-flex; align-items: center; margin-left: var(--sp-2); padding: 0 var(--sp-2); min-height: 16px; border: 1px solid color-mix(in srgb, var(--yellow) 48%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--yellow) 13%, transparent); color: var(--yellow); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
     .dash-card .section-label, .dash-card .token-title, .dash-card .cost-title, .dash-card .gov-title { margin: 0; }
     .section-group-header {
       font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
@@ -4859,6 +4866,7 @@
           <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (terms are OR'd, supports /regex/)" data-input-action="filterAuditLog" data-keydown-action="saveAuditSearch" data-keys="Enter" style="width:100%;padding:var(--sp-3) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-base);outline:none">
           <datalist id="audit-saved-searches"></datalist>
         </div>
+        <button id="audit-sensitive-filter" class="hv-btn btn-secondary btn-sm audit-filter-chip" data-action="toggleAuditSensitiveFilter" data-keydown-action="toggleAuditSensitiveFilter" data-keys="Enter, " data-stop="1" data-prevent="1" aria-pressed="false" title="Show only sensitive audit entries from the last 24h">Sensitive only</button>
         <button class="hv-btn btn-primary btn-sm" data-action="saveAuditSearch" title="Save this search">💾 Save</button>
         <button class="hv-btn btn-danger btn-sm" data-action="clearAuditSearches" title="Clear saved searches">✕</button>
         <span id="audit-match-count" style="font-size:0.7rem;color:var(--muted);white-space:nowrap"></span>
@@ -5809,7 +5817,7 @@
       'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
       'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
-      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first.' },
+      'audit-section': { heading: 'Audit Log', help: 'A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.' },
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
@@ -6057,7 +6065,8 @@
       const chipClass = sensitive > 0 ? 'warning' : 'muted';
       const todayLabel = `${formatCount(today)} ${plural(today, 'event')} today`;
       const label = title || text || todayLabel;
-      return `<span class="mini-summary-strip audit-collapsed-summary" role="img" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="audit-section">${spark}<span class="audit-last-entry" title="${escapeHtml(tooltip)}">${escapeHtml(lastLabel)}</span><span class="audit-today-count">${escapeHtml(todayLabel)}</span><span class="audit-sensitive-chip ${chipClass}" title="${escapeHtml(sensitive + ' sensitive audit actions in the last 24h')}">${escapeHtml(formatCount(sensitive))} sensitive</span></span>`;
+      const sensitiveTitle = sensitive + ' sensitive audit actions in the last 24h — show sensitive entries';
+      return `<span class="mini-summary-strip audit-collapsed-summary" role="group" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" data-mini-summary="audit-section">${spark}<span class="audit-last-entry" title="${escapeHtml(tooltip)}">${escapeHtml(lastLabel)}</span><span class="audit-today-count">${escapeHtml(todayLabel)}</span><span class="audit-sensitive-chip ${chipClass}" role="button" tabindex="0" data-action="showAuditSensitiveEntries" data-keydown-action="showAuditSensitiveEntries" data-keys="Enter, " data-stop="1" data-prevent="1" title="${escapeHtml(sensitiveTitle)}" aria-label="Show sensitive entries">${escapeHtml(formatCount(sensitive))} sensitive</span></span>`;
     }
     function miniGauge(value, max, color, label) {
       const v = Math.max(0, Number(value) || 0);
@@ -22757,6 +22766,8 @@ function burnAreaChart() {
     var _auditEntries = [];
     var _auditSummary = { histogram: [], sensitive_24h: 0, today: 0, last: null };
     var _auditResizeObserver = null;
+    var _auditSensitiveOnly = false;
+    var _auditPendingSensitiveScroll = false;
     function auditPanelSavedHeight() {
       const n = Number(localStorage.getItem(AUDIT_PANEL_HEIGHT_KEY));
       return Number.isFinite(n) && n >= 320 ? Math.min(n, Math.round(window.innerHeight * 0.8)) : AUDIT_PANEL_DEFAULT_HEIGHT;
@@ -22780,6 +22791,7 @@ function burnAreaChart() {
     function renderAuditRow(e) {
       var t = e.ts ? new Date(e.ts) : null;
       var timeStr = t ? formatDashboardDateTime(t) : '—';
+      var sensitive = e && e.sensitive === true;
       /* An entry with no actor is attributed to 'ghost', which is a real
          github.com account and not this person — so the placeholder face is
          rendered UNLINKED by passing no username, rather than sending the
@@ -22797,10 +22809,11 @@ function burnAreaChart() {
       } else {
         face = linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px');
       }
-      return '<tr style="border-bottom:1px solid var(--terminal-line)">' +
+      var sensitiveTag = sensitive ? '<span class="audit-entry-sensitive-tag" title="Server-classified sensitive audit action">sensitive</span>' : '';
+      return '<tr class="audit-entry' + (sensitive ? ' audit-entry-sensitive' : '') + '" data-audit-sensitive="' + (sensitive ? '1' : '0') + '" style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:var(--sp-2) var(--sp-4);white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
         '<td class="py-2-px-4" title="' + esc(actor) + '">' + face + esc(actorLabel || '—') + '</td>' +
-        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + '</td>' +
+        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + '</td>' +
         '<td class="py-2-px-4">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:var(--sp-2) var(--sp-4);color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
         '</tr>';
@@ -22811,7 +22824,10 @@ function burnAreaChart() {
       var panel = document.getElementById('audit-panel');
       if (!panel) return;
       initAuditPanelResize();
-      if (!entries.length) { panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">No audit entries yet</div>'; return; }
+      if (!entries.length) {
+        panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">' + (_auditSensitiveOnly ? 'No sensitive audit entries in the last 24h' : 'No audit entries yet') + '</div>';
+        return;
+      }
       panel.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
         '<thead><tr style="color:var(--terminal-muted);font-size:0.7rem;border-bottom:1px solid var(--terminal-line)"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Time</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">User</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Action</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Agent</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Details</th></tr></thead>' +
         '<tbody>' + entries.map(renderAuditRow).join('') + '</tbody></table>';
@@ -22833,9 +22849,16 @@ function burnAreaChart() {
     function filterAuditLog() {
       var raw = (document.getElementById('audit-search').value || '').trim();
       var countEl = document.getElementById('audit-match-count');
+      var chip = document.getElementById('audit-sensitive-filter');
+      if (chip) {
+        chip.setAttribute('aria-pressed', _auditSensitiveOnly ? 'true' : 'false');
+        chip.textContent = _auditSensitiveOnly ? 'Sensitive only ×' : 'Sensitive only';
+        chip.title = _auditSensitiveOnly ? 'Clear sensitive-only audit filter' : 'Show only sensitive audit entries from the last 24h';
+      }
       if (!raw) {
         renderAuditTable(_auditEntries);
-        if (countEl) countEl.textContent = _auditEntries.length ? _auditEntries.length + ' entries' : '';
+        if (countEl) countEl.textContent = _auditEntries.length ? (_auditSensitiveOnly ? _auditEntries.length + ' sensitive / 24h' : _auditEntries.length + ' entries') : '';
+        scrollPendingAuditSensitiveEntry();
         return;
       }
       var query = parseAuditQuery(raw);
@@ -22847,7 +22870,32 @@ function burnAreaChart() {
         return terms.some(function(t) { return lower.includes(t); });
       });
       renderAuditTable(filtered);
-      if (countEl) countEl.textContent = filtered.length + ' / ' + _auditEntries.length;
+      if (countEl) countEl.textContent = filtered.length + ' / ' + _auditEntries.length + (_auditSensitiveOnly ? ' sensitive / 24h' : '');
+      scrollPendingAuditSensitiveEntry();
+    }
+
+    function scrollPendingAuditSensitiveEntry() {
+      if (!_auditPendingSensitiveScroll) return;
+      requestAnimationFrame(function() {
+        var panel = document.getElementById('audit-panel');
+        var row = panel && panel.querySelector('.audit-entry-sensitive');
+        if (!row) return;
+        _auditPendingSensitiveScroll = false;
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    }
+
+    function toggleAuditSensitiveFilter() {
+      _auditSensitiveOnly = !_auditSensitiveOnly;
+      _auditPendingSensitiveScroll = _auditSensitiveOnly;
+      fetchAuditLog();
+    }
+
+    function showAuditSensitiveEntries() {
+      if (isSectionCollapsed('audit-section')) toggleSection('audit-section', { collapsed: false });
+      _auditSensitiveOnly = true;
+      _auditPendingSensitiveScroll = true;
+      fetchAuditLog();
     }
 
     var AUDIT_SEARCHES_KEY = 'hive-audit-saved-searches';
@@ -22880,7 +22928,7 @@ function burnAreaChart() {
 
     async function fetchAuditLog() {
       try {
-        var resp = await fetch('/api/audit');
+        var resp = await fetch('/api/audit' + (_auditSensitiveOnly ? '?sensitive=1' : ''));
         if (!resp.ok) return;
         var data = await resp.json();
         _auditEntries = capDashboardArray(data.entries || [], DASHBOARD_LOG_CAP);

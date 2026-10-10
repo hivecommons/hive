@@ -155,7 +155,7 @@ Project Inception is branded as powered by Spektacular with a linked header pill
 
 ## Audit Log
 
-The Audit Log viewport defaults to a taller resizable panel. Browser-local height changes are persisted in `localStorage` under `hive.audit.panel.height`; the entry cap/search controls remain in the card header area above the scrollable table.
+The Audit Log viewport defaults to a taller resizable panel. Browser-local height changes are persisted in `localStorage` under `hive.audit.panel.height`; the entry cap/search controls remain in the card header area above the scrollable table. The collapsed **sensitive** badge is actionable: it opens the card, applies the visible **Sensitive only** filter for the same 24-hour window as the badge count, and jumps to the first sensitive row.
 
 ## Hive Chat
 

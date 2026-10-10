@@ -375,13 +375,14 @@ Actions Hive wants to take that are waiting for you to approve or reject them.
 
 ## Audit Log
 
-A searchable record of everything Hive has done, newest first.
+A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count.
 
 **What it tells you.** Every action Hive takes is written to the audit log. This section lets you read and search it.
 
 **How the numbers are worked out.**
 
 - The collapsed summary counts today's events.
+- Its **sensitive** badge counts sensitive audit actions over the last 24 hours. Click it to expand the card, apply the visible **Sensitive only** filter, and scroll to the first matching row.
 - The search box matches any of the words you type. Wrap text in slashes, like `/merge.*failed/`, to search with a pattern.
 - The match count shows how many events match.
 
