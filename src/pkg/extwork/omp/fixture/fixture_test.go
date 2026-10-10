@@ -293,6 +293,12 @@ func TestCancelStopsAndIgnores(t *testing.T) {
 		if _, err := p.Start(ctx, key, 1, "implement", bundle(t, tc.id, "")); err != nil {
 			t.Fatal(err)
 		}
+		// The workbench sends its "queued" progress frame after the start
+		// ack; wait for it so it cannot land after the tick's running frame.
+		testutil.Eventually(t, settle, func() bool {
+			obs, _ := p.Observe(key)
+			return obs.Detail == "queued on the workbench"
+		}, "queued frame not observed for %s", tc.id)
 		tc.w.Tick()
 		waitState(t, p, key, extwork.StateRunning)
 		facts, err := p.Cancel(ctx, key)
