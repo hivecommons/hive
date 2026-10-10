@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.159.2)
+
+### Changed
+
+- Make the Hub Manage Access modal a fixed-size two-column layout with Add User on the right. (#11451)
+
 ## 2026-10-10 (v5.159.1)
 
 ### Fixed
