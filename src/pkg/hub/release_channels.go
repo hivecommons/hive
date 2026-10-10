@@ -152,6 +152,10 @@ var (
 	channelTargetCache           []ChannelTarget
 	channelTargetCachedAt        time.Time
 	channelTargetRefreshInFlight bool
+	// Tests disable request-triggered background refreshes by default so a
+	// resolver cannot outlive the test that stubbed package-level hooks.
+	channelTargetRefreshDisabled bool
+	channelTargetRefreshWG       sync.WaitGroup
 )
 
 // ghcrTagDigest returns the registry digest that repo:tag currently resolves
@@ -360,14 +364,16 @@ func refreshChannelTargetsAsync(branchSHAs map[string]string, logger *slog.Logge
 		shas[k] = v
 	}
 	channelTargetMu.Lock()
-	if channelTargetRefreshInFlight {
+	if channelTargetRefreshDisabled || channelTargetRefreshInFlight {
 		channelTargetMu.Unlock()
 		return
 	}
 	channelTargetRefreshInFlight = true
+	channelTargetRefreshWG.Add(1)
 	channelTargetMu.Unlock()
 
 	go func() {
+		defer channelTargetRefreshWG.Done()
 		defer func() {
 			channelTargetMu.Lock()
 			channelTargetRefreshInFlight = false
@@ -381,6 +387,10 @@ func refreshChannelTargetsAsync(branchSHAs map[string]string, logger *slog.Logge
 			logger.Warn("channel resolve: async refresh resolved no images — keeping previous channel targets")
 		}
 	}()
+}
+
+func waitForChannelTargetRefreshes() {
+	channelTargetRefreshWG.Wait()
 }
 
 // getChannelTargetsNonBlocking returns the cached channel association without
