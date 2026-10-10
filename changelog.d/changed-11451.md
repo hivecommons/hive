@@ -1,1 +1,0 @@
-- Make the Hub Manage Access modal a fixed-size two-column layout with Add User on the right. (#11451)
