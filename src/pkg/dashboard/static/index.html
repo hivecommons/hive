@@ -17391,6 +17391,15 @@ function computeHourlyBurnRates() {
   return rates.length >= 3 ? rates : null;
 }
 
+// Headline tok/hr for the Tokens card. computeHourlyBurnRates() returns null
+// whenever the history is too short or too flat to bucket; that is the normal
+// state on a quiet hive, so fall back to the window average instead of
+// throwing out of render() and freezing every section painted after Tokens.
+function currentTokenBurnPerHour(rates, totalTokens, lookbackHours) {
+  if (rates && rates.length) return rates[rates.length - 1].rate;
+  return Math.round(totalTokens / Math.max(1, lookbackHours || 24));
+}
+
 function intensityGauge() {
   const rates = computeHourlyBurnRates();
   if (!rates) return '';
@@ -17625,8 +17634,7 @@ function burnAreaChart() {
         return `<div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(aTotal)}</span>${aSpark}</div><div class="tlabel">${name}</div></div>`;
       }).join('');
 
-      const tokenRates = computeHourlyBurnRates();
-      const currentTokHr = tokenRates.length ? tokenRates[tokenRates.length - 1].rate : Math.round(totalTokens / Math.max(1, tokens.lookbackHours || 24));
+      const currentTokHr = currentTokenBurnPerHour(computeHourlyBurnRates(), totalTokens, tokens.lookbackHours);
       const tokenSummary = `${fmtTokens(currentTokHr)} tok/hr · ${t.sessions} sessions (${tokens.lookbackHours || 24}h)`;
       const tokenBody = `        <div class="sec-headline" data-collapsed-keep style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-8);padding-bottom:var(--sp-6);border-bottom:1px solid var(--border)">
           <div style="flex:1;min-width:0">${intensityGauge()}</div>
