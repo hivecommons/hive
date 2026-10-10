@@ -198,14 +198,13 @@ func TestDashboardSectionSettingsGearsAvoidLegacyFarRightActions(t *testing.T) {
 	}
 }
 
-func TestDashboardSectionSettingsGearUsesPlainSvgIcon(t *testing.T) {
+func TestDashboardSectionSettingsGearRestoresCogInsideCircle(t *testing.T) {
 	html := indexHTML(t)
 	settingsGearBody := jsFunctionBody(t, html, "function sectionSettingsGear(label, action, title, extraAttrs)")
 	for _, want := range []string{
 		`<svg class="section-settings-gear-icon"`,
 		`viewBox="0 0 24 24"`,
 		`fill="currentColor"`,
-		`stroke="currentColor"`,
 		`aria-label="${esc(label)} settings"`,
 	} {
 		if !strings.Contains(settingsGearBody, want) {
@@ -216,34 +215,49 @@ func TestDashboardSectionSettingsGearUsesPlainSvgIcon(t *testing.T) {
 		t.Fatal("shared section settings gear must use the inline SVG, not the emoji gear")
 	}
 
+	infoRule := cssRule(t, html, ".config-info")
+	for _, want := range []string{
+		"width: 15px",
+		"height: 15px",
+		"border-radius: 50%",
+		"background: color-mix(in srgb, var(--blue) 18%, var(--panel))",
+		"border: 1px solid color-mix(in srgb, var(--blue) 60%, transparent)",
+	} {
+		if !strings.Contains(infoRule, want) {
+			t.Fatalf("section settings gear must keep the shared help-mark circle; .config-info missing %q in %s", want, infoRule)
+		}
+	}
+
 	gearRule := cssRule(t, html, ".section-settings-gear")
 	for _, want := range []string{
-		"width: 28px",
-		"height: 28px",
-		"padding: 6px",
-		"background: none",
-		"border: 0",
-		"color: var(--muted)",
+		"padding: var(--sp-0)",
+		"margin-left: var(--sp-0)",
+		"text-decoration: none",
 	} {
 		if !strings.Contains(gearRule, want) {
-			t.Fatalf("plain section settings gear CSS is missing %q in %s", want, gearRule)
+			t.Fatalf("section settings gear CSS is missing circle-compatible override %q in %s", want, gearRule)
 		}
 	}
 	for _, forbidden := range []string{
-		"border-radius: 50%",
-		"color-mix(in srgb, var(--blue)",
-		"border: 1px",
+		"width:",
+		"height:",
+		"background:",
+		"border:",
 	} {
 		if strings.Contains(gearRule, forbidden) {
-			t.Fatalf("plain section settings gear CSS kept circular help-mark styling %q in %s", forbidden, gearRule)
+			t.Fatalf("section settings gear CSS must not override the shared help-mark circle with %q in %s", forbidden, gearRule)
 		}
 	}
 
 	iconRule := cssRule(t, html, ".section-settings-gear-icon")
-	for _, want := range []string{"width: 16px", "height: 16px"} {
+	for _, want := range []string{"width: 11px", "height: 11px", "color: var(--muted)"} {
 		if !strings.Contains(iconRule, want) {
 			t.Fatalf("section settings SVG icon CSS is missing %q in %s", want, iconRule)
 		}
+	}
+	hoverIconRule := cssRule(t, html, ".section-settings-gear:hover .section-settings-gear-icon,\n    .section-settings-gear:focus-visible .section-settings-gear-icon")
+	if !strings.Contains(hoverIconRule, "color: var(--bg)") {
+		t.Fatalf("section settings SVG icon hover/focus CSS must follow the circular button contrast: %s", hoverIconRule)
 	}
 }
 
