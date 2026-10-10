@@ -1,0 +1,1 @@
+- The hub now keeps GitHub slow-start pacing productive after rate-limit bursts by rejecting hopeless paced requests before they consume slots, reclaiming cancelled slots, logging caution windows, and coalescing duplicate channel commit lookups so hosted hive auto-upgrades can keep resolving targets ([#11468](https://github.com/hivecommons/hive/issues/11468)).

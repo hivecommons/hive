@@ -857,3 +857,100 @@ func TestHeartbeatWithholdsHubManagedTargetWhenChannelDoesNotResolve(t *testing.
 		t.Errorf("upgrade_to = %q, want empty when the channel cannot be resolved", resp.UpgradeTo)
 	}
 }
+
+func TestCachedListChannelBranchCommitsCoalescesConcurrentCalls(t *testing.T) {
+	resetChannelBranchCommitsCacheForTest()
+	origFetch := fetchChannelBranchCommits
+	defer func() {
+		fetchChannelBranchCommits = origFetch
+		resetChannelBranchCommitsCacheForTest()
+	}()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls int32
+	want := []branchSHAInfo{{SHA: "abc1234", Message: "tip"}}
+	fetchChannelBranchCommits = func(branch string, _ *slog.Logger) []branchSHAInfo {
+		if branch != "v5" {
+			t.Errorf("branch = %q, want v5", branch)
+		}
+		atomic.AddInt32(&calls, 1)
+		started <- struct{}{}
+		<-release
+		return want
+	}
+
+	const waiters = 6
+	results := make(chan []branchSHAInfo, waiters)
+	for i := 0; i < waiters; i++ {
+		go func() { results <- cachedListChannelBranchCommits("v5", targetingLogger()) }()
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("fetch did not start")
+	}
+	close(release)
+	for i := 0; i < waiters; i++ {
+		select {
+		case got := <-results:
+			if len(got) != 1 || got[0].SHA != want[0].SHA {
+				t.Fatalf("result = %#v, want %#v", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for coalesced result")
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("fetch calls = %d, want 1", got)
+	}
+}
+
+func TestCachedListChannelBranchCommitsUsesPositiveTTL(t *testing.T) {
+	resetChannelBranchCommitsCacheForTest()
+	origFetch := fetchChannelBranchCommits
+	defer func() {
+		fetchChannelBranchCommits = origFetch
+		resetChannelBranchCommitsCacheForTest()
+	}()
+
+	var calls int32
+	fetchChannelBranchCommits = func(branch string, _ *slog.Logger) []branchSHAInfo {
+		atomic.AddInt32(&calls, 1)
+		return []branchSHAInfo{{SHA: "abc1234", Message: branch}}
+	}
+	first := cachedListChannelBranchCommits("v5", targetingLogger())
+	second := cachedListChannelBranchCommits("v5", targetingLogger())
+	if len(first) != 1 || len(second) != 1 || first[0].SHA != second[0].SHA {
+		t.Fatalf("cached results differ: first=%#v second=%#v", first, second)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("fetch calls = %d, want 1", got)
+	}
+}
+
+func TestCachedListChannelBranchCommitsDoesNotCacheNil(t *testing.T) {
+	resetChannelBranchCommitsCacheForTest()
+	origFetch := fetchChannelBranchCommits
+	defer func() {
+		fetchChannelBranchCommits = origFetch
+		resetChannelBranchCommitsCacheForTest()
+	}()
+
+	var calls int32
+	fetchChannelBranchCommits = func(branch string, _ *slog.Logger) []branchSHAInfo {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return nil
+		}
+		return []branchSHAInfo{{SHA: "def5678", Message: branch}}
+	}
+	if got := cachedListChannelBranchCommits("v5", targetingLogger()); got != nil {
+		t.Fatalf("first result = %#v, want nil", got)
+	}
+	if got := cachedListChannelBranchCommits("v5", targetingLogger()); len(got) != 1 || got[0].SHA != "def5678" {
+		t.Fatalf("second result = %#v, want fetched commit", got)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("fetch calls = %d, want 2", got)
+	}
+}

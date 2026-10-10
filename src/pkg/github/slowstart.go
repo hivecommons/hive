@@ -2,7 +2,10 @@ package github
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -44,6 +47,11 @@ const (
 	// slowStartDefaultRetryAfter is assumed when a secondary 403 carries an
 	// unparseable Retry-After: cover a full secondary window.
 	slowStartDefaultRetryAfter = time.Hour
+	// slowStartDeadlineMargin preserves time for the actual HTTP round trip once a
+	// paced request reaches its slot.
+	slowStartDeadlineMargin = 500 * time.Millisecond
+	// slowStartLogInterval bounds caution-window logs during repeated extensions.
+	slowStartLogInterval = time.Minute
 )
 
 // slowStartState is the shared pacing ledger. It is deliberately SEPARATE
@@ -56,13 +64,16 @@ const (
 type slowStartState struct {
 	// gap/jitter/window default from the package consts; fields so tests can
 	// use millisecond values without minute-long sleeps.
-	gap    time.Duration
-	jitter time.Duration
-	window time.Duration
+	gap            time.Duration
+	jitter         time.Duration
+	window         time.Duration
+	deadlineMargin time.Duration
 
-	mu            sync.Mutex
-	cautiousUntil time.Time
-	nextSlot      time.Time
+	mu             sync.Mutex
+	cautiousUntil  time.Time
+	nextSlot       time.Time
+	abandonedSlots []time.Time
+	lastCautionLog time.Time
 }
 
 type slowStartTransport struct {
@@ -72,9 +83,10 @@ type slowStartTransport struct {
 
 func newSlowStartState() *slowStartState {
 	return &slowStartState{
-		gap:    slowStartGap,
-		jitter: slowStartJitter,
-		window: slowStartWindow,
+		gap:            slowStartGap,
+		jitter:         slowStartJitter,
+		window:         slowStartWindow,
+		deadlineMargin: slowStartDeadlineMargin,
 	}
 }
 
@@ -100,8 +112,60 @@ func ResetRateLimitPacingForTest() {
 		st.mu.Lock()
 		st.cautiousUntil = time.Time{}
 		st.nextSlot = time.Time{}
+		st.abandonedSlots = nil
+		st.lastCautionLog = time.Time{}
 		st.mu.Unlock()
 	}
+}
+
+func (st *slowStartState) claimSlotLocked(now time.Time) (time.Time, bool) {
+	for len(st.abandonedSlots) > 0 && st.abandonedSlots[0].Before(now) {
+		st.abandonedSlots = st.abandonedSlots[1:]
+	}
+	if len(st.abandonedSlots) > 0 {
+		return st.abandonedSlots[0], true
+	}
+	if st.nextSlot.Before(now) {
+		return now, false
+	}
+	return st.nextSlot, false
+}
+
+func (st *slowStartState) consumeAbandonedSlotLocked(slot time.Time) {
+	if len(st.abandonedSlots) > 0 && st.abandonedSlots[0].Equal(slot) {
+		st.abandonedSlots = st.abandonedSlots[1:]
+	}
+}
+
+func (st *slowStartState) reclaimSlot(slot time.Time) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	now := time.Now()
+	if slot.Before(now) || !now.Before(st.cautiousUntil) {
+		return
+	}
+	i := 0
+	for i < len(st.abandonedSlots) && st.abandonedSlots[i].Before(slot) {
+		i++
+	}
+	if i < len(st.abandonedSlots) && st.abandonedSlots[i].Equal(slot) {
+		return
+	}
+	st.abandonedSlots = append(st.abandonedSlots, time.Time{})
+	copy(st.abandonedSlots[i+1:], st.abandonedSlots[i:])
+	st.abandonedSlots[i] = slot
+}
+
+func (st *slowStartState) logCautionLocked(now time.Time, kind string, until time.Time, req *http.Request) {
+	if !st.lastCautionLog.IsZero() && now.Sub(st.lastCautionLog) < slowStartLogInterval {
+		return
+	}
+	st.lastCautionLog = now
+	path := ""
+	if req != nil && req.URL != nil {
+		path = req.URL.Path
+	}
+	slog.Warn("github slow-start caution window engaged", "kind", kind, "until", until, "path", path)
 }
 
 func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -109,17 +173,30 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// until it. Slots are claimed under the lock; the sleep happens outside it
 	// so pacing serializes REQUEST STARTS, not the lock.
 	st := t.state
-	st.mu.Lock()
+	var slot time.Time
 	var wait time.Duration
+	var claimed bool
+	st.mu.Lock()
 	now := time.Now()
 	if now.Before(st.cautiousUntil) {
 		gap := st.gap + time.Duration(rand.Int63n(int64(st.jitter)+1))
-		slot := st.nextSlot
-		if slot.Before(now) {
-			slot = now
+		var fromAbandoned bool
+		slot, fromAbandoned = st.claimSlotLocked(now)
+		deadlineMargin := st.deadlineMargin
+		if deadlineMargin == 0 {
+			deadlineMargin = slowStartDeadlineMargin
 		}
-		st.nextSlot = slot.Add(gap)
+		if deadline, ok := req.Context().Deadline(); ok && slot.Add(deadlineMargin).After(deadline) {
+			st.mu.Unlock()
+			return nil, fmt.Errorf("github pacing: slot would miss request deadline: %w", context.DeadlineExceeded)
+		}
+		if fromAbandoned {
+			st.consumeAbandonedSlotLocked(slot)
+		} else {
+			st.nextSlot = slot.Add(gap)
+		}
 		wait = slot.Sub(now)
+		claimed = true
 	}
 	st.mu.Unlock()
 
@@ -127,7 +204,12 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 		timer := time.NewTimer(wait)
 		select {
 		case <-req.Context().Done():
-			timer.Stop()
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if claimed {
+				st.reclaimSlot(slot)
+			}
 			return nil, req.Context().Err()
 		case <-timer.C:
 		}
@@ -151,15 +233,20 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// turns that stampede into a trickle the new window can absorb.
 	if err == nil && resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
 		var until time.Time
+		var kind string
 		if after, secondary := secondaryLimitBackoff(resp); secondary {
 			until = time.Now().Add(after + st.window)
+			kind = "secondary"
 		} else if reset, primary := primaryLimitReset(resp, time.Now()); primary {
 			until = reset.Add(st.window)
+			kind = "primary"
 		}
 		if !until.IsZero() {
 			st.mu.Lock()
+			now := time.Now()
 			if until.After(st.cautiousUntil) {
 				st.cautiousUntil = until
+				st.logCautionLocked(now, kind, until, req)
 			}
 			st.mu.Unlock()
 		}

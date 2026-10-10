@@ -197,6 +197,9 @@ with `run/spec`.
 | `PUT` | `/api/config/agent/{name}/channels` | Owner only | Agent Config Channels | `pkg/dashboard/api.go:197` |
 | `PUT` | `/api/config/agent/{name}/tools` | Owner only | Agent Config Tools | `pkg/dashboard/api.go:198` |
 | `PUT` | `/api/config/agent/{name}/connections` | Owner only | Agent Config Connections | `pkg/dashboard/api.go:199` |
+| `GET` | `/api/config/agent/{name}/variables` | Dashboard auth/session | Per-agent Variables tab: the agent's own `${VAR}` definitions plus the hive-level ones it inherits (each flagged `overridden` when the agent redefines it) and the seed-only exec/http gate flags. Never returns values — only name, type, scope and a non-secret source hint | `pkg/dashboard/api_variables.go:298` |
+| `PUT` | `/api/config/agent/{name}/variables/{var}` | Owner only | Create or update one per-agent variable (`static`/`env` only; `script`/`http` are 403 and seed-only; scope `template` or `both`; secret-looking static values rejected). Persisted on the agent entry; overrides a same-named hive-level variable in this agent's kick prompt | `pkg/dashboard/api_variables.go:299` |
+| `DELETE` | `/api/config/agent/{name}/variables/{var}` | Owner only | Delete one per-agent variable (404 for inherited hive-level variables — delete those via `/api/config/variables/{name}`) | `pkg/dashboard/api_variables.go:300` |
 | `GET` | `/api/config/stat-sources` | Dashboard auth/session | Stat Sources | `pkg/dashboard/api.go:200` |
 | `GET` | `/api/config/governor` | Dashboard auth/session | Governor Config Get | `pkg/dashboard/api.go:202` |
 | `PUT` | `/api/config/governor/sensing` | Owner only | Governor Sensing | `pkg/dashboard/api.go:203` |
@@ -238,6 +241,7 @@ with `run/spec`.
 
 | `GET` | `/api/config/governor/threshold-scaling` | Owner only | Governor Threshold Scaling Get | `pkg/dashboard/api.go:207` |
 | `PUT` | `/api/config/governor/threshold-scaling` | Owner only | Governor Threshold Scaling Set | `pkg/dashboard/api.go:208` |
+| `PUT` | `/api/config/governor/coverage-target` | Owner only | Governor Coverage Target | `pkg/dashboard/api.go:209` |
 | `POST` | `/api/config/governor/budget/reset` | Owner only | Governor Budget Reset | `pkg/dashboard/api.go:212` |
 | `PUT` | `/api/config/governor/watchdog` | Owner only | Governor Watchdog | `pkg/dashboard/api.go:217` |
 | `GET` | `/api/config/escalation` | Owner only | Escalation Config Get | `pkg/dashboard/api.go:220` |
@@ -270,16 +274,6 @@ with `run/spec`.
 | `PUT` | `/api/config/variables/{name}` | Owner only | Variable Upsert | `pkg/dashboard/api.go:51` |
 | `DELETE` | `/api/config/variables/{name}` | Owner only | Variable Delete | `pkg/dashboard/api.go:52` |
 
-
-| `GET` | `/api/compliance/status` | Merger or owner | Evaluated compliance controls for the frameworks in `compliance.frameworks` (`compliance.Report`, JSON): per control `meets`/`deviates`/`off`/`not_covered` with current vs recommended value per mapped setting, a summary, and the non-certification disclaimer — see [Compliance](compliance.md) ([#11078](https://github.com/hivecommons/hive/issues/11078)) | `pkg/dashboard/api.go:334` |
-| `GET` | `/api/compliance/posture` | Merger or owner | Posture-check catalogue, effective interval / window / history retention, and the latest run (`compliance.PostureRun`: per check `pass`/`fail`/`skip`/`error`, detail, control ids, evidence refs); `?since=` (RFC 3339, `YYYY-MM-DD` or a look-back such as `168h`) adds every run since then, oldest first, capped at 1000 — see [Compliance](compliance.md#posture-checks-catalogue) ([#11079](https://github.com/hivecommons/hive/issues/11079)) | `pkg/dashboard/api.go:335` |
-| `POST` | `/api/compliance/posture/run` | Merger or owner | Run the posture checks now and record the pass in the history; audited as `compliance_posture_run`; `409` when no framework is selected or a pass is already running ([#11079](https://github.com/hivecommons/hive/issues/11079)) | `pkg/dashboard/api.go:336` |
-| `GET` | `/api/compliance/posture/history` | Owner only | Posture history for `?since=`/`?until=` (default the last 30 days) as one series per check: points (`at`, `status`), status counts, `last_fail_at` and the latest result with detail and evidence refs; at most the 1000 most recent runs — see [Compliance](compliance.md#evidence-exports-and-attestations) ([#11081](https://github.com/hivecommons/hive/issues/11081)) | `pkg/dashboard/api.go:337` |
-| `GET` | `/api/compliance/export` | Owner only | Evidence download for `?since=`/`?until=`: `kind=controls` (`json`/`md`), `posture` (`json`/`csv`), `audit` (`json`), `config` (redacted effective config + sha256, `json`), `attestations` (`json`/`csv`) or `bundle` (`json`); audited as `compliance_export` ([#11081](https://github.com/hivecommons/hive/issues/11081)) | `pkg/dashboard/api.go:338` |
-| `GET` | `/api/compliance/attestations` | Owner only | Owner attestations, newest first (`?framework=` filters) ([#11081](https://github.com/hivecommons/hive/issues/11081)) | `pkg/dashboard/api.go:339` |
-| `POST` | `/api/compliance/attestations` | Owner only | Record `{"framework", "reviewed_on", "note"}` for the signed-in owner; audited as `compliance_attestation`; `201` with the attestation, `400` for an unknown framework, a bad or future date, or a note over 2000 characters ([#11081](https://github.com/hivecommons/hive/issues/11081)) | `pkg/dashboard/api.go:340` |
-| `PUT` | `/api/config/governor/compliance` | Owner only | Settings → Compliance framework picker: `{"frameworks": [...]}` sets `compliance.frameworks` (empty list deselects all, absent key leaves it unchanged; unknown/duplicate ids are a `400` before any change); audited as `config_compliance`; returns the re-evaluated `compliance.Report` ([#11080](https://github.com/hivecommons/hive/issues/11080)) | `pkg/dashboard/api.go:492` |
-
 | `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:186` |
 | `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General | `pkg/dashboard/api.go:187` |
 | `PUT` | `/api/config/agent/{name}/cadences` | Owner only | Agent Config Cadences | `pkg/dashboard/api.go:188` |
@@ -310,6 +304,9 @@ with `run/spec`.
 | `PUT` | `/api/config/governor/hub` | Owner only | Governor Hub | `pkg/dashboard/api.go:230` |
 | `PUT` | `/api/config/governor/litellm` | Owner only | Governor Lite LLM | `pkg/dashboard/api.go:231` |
 | `PUT` | `/api/config/governor/trajectory` | Owner only | Governor Trajectory | `pkg/dashboard/api.go:232` |
+| `GET` | `/api/config/governor/backup` | Owner only | Backup Key Status (presence + safe source label; never the key value) | `pkg/dashboard/backup_key.go` |
+| `PUT` | `/api/config/governor/backup` | Owner only | Backup Key Set (64-hex AES-256 key; stored 0600, path-only in `hive.yaml`) | `pkg/dashboard/backup_key.go` |
+| `DELETE` | `/api/config/governor/backup` | Owner only | Backup Key Clear (backups are refused again) | `pkg/dashboard/backup_key.go` |
 | `GET` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Status | `pkg/dashboard/api.go:272` |
 | `PUT` | `/api/config/governor/bob` | Owner only | Governor Bob Key | `pkg/dashboard/api.go:273` |
 | `DELETE` | `/api/config/governor/bob` | Owner only | Governor Bob Key Clear | `pkg/dashboard/api.go:274` |
@@ -394,32 +391,6 @@ with `run/spec`.
 | `GET` | `/api/governor/pr-models` | Dashboard auth/session | Agent-authored PR distribution by normalized attribution model/backend for `window=7d`, `30d`, or `all`, including per-model rework stats and the top 10 most-reworked PRs | `pkg/dashboard/api.go:169` |
 | `GET` | `/api/reviewer/accuracy` | Dashboard auth/session | Reviewer verdict calibration for the configured window: false-approve/false-block rates and confidence buckets per perspective and reviewer model | `pkg/dashboard/api.go:226` |
 | `GET` | `/api/review/queue` | Dashboard auth/session | PR review queue: every open PR (agent and contributor, actionable and held) ranked by triage class, confidence band, CI state and age, with per-PR `reasons`; paged with `limit` (1-200, default 50) and `offset` | `pkg/dashboard/api.go:476` |
-| `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:301` |
-| `POST` | `/api/agents` | Owner only | Agent Create | `pkg/dashboard/api.go:302` |
-| `POST` | `/api/agents/import` | Owner only | Agent Import | `pkg/dashboard/api.go:303` |
-| `DELETE` | `/api/agents/{name}` | Owner only | Agent Delete | `pkg/dashboard/api.go:304` |
-| `POST` | `/api/kick/{agent}` | Owner only | Kick — asynchronous; answers `202` once queued (see below) | `pkg/dashboard/api.go:135` |
-| `GET` | `/api/kick/{agent}/status` | Dashboard auth/session | Outcome of the most recent kick | `pkg/dashboard/api.go:139` |
-| `POST` | `/api/switch/{agent}/{backend}` | Owner only | Switch | `pkg/dashboard/api.go:140` |
-| `POST` | `/api/model/{agent}/{model}` | Owner only | Model Set | `pkg/dashboard/api.go:141` |
-| `POST` | `/api/effort/{agent}/{effort}` | Owner only | Set launch-only reasoning effort after validating against the agent's live backend (including runtime override); persists config/agent overlay, restarts the session, and `default` clears the stored effort | `pkg/dashboard/api.go:142` |
-| `POST` | `/api/pause/{agent}` | Owner only | Pause | `pkg/dashboard/api.go:143` |
-| `POST` | `/api/resume/{agent}` | Owner only | Resume | `pkg/dashboard/api.go:144` |
-| `GET` | `/api/agent-state/{agent}` | Dashboard auth/session | Agent State | `pkg/dashboard/api.go:145` |
-| `GET` | `/api/breaker` | Dashboard auth/session | Breaker State | `pkg/dashboard/api.go:146` |
-| `POST` | `/api/breaker/engage` | Owner only | Breaker Engage | `pkg/dashboard/api.go:147` |
-| `POST` | `/api/breaker/release` | Owner only | Breaker Release | `pkg/dashboard/api.go:148` |
-| `POST` | `/api/pin/{agent}/{dimension}` | Owner only | Pin | `pkg/dashboard/api.go:149` |
-| `POST` | `/api/unpin/{agent}/{dimension}` | Owner only | Unpin | `pkg/dashboard/api.go:150` |
-| `POST` | `/api/restart/{agent}` | Owner only | Restart | `pkg/dashboard/api.go:154` |
-| `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:168` |
-| `GET` | `/api/governor/pr-models` | Dashboard auth/session | Agent-authored PR distribution by normalized attribution model/backend for `window=7d`, `30d`, or `all`, including per-model rework stats and the top 10 most-reworked PRs | `pkg/dashboard/api.go:169` |
-| `GET` | `/api/reviewer/accuracy` | Dashboard auth/session | Reviewer verdict calibration for the configured window: false-approve/false-block rates and confidence buckets per perspective and reviewer model | `pkg/dashboard/api.go:226` |
-| `GET` | `/api/review/queue` | Dashboard auth/session | PR review queue: every open PR (agent and contributor, actionable and held) ranked by triage class, confidence band, CI state and age, with per-PR `reasons`; paged with `limit` (1-200, default 50) and `offset` | `pkg/dashboard/api.go:476` |
-| `GET` | `/api/review/pipeline` | Dashboard auth/session | Review pipeline: one card per review-queue PR placed in its stage (`unreviewed`, `reviewing`, `changes_requested`, `fixing`, `human_hold`, `approved`, `merged`, `abandoned`) with `since`, `reviewers`, P0–P3 `severity` counts, `loop_count`/`loop_cap`, `next_action` and `reasons`; filtered by `repo` and `stage`, paged with `limit` (1-200, default 50) and `offset` | `pkg/dashboard/api.go:480` |
-| `GET` | `/api/review/dispatch/events` | Dashboard auth/session | Webhook review dispatch queue: `enabled`, `webhooks_configured`, `debounce_s`, `pending` (soonest first) and `recent` (newest first) dispatches with repo, number, head SHA, action, timestamps and coalesced count, plus `stats` counters; in memory, never calls GitHub | `pkg/dashboard/api_review_event_dispatch.go:16` |
-| `GET` | `/api/review/evidence` | Merger or owner | [Review evidence bundle](review-evidence.md) for one PR head. Query `repo` (`owner/name`), `number`, optional `head` (full SHA or unique prefix of at least 7 characters; `409` when ambiguous; default is the newest head), `format=json\|zip` (default `json`) and `download=1` for an attachment. `json` returns the bundle bytes exactly as sealed (verdicts, posted reviews, policy, CI check runs, sentinel findings, human actions, merge event, `hash`, optional `signature`); `zip` adds `verdicts.json`, `review-links.json` and a `manifest.json` of SHA-256s plus the signing public key when readable. `400` for a bad `repo`/`number`; `404` with `status: "expired"`/`expired: true` when retention removed a bundle Hive can prove existed, otherwise `status: "not_found"` | `pkg/dashboard/api.go:484` |
-| `GET` | `/api/review/evidence/list` | Merger or owner | Every retained evidence bundle id and head for one PR (`repo`, `number`), oldest first, with the newest marked latest; `400` for a bad `repo`/`number` | `pkg/dashboard/api.go:485` |
 | `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:301` |
 | `POST` | `/api/agents` | Owner only | Agent Create | `pkg/dashboard/api.go:302` |
 | `POST` | `/api/agents/import` | Owner only | Agent Import | `pkg/dashboard/api.go:303` |
@@ -579,12 +550,6 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:403` |
 | `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:368` |
 | `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:369` |
-| `POST` | `/mcp/knowledge` | Public (read-only) when the dashboard setting or `HIVE_PUBLIC_KNOWLEDGE` is on; 404 otherwise | Public Knowledge MCP endpoint — `initialize`, `tools/list`, `tools/call` for `knowledge_search`/`knowledge_toc`/`knowledge_get`/`knowledge_export` ([docs](public-knowledge-mcp.md)) | `pkg/dashboard/api.go:356` |
-| `GET` | `/api/knowledge/toc` | Dashboard auth/session | Scoped knowledge table of contents: capped, body-free entries (`id`, `title`, `type`, `layer`, `repo`, `tags`, `status`, `confidence`, `updated`, `size_bytes`, `source`) plus `total`/`returned`/`truncated`. Query: `layers`, `repos`, `types`, `tags` (comma-separated), `limit` (default 50, max 200), `include_states` (operator opt-in for `draft`/`deprecated`/`superseded`/`all`), `format=prompt` with `max_chars` for a bounded markdown rendering, `agent` to apply that agent's `knowledge.agent_scopes` entry (the other parameters can only narrow it). Approved knowledge only by default ([docs](knowledge-toc.md)) | `pkg/dashboard/api.go:350` |
-| `GET` | `/api/knowledge/effective` | Dashboard auth/session | Effective knowledge for one agent (`agent` required): the agent's `knowledge.agent_scopes` entry (unrestricted when it has none) intersected with the request scope (approved only unless `include_states` is set). Returns `scope` (resolved scope applied, with `configured`), `included` TOC entries, `excluded` entries each with a `reason` (`lifecycle`, `layer`, `repo`, `type` or `tag` — first failing check, in that order), `included_total`/`excluded_total`/`included_returned`/`excluded_returned` and `truncated`; `limit` caps each list (default 50, max 200) ([docs](knowledge-toc.md#effective-knowledge)) | `pkg/dashboard/api.go:351` |
-| `GET` | `/api/knowledge/entry/{id}` | Dashboard auth/session | Full read of one knowledge entry: `markdown` (front-matter plus body) and the fact. Takes the same scope, `include_states` and `agent` query as the table of contents and returns 404 for an entry outside it ([docs](knowledge-toc.md)) | `pkg/dashboard/api.go:352` |
-| `GET` | `/api/knowledge/public` | Dashboard auth/session | Public Knowledge MCP sharing status (`enabled`, `tags`, `source`, endpoint URL) | `pkg/dashboard/api.go:357` |
-| `PUT` | `/api/knowledge/public` | Owner only | Persist public Knowledge MCP sharing setting; overrides env vars until changed | `pkg/dashboard/api.go:358` |
 | `GET` | `/api/knowledge` | Dashboard auth/session | Knowledge List | `pkg/dashboard/api.go:347` |
 | `GET` | `/api/knowledge/export` | Dashboard auth/session | Knowledge Export | `pkg/dashboard/api.go:348` |
 | `POST` | `/mcp/knowledge` | Public (read-only) when the dashboard setting or `HIVE_PUBLIC_KNOWLEDGE` is on; 404 otherwise | Public Knowledge MCP endpoint — `initialize`, `tools/list`, `tools/call` for `knowledge_search`/`knowledge_toc`/`knowledge_get`/`knowledge_export` ([docs](public-knowledge-mcp.md)) | `pkg/dashboard/api.go:356` |
@@ -623,19 +588,6 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `POST` | `/api/config/knowledge/connectors/{name}/sync` | Owner only | Start an immediate background sync of one connector | `pkg/dashboard/api.go` |
 | `GET` | `/api/config/knowledge/agent-scopes` | Dashboard auth/session | Per-agent knowledge scopes (`knowledge.agent_scopes`: layers, repos, types, tags, include_states) ([docs](knowledge-toc.md#per-agent-scopes)) | `pkg/dashboard/api.go` |
 | `PUT` | `/api/config/knowledge/agent-scopes` | Owner only | Replace `knowledge.agent_scopes` after validating layer and state names; persisted and audited as `config_knowledge_agent_scopes` | `pkg/dashboard/api.go` |
-| `GET` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources List | `pkg/dashboard/api.go:393` |
-| `POST` | `/api/knowledge/git-sources` | Owner only | Git Sources Connect | `pkg/dashboard/api.go:394` |
-| `DELETE` | `/api/knowledge/git-sources` | Owner only | Git Sources Disconnect | `pkg/dashboard/api.go:395` |
-| `POST` | `/api/knowledge/obsidian/sync` | Dashboard auth/session | Obsidian Sync | `pkg/dashboard/api.go:396` |
-| `GET` | `/api/knowledge/documents` | Dashboard auth/session | Documents List | `pkg/dashboard/api.go:397` |
-| `POST` | `/api/knowledge/documents` | Dashboard auth/session | Documents Import | `pkg/dashboard/api.go:398` |
-| `GET` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Get | `pkg/dashboard/api.go:399` |
-| `DELETE` | `/api/knowledge/documents/{slug}` | Dashboard auth/session | Document Delete | `pkg/dashboard/api.go:400` |
-| `POST` | `/api/knowledge/documents/{slug}/reimport` | Dashboard auth/session | Document Reimport | `pkg/dashboard/api.go:401` |
-| `GET` | `/api/knowledge/context7/search` | Dashboard auth/session | Context7 Search | `pkg/dashboard/api.go:402` |
-| `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:403` |
-| `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:368` |
-| `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:369` |
 | `GET` | `/api/knowledge/git-sources` | Dashboard auth/session | Git Sources List | `pkg/dashboard/api.go:393` |
 | `POST` | `/api/knowledge/git-sources` | Owner only | Git Sources Connect | `pkg/dashboard/api.go:394` |
 | `DELETE` | `/api/knowledge/git-sources` | Owner only | Git Sources Disconnect | `pkg/dashboard/api.go:395` |
@@ -900,11 +852,6 @@ always resolved server-side from the validated token.
 | `GET` | `/api/leaderboard/teams` | Public | Team Leaderboards | `pkg/dashboard/api_contribute.go:254` |
 | `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:255` |
 | `GET` | `/api/audit` | Read-write role | Audit Log — `{"entries": [...]}` envelope, newest first, capped at 200; response shape and the serve-time `user_name` field in [audit-log.md](audit-log.md#get-apiaudit) | `pkg/dashboard/api.go:53` |
-
-
-| `GET` | `/api/upstream-watch` | Owner only | Upstream-watch divergence: per watched fork the upstream followed, the watermark and last-run time, surfaced/ported/dismissed/skipped counts, and the recent upstream refs with their upstream URL, diff URL, fork issue number and state. Read-only — it reads the config and the watch state file, never GitHub. Also carries `interval`, `project_repos` and each repo's configured entry (`config`) for the editor. | `pkg/dashboard/api.go:287` |
-| `PUT` | `/api/config/upstream-watch` | Owner only | Upstream Watch Config Update: edit `upstream_watch` from the Features tab. Body `{enabled?, interval?, repos?: {<repo>: {upstream?, sources?, pr_labels?, max_issues_per_run?, label?} \| null}}` — absent keys are unchanged, `null` removes a repo, keys are stored as the bare repo name. Validated with the loader's rules before the config changes (400 on failure), then persisted and audited as `config_upstream_watch`. | `pkg/dashboard/api.go:288` |
-
 | `GET` | `/api/watchdog/activity` | Read-write role | Watchdog activity readout for the Health tab (#7254): `watchdog-*` audit actions over `?days=` (default 30, clamped to 90) — total / taken / observed / `byAction`, a zero-filled per-day `daily` histogram, per-agent `agents` liveness, and the Observe → Heal `promotion` hint; see [agent-watchdog.md](agent-watchdog.md#watchdog-activity-strip) | `pkg/dashboard/api.go:471` |
 | `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:62` |
 | `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:63` |
