@@ -7206,14 +7206,17 @@
                A daily-mode hive is NOT upgrading "shortly" — saying so would be
                a lie the operator would notice hours later, so the window is
                still named on the badge. */
-            var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY;
-            var queuedLabel = queuedDaily ? 'Queued for auto-upgrade · 1pm ET' : 'Queued for auto-upgrade';
+            var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY && h.trackedChannel !== 'candidate';
+            var behindLabel = behindKnown ? ('behind by ' + behindCount) : 'behind';
+            var nextCheck = h.nextUpdateAt ? ('next check ' + nextCheckIn(h.nextUpdateAt)) : (h.nextUpdateStatus === 'candidate-continuous' ? 'next hub poll' : 'next check soon');
+            var whyNotNow = h.upgradeWhyNotNow || (queuedDaily ? 'daily schedule' : 'waiting for idle/health gates');
+            var queuedLabel = behindLabel + ' · ' + nextCheck + ' · why not now: ' + whyNotNow;
             /* The tooltip names the TARGET — SHA plus the tracked
                branch/channel label — so "queued for what?" never needs a
                second click to answer. */
             var queuedTitle = queuedDaily
               ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint + pendingImageNote + floatingLagNote + verificationNote
-              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
+              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') as soon as the hub observes a published image and the hive is idle/healthy' + buildingHint + pendingImageNote + floatingLagNote + verificationNote;
             /* REFUSED, not queued. autoUpgradeBlocked is the hub's own evaluated
                decision (upgradeCollectible false), sent by the fleet API rather
                than re-derived here — the badge must never claim an upgrade is
@@ -7820,6 +7823,16 @@
       if (mins < 60) return mins + 'm ago';
       if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
       return Math.floor(mins / 1440) + 'd ago';
+    }
+    function nextCheckIn(iso) {
+      if (!iso) return '';
+      var t = Date.parse(iso);
+      if (isNaN(t)) return '';
+      var mins = Math.max(0, Math.ceil((t - Date.now()) / 60000));
+      if (mins < 1) return 'now';
+      if (mins < 60) return 'in ' + mins + 'm';
+      if (mins < 1440) return 'in ' + Math.ceil(mins / 60) + 'h';
+      return 'in ' + Math.ceil(mins / 1440) + 'd';
     }
     function accessRequestAge(iso) {
       var age = stablePromotionAge(iso);
