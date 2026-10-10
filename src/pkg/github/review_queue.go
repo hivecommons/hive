@@ -182,6 +182,25 @@ type ReviewQueueEntry struct {
 	// age), then any context that did not move it. Like Confidence.Reasons,
 	// it is what a reader needs to reconstruct the order without the code.
 	Reasons []string `json:"reasons"`
+	// Superseded is set when the supersession sweep has announced it will
+	// close this PR once its grace window ends (hivecommons/hive#11430).
+	Superseded *ReviewQueueSuperseded `json:"superseded,omitempty"`
+}
+
+// ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason.
+const ReviewQueueSupersededReason = "superseded"
+
+// ReviewQueueSuperseded describes a PR in the supersession grace window: a
+// different merged PR closed its claimed issue, and the sweep will close it
+// at GraceEndsAt unless someone replies or an operator keeps it open.
+type ReviewQueueSuperseded struct {
+	Reason         string    `json:"reason"`
+	Issue          string    `json:"issue,omitempty"`
+	CloserRepo     string    `json:"closer_repo,omitempty"`
+	CloserPR       int       `json:"closer_pr"`
+	CloserURL      string    `json:"closer_url,omitempty"`
+	GraceStartedAt time.Time `json:"grace_started_at"`
+	GraceEndsAt    time.Time `json:"grace_ends_at"`
 }
 
 // ReviewQueueOptions carries the inputs BuildReviewQueue needs besides the PRs.

@@ -457,6 +457,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or contributor-authored, in one ranked order with the reasons for each
 	// position. Read-only; paged like /api/v1/queue (#6537).
 	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
+	// Superseded PRs in the grace window (#11430): confirm the close now, or
+	// keep the PR open so the supersession sweep never auto-closes it.
+	s.mux.HandleFunc("POST /api/review/queue/{owner}/{repo}/{number}/superseded/close", s.handleReviewQueueSupersededClose)
+	s.mux.HandleFunc("POST /api/review/queue/{owner}/{repo}/{number}/superseded/keep-open", s.handleReviewQueueSupersededKeepOpen)
 	// Review pipeline (#11086): the same queue, one card per PR placed in its
 	// review stage (unreviewed … approved) with reviewers, severity counts,
 	// loop counter and next action. Read-only; paged like /api/review/queue.

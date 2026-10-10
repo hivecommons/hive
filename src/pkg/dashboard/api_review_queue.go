@@ -83,6 +83,7 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	actionable := s.lastActionableForPRModels()
 	queue := ghpkg.ReviewQueueFromActionable(actionable, opts)
+	s.annotateSupersededReviewQueue(queue, opts.Org, opts.Now)
 	history := s.recordReviewQueueHistory(queue, opts.Now)
 
 	resp := reviewQueueResponse{

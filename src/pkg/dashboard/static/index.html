@@ -4117,6 +4117,9 @@
     a.review-queue-title { color: var(--text); }
     .review-queue-meta { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); }
     .review-queue-reasons { margin: var(--sp-2) 0 0; padding-left: var(--sp-6); color: var(--muted); font-size: var(--fs-xs); }
+    .review-queue-superseded { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--terminal-line); border-radius: var(--r-sm); font-size: var(--fs-xs); color: var(--muted); }
+    .review-queue-superseded-badge { font-weight: 700; color: var(--text); }
+    .review-queue-superseded-actions { display: inline-flex; gap: var(--sp-2); margin-left: var(--sp-3); }
     .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
     .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
     .review-queue-collapsed { width: min(460px, 44vw); max-width: 460px; gap: var(--sp-3); }
@@ -23043,11 +23046,70 @@ function burnAreaChart() {
             '<div class="review-queue-titlerow">' + priorityBadge + titleHtml + '</div>' +
             '<div class="review-queue-meta">' + repoRef + ' · ' + metaBits.join(' · ') + '</div>' +
             reasonsHtml +
+            reviewQueueSupersededHtml(e) +
             reviewEvidenceButtonHtml(e.repo, e.number) +
           '</div>' +
         '</div>' +
       '</div>';
     }
+
+    // reviewQueueSupersededHtml renders the supersession grace-window strip
+    // (#11430): the superseding PR, when the sweep will close this one, and
+    // owner-only Close now / Keep open actions.
+    function reviewQueueSupersededHtml(e) {
+      var sup = e && e.superseded;
+      if (!sup) return '';
+      var closerRef = esc(String(sup.closer_repo || '')) + '#' + esc(String(sup.closer_pr || ''));
+      var closerHtml = sup.closer_url
+        ? '<a href="' + esc(String(sup.closer_url)) + '" target="_blank" rel="noopener noreferrer">' + closerRef + '</a>'
+        : closerRef;
+      var ends = sup.grace_ends_at ? new Date(sup.grace_ends_at) : null;
+      var endsText = 'grace window end unknown';
+      if (ends && !isNaN(ends.getTime())) {
+        endsText = ends.getTime() <= Date.now()
+          ? 'grace window ended ' + esc(formatDashboardDateTime(ends)) + '; closes on the next sweep'
+          : 'auto-closes ' + esc(formatDashboardDateTime(ends)) + ' unless someone replies';
+      }
+      var actions = '';
+      if (e.repo && e.number && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
+        var args = ' data-arg0="' + esc(String(e.repo)) + '" data-arg1="' + esc(String(e.number)) + '" data-arg-types="s,s"';
+        actions = '<span class="review-queue-superseded-actions">' +
+          '<button type="button" class="hv-btn btn-danger btn-sm" data-action="reviewQueueSupersededClose"' + args + ' title="Close this PR as superseded now">Close now</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="reviewQueueSupersededKeepOpen"' + args + ' title="Keep this PR open; the sweep will not auto-close it">Keep open</button>' +
+          '</span>';
+      }
+      return '<div class="review-queue-superseded" data-reason="superseded">' +
+        '<span class="review-queue-superseded-badge">superseded</span> by ' + closerHtml + ' · ' + endsText + actions +
+      '</div>';
+    }
+
+    async function reviewQueueSupersededAction(repo, number, action) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      var parts = String(repo || '').split('/');
+      if (parts.length !== 2 || !number) return;
+      var ref = repo + '#' + number;
+      var closing = action === 'close';
+      var ok = await hiveConfirm(closing
+        ? { title: 'Close ' + ref + ' as superseded?', message: 'Hive posts the superseded comment, adds hive/superseded and closes the PR now instead of waiting for the grace window. It can be reopened.', confirmLabel: 'Close now', danger: true }
+        : { title: 'Keep ' + ref + ' open?', message: 'Hive adds hive/keep-open so the supersession sweep never auto-closes this PR.', confirmLabel: 'Keep open' });
+      if (!ok) return;
+      try {
+        var resp = await fetch('/api/review/queue/' + encodeURIComponent(parts[0]) + '/' + encodeURIComponent(parts[1]) + '/' + encodeURIComponent(String(number)) + '/superseded/' + (closing ? 'close' : 'keep-open'), { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        var body = null;
+        try { body = await resp.json(); } catch (_) { body = null; }
+        if (!resp.ok) {
+          showToast((closing ? 'Close failed: ' : 'Keep open failed: ') + ((body && body.error) || ('HTTP ' + resp.status)), 'error');
+          return;
+        }
+        showToast(closing ? ref + ' closed as superseded' : ref + ' kept open', 'success');
+        fetchReviewQueue();
+      } catch (err) {
+        showToast((closing ? 'Close failed: ' : 'Keep open failed: ') + (err && err.message ? err.message : 'network error'), 'error');
+      }
+    }
+
+    function reviewQueueSupersededClose(repo, number) { return reviewQueueSupersededAction(repo, number, 'close'); }
+    function reviewQueueSupersededKeepOpen(repo, number) { return reviewQueueSupersededAction(repo, number, 'keep-open'); }
 
     function renderReviewQueue(data) {
       refreshSectionCardShell('review-queue-section');

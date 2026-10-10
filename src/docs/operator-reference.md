@@ -355,6 +355,11 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   `<!-- hive:pr-supersession-autoclose -->` comment naming the merged PR and
   its merge time, with "reopen if that's wrong". Reopening and commenting
   keeps it open on the next pass.
+- While a PR is in the grace window, the dashboard Review Queue tags it
+  `superseded`, links the merged PR and shows when the window ends. An owner
+  can **Close now** (same comment, label and close as the sweep) or **Keep
+  open**, which adds `hive/keep-open`; the sweep never auto-closes a PR with
+  that label.
 
 | Key | Default | Meaning |
 |---|---|---|

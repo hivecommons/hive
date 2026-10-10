@@ -23587,6 +23587,168 @@
         }
       }
     },
+    "/api/review/queue/{owner}/{repo}/{number}/superseded/close": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Close a superseded PR now",
+        "description": "Owner role required. Confirms the close of a PR in the supersession grace window before it ends: posts the superseded close comment (once), applies the hive/superseded label and closes the PR through the sweep's own close path. Audited.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository owner."
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository name."
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PR closed as superseded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "closed"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The label applied to the PR (hive/superseded)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository or pull request number"
+          },
+          "403": {
+            "description": "Owner access required, or repository not managed by this hive"
+          },
+          "502": {
+            "description": "GitHub comment, label or close write failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
+    "/api/review/queue/{owner}/{repo}/{number}/superseded/keep-open": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Keep a superseded PR open",
+        "description": "Owner role required. Applies the hive/keep-open label so the supersession sweep never auto-closes the PR. Audited.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository owner."
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository name."
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PR kept open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "kept_open"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The label applied to the PR (hive/keep-open)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository or pull request number"
+          },
+          "403": {
+            "description": "Owner access required, or repository not managed by this hive"
+          },
+          "502": {
+            "description": "GitHub label write failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
     "/api/review/outcomes": {
       "get": {
         "tags": [

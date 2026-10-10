@@ -121,7 +121,7 @@ func TestReviewQueueEntryRendering(t *testing.T) {
 	// The evidence button is role-gated on window state that does not exist
 	// under node; its wiring is pinned in TestReviewQueueViewStaticWiring.
 	source.WriteString("function reviewEvidenceButtonHtml() { return ''; }\n")
-	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "renderReviewQueueEntry"} {
+	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "reviewQueueSupersededHtml", "renderReviewQueueEntry"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
