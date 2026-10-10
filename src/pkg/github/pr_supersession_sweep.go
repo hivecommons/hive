@@ -18,6 +18,14 @@ type SupersessionSweepOptions struct {
 	MaxActions       int
 	ACMMLevelForRepo func(repo string) int
 	Audit            func(SupersessionSweepEvent)
+	// CloseContributorPRs lets the sweep close a superseded human-authored PR
+	// once the guards in DecideSupersessionAutoClose hold and GracePeriod has
+	// elapsed since the notice with no human reply (hivecommons/hive#11418).
+	// Off by default: without it contributor PRs only get the notice.
+	CloseContributorPRs bool
+	// GracePeriod is how long a contributor PR stays open after the
+	// supersession notice. Non-positive means DefaultSupersessionGracePeriod.
+	GracePeriod time.Duration
 }
 
 type SupersessionSweepEvent struct {
@@ -38,9 +46,10 @@ type SupersessionSweepResult struct {
 }
 
 type supersessionCloser struct {
-	Repo   string
-	Number int
-	URL    string
+	Repo     string
+	Number   int
+	URL      string
+	MergedAt time.Time
 }
 
 func (c *Client) SweepSupersededOpenPRs(ctx context.Context, opts SupersessionSweepOptions) (*SupersessionSweepResult, error) {
@@ -75,7 +84,7 @@ func (c *Client) SweepSupersededOpenPRs(ctx context.Context, opts SupersessionSw
 				continue
 			}
 			result.Seen++
-			event, action, err := c.trySweepSupersededPR(ctx, repo, owner, repoName, pr, identity, now, opts.ACMMLevelForRepo)
+			event, action, err := c.trySweepSupersededPR(ctx, repo, owner, repoName, pr, identity, now, opts)
 			if err != nil {
 				return result, err
 			}
@@ -116,7 +125,7 @@ func (c *Client) listOpenPRsForSupersessionSweep(ctx context.Context, owner, rep
 	return all, nil
 }
 
-func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRepoName string, pr *gh.PullRequest, identity HiveIdentity, now time.Time, levelForRepo func(string) int) (SupersessionSweepEvent, string, error) {
+func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRepoName string, pr *gh.PullRequest, identity HiveIdentity, now time.Time, opts SupersessionSweepOptions) (SupersessionSweepEvent, string, error) {
 	claims := claimsFromPR(pr, prRepo, identity, now)
 	if len(claims) == 0 {
 		return SupersessionSweepEvent{}, "", nil
@@ -170,8 +179,15 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		}
 	}
 
+	level := 0
+	if opts.ACMMLevelForRepo != nil {
+		level = opts.ACMMLevelForRepo(prRepo)
+	}
 	ownPR := identity.Matches(event.Author)
 	if !ownPR {
+		if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
+			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
+		}
 		event.Action = "commented-contributor"
 		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review.")
 		if err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
@@ -180,19 +196,14 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		return event, "commented", nil
 	}
 
-	level := 0
-	if levelForRepo != nil {
-		level = levelForRepo(prRepo)
-	}
 	if reason == "" && level >= acmmLevelFullyAutonomous {
 		event.Action = "closed"
 		body := renderSupersessionComment(event, closer, "Closing this hive-authored PR because the claimed issue was already closed by the merged PR below.")
 		if err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
 			return event, "", err
 		}
-		closed := "closed"
-		if _, _, err := c.client.Issues.Edit(ctx, prOwner, prRepoName, pr.GetNumber(), &gh.IssueRequest{State: &closed}); err != nil {
-			return event, "", fmt.Errorf("closing superseded PR %s#%d: %w", prRepo, pr.GetNumber(), err)
+		if err := c.labelAndCloseSupersededPR(ctx, prOwner, prRepoName, pr.GetNumber()); err != nil {
+			return event, "", err
 		}
 		return event, "closed", nil
 	}
@@ -227,14 +238,14 @@ func (c *Client) resolveIssueClosingPR(ctx context.Context, issueDisplayRepo, ow
 		if pr == nil || pr.GetNumber() == currentPR || pr.GetMergedAt().Time.IsZero() {
 			continue
 		}
-		return supersessionCloser{Repo: issueDisplayRepo, Number: pr.GetNumber(), URL: pr.GetHTMLURL()}, true, nil
+		return supersessionCloser{Repo: issueDisplayRepo, Number: pr.GetNumber(), URL: pr.GetHTMLURL(), MergedAt: pr.GetMergedAt().Time}, true, nil
 	}
 	return supersessionCloser{}, false, nil
 }
 
 func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo string, issue, currentPR int) (supersessionCloser, bool) {
 	payload := map[string]any{
-		"query": `query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:10){nodes{number url merged}}}}}`,
+		"query": `query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:10){nodes{number url merged mergedAt}}}}}`,
 		"variables": map[string]any{
 			"owner": owner,
 			"repo":  repo,
@@ -251,9 +262,10 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 				Issue struct {
 					ClosedByPullRequestsReferences struct {
 						Nodes []struct {
-							Number int    `json:"number"`
-							URL    string `json:"url"`
-							Merged bool   `json:"merged"`
+							Number   int       `json:"number"`
+							URL      string    `json:"url"`
+							Merged   bool      `json:"merged"`
+							MergedAt time.Time `json:"mergedAt"`
 						} `json:"nodes"`
 					} `json:"closedByPullRequestsReferences"`
 				} `json:"issue"`
@@ -268,7 +280,7 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		if node.Number == currentPR || !node.Merged {
 			continue
 		}
-		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL}, true
+		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
 	}
 	return supersessionCloser{}, false
 }

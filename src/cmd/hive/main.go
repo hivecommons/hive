@@ -8544,8 +8544,14 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 	if lastRun != nil {
 		*lastRun = now
 	}
+	var supersessionCfg config.SupersessionSweepConfig
+	if cfg != nil {
+		supersessionCfg = cfg.SupersessionSweep
+	}
 	result, err := ghClient.SweepSupersededOpenPRs(ctx, github.SupersessionSweepOptions{
-		MaxActions: github.DefaultSupersessionSweepMaxActions,
+		MaxActions:          github.DefaultSupersessionSweepMaxActions,
+		CloseContributorPRs: supersessionCfg.CloseContributorPRs,
+		GracePeriod:         supersessionCfg.GracePeriod,
 		ACMMLevelForRepo: func(repo string) int {
 			if cfg == nil {
 				return 0

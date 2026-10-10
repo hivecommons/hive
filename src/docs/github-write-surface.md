@@ -127,7 +127,7 @@ writes no entry.
 | Auto-merge sweep merges | `pkg/github/automerge/automerge_sweep.go` | yes (`pr_merged`, `automerge-sweep-merged`) | yes |
 | Attribution trailer reconcile | `attribution.go` (`ReconcilePRAttribution`) | yes (`pr_attribution_reconciled`) | yes |
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
-| Supersession sweep | `pr_supersession_sweep.go` | yes (`supersession-sweep-*`) | yes |
+| Supersession sweep (notice, `hive/superseded` close) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go` | yes (`supersession-sweep-*`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
