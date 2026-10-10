@@ -47,7 +47,7 @@ func TestHubReleaseNotesBuildsOnceAndCaches(t *testing.T) {
 	t.Cleanup(api.Close)
 	oldAPI := githubAPIBase
 	githubAPIBase = api.URL
-	t.Cleanup(func() { githubAPIBase = oldAPI })
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); githubAPIBase = oldAPI })
 
 	s := newHubServerForTest(t)
 	oldHives := saasHivesDir

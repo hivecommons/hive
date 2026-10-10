@@ -145,6 +145,7 @@ func TestChannelDistanceIsCachedPerCommitPair(t *testing.T) {
 		return channelDistance{Status: "behind", Behind: 4}, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})
@@ -180,6 +181,7 @@ func TestSameCommitNeedsNoCompareCall(t *testing.T) {
 		return channelDistance{}, fmt.Errorf("unreachable")
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})
@@ -199,6 +201,7 @@ func TestEmptySHAIsNeverCompared(t *testing.T) {
 		return channelDistance{}, fmt.Errorf("unreachable")
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})
@@ -229,6 +232,7 @@ func TestMissingUpstreamSkipsRatherThanSubstitutes(t *testing.T) {
 		return channelDistance{Status: "behind", Behind: 1}, nil
 	}
 	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
 		fetchCommitCompareCounts = orig
 		resetChannelDistanceCache()
 	})

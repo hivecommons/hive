@@ -1,0 +1,1 @@
+- Drain release-channel target refresh goroutines before hub tests restore shared HTTP and registry hooks.
