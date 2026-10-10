@@ -43,6 +43,7 @@ var (
 	releaseNotesRawBaseURL = "https://raw.githubusercontent.com"
 	releaseNotesAPIBaseURL = "https://api.github.com"
 	releaseNotesHTTP       = &http.Client{Timeout: 10 * time.Second}
+	releaseNotesHubHTTP    = &http.Client{Timeout: 10 * time.Second}
 
 	releaseNotesSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 	releaseNotesRefPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,100}$`)
@@ -58,7 +59,7 @@ type releaseNotesFetcher interface {
 // newReleaseNotesFetcher is a seam so tests can serve fixture content.
 var newReleaseNotesFetcher = func(s *Server) releaseNotesFetcher {
 	f := &githubReleaseNotesFetcher{}
-	if s.deps != nil {
+	if s.deps != nil && s.deps.GHClient != nil {
 		f.client = s.deps.GHClient.GoGitHub()
 	}
 	return f
@@ -198,6 +199,13 @@ func (s *Server) handleVersionReleaseNotes(w http.ResponseWriter, r *http.Reques
 		writeReleaseNotes(w, cached)
 		return
 	}
+	if hubResp, attempted := s.fetchHubReleaseNotes(r.Context(), from, toSHA); attempted {
+		if hubResp.Source == "changelog" {
+			storeReleaseNotes(key, hubResp, releaseNotesNow())
+		}
+		writeReleaseNotes(w, hubResp)
+		return
+	}
 
 	release, reason, ok := acquireReleaseNotesBuild()
 	if !ok {
@@ -214,6 +222,61 @@ func (s *Server) handleVersionReleaseNotes(w http.ResponseWriter, r *http.Reques
 		storeReleaseNotes(key, resp, releaseNotesNow())
 	}
 	writeReleaseNotes(w, resp)
+}
+
+func (s *Server) fetchHubReleaseNotes(ctx context.Context, from, toSHA string) (releaseNotesResponse, bool) {
+	resp := releaseNotesResponse{
+		From:     releaseNotesFrom{SHA: from},
+		To:       releaseNotesTo{SHA: toSHA, Ref: toSHA},
+		Sections: []releasenotes.Section{},
+		Source:   "unavailable",
+	}
+	if s == nil || s.deps == nil || s.deps.Config == nil || strings.TrimSpace(s.deps.Config.Hub.URL) == "" {
+		return resp, false
+	}
+	hubURL := strings.TrimRight(strings.TrimSpace(s.deps.Config.Hub.URL), "/") + "/api/saas/release-notes"
+	u, err := url.Parse(hubURL)
+	if err != nil {
+		resp.Error = "hub release notes URL invalid: " + err.Error()
+		return resp, true
+	}
+	q := u.Query()
+	q.Set("from", from)
+	q.Set("to", toSHA)
+	if hiveID := strings.TrimSpace(s.deps.Config.HiveID); hiveID != "" {
+		q.Set("hive_id", hiveID)
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		resp.Error = "hub release notes request invalid: " + err.Error()
+		return resp, true
+	}
+	if proof := s.authToken; proof != "" {
+		req.Header.Set(proxyAuthHeader, proof)
+	} else if s.deps.Config.Dashboard.AuthToken != "" {
+		req.Header.Set(proxyAuthHeader, s.deps.Config.Dashboard.AuthToken)
+	}
+	httpResp, err := releaseNotesHubHTTP.Do(req)
+	if err != nil {
+		resp.Error = "hub release notes unavailable: " + err.Error()
+		return resp, true
+	}
+	defer closeHTTPBody(httpResp.Body)
+	if httpResp.StatusCode != http.StatusOK {
+		resp.Error = fmt.Sprintf("hub release notes returned HTTP %d", httpResp.StatusCode)
+		return resp, true
+	}
+	if err := json.NewDecoder(io.LimitReader(httpResp.Body, releaseNotesMaxBody)).Decode(&resp); err != nil {
+		resp.Source = "unavailable"
+		resp.Error = "hub release notes response invalid: " + err.Error()
+		resp.Sections = []releasenotes.Section{}
+		return resp, true
+	}
+	if resp.Sections == nil {
+		resp.Sections = []releasenotes.Section{}
+	}
+	return resp, true
 }
 
 func writeReleaseNotes(w http.ResponseWriter, resp releaseNotesResponse) {

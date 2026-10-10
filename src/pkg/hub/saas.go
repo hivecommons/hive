@@ -425,6 +425,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
+	s.mux.HandleFunc("GET /api/saas/release-notes", s.handleReleaseNotes)
 	s.mux.HandleFunc("GET /api/hub/release/stable-promotion", s.handleGetStablePromotion)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
 	s.mux.HandleFunc("PUT /api/saas/hub/auto-upgrade", s.requireAdmin(s.handleHubAutoUpgrade))
