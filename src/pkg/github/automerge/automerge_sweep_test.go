@@ -2910,3 +2910,77 @@ func TestSweepSelfAuthoredAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
 		}
 	}
 }
+
+func TestCommitGreenKnownEmptyRequiredChecksRequiresEvidence(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"message": "Branch not protected"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+	if err != nil {
+		t.Fatalf("commitGreen returned error: %v", err)
+	}
+	if green || reason != "ci-unverified" {
+		t.Fatalf("commitGreen = (%v,%q), want (false, ci-unverified)", green, reason)
+	}
+}
+
+func TestRequiredChecksForRepoResolver(t *testing.T) {
+	engine := New(nil, Options{
+		RequiredChecks: map[string]bool{"global": true},
+		RequiredChecksForRepo: func(repo string) (map[string]bool, bool) {
+			if repo == "acme/widget" {
+				return map[string]bool{"repo-gate": true}, true
+			}
+			return nil, false
+		},
+	})
+	if got, ok := engine.configRequiredChecksForRepo("acme/widget"); !ok || !got["repo-gate"] {
+		t.Fatalf("configRequiredChecksForRepo(repo) = (%v,%v), want repo override", got, ok)
+	}
+	if got, ok := engine.configRequiredChecksForRepo("acme/other"); ok || got != nil {
+		t.Fatalf("configRequiredChecksForRepo(other) = (%v,%v), want resolver miss", got, ok)
+	}
+	engine.SetRequiredChecks(map[string]bool{"global": true})
+	if got, ok := engine.configRequiredChecksForRepo("acme/widget"); !ok || !got["global"] || got["repo-gate"] {
+		t.Fatalf("after SetRequiredChecks resolver should clear, got (%v,%v)", got, ok)
+	}
+	engine.SetRequiredChecksForRepo(func(string) (map[string]bool, bool) { return map[string]bool{}, true })
+	if got, ok := engine.configRequiredChecksForRepo("acme/widget"); !ok || len(got) != 0 {
+		t.Fatalf("empty per-repo override = (%v,%v), want known empty", got, ok)
+	}
+}
+
+func TestWarnRequiredChecksMismatchOnce(t *testing.T) {
+	var logs bytes.Buffer
+	engine := New(nil, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	declared := map[string]bool{"build-gate": true, "observed-legacy": true, "validate": true}
+	actual := map[string]bool{"validate": true}
+	observed := map[string]bool{"observed-legacy": true}
+
+	missing := mismatchedDeclaredChecks(declared, actual, observed)
+	if len(missing) != 1 || missing[0] != "build-gate" {
+		t.Fatalf("mismatchedDeclaredChecks = %v, want [build-gate]", missing)
+	}
+	engine.warnRequiredChecksMismatch("acme", "widget", declared, actual, observed)
+	engine.warnRequiredChecksMismatch("acme", "widget", declared, actual, observed)
+	out := logs.String()
+	if strings.Count(out, "automerge required_checks override does not match repo protection") != 1 {
+		t.Fatalf("warn log count mismatch: %s", out)
+	}
+	if !strings.Contains(out, "using=actual") || !strings.Contains(out, "build-gate") {
+		t.Fatalf("warn log missing fields: %s", out)
+	}
+}
