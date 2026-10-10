@@ -306,7 +306,7 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 		{name: "nil", want: "missing-head-sha"},
 		{name: "closed", pr: pr(func(p *gh.PullRequest) { p.State = gh.Ptr("closed") }), want: "closed"},
 		{name: "draft", pr: pr(func(p *gh.PullRequest) { p.Draft = gh.Ptr(true) }), want: "draft"},
-		{name: "excluded", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}} }), want: "excluded-label:needs-human"},
+		{name: "excluded", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}} }), want: "label:needs-human"},
 		{name: "missing head", pr: pr(func(p *gh.PullRequest) { p.Head = nil }), want: "missing-head-sha"},
 		{name: "role", pr: pr(func(p *gh.PullRequest) { p.User = &gh.User{Login: gh.Ptr("bob")} }), want: "untrusted-author-role"},
 		{name: "ok", pr: pr(), want: ""},
@@ -1801,6 +1801,14 @@ func TestTrySweepSelfAuthoredPRRequiredChecksDecision(t *testing.T) {
 			wantReason: "label:hold",
 		},
 		{
+			name: "needs-human label blocks",
+			pr: selfAuthoredPR{
+				number: 28, author: testHiveAppBotLogin, mergeableState: "clean", extraLabels: []string{"Needs-Human"},
+				statusState: "success", checkStatus: "completed", checkConclusion: "success",
+			},
+			wantReason: "label:needs-human",
+		},
+		{
 			name: "sentinel label on trusted self-authored PR is eligible",
 			pr: selfAuthoredPR{
 				number: 26, author: testHiveAppBotLogin, mergeableState: "clean", extraLabels: []string{"sentinel-alert"},
@@ -2567,6 +2575,8 @@ func TestAutoMergeSweepPrefilterHelpers(t *testing.T) {
 		{name: "draft", pr: &gh.PullRequest{State: gh.Ptr("open"), Draft: gh.Ptr(true)}, want: "draft"},
 		{name: "other-author", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr("alice")}}, want: "not-app-authored"},
 		{name: "held", pr: appPR("hold/review"), want: "label:hold"},
+		{name: "needs-human", pr: appPR("needs-human"), want: "label:needs-human"},
+		{name: "needs-human case-insensitive", pr: appPR("Needs-Human"), want: "label:needs-human"},
 		{name: "exempt", pr: appPR("skip-merge"), want: "exempt-label"},
 		{name: "missing-head", pr: &gh.PullRequest{State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}, want: "missing-head-sha"},
 		{name: "candidate", pr: appPR("ready"), want: ""},
@@ -2595,6 +2605,8 @@ func TestAutoMergeSweepPrefilterHelpers(t *testing.T) {
 		{name: "plain-issue", issue: &gh.Issue{Number: gh.Ptr(7)}, want: "not-pull-request"},
 		{name: "label-removed", issue: queuedIssue("other"), want: "label-removed"},
 		{name: "held", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "hold"), want: "label:hold"},
+		{name: "needs-human", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "needs-human"), want: "label:needs-human"},
+		{name: "needs-human case-insensitive", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "Needs-Human"), want: "label:needs-human"},
 		{name: "exempt", issue: queuedIssue(hgithub.AutoMergeQueuedLabel, "skip-merge"), want: "exempt-label"},
 		{name: "candidate", issue: queuedIssue(hgithub.AutoMergeQueuedLabel), want: ""},
 	}

@@ -59,6 +59,12 @@ func TestPrefilterSelfAuthoredPRReasons(t *testing.T) {
 		{"held", func(pr *gh.PullRequest) {
 			pr.Labels = []*gh.Label{{Name: gh.Ptr("do-not-merge/hold")}}
 		}, "label:do-not-merge/hold"},
+		{"needs-human", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr("needs-human")}}
+		}, "label:needs-human"},
+		{"needs-human case-insensitive", func(pr *gh.PullRequest) {
+			pr.Labels = []*gh.Label{{Name: gh.Ptr("Needs-Human")}}
+		}, "label:needs-human"},
 		// The dashboard ⏸ Hold label is an exact, hive-scoped hold that the
 		// generic predicate cannot see; the sweep must gate on the
 		// transport's configured hold set (#8927).
@@ -117,6 +123,8 @@ func TestPrefilterQueuedIssueReasons(t *testing.T) {
 		{"plain issue", &gh.Issue{Number: gh.Ptr(8), Labels: []*gh.Label{{Name: gh.Ptr(label)}}}, "not-pull-request"},
 		{"label removed since listing", queuedListIssue("kind/bug"), "label-removed"},
 		{"held", queuedListIssue(label, "hold"), "label:hold"},
+		{"needs-human", queuedListIssue(label, "needs-human"), "label:needs-human"},
+		{"needs-human case-insensitive", queuedListIssue(label, "Needs-Human"), "label:needs-human"},
 		{"hive-pause held", queuedListIssue(label, "hive-pause/h1"), "label:hold"},
 		{"hive provenance is not a hold", queuedListIssue(label, hgithub.HiveProvenanceLabel("h1")), ""},
 		{"sentinel alert", queuedListIssue(label, "Sentinel-Alert"), "sentinel"},
