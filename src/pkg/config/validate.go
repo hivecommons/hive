@@ -198,6 +198,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if apiCritical >= apiReserve {
 		return fmt.Errorf("github.api_critical must be less than github.api_reserve")
 	}
+	if !ValidateCoverageTarget(c.Governor.CoverageTarget) {
+		return fmt.Errorf("governor.coverage_target must be between 1 and 100 (got %d)", c.Governor.CoverageTarget)
+	}
 	if c.Governor.EvalIntervalMaxS > 0 && c.Governor.EvalIntervalS > 0 && c.Governor.EvalIntervalMaxS < c.Governor.EvalIntervalS {
 		return fmt.Errorf("governor.eval_interval_max_s must be greater than or equal to governor.eval_interval_s")
 	}

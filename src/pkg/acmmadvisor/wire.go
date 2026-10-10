@@ -27,6 +27,7 @@ package acmmadvisor
 type StatusInputs struct {
 	CurrentLevel     int
 	CoveragePct      float64
+	CoverageTarget   float64
 	GreenStreak      int
 	MergeSuccessRate float64
 	ActionableIssues int

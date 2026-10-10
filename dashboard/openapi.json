@@ -7143,6 +7143,60 @@
         }
       }
     },
+    "/api/config/governor/coverage-target": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update quality coverage target",
+        "description": "Sets governor.coverage_target, the test-coverage goal (percent, 1-100) shown on the quality/ci-maintainer cards and used by the coverage preamble and the ACMM advisor. Accepts either `coverageTarget` or the YAML key `coverage_target`; omitting both (0) resets to the default of 91. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "coverageTarget": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "coverage_target": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Snake-case alias for coverageTarget"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "coverageTarget must be between 1 and 100"
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      }
+    },
     "/api/config/governor/trajectory": {
       "put": {
         "tags": [

@@ -30,6 +30,7 @@ The effect is that the mode ladder means the same thing at any hive size: **surg
 ```yaml
 governor:
   threshold_scaling: linear   # linear (default) | sqrt | none
+  coverage_target: 91         # test-coverage goal in percent, 1-100 (default 91)
 ```
 
 | Value | Factor | When to use |
