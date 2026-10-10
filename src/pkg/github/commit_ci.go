@@ -83,6 +83,14 @@ type CommitCIState struct {
 	// gating or not, in any state. Zero means GitHub has NOTHING to say about
 	// this commit: no workflow ever produced a job for it.
 	Evidence int
+	// SuccessfulCIEvidence counts completed successful, non-meta check runs on
+	// the SHA. Status contexts and merge/deploy metadata do not count toward
+	// the positive evidence gate for unprotected or unknown required-check sets.
+	SuccessfulCIEvidence int
+	// IgnoredMetaContexts names pending/failing metadata contexts ignored while
+	// the required-check set is unknown or empty and server-side enforcement is
+	// authoritative.
+	IgnoredMetaContexts []string
 	// MissingRequired lists the config/protection-declared required check
 	// names (when that set is known) for which NO status and NO check run
 	// exists on the SHA. A required check that has not been created yet is
@@ -107,9 +115,10 @@ type CommitCIOptions struct {
 	MinHeadAge                          time.Duration
 	HeadPushedAt                        time.Time
 	Now                                 func() time.Time
-	// RequireEvidence fails closed when no status or check-run evidence exists.
-	// It is used when GitHub reports a known empty required-check set, so Hive
-	// still requires positive CI evidence instead of treating absence as green.
+	// RequireEvidence fails closed when no real successful CI check-run evidence
+	// exists. It is used when GitHub reports a known empty required-check set or
+	// the set is unknown, so Hive still requires positive CI evidence instead of
+	// treating absent CI or metadata-only statuses as green.
 	RequireEvidence bool
 }
 
@@ -335,8 +344,9 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 // RequiredStatusCheckContexts. When requiredKnown is false and
 // UnknownRequiredChecksServerEnforced is set, completed failing checks do not
 // block: the merge call is the source of truth for required checks. Pending
-// statuses/check-runs still block so the sweep does not race in-flight CI.
-// Without that option the older fail-closed positive-evidence policy applies.
+// real CI statuses/check-runs still block so the sweep does not race in-flight
+// CI, while known metadata contexts are ignored. Without that option the older
+// fail-closed positive-evidence policy applies.
 // Later blockers are still walked after the first so that Evidence and
 // MissingRequired are complete for the caller. A non-nil error means the
 // evidence could not be gathered; Reason then names the failing API
@@ -352,7 +362,16 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
+	ignoredMeta := make(map[string]bool)
 	st.Observed = seen
+	rememberIgnoredMeta := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || ignoredMeta[name] {
+			return
+		}
+		ignoredMeta[name] = true
+		st.IgnoredMetaContexts = append(st.IgnoredMetaContexts, name)
+	}
 	// block records the first blocker; later ones are still walked so that
 	// Evidence/seen are complete for the caller.
 	block := func(reason string) {
@@ -362,44 +381,14 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 
 	statusOpts := &gh.ListOptions{PerPage: 100}
+	var allStatuses []*gh.RepoStatus
 	for {
 		status, resp, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
 		if err != nil {
 			st.Reason = "status-check"
 			return st, err
 		}
-		for _, s := range status.Statuses {
-			ctxName := s.GetContext()
-			st.Evidence++
-			seen[ctxName] = true
-			if requiredKnown {
-				// Required-checks-only gating: skip anything not on the
-				// branch's actual required list, no matter its state.
-				if !required[ctxName] {
-					continue
-				}
-			} else if !serverEnforcedUnknown && isMetaCheck(ctxName) {
-				continue
-			}
-			switch s.GetState() {
-			case "success":
-				if requiredKnown && required[ctxName] {
-					requiredSuccess[ctxName] = true
-				}
-			case "pending":
-				if requiredKnown {
-					block("required-check-pending:" + ctxName)
-				} else {
-					block("status-pending")
-				}
-			default: // "failure", "error"
-				if requiredKnown {
-					block("required-check-failing:" + ctxName)
-				} else if !serverEnforcedUnknown && !isIgnorableCICheck(ctxName) {
-					block("status-" + s.GetState())
-				}
-			}
-		}
+		allStatuses = append(allStatuses, status.Statuses...)
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
@@ -420,6 +409,47 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		checkOpts.Page = resp.NextPage
 	}
+
+	dcoSatisfied := dcoContextSucceeded(allStatuses, allCheckRuns)
+
+	for _, s := range allStatuses {
+		ctxName := s.GetContext()
+		st.Evidence++
+		seen[ctxName] = true
+		if requiredKnown {
+			// Required-checks-only gating: skip anything not on the
+			// branch's actual required list, no matter its state.
+			if !required[ctxName] {
+				continue
+			}
+		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, serverEnforcedUnknown, dcoSatisfied) {
+			if s.GetState() != "success" {
+				rememberIgnoredMeta(ctxName)
+			}
+			continue
+		} else if !serverEnforcedUnknown && isMetaCheck(ctxName) {
+			continue
+		}
+		switch s.GetState() {
+		case "success":
+			if requiredKnown && required[ctxName] {
+				requiredSuccess[ctxName] = true
+			}
+		case "pending":
+			if requiredKnown {
+				block("required-check-pending:" + ctxName)
+			} else {
+				block("status-pending")
+			}
+		default: // "failure", "error"
+			if requiredKnown {
+				block("required-check-failing:" + ctxName)
+			} else if !serverEnforcedUnknown && !isIgnorableCICheck(ctxName) {
+				block("status-" + s.GetState())
+			}
+		}
+	}
+
 	for _, cr := range latestCheckRunsByNameAndApp(allCheckRuns) {
 		name := cr.GetName()
 		st.Evidence++
@@ -428,6 +458,11 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if !required[name] {
 				continue
 			}
+		} else if shouldIgnoreMetaContextForServerEnforcement(name, serverEnforcedUnknown, dcoSatisfied) {
+			if cr.GetStatus() != "completed" || (cr.GetConclusion() != "success" && cr.GetConclusion() != "neutral" && cr.GetConclusion() != "skipped") {
+				rememberIgnoredMeta(name)
+			}
+			continue
 		} else if !serverEnforcedUnknown && isMetaCheck(name) {
 			continue
 		}
@@ -444,6 +479,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		switch cr.GetConclusion() {
 		case "success":
+			if !isMetaCheck(name) && !isIgnorableCICheck(name) && !isDCOContext(name) {
+				st.SuccessfulCIEvidence++
+			}
 			if requiredKnown && required[name] {
 				requiredSuccess[name] = true
 			}
@@ -482,9 +520,10 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 	}
 
-	if st.Reason == "" && opts.RequireEvidence && st.Evidence == 0 {
+	if st.Reason == "" && opts.RequireEvidence && st.SuccessfulCIEvidence == 0 {
 		block("ci-unverified")
 	}
+	sort.Strings(st.IgnoredMetaContexts)
 
 	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {
 		now := opts.Now
@@ -502,6 +541,34 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+func dcoContextSucceeded(statuses []*gh.RepoStatus, checkRuns []*gh.CheckRun) bool {
+	for _, s := range statuses {
+		if isDCOContext(s.GetContext()) && s.GetState() == "success" {
+			return true
+		}
+	}
+	for _, cr := range latestCheckRunsByNameAndApp(checkRuns) {
+		if isDCOContext(cr.GetName()) && cr.GetStatus() == "completed" && cr.GetConclusion() == "success" {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldIgnoreMetaContextForServerEnforcement(name string, serverEnforcedUnknown, dcoSatisfied bool) bool {
+	if !serverEnforcedUnknown {
+		return false
+	}
+	if isMetaCheck(name) || isIgnorableCICheck(name) {
+		return true
+	}
+	return isDCOContext(name) && dcoSatisfied
+}
+
+func isDCOContext(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), "dco")
 }
 
 func commitCIReasonIsPending(reason string) bool {

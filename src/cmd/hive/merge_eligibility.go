@@ -362,6 +362,9 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// 2026-08-04: three green console PRs stuck for hours). The merge step
 	// re-enforces branch protection, so trusting the mergeable verdict here
 	// cannot merge anything GitHub would actually block.
+	if pr.CIStatus == "pending" && pr.Mergeable == github.MergeableYes && pr.CIRealCheckRunsKnown && pr.CIRealCheckRuns == 0 {
+		return mergeBucketSkip, blockedOrOutstanding("CI unverified — only metadata checks reported"), ""
+	}
 	if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes && len(g.requiredChecks) == 0 {
 		// Genuinely not ready: a required check is still running (or
 		// mergeability is unknown/no). Leave it out of both buckets, as
