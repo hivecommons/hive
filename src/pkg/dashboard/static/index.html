@@ -2494,14 +2494,15 @@
     .feedback-bug-btn { position:relative; min-width:34px; }
     .feedback-pill { position:absolute; top:-7px; right:-7px; min-width:16px; height:16px; padding:var(--sp-0) var(--sp-1); border-radius:var(--r-pill); background:var(--red); color:var(--text); font-size:var(--fs-2xs); font-weight:800; line-height:16px; text-align:center; box-shadow:var(--shadow-raised); }
     .feedback-pill[hidden] { display:none; }
-    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: hidden; padding: var(--sp-0); }
-    .feedback-header { position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
+    .feedback-modal { max-width: 720px; width: min(94vw, 720px); height: min(82vh, 720px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display:flex; flex-direction:column; overflow: hidden; padding: var(--sp-0); }
+    .feedback-header { flex:0 0 auto; position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
     .feedback-header h2 { margin:0 0 var(--sp-2); }
     .feedback-intro { color:var(--muted); margin:0; line-height:1.45; }
-    .feedback-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:var(--sp-8); }
-    .feedback-footer { position: sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; gap:var(--sp-4); padding:var(--sp-6) var(--sp-8); border-top:1px solid var(--border); background:var(--panel); }
+    .feedback-body { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; padding:var(--sp-8); }
+    .feedback-footer { flex:0 0 auto; position: sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; gap:var(--sp-4); padding:var(--sp-6) var(--sp-8); border-top:1px solid var(--border); background:var(--panel); }
     .feedback-tabs, .feedback-segmented { display:inline-flex; gap:var(--sp-1); padding:var(--sp-1); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg-soft); }
-    .feedback-tabs { margin-bottom:24px; }
+    .feedback-tabs { flex:0 0 auto; margin-bottom:24px; }
+    .feedback-body > [role="tabpanel"] { flex:1 1 auto; min-height:0; overflow:auto; }
     .feedback-tabs .hv-btn, .feedback-segmented label { border-radius:var(--r-pill); }
     .feedback-tabs .active, .feedback-segmented label:has(input:checked) { background:var(--surface-2); color:var(--text); border-color:var(--accent); box-shadow:var(--shadow-soft); }
     .feedback-segmented label { display:inline-flex; align-items:center; gap:var(--sp-2); padding:var(--sp-3) var(--sp-5); border:1px solid transparent; color:var(--muted); cursor:pointer; }
@@ -2570,6 +2571,9 @@
     .acmm-dialog-overlay { z-index: 10000; } /* JS toggles inline display flex/none */
     .acmm-dialog { padding: var(--sp-7); max-width: 600px; width: 92%; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow-y: auto; }
     .hive-dialog { width: 460px; max-width: 92vw; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow: auto; padding: var(--sp-8); } /* modal panel recipe */
+    .tabbed-modal-shell { display:flex; flex-direction:column; overflow:hidden; }
+    .tabbed-modal-strip { flex:0 0 auto; }
+    .tabbed-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
     .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
@@ -2598,7 +2602,7 @@
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
       width: 1200px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));
-      height: auto; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
+      height: min(84vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
       font-family: var(--font-ui); font-size: var(--fs-base);
       contain: layout;
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2611,6 +2615,7 @@
       --radius-sm: var(--r-sm); --radius: var(--r); --radius-lg: var(--r-lg);
     } /* modal panel recipe */
     .config-header {
+      flex: 0 0 auto;
       display: flex; align-items: center; justify-content: space-between;
       padding: var(--sp-6) var(--sp-7); border-bottom: 1px solid var(--border);
     }
@@ -2631,7 +2636,7 @@
     .config-tabs {
       display: flex; flex-wrap: wrap; gap: var(--sp-0);
       border-bottom: 1px solid var(--border);
-      padding: var(--sp-0) var(--sp-7); flex-shrink: 0;
+      padding: var(--sp-0) var(--sp-7); flex: 0 0 auto;
     }
     .config-tab {
       padding: 10px 10px; font-size: var(--fs-sm); color: var(--muted);
@@ -2646,7 +2651,7 @@
     }
     .config-tab.active { color: var(--amber); border-bottom-color: var(--amber); }
     .config-body {
-      flex: 1; overflow-y: auto; padding: var(--sp-7);
+      flex: 1 1 auto; overflow: auto; padding: var(--sp-7);
       /* min-height:0 lets this flex child actually shrink, so it stays the
          scroll container even on short tabs (#7250) — a flex item's default
          min-height:auto would size it to its content and leave nothing to
@@ -2702,6 +2707,7 @@
       overscroll-behavior-y: contain;
     }
     .config-footer {
+      flex: 0 0 auto;
       display: flex; gap: var(--sp-4); justify-content: flex-end;
       padding: var(--sp-5) var(--sp-7); border-top: 1px solid var(--border);
     }
@@ -3229,10 +3235,10 @@
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
        (also reused by the kb modals via className); z-index stays. */
     .nous-config-overlay { z-index: 1000; }
-    .nous-config-dialog { width: 900px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
-    .nous-config-dialog > h2 { flex-shrink: 0; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
-    .nous-config-dialog > .nous-config-body { flex: 1; overflow-y: auto; padding: var(--sp-6) var(--sp-8); }
-    .nous-config-dialog > .nous-config-footer { flex-shrink: 0; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
+    .nous-config-dialog { width: min(900px, calc(100vw - var(--modal-gap) - var(--modal-gap))); max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); height: min(82vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
+    .nous-config-dialog > h2 { flex: 0 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
+    .nous-config-dialog > .nous-config-body { flex: 1 1 auto; min-height:0; overflow: auto; padding: var(--sp-6) var(--sp-8); }
+    .nous-config-dialog > .nous-config-footer { flex: 0 0 auto; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
     .nous-config-dialog h2 { font-size: var(--fs-lg); margin: var(--sp-0) var(--sp-0) var(--sp-6) var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
     .nous-config-section { margin-bottom: var(--sp-7); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border); }
     .nous-config-section:last-child { border-bottom: none; margin-bottom: var(--sp-0); padding-bottom: var(--sp-0); }
@@ -3250,7 +3256,7 @@
     .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; }
     .nous-config-pill.active { --pill-c: var(--accent); }
     .nous-config-pill:hover { border-color: var(--accent); }
-    .nous-config-output-modes { display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+    .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
     .nous-config-output-mode { flex: 1; padding: 8px 10px; text-align: center; font-size: 0.76rem; cursor: pointer; border: none; background: var(--bg); color: var(--muted); transition: all 0.2s; }
     .nous-config-output-mode:not(:last-child) { border-right: 1px solid var(--border); }
     .nous-config-output-mode.active { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); font-weight: 700; }
@@ -3306,13 +3312,13 @@
     .public-knowledge-tags { min-width: min(24em, 100%); }
     .kb-layout { display: grid; grid-template-columns: 240px 1fr; gap: var(--sp-6); min-height: 320px; }
 
-    .kb-integrations-modal { height: 72vh; overflow: hidden; }
+    .kb-integrations-modal { height: 100%; min-height:0; overflow: hidden; }
     .kb-integrations-loading { text-align: center; padding: var(--sp-7); color: var(--muted); }
-    .kb-integrations-shell { display: grid; grid-template-columns: 230px 1fr; gap: var(--sp-6); height: 100%; }
-    .kb-integrations-sidebar { border-right: var(--line-width) solid var(--border); padding-right: var(--sp-5); overflow: auto; }
+    .kb-integrations-shell { display: grid; grid-template-columns: 230px 1fr; gap: var(--sp-6); height: 100%; min-height:0; }
+    .kb-integrations-sidebar { min-height:0; border-right: var(--line-width) solid var(--border); padding-right: var(--sp-5); overflow: auto; }
     .kb-integrations-list { margin-top: var(--sp-4); }
     .kb-integrations-note { margin-top: var(--sp-5); }
-    .kb-integrations-main { overflow: auto; padding-right: var(--sp-3); }
+    .kb-integrations-main { min-height:0; overflow: auto; padding-right: var(--sp-3); }
     .kb-integration-row-main { min-width: 0; flex: 1; }
     .kb-integration-connector-title { font-weight: 700; color: var(--fg); }
     .kb-integration-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
