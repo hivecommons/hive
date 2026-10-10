@@ -17,6 +17,10 @@ const (
 	// SupersededLabel marks a PR the supersession sweep closed because a
 	// different merged PR already landed the same change.
 	SupersededLabel = "hive/superseded"
+	// SupersessionKeepOpenLabel marks a superseded PR an operator chose to
+	// keep open (the dashboard Review Queue's keep-open action,
+	// hivecommons/hive#11430). The sweep never auto-closes a PR carrying it.
+	SupersessionKeepOpenLabel = "hive/keep-open"
 	// DefaultSupersessionGracePeriod is how long a human-authored PR stays
 	// open after the supersession notice before the sweep may close it.
 	DefaultSupersessionGracePeriod = 24 * time.Hour
@@ -26,12 +30,16 @@ const (
 	supersessionAutoCloseMarker          = "<!-- hive:pr-supersession-autoclose -->"
 	supersededLabelColor                 = "cfd3d7"
 	supersededLabelDescription           = "Closed by Hive: a different merged PR already landed this change"
+	keepOpenLabelColor                   = "0e8a16"
+	keepOpenLabelDescription             = "An operator kept this PR open: the supersession sweep will not close it"
 )
 
 // SupersessionAutoCloseFacts are the observations DecideSupersessionAutoClose
 // needs. The caller has already established that the PR's claimed issue was
 // closed by a different, merged PR.
 type SupersessionAutoCloseFacts struct {
+	// KeptOpen is true when the PR carries SupersessionKeepOpenLabel.
+	KeptOpen bool
 	// HiveAuthored PRs skip the grace window and the human-reply check.
 	HiveAuthored bool
 	// OpenClaimRemaining is true when the PR also claims an issue that is
@@ -85,6 +93,9 @@ func DecideSupersessionAutoClose(f SupersessionAutoCloseFacts) SupersessionAutoC
 	keep := func(reason string) SupersessionAutoCloseDecision {
 		return SupersessionAutoCloseDecision{Verdict: SupersessionKeep, Reason: reason}
 	}
+	if f.KeptOpen {
+		return keep("an operator chose to keep this PR open")
+	}
 	if f.OpenClaimRemaining {
 		return keep("this PR also claims another issue that is still open")
 	}
@@ -134,6 +145,15 @@ func supersessionSizeAllowsAutoClose(sizeLabel string, changedLines int) (bool, 
 		return false, fmt.Sprintf("this PR changes %d lines; only size/XS–size/M PRs are closed automatically", changedLines)
 	}
 	return true, ""
+}
+
+func supersessionHasLabel(pr *gh.PullRequest, name string) bool {
+	for _, l := range pr.Labels {
+		if strings.EqualFold(l.GetName(), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func supersessionSizeLabel(pr *gh.PullRequest) string {
@@ -304,6 +324,7 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 	graceBody := renderSupersessionComment(event, closer, renderSupersessionGraceNotice(grace))
 
 	facts := SupersessionAutoCloseFacts{
+		KeptOpen:     supersessionHasLabel(pr, SupersessionKeepOpenLabel),
 		FilesSubset:  true,
 		SizeLabel:    supersessionSizeLabel(pr),
 		ChangedLines: -1,
@@ -369,6 +390,47 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		}
 		return event, "commented", nil
 	}
+}
+
+// SupersessionAutoCloseMarker tags the one close comment on a superseded PR.
+const SupersessionAutoCloseMarker = supersessionAutoCloseMarker
+
+// RenderSupersessionOperatorCloseComment is the close comment for a PR an
+// operator closed from the dashboard Review Queue before the grace window
+// ended. It carries the auto-close marker so the sweep never posts its own.
+func RenderSupersessionOperatorCloseComment(closerRef, user string) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, supersessionAutoCloseMarker)
+	by := "an operator"
+	if user != "" {
+		by = "@" + user
+	}
+	fmt.Fprintf(&b, "Closing as superseded by %s: %s confirmed the close from the Hive dashboard before the grace window ended.\n", closerRef, by)
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "Reopen if that's wrong. The `%s` label marks PRs the supersession sweep closed.\n", SupersededLabel)
+	return b.String()
+}
+
+// CloseSupersededPR labels a superseded PR with SupersededLabel and closes
+// it: the same path the sweep's auto-close takes. repo is owner/name.
+func (c *Client) CloseSupersededPR(ctx context.Context, repo string, number int) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	return c.labelAndCloseSupersededPR(ctx, owner, name, number)
+}
+
+// KeepSupersededPROpen applies SupersessionKeepOpenLabel so the sweep stops
+// counting down the grace window for this PR. repo is owner/name.
+func (c *Client) KeepSupersededPROpen(ctx context.Context, repo string, number int) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	if err := c.EnsureIssueLabel(ctx, repo, SupersessionKeepOpenLabel, keepOpenLabelColor, keepOpenLabelDescription); err != nil {
+		c.logger.Warn("supersession keep-open: could not ensure label", "label", SupersessionKeepOpenLabel, "repo", repo, "error", err)
+	}
+	return c.AddLabels(ctx, repo, number, []string{SupersessionKeepOpenLabel})
 }
 
 // labelAndCloseSupersededPR applies SupersededLabel and closes the PR. A

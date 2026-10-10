@@ -88,6 +88,12 @@ Where it shows up:
   reasons, paged (`limit` 1-200, default 50; `total` and `has_more` for
   walking it). Reads only the last enumeration snapshot and the verdict
   artifact; never calls GitHub.
+  A PR in the supersession sweep's grace window
+  ([operator-reference.md](operator-reference.md)) also carries a
+  `superseded` object (merged PR, `grace_ends_at`) and a `superseded: ...`
+  reason, read from the sweep's audit entries. Owners act on it with
+  `POST /api/review/queue/{owner}/{repo}/{number}/superseded/close` or
+  `.../superseded/keep-open`.
 - **`last-actionable.json`** - each PR in `prs.items` and `prs.held` carries
   `review_rank` (its 1-based queue position), `review_priority` and
   `review_rank_reasons`. The lists keep their existing class-then-age order.

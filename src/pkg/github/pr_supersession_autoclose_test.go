@@ -25,6 +25,7 @@ func TestDecideSupersessionAutoClose(t *testing.T) {
 		want   SupersessionAutoCloseVerdict
 	}{
 		{"past grace closes", func(f *SupersessionAutoCloseFacts) {}, SupersessionClose},
+		{"operator kept open keeps", func(f *SupersessionAutoCloseFacts) { f.KeptOpen = true }, SupersessionKeep},
 		{"open claim keeps", func(f *SupersessionAutoCloseFacts) { f.OpenClaimRemaining = true }, SupersessionKeep},
 		{"extra files keep", func(f *SupersessionAutoCloseFacts) { f.FilesSubset = false }, SupersessionKeep},
 		{"size/L keeps", func(f *SupersessionAutoCloseFacts) { f.SizeLabel = "size/L" }, SupersessionKeep},
@@ -65,6 +66,18 @@ func TestDecideSupersessionAutoClose(t *testing.T) {
 				t.Fatal("decision has no reason")
 			}
 		})
+	}
+}
+
+func TestRenderSupersessionOperatorCloseComment(t *testing.T) {
+	body := RenderSupersessionOperatorCloseComment("o/r#7", "alice")
+	for _, want := range []string{supersessionAutoCloseMarker, "o/r#7", "@alice", "Reopen if that's wrong", SupersededLabel} {
+		if !strings.Contains(body, want) {
+			t.Errorf("operator close comment missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(RenderSupersessionOperatorCloseComment("o/r#7", ""), "an operator confirmed") {
+		t.Error("operator close comment without a user should name an operator")
 	}
 }
 
@@ -262,6 +275,7 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			}}},
 		}, autoCloseEnabled},
 		{"review threads unreadable", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, ThreadsBroken: true}, autoCloseEnabled},
+		{"operator kept open", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/S", SupersessionKeepOpenLabel}}, autoCloseEnabled},
 		{"size/L", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/L"}}, autoCloseEnabled},
 		{"large unlabeled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{}, Additions: 400}, autoCloseEnabled},
 		{"extra files", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
