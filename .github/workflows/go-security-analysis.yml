@@ -49,11 +49,12 @@ on:
   push:
     branches: [v4, v5, v6]
     # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'NOTICE', '.github/workflows/**', '.github/scripts/**', '.github/release-lines.yml']
   pull_request:
     branches: [v4, v5, v6]
-    # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
+    # Required contexts from this workflow must appear on every PR head. Keep
+    # the trigger unfiltered and let required-context-scope below skip Go scans
+    # for out-of-scope diffs.
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still
     # found. A push-only trigger cannot catch that: the vulnerability appears
@@ -81,9 +82,63 @@ env:
   GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
 
 jobs:
+  required-context-scope:
+    name: required context scope
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    outputs:
+      run-go-security: ${{ steps.scope.outputs.run-go-security }}
+    steps:
+      - name: Decide whether Go security checks need real scans
+        id: scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run-go-security=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : > changed-files.txt
+          page=1
+          api_root="${GITHUB_API_URL:-https://api.github.com}"
+          while :; do
+            curl -fsSL               -H "Authorization: Bearer ${GITHUB_TOKEN}"               -H "Accept: application/vnd.github+json"               "${api_root}/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"               -o changed-files-page.json
+            python3 - <<'PYFILES' >> changed-files.txt
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              for item in json.load(f):
+                  print(item['filename'])
+          PYFILES
+            count=$(python3 - <<'PYCOUNT'
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              print(len(json.load(f)))
+          PYCOUNT
+          )
+            [ "$count" -lt 100 ] && break
+            page=$((page + 1))
+          done
+          rm -f changed-files-page.json
+          run=false
+          while IFS= read -r path; do
+            case "$path" in
+              CHANGELOG.md|changelog.d/*|src/*|NOTICE|.github/workflows/*|.github/scripts/*|.github/release-lines.yml)
+                run=true
+                ;;
+            esac
+          done < changed-files.txt
+          echo "run-go-security=${run}" >> "$GITHUB_OUTPUT"
+          if [ "$run" = true ]; then
+            echo "Go security checks will run real scans."
+          else
+            echo "No Go security paths changed; required scan contexts will be skipped/success."
+          fi
+
   govulncheck:
+    needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: govulncheck (known vulnerabilities)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
@@ -112,8 +167,9 @@ jobs:
         run: govulncheck ./...
 
   gosec:
+    needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: gosec (insecure patterns)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
@@ -165,8 +221,9 @@ jobs:
         run: gosec -exclude-generated ./...
 
   golangci-lint:
+    needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: golangci-lint
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
@@ -195,6 +252,8 @@ jobs:
 
   action-pins:
     name: action pins resolve
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,6 +269,8 @@ jobs:
 
   notice-drift:
     name: NOTICE matches the module graph
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
     # project ensures third-party attribution stays correct and complete. A

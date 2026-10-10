@@ -15,22 +15,13 @@ on:
     # src/**, so this is the same rule applied to the docs outside src/.
     # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
     # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/go-toolcache-guard.sh', '.github/scripts/test-go-toolcache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/coverage-hourly.yml', '.github/workflows/changelog-fragment-guard.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/dco-post-merge.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/**', '.github/workflows/**']
   pull_request:
     branches: [v4, v5, v6]
-    # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
-    # merge gate behind the proxy hard-deny) and previously matched no path
-    # filter at all — a change to it triggered no CI whatsoever.
-    #
-    # README.md and docs/** are in scope for the same reason (#4477): the
-    # default Docker Compose quick start lives in README.md and docs/, and the
-    # gate that asserts it works is below. Without these entries that gate would
-    # not run on the one change that can break it — which is how the quick start
-    # shipped broken twice over. src/docs/** already triggers this workflow via
-    # src/**, so this is the same rule applied to the docs outside src/.
-    # Protected-branch monitor/gate workflow changes must run required CI so branch protection can merge the PR.
-    # release PRs touch only these; the required contexts must report — #10795
-    paths: ['CHANGELOG.md', 'changelog.d/**', 'src/**', 'bin/**', 'config/**', 'README.md', 'docs/**', '.github/scripts/ci-install-tool.sh', '.github/scripts/test-ci-install-tool-apt-cache.sh', '.github/scripts/go-cache-guard.sh', '.github/scripts/test-go-cache-guard.sh', '.github/scripts/go-toolcache-guard.sh', '.github/scripts/test-go-toolcache-guard.sh', '.github/scripts/ci_infra_classify.py', '.github/scripts/ci_infra_actions.py', '.github/scripts/ci-infra-signatures.tsv', '.github/scripts/test-ci-infra.py', '.github/scripts/testdata/ci-infra/**', '.github/workflows/ci-infra-rerun.yml', '.github/workflows/ci-infra-rate.yml', '.github/workflows/v2-ci.yml', '.github/workflows/coverage-hourly.yml', '.github/workflows/changelog-fragment-guard.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/dco-post-merge.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
+    # Required contexts from this workflow must appear on every PR head. Keep
+    # the trigger unfiltered and let required-context-scope below skip the
+    # expensive build for out-of-scope diffs.
+
 
 permissions:
   contents: read
@@ -58,9 +49,63 @@ env:
   GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
 
 jobs:
+  required-context-scope:
+    name: required context scope
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    outputs:
+      run-ci: ${{ steps.scope.outputs.run-ci }}
+    steps:
+      - name: Decide whether build-and-test needs the real CI lane
+        id: scope
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run-ci=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : > changed-files.txt
+          page=1
+          api_root="${GITHUB_API_URL:-https://api.github.com}"
+          while :; do
+            curl -fsSL               -H "Authorization: Bearer ${GITHUB_TOKEN}"               -H "Accept: application/vnd.github+json"               "${api_root}/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"               -o changed-files-page.json
+            python3 - <<'PYFILES' >> changed-files.txt
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              for item in json.load(f):
+                  print(item['filename'])
+          PYFILES
+            count=$(python3 - <<'PYCOUNT'
+          import json
+          with open('changed-files-page.json', encoding='utf-8') as f:
+              print(len(json.load(f)))
+          PYCOUNT
+          )
+            [ "$count" -lt 100 ] && break
+            page=$((page + 1))
+          done
+          rm -f changed-files-page.json
+          run=false
+          while IFS= read -r path; do
+            case "$path" in
+              CHANGELOG.md|changelog.d/*|src/*|bin/*|config/*|README.md|docs/*|.github/scripts/*|.github/workflows/*)
+                run=true
+                ;;
+            esac
+          done < changed-files.txt
+          echo "run-ci=${run}" >> "$GITHUB_OUTPUT"
+          if [ "$run" = true ]; then
+            echo "v2 build-and-test will run."
+          else
+            echo "No v2 CI paths changed; build-and-test will be reported as skipped/success."
+          fi
+
   build-and-test:
+    needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
@@ -1157,6 +1202,8 @@ jobs:
   # line docker.yml builds and publishes them anyway.
   docker:
     name: docker (${{ matrix.name }})
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
@@ -1227,6 +1274,8 @@ jobs:
   overlayfs-exec-guard:
     # Hosted on purpose: this asserts GitHub-hosted runner containerd/overlayfs
     # semantics (systemd-managed containerd plus the default overlayfs snapshotter).
+    needs: required-context-scope
+    if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
