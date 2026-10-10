@@ -115,6 +115,8 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"self upgrade", http.MethodPost, "/api/self-upgrade", srv.handleSelfUpgrade},
 		{"variable delete", http.MethodDelete, "/api/config/variables/VAR", srv.handleVariableDelete},
 		{"variable upsert", http.MethodPut, "/api/config/variables/VAR", srv.handleVariableUpsert},
+		{"agent variable delete", http.MethodDelete, "/api/config/agent/scanner/variables/VAR", srv.handleAgentVariableDelete},
+		{"agent variable upsert", http.MethodPut, "/api/config/agent/scanner/variables/VAR", srv.handleAgentVariableUpsert},
 	}
 
 	authCases := []struct {
