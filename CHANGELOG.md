@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.158.0)
+
+### Added
+
+- Centralize dashboard upgrade release-note builds through the hub cache so hosted spokes reuse one fleet-wide GitHub fetch per revision pair.
+
+### Fixed
+
+- Make self-authored auto-merge honor `needs-human` as a live hold label.
+- Make the hub pending access-request banner name the requester and hive and link directly to Permissions. (#11357)
+- Keep tabbed dashboard modal shells fixed-size while tab panels scroll internally. (#11379)
+- Anchor dashboard help-mark tooltips to the hovered trigger instead of modal-contained coordinates. (#11380)
+- Dashboard: faster initial load (defer model discovery) (#11389)
+
 ## 2026-10-10 (v5.157.0)
 
 ### Added
