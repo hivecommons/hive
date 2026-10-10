@@ -572,3 +572,23 @@ const octocovBadgeSVG = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="ht
         <text x="1085" y="140" transform="scale(.1)" fill="#fff">98.5%</text>
     </g>
 </svg>`
+
+func TestMetricsCollector_CoverageTargetConfigurable(t *testing.T) {
+	mc := &MetricsCollector{metrics: make(map[string]any)}
+	if got := mc.collectCoverage(context.Background())["coverageTarget"]; got != 91 {
+		t.Errorf("default coverageTarget = %v, want 91", got)
+	}
+
+	mc.SetCoverageTargetProvider(func() int { return 75 })
+	if got := mc.collectCoverage(context.Background())["coverageTarget"]; got != 75 {
+		t.Errorf("configured coverageTarget = %v, want 75", got)
+	}
+	if got := qualityCoverageMetrics(50, true, mc.effectiveCoverageTarget())["coverageTarget"]; got != 75 {
+		t.Errorf("quality coverageTarget = %v, want 75", got)
+	}
+
+	mc.SetCoverageTargetProvider(func() int { return 0 })
+	if got := mc.collectCoverage(context.Background())["coverageTarget"]; got != 91 {
+		t.Errorf("zero provider coverageTarget = %v, want 91", got)
+	}
+}

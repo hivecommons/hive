@@ -411,6 +411,12 @@ type AgentConfig struct {
 	// /data/policies and is present on every hive host.
 	Skills []string `yaml:"skills,omitempty" json:"skills,omitempty"`
 
+	// Variables declares per-agent ${NAME} substitutions for this agent's kick
+	// prompt. They merge over hive-level variables.defs for this agent only,
+	// and only safe static/env resolvers are honored from this user-writable
+	// overlay surface. json:"-" keeps values out of generic agent-config JSON.
+	Variables map[string]VarDef `yaml:"variables,omitempty" json:"-"`
+
 	// Managed is true for agents loaded from the overlay directory (not base config).
 	Managed bool `yaml:"-" json:"managed"`
 

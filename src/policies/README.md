@@ -107,6 +107,19 @@ Dashboard prompt previews substitute only the config-only subset that does not r
 
 Custom variables are declared under `variables.defs` in `hive.yaml` and use the same `${NAME}` syntax. Names must match letters/digits/underscore and not start with a digit. `static` and `env` variables can be managed from the dashboard; `script` and `http` variables are seed/GitOps-only and require their corresponding security gates. Scope controls where a custom variable resolves: `template`, `config`, or `both`. Unresolved custom variables remain literal, matching built-in unknown-variable behavior.
 
+An agent can also declare its own `variables:` map (same entry shape as `variables.defs`) for substitutions that differ per agent — a per-repo path, a per-lane goal — without duplicating its prompt template. Per-agent variables are merged over the hive-level `variables.defs` when that agent's kick prompt (and its dashboard preview) is built; the agent wins on a name clash, and every other agent keeps the hive-level value. Only `static` and `env` are allowed per agent and the scope must be `template` or `both`; `script`/`http` and `variables.security` stay hive-level and seed-only, so an agent entry (which the dashboard overlay can write) can never introduce a resolver that runs commands or reaches the network. Owners manage them from the agent editor's **Variables** tab, which also lists the inherited hive-level variables read-only.
+
+```yaml
+variables:
+  defs:
+    DEPLOY_ENV: { type: static, value: production }
+agents:
+  scanner:
+    variables:
+      DEPLOY_ENV: { type: static, value: staging }   # scanner sees "staging"
+      REPO_PATH:  { type: env, env: SCANNER_REPO_PATH }
+```
+
 ## Operator checklist
 
 - Match the template to the agent's `mode`; do not give an advisory agent a hold-gated template and expect GitHub writes to work.

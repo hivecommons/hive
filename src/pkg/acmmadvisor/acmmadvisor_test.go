@@ -370,3 +370,16 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+func TestRecommend_L6UsesConfiguredCoverageTarget(t *testing.T) {
+	s := readySignals(5)
+	s.CoverageTarget = 70
+	s.CoveragePct = 70
+	if rec := Recommend(s); rec.Advise != AdviseRaise {
+		t.Fatalf("coverage at configured target should raise, got %q", rec.Advise)
+	}
+	s.CoveragePct = 69
+	if rec := Recommend(s); rec.Advise != AdviseStay {
+		t.Fatalf("coverage below configured target should stay, got %q", rec.Advise)
+	}
+}

@@ -127,6 +127,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"pinnedThresholds":    pinnedThresholds,
 		"cadenceScope":        cfg.Governor.CadenceScopeMode(),
 		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
+		"coverageTarget":      cfg.Governor.EffectiveCoverageTarget(),
 		"repoCount":           repoCount,
 		"labels":              cfg.Governor.Labels.Exempt,
 		"holdLabels":          github.HoldLabels,
@@ -576,6 +577,45 @@ func (s *Server) handleGovernorThresholdScaling(w http.ResponseWriter, r *http.R
 	}
 
 	s.auditFromRequest(r, "config_governor_threshold_scaling", auditDetail("section", "thresholdScaling"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// handleGovernorCoverageTarget sets governor.coverage_target, the test-coverage
+// goal (percent) shown on the quality/ci-maintainer cards and used by the
+// coverage preamble and the ACMM advisor. 0 resets to the default.
+func (s *Server) handleGovernorCoverageTarget(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	var body struct {
+		CoverageTarget int `json:"coverageTarget"`
+		// Snake-case alias so callers can send the key the YAML config uses.
+		CoverageTargetSnake int `json:"coverage_target"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	target := body.CoverageTarget
+	if target == 0 {
+		target = body.CoverageTargetSnake
+	}
+	// Same gate as config.validate, so the write path cannot persist a value
+	// that fails the next config load.
+	if !config.ValidateCoverageTarget(target) {
+		jsonError(w, "coverageTarget must be between 1 and 100", http.StatusBadRequest)
+		return
+	}
+	s.deps.Config.Governor.CoverageTarget = target
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after coverage target update", "error", err)
+	}
+
+	s.auditFromRequest(r, "config_governor_coverage_target", auditDetail("section", "coverageTarget"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }

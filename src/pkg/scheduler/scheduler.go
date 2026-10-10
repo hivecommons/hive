@@ -95,12 +95,13 @@ func (s *Scheduler) recordClassified(issues []github.Issue) {
 	}
 }
 
-// registry builds the variable-resolution registry from the current config's
-// `variables:` block. It is rebuilt per call (cheap: env/static factories only),
-// so a live config reload that changes variable definitions is picked up on the
-// next kick without extra wiring.
-func (s *Scheduler) registry() *resolve.Registry {
-	return s.cfg.ResolveRegistry(s.logger)
+// registryFor builds the variable-resolution registry for agentName's kick:
+// the current config's hive-level `variables:` block with that agent's own
+// `variables:` merged over it (agent wins). It is rebuilt per call (cheap:
+// env/static factories only), so a live config reload that changes variable
+// definitions is picked up on the next kick without extra wiring.
+func (s *Scheduler) registryFor(agentName string) *resolve.Registry {
+	return s.cfg.ResolveRegistryForAgent(agentName, s.logger)
 }
 
 func New(cfg *config.Config, logger *slog.Logger) *Scheduler {

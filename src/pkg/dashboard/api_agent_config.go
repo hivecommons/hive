@@ -350,7 +350,7 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 		// owner sees that the setting took (hivecommons/hive#7667).
 		"WRITING_GUIDE": lit(cfg.Project.WritingGuideSection()),
 	}}
-	return cfg.ResolveRegistry(s.deps.Logger).Expand(context.Background(), template, resolve.ScopeTemplate, rt)
+	return cfg.ResolveRegistryForAgent(agentName, s.deps.Logger).Expand(context.Background(), template, resolve.ScopeTemplate, rt)
 }
 
 func (s *Server) loadAgentStats(name string) []any {
