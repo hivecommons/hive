@@ -47,9 +47,14 @@ body #oc-topbar.oc-topbar>.oc-topbar-left{justify-self:start!important;justify-c
 body #oc-topbar.oc-topbar>.oc-topbar-center{justify-self:stretch!important;justify-content:center!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;z-index:1!important;}
 body #oc-topbar.oc-topbar>.oc-topbar-right{justify-self:end!important;justify-content:flex-end!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;flex-wrap:nowrap!important;z-index:2!important;}
 body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;justify-self:start!important;}
-body #repos.repo-grid .repo-card .repo-name{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto auto auto!important;align-items:center!important;justify-content:normal!important;justify-items:stretch!important;text-align:left!important;}
-body #repos.repo-grid .repo-card .repo-name>a{text-align:left!important;justify-self:start!important;}
-body #repos.repo-grid .repo-card .repo-name .repo-header-badges{justify-self:start!important;text-align:left!important;}
+body #repos.repo-grid .repo-card .repo-name{display:flex!important;align-items:center!important;gap:var(--sp-2) var(--sp-3)!important;flex-wrap:wrap!important;min-width:0!important;max-width:100%!important;justify-content:flex-start!important;justify-items:stretch!important;text-align:left!important;}
+body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 auto!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}
+body #repos.repo-grid .repo-card .repo-name .repo-header-badges{flex:0 0 auto!important;justify-self:start!important;text-align:left!important;}
+body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin-left:auto!important;flex:0 0 auto!important;}
+body .oc-version-hive{--oc-version-hive-size:28px!important;--oc-version-bee-size:16px!important;--oc-version-bee-radius:9px!important;}
+body .oc-version-hive>svg{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;}
+body .oc-version-hive .oc-version-bee-orbit{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;overflow:visible!important;}
+body .oc-version-hive .oc-version-bee{width:var(--oc-version-bee-size)!important;height:calc(var(--oc-version-bee-size) * 0.667)!important;transform:translate3d(-50%,-50%,0) translate3d(var(--oc-version-bee-radius),0,0) rotate(90deg)!important;}
 @media (max-width:768px){body #oc-topbar.oc-topbar{left:var(--sp-0)!important;right:auto!important;width:100%!important;max-width:100%!important;}}
 `
 

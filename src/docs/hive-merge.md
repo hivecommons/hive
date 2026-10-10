@@ -119,6 +119,15 @@ to green for that listed repo, and the watcher logs that
 `auto_merge.no_ci_ok` enabled it. Any non-zero failing CI evidence still
 refuses, and pending evidence still waits.
 
+**Paths a person must merge.** `auto_merge.human_merge_paths` is a per-repo map
+of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`),
+unset by default. When a merge request touches a listed path, `hive-merge`
+refuses it, adds `hold`, and posts one `<!-- hive-human-merge-path -->` comment
+naming the path(s); a person must merge it. The same key guards the automerge
+sweep lanes whatever the intent tier. If the changed-file list for a configured
+repo cannot be fetched completely, the merge is withheld (fail closed). See
+[operator-reference.md](operator-reference.md).
+
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
 not one per PR or retry tick. The alert text names the fix: install/grant the
@@ -210,6 +219,13 @@ Operators can set `require_github_permission: false` only when the
 `authorized_users` role list is the desired authority, but fork PRs still need a
 successful GitHub permission check so non-member forks do not merge through
 this tier.
+
+The same block is editable from the dashboard: **Settings → Features → Auto
+Merge → Trusted-author auto-merge** writes `auto_merge.trusted_authors` through
+owner-only `GET/PUT /api/config/auto-merge`. The form exposes the enabled
+switch, repository allow-list (select none for all watched repos), required
+role (`merger` or `owner`), GitHub permission requirement, and excluded labels
+so hosted spokes can opt in without editing `hive.yaml`.
 
 ## Usage
 

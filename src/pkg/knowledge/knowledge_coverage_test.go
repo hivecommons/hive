@@ -535,7 +535,7 @@ func TestPrimer_ExpandWithGraph(t *testing.T) {
 	p.SetGraphStore(gs)
 
 	facts := []Fact{{Slug: "seed", Title: "Seed Fact", Confidence: 0.9, Layer: LayerProject}}
-	expanded := p.expandWithGraph(facts)
+	expanded := p.expandWithGraph(facts, nil)
 	if len(expanded) < 2 {
 		t.Fatalf("expected graph expansion to add related fact, got %d facts", len(expanded))
 	}
@@ -553,7 +553,7 @@ func TestPrimer_ExpandWithGraph(t *testing.T) {
 func TestPrimer_ExpandWithGraph_NoGraph(t *testing.T) {
 	p := NewPrimer(nil, PrimerConfig{MaxFacts: 25}, covLogger())
 	facts := []Fact{{Slug: "a"}}
-	if got := p.expandWithGraph(facts); len(got) != 1 {
+	if got := p.expandWithGraph(facts, nil); len(got) != 1 {
 		t.Errorf("expected passthrough without graph, got %d", len(got))
 	}
 }

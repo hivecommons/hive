@@ -21,8 +21,16 @@ func TestDashboardRateLimitUIUsesRemainingSemantics(t *testing.T) {
 		"q.semantics === 'remaining'",
 		"debugGhRateClassFromRemainingPct(remainingPct)",
 		"async function maybeRefreshGhRateLimits(ghRateLimits)",
+		"id=\"api-budget-pill\"",
 		"fetch('/api/gh-rate-limits', { cache: 'no-store' })",
 		"!status.resetPassed && !dueForPeriodicRefresh",
+		"function renderGitHubAPIBudgetPanel(ghRate)",
+		"id=\"gh-api-budget-panel\"",
+		"GitHub API budget (1h)",
+		"id=\"gh-api-budget-core-bar\"",
+		"id=\"gh-api-budget-consumers\"",
+		"ghRate.top_consumers || ghRate.topConsumers",
+		"top.map(c =>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing rate-limit remaining-semantics snippet %q", want)

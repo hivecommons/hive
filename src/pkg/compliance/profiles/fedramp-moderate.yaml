@@ -1,0 +1,322 @@
+# FedRAMP Moderate — Hive control mapping (hivecommons/hive#11082).
+#
+# A SUBSET of the baseline: families AC, AU, CM, IA, RA, SA and SI only. PE-3 and
+# PS-3 are listed not_covered so silence is not read as coverage.
+#
+# Control text below is a short paraphrase for orientation, NOT the standard's
+# wording; the authoritative text is the publication cited on each control.
+# Selecting this profile is not a certification and does not make a hive
+# compliant with anything: it shows which Hive settings an operator's own
+# control owners can point to as part of THEIR controls, and whether those
+# settings are currently in the recommended posture. See src/docs/compliance.md.
+#
+# Every mapping's setting_path must be a key pkg/compliance knows how to read
+# (TestProfileSchema enforces it); evaluator must be one of the closed set in
+# pkg/compliance/evaluators.go. The mapping tables in docs/compliance.md are
+# rendered from this file by src/scripts/render-compliance-tables.py.
+id: fedramp-moderate
+name: >-
+  FedRAMP Moderate (NIST SP 800-53 Rev 5 baseline, AC/AU/CM/IA/RA/SA/SI subset)
+version: Rev 5 Moderate baseline
+controls:
+  - id: AC-2
+    title: Account management
+    text: >-
+      Accounts are created, authorized, reviewed and removed by named account managers.
+    citation: NIST SP 800-53 Rev 5 AC-2
+    domain: Access control
+    rationale: >-
+      The dashboard allowlist is the account roster; periodic review of it is the
+      operator's process.
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: dashboard.authorized_users
+        recommended: '2'
+        evaluator: max_owners
+  - id: AC-2.ELIG
+    title: Personnel eligibility by location or citizenship
+    text: >-
+      Access is limited to people who meet geographic or citizenship requirements.
+    citation: >-
+      NIST SP 800-53 Rev 5 AC-2, AC-3 (US-persons and similar eligibility conditions)
+    domain: Access control
+    rationale: >-
+      Hive cannot verify where a person is or their citizenship. Enforce eligibility
+      at the identity provider and the hosting region; Hive only records who is
+      on the allowlist.
+    not_covered: true
+  - id: AC-3
+    title: Access enforcement
+    text: Approved authorizations are enforced for logical access to resources.
+    citation: NIST SP 800-53 Rev 5 AC-3
+    domain: Access control
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.trusted_authors.require_github_permission
+        recommended: 'true'
+        evaluator: equals
+  - id: AC-5
+    title: Separation of duties
+    text: Duties that conflict are divided among different people or roles.
+    citation: NIST SP 800-53 Rev 5 AC-5
+    domain: Segregation of duties
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: '1'
+        evaluator: min_mergers
+      - setting_path: auto_merge.self_authored
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+  - id: AC-6
+    title: Least privilege
+    text: Users and processes get only the access needed for their tasks.
+    citation: NIST SP 800-53 Rev 5 AC-6
+    domain: Access control
+    mappings:
+      - setting_path: auto_merge.trusted_authors.enabled
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: agent_sandbox.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: env.HIVE_PROXY_INJECT_GH_AUTH
+        recommended: 'true'
+        evaluator: equals
+  - id: AU-2
+    title: Event logging
+    text: >-
+      The system identifies which event types it logs to support incident analysis.
+    citation: NIST SP 800-53 Rev 5 AU-2
+    domain: Logging & monitoring
+    mappings:
+      - setting_path: review.post_comments
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: audit.retention_days
+        recommended: '365'
+        evaluator: at_least
+  - id: AU-3
+    title: Content of audit records
+    text: >-
+      Audit records carry what happened, when, where, the source and the outcome.
+    citation: NIST SP 800-53 Rev 5 AU-3
+    domain: Logging & monitoring
+    rationale: >-
+      Review verdicts are published as PR comments with the evidence; the audit
+      log record format is fixed in code.
+    mappings:
+      - setting_path: review.post_comments
+        recommended: 'true'
+        evaluator: equals
+  - id: AU-6
+    title: Audit record review and reporting
+    text: >-
+      Audit records are reviewed for inappropriate or unusual activity and findings
+      are reported.
+    citation: NIST SP 800-53 Rev 5 AU-6
+    domain: Logging & monitoring
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: escalation.disabled
+        recommended: 'false'
+        evaluator: equals
+  - id: AU-11
+    title: Audit record retention
+    text: >-
+      Audit records are retained for the period needed for investigations and policy.
+    citation: NIST SP 800-53 Rev 5 AU-11
+    domain: Logging & monitoring
+    rationale: >-
+      Retention is fixed in code at 90 days today; the configurable floor is tracked
+      by hivecommons/hive#11077, so this reports a deviation until it lands.
+    mappings:
+      - setting_path: audit.retention_days
+        recommended: '365'
+        evaluator: at_least
+  - id: AU-12
+    title: Audit record generation
+    text: >-
+      The system generates audit records for the events it is configured to log.
+    citation: NIST SP 800-53 Rev 5 AU-12
+    domain: Logging & monitoring
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: review.post_comments
+        recommended: 'true'
+        evaluator: equals
+  - id: CM-3
+    title: Configuration change control
+    text: Changes to the system are proposed, reviewed, approved and recorded.
+    citation: NIST SP 800-53 Rev 5 CM-3
+    domain: Change management
+    rationale: >-
+      Whether an automated review satisfies approval is the organisation's change-management
+      policy; these values describe the conservative posture.
+    mappings:
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.human_merge_paths
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.self_authored
+        recommended: 'false'
+        evaluator: equals
+  - id: CM-5
+    title: Access restrictions for change
+    text: Only authorized people and processes may change the system.
+    citation: NIST SP 800-53 Rev 5 CM-5
+    domain: Change management
+    mappings:
+      - setting_path: auto_merge.human_merge_paths
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: auto_merge.trusted_authors.require_github_permission
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: dashboard.authorized_users
+        recommended: '1'
+        evaluator: min_mergers
+  - id: CM-6
+    title: Configuration settings
+    text: >-
+      Secure configuration settings are established, documented and monitored.
+    citation: NIST SP 800-53 Rev 5 CM-6
+    domain: Change management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: sentinel.disabled_behaviors
+        recommended: none
+        evaluator: empty
+  - id: IA-2
+    title: Identification and authentication (organizational users)
+    text: Organizational users are uniquely identified and authenticated.
+    citation: NIST SP 800-53 Rev 5 IA-2
+    domain: Access control
+    rationale: >-
+      Informational. Authentication is performed by GitHub OAuth or the hub; Hive
+      only holds the allowlist of named users, so a non-empty list is the most it
+      can evidence.
+    mappings:
+      - setting_path: dashboard.authorized_users
+        recommended: non-empty
+        evaluator: non_empty
+  - id: IA-5
+    title: Authenticator management
+    text: >-
+      Authenticators such as passwords and tokens are managed through their lifecycle.
+    citation: NIST SP 800-53 Rev 5 IA-5
+    domain: Access control
+    rationale: >-
+      Hive keeps the real GitHub credential out of agent processes; issuing, rotating
+      and revoking credentials belongs to the operator and GitHub.
+    mappings:
+      - setting_path: env.HIVE_PROXY_INJECT_GH_AUTH
+        recommended: 'true'
+        evaluator: equals
+  - id: RA-5
+    title: Vulnerability monitoring and scanning
+    text: Systems are scanned for vulnerabilities and findings are remediated.
+    citation: NIST SP 800-53 Rev 5 RA-5
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+  - id: SA-11
+    title: Developer testing and evaluation
+    text: >-
+      Developers plan and perform testing and evaluation and fix flaws found.
+    citation: NIST SP 800-53 Rev 5 SA-11
+    domain: Vulnerability management
+    mappings:
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: review.require_approval
+        recommended: 'true'
+        evaluator: equals
+  - id: SA-9
+    title: External system services
+    text: >-
+      Providers of external services meet the organisation's security requirements.
+    citation: NIST SP 800-53 Rev 5 SA-9
+    domain: Risk management
+    rationale: >-
+      Model providers, GitHub and the host are the operator's external providers;
+      assessing them is the operator's vendor-management process.
+    not_covered: true
+  - id: SI-4
+    title: System monitoring
+    text: >-
+      The system is monitored to detect attacks, anomalies and unauthorized use.
+    citation: NIST SP 800-53 Rev 5 SI-4
+    domain: Logging & monitoring
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: escalation.disabled
+        recommended: 'false'
+        evaluator: equals
+      - setting_path: tool_approval.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: SI-7
+    title: Software, firmware and information integrity
+    text: >-
+      Integrity of software and information is verified and unauthorized changes
+      are detected.
+    citation: NIST SP 800-53 Rev 5 SI-7
+    domain: Vulnerability management
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: 'true'
+        evaluator: equals
+      - setting_path: auto_merge.required_checks
+        recommended: non-empty
+        evaluator: non_empty
+      - setting_path: agent_sandbox.enabled
+        recommended: 'true'
+        evaluator: equals
+  - id: PE-3
+    title: Physical access control
+    text: Physical access to facilities is controlled.
+    citation: >-
+      NIST SP 800-53 Rev 5 PE-3 (outside the AC/AU/CM/IA/RA/SA/SI subset; listed
+      so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Hive is software on infrastructure the operator chooses; physical security
+      belongs to the hosting provider.
+    not_covered: true
+  - id: PS-3
+    title: Personnel screening
+    text: People are screened before access is authorized.
+    citation: >-
+      NIST SP 800-53 Rev 5 PS-3 (outside the AC/AU/CM/IA/RA/SA/SI subset; listed
+      so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Hiring and background screening are HR processes; no Hive setting can evidence
+      them.
+    not_covered: true

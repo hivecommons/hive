@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1299,5 +1300,42 @@ func TestAutoMergeConfigRepoPolicySets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHumanMergePathsFor(t *testing.T) {
+	cfg := AutoMergeConfig{HumanMergePaths: map[string][]string{
+		"Danathar/Goodreads-MCP": {".claude/settings.json", ".claude/hooks/**"},
+	}}
+	tests := []struct {
+		name string
+		cfg  AutoMergeConfig
+		repo string
+		want []string
+	}{
+		{"unset map", AutoMergeConfig{}, "o/r", nil},
+		{"repo not listed", cfg, "other/repo", nil},
+		{"exact key", cfg, "Danathar/Goodreads-MCP", []string{".claude/settings.json", ".claude/hooks/**"}},
+		{"case-insensitive", cfg, "danathar/goodreads-mcp", []string{".claude/settings.json", ".claude/hooks/**"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.cfg.HumanMergePathsFor(tc.repo)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateGitHubAPIBudgetThresholds(t *testing.T) {
+	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "github.api_critical") {
+		t.Fatalf("Validate() error = %v, want github.api_critical", err)
 	}
 }

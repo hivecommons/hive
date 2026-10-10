@@ -39,6 +39,7 @@ func (f *fakeRecorder) RecordKick(agent string) { f.kicked = append(f.kicked, ag
 type fakeSink struct {
 	audits  []string
 	alerts  []struct{ id, sev, msg string }
+	kept    map[string]struct{}
 	notifys int
 }
 
@@ -47,6 +48,9 @@ func (f *fakeSink) Audit(actor, action, detail, agent string) {
 }
 func (f *fakeSink) Alert(id, severity, message string) {
 	f.alerts = append(f.alerts, struct{ id, sev, msg string }{id, severity, message})
+}
+func (f *fakeSink) ClearAlertsExcept(prefix string, keep map[string]struct{}) {
+	f.kept = keep
 }
 func (f *fakeSink) Notify(title, message string) { f.notifys++ }
 
@@ -237,6 +241,51 @@ func TestReplanLane_Run_PerformsReplan(t *testing.T) {
 	}
 	if len(k.kicks) != 1 {
 		t.Errorf("architect should be kicked once: %+v", k.kicks)
+	}
+}
+
+func TestReplanLane_SuppressesInactiveIssueSourceAndClearsAlert(t *testing.T) {
+	store := newStore(t)
+	epicID := setupStalledPlan(t, store, "3") // at cap, would otherwise alert
+	if err := store.Update(epicID, func(b *beads.Bead) {
+		b.ExternalRef = "gh-acme/widgets#7"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSink{}
+	lane := NewReplanLane(map[string]*beads.Store{"m": store}, &fakeKicker{}, &fakeRecorder{}, s,
+		ReplanLaneConfig{IntervalS: 1, Stall: StallConfig{StallThreshold: time.Nanosecond, MaxReplans: 3}}, nil)
+	lane.SetActiveIssueRefs(map[string]struct{}{"gh-acme/widgets#8": {}}, map[string]struct{}{"acme/widgets": {}})
+
+	time.Sleep(2 * time.Millisecond)
+	if n := lane.Run(context.Background()); n != 0 {
+		t.Fatalf("inactive source issue should not replan, got %d", n)
+	}
+	if len(s.alerts) != 0 {
+		t.Fatalf("inactive source issue reasserted alerts: %+v", s.alerts)
+	}
+	if _, kept := s.kept["plan-stall-"+epicID]; kept {
+		t.Fatalf("inactive source issue alert was kept: %+v", s.kept)
+	}
+}
+
+func TestReplanLane_FailsOpenWhenSourceRepoNotCovered(t *testing.T) {
+	store := newStore(t)
+	epicID := setupStalledPlan(t, store, "3")
+	if err := store.Update(epicID, func(b *beads.Bead) {
+		b.ExternalRef = "gh-acme/widgets#7"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSink{}
+	lane := NewReplanLane(map[string]*beads.Store{"m": store}, &fakeKicker{}, &fakeRecorder{}, s,
+		ReplanLaneConfig{IntervalS: 1, Stall: StallConfig{StallThreshold: time.Nanosecond, MaxReplans: 3}}, nil)
+	lane.SetActiveIssueRefs(map[string]struct{}{}, map[string]struct{}{"other/repo": {}})
+
+	time.Sleep(2 * time.Millisecond)
+	lane.Run(context.Background())
+	if len(s.alerts) != 1 {
+		t.Fatalf("repo with incomplete issue coverage should fail open and keep alert, got %+v", s.alerts)
 	}
 }
 

@@ -32,6 +32,7 @@ func TestDashboardNavPeekHelpers(t *testing.T) {
 	html := indexHTML(t)
 	script := `
 const SECTION_LS_PREFIX = 'hive-section-collapsed-';
+function dashboardAliasSectionId(id){ return id === 'review-pipeline-section' ? 'review-queue-section' : id; }
 let layoutUpdates = 0;
 function dashboardUpdateLayoutMenuState(){ layoutUpdates++; }
 function normalizeSectionCardChrome(){}
@@ -118,6 +119,7 @@ func TestDashboardNavPeekNavigationWaitsForSettledLayout(t *testing.T) {
 	html := indexHTML(t)
 	script := `
 const SECTION_LS_PREFIX = 'hive-section-collapsed-';
+function dashboardAliasSectionId(id){ return id === 'review-pipeline-section' ? 'review-queue-section' : id; }
 const SECTION_MAX_HEIGHT_PROPERTY = 'max-height';
 const NAV_JUMP_SETTLE_MS = 350;
 const NAV_JUMP_RESIZE_QUIET_MS = 60;
@@ -185,7 +187,7 @@ let _ocSelectedAgent = 'agent';
 function ocStopPanePoll(){}
 function ocUpdateFocusedState(){}
 function assert(cond, msg){ if (!cond) throw new Error(msg + ' :: ' + JSON.stringify(calls)); }
-` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocNavigate") + `
+` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocEnsureSectionVisibleForNav") + "\n" + jsFunc(t, html, "ocNavigate") + `
 localStorage.setItem(SECTION_LS_PREFIX + 'repos-section', '1');
 localStorage.setItem(SECTION_LS_PREFIX + 'contributors-section', '1');
 assert(navPeekExpand('repos-section') === true, 'setup peek failed');

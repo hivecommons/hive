@@ -26,10 +26,13 @@ type trustedSweepFixture struct {
 	permStatus      int
 	permission      string
 	mergeStatus     int
+	mergeMessage    string
 	mergeNotApplied bool
 	commentStatus   int
 	merges          int
 	comments        int
+	updates         int
+	updateStatus    int
 }
 
 func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server {
@@ -104,10 +107,21 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			fx.merges++
 			if fx.mergeStatus != 0 {
-				http.Error(w, "merge error", fx.mergeStatus)
+				w.WriteHeader(fx.mergeStatus)
+				msg := fx.mergeMessage
+				if msg == "" {
+					msg = "merge error"
+				}
+				json.NewEncoder(w).Encode(map[string]string{"message": msg})
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"merged": !fx.mergeNotApplied, "sha": "merge7"})
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
+			fx.updates++
+			if fx.updateStatus != 0 {
+				w.WriteHeader(fx.updateStatus)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			fx.comments++
 			if fx.commentStatus != 0 {
@@ -140,11 +154,12 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 		wantErr     bool
 		wantMerges  int
 		wantComment int
+		wantUpdates int
 	}{
 		{name: "pr gone", fx: trustedSweepFixture{getStatus: http.StatusNotFound}, wantReason: "gone"},
 		{name: "fetch error", fx: trustedSweepFixture{getStatus: http.StatusInternalServerError}, wantReason: "fetch-pr", wantErr: true},
 		{name: "reviews error", fx: trustedSweepFixture{reviewsStatus: http.StatusInternalServerError}, wantReason: "review-state-check", wantErr: true},
-		{name: "not mergeable", fx: trustedSweepFixture{mergeableState: "dirty"}, wantReason: "not-mergeable"},
+		{name: "not mergeable", fx: trustedSweepFixture{mergeableState: "dirty"}, wantReason: "conflicting"},
 		{
 			name: "fork permission api error", fx: trustedSweepFixture{headRepo: "alice/widget", permStatus: http.StatusInternalServerError},
 			wantReason: "author-permission-check", wantErr: true,
@@ -166,6 +181,26 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 		{name: "recheck gone", fx: trustedSweepFixture{recheckStatus: http.StatusNotFound}, wantReason: "gone"},
 		{name: "recheck error", fx: trustedSweepFixture{recheckStatus: http.StatusInternalServerError}, wantReason: "fetch-pr-recheck", wantErr: true},
 		{name: "head changed since eval", fx: trustedSweepFixture{recheckHeadSHA: "sha8"}, wantReason: "head-changed-since-eval"},
+		{
+			name:        "behind updates branch",
+			fx:          trustedSweepFixture{mergeableState: "behind"},
+			wantReason:  "check-pending",
+			wantUpdates: 1,
+		},
+		{
+			name:        "required checks expected updates branch",
+			fx:          trustedSweepFixture{mergeStatus: http.StatusMethodNotAllowed, mergeMessage: `2 of 3 required status checks are expected.`},
+			wantReason:  "check-pending",
+			wantMerges:  1,
+			wantUpdates: 1,
+		},
+		{
+			name:        "required checks expected update conflict",
+			fx:          trustedSweepFixture{mergeStatus: http.StatusMethodNotAllowed, mergeMessage: `Required status check "changelog-fragment-guard" is expected.`, updateStatus: http.StatusUnprocessableEntity},
+			wantReason:  "conflicting",
+			wantMerges:  1,
+			wantUpdates: 1,
+		},
 		{name: "merge api error", fx: trustedSweepFixture{mergeStatus: http.StatusConflict}, wantReason: "merge-failed", wantErr: true, wantMerges: 1},
 		{name: "merge not applied", fx: trustedSweepFixture{mergeNotApplied: true}, wantReason: "merge-not-applied", wantMerges: 1},
 		{name: "comment failure does not undo merge", fx: trustedSweepFixture{commentStatus: http.StatusInternalServerError}, wantMerges: 1, wantComment: 1},
@@ -185,8 +220,8 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 			if reason != tc.wantReason {
 				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
 			}
-			if fx.merges != tc.wantMerges || fx.comments != tc.wantComment {
-				t.Fatalf("merges=%d comments=%d, want %d/%d", fx.merges, fx.comments, tc.wantMerges, tc.wantComment)
+			if fx.merges != tc.wantMerges || fx.comments != tc.wantComment || fx.updates != tc.wantUpdates {
+				t.Fatalf("merges=%d comments=%d updates=%d, want %d/%d/%d", fx.merges, fx.comments, fx.updates, tc.wantMerges, tc.wantComment, tc.wantUpdates)
 			}
 			if tc.wantReason == "" && (event.Tier != "trusted-author" || event.Number != 7 || event.MergeSHA != "merge7") {
 				t.Fatalf("event = %+v, want trusted-author merge of PR 7", event)
@@ -303,12 +338,35 @@ func TestPrefilterTrustedAuthorPRHeldLabel(t *testing.T) {
 		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
 		Labels: []*gh.Label{{Name: gh.Ptr("hold")}},
 	}
-	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "held" {
-		t.Fatalf("prefilterTrustedAuthorPR = %q, want held", got)
+	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "label:hold" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want label:hold", got)
 	}
 	pr.Labels = nil
 	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "untrusted-author-role" {
 		t.Fatalf("prefilterTrustedAuthorPR without authorizer = %q, want untrusted-author-role", got)
+	}
+}
+
+func TestPrefilterTrustedAuthorPRIgnoresSentinelExcludedLabel(t *testing.T) {
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	engine := New(client, Options{
+		SentinelLabel: func() string { return "sentinel-alert" },
+		TrustedAuthorizer: func(login, requireRole string) TrustedAuthorDecision {
+			return TrustedAuthorDecision{Allowed: true, Role: requireRole}
+		},
+	})
+	policy := TrustedAuthorPolicy{
+		RequireRole:   "merger",
+		ExcludeLabels: map[string]bool{"sentinel-alert": true},
+	}
+	pr := &gh.PullRequest{
+		State:  gh.Ptr("open"),
+		User:   &gh.User{Login: gh.Ptr("alice")},
+		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha")},
+		Labels: []*gh.Label{{Name: gh.Ptr("sentinel-alert")}},
+	}
+	if got := engine.prefilterTrustedAuthorPR(pr, policy); got != "" {
+		t.Fatalf("prefilterTrustedAuthorPR = %q, want eligible", got)
 	}
 }
 

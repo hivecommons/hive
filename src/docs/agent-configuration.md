@@ -77,7 +77,28 @@ agents:
     role: scanner                # behavioral role; defaults to the agent name
     sort_order: 20               # dashboard ordering (supervisors default to 0, others 100)
     aliases: [sc]                # short names accepted in dispatch/commands
+    bob:
+      session_label: hive-scanner # bob backend only: overrides governor.bob.session_prefix + name
 ```
+
+`agents.<name>.bob.session_label` gives a bob-backed agent a Bob session label
+without renaming the agent. If it is unset, `governor.bob.session_prefix` can
+prefix every bob agent (for example `hive-` makes `scanner` report as
+`hive-scanner`). Hive passes the label to Bob as `--instance-id` and exports it
+to the bob pane as `HIVE_BOB_SESSION_LABEL`; `HIVE_AGENT`,
+`HIVE_AGENT_DISPLAY_NAME`, tmux session, workdir, beads directory, claims, token
+buckets, and Hive token attribution stay keyed to the real agent name. Labels
+may contain up to 64 ASCII letters, digits, `-`, `_`, or `.` characters.
+
+Renaming agents is a migration, not a display-only change. The YAML key is the
+agent identity: changing it splits tmux session/socket names,
+`/data/agents/<name>`, `/data/logs/kicks/<name>`, default `/data/beads/<name>`,
+claim holders, dashboard/token buckets, hub heartbeat names, and defaults that
+literally use the agent name. Prefer `display_name` for dashboard presentation
+and Bob `session_label` / `session_prefix` for Bobalytics tagging.
+
+The legacy flat `bob_display_name` spelling is still accepted as an alias for
+older overlays, but new configs should use `bob.session_label`.
 
 ### Engine — what powers it
 
@@ -524,6 +545,21 @@ Each agent shows a 📌 pin on its CLI and its model in the dashboard. The seman
 
 Pin a model when reproducibility matters more than the governor's budget optimizations. Leave it unpinned when you want the hive to manage cost for you.
 
+### Disabling a backend spoke-wide
+
+A top-level `backends:` block restricts which backends agents on this spoke may be placed on ([#11310](https://github.com/hivecommons/hive/issues/11310)):
+
+```yaml
+backends:
+  allow: [claude, codex]   # empty or omitted = every backend is allowed
+  deny: [copilot]          # deny wins over allow
+```
+
+Names compare case-insensitively; an empty `backend:` (the hive default) is always allowed. The list is enforced where placements are decided:
+
+- **ACMM pack apply** never places an agent on a disallowed backend. A pack agent whose pack backend is disallowed gets the first allowed `allow` entry instead (or the hive default when `allow` is empty), without the pack's model, so the replacement backend uses its own default model. A pack-owned agent already on a now-disallowed backend is moved the same way on the next apply. Backends an operator explicitly chose (operator-owned) are left alone.
+- **`PUT /api/config/agent/{name}/models`** rejects a placement onto a disallowed backend with `400` and a message naming it.
+
 ### Changing backend and model together: use the atomic endpoint
 
 Three API routes can change an agent's method or model. If you are changing **both**, use the single atomic one:
@@ -826,8 +862,8 @@ One agent reaches its template by **role** rather than by `kick_template`: an ag
 
 | Decision | Where it lives | Why |
 |---|---|---|
-| Is the lane awake? | Go, before any template is read | Below ACMM L5 the kick is a stand-down. An edited template must not be able to wake a lane on a low-trust hive. |
-| Is there work? | Go, before any template is read | An empty escalated queue is a stand-down. A template must not be able to manufacture a contract with nothing to adjudicate. |
+| Is the lane awake? | Go, before any template is read | Below ACMM L5 the lane is dormant: scheduled kicks are skipped (logged as `dormant below ACMM 5`), and a forced kick is a stand-down. An edited template must not be able to wake a lane on a low-trust hive. |
+| Is there work? | Go, before any template is read | An empty escalated queue means scheduled kicks are skipped (logged as `nothing to adjudicate`) and a forced kick is a stand-down with no repo-rotation instructions ([#11045](https://github.com/hivecommons/hive/issues/11045), [#11046](https://github.com/hivecommons/hive/issues/11046)). A template must not be able to manufacture a contract with nothing to adjudicate. |
 | May this agent close a PR? | Go, rendered into `${REVIEWER_CLOSE_AUTHORITY}` | Closing is operator-only below ACMM L6. Whether an agent may close a human-queued PR is a trust decision, not wording. |
 
 So the worst an override can do is change the *wording* of a kick that was already going to be sent. The template-specific variables are `${REVIEWER_WORK_LIST}`, `${REVIEWER_MAX_PRS}`, `${REVIEWER_PASSED_LABEL}`, `${REVIEWER_RECOMMEND_CLOSE_LABEL}` and `${REVIEWER_CLOSE_AUTHORITY}`, alongside the usual built-ins.

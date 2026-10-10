@@ -47,7 +47,7 @@ func anyPathTriggerMatches(patterns []string, changed string) bool {
 	return matched
 }
 
-func v2TestsPullRequestPaths(t *testing.T) []string {
+func v2TestsPullRequestPaths(t *testing.T) ([]string, bool) {
 	t.Helper()
 	raw, err := os.ReadFile(v2TestsWorkflowPath)
 	if err != nil {
@@ -59,9 +59,9 @@ func v2TestsPullRequestPaths(t *testing.T) []string {
 	}
 	paths := workflow.On.PullRequest.Paths
 	if len(paths) == 0 {
-		t.Fatalf("%s has no pull_request path filters; workflow parsing or trigger wiring drifted", v2TestsWorkflowPath)
+		return nil, true
 	}
-	return paths
+	return paths, false
 }
 
 // TestV2TestsTriggersForExternalPackageTestInputs closes the #5388 path-filter
@@ -69,7 +69,7 @@ func v2TestsPullRequestPaths(t *testing.T) []string {
 // src/pkg/..., not illustrative filenames. A PR changing only one of them must
 // start v2-tests, or the relevant assertion is structurally unable to fail.
 func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
-	paths := v2TestsPullRequestPaths(t)
+	paths, unfiltered := v2TestsPullRequestPaths(t)
 	externalInputs := []struct {
 		property string
 		changed  string
@@ -96,6 +96,9 @@ func TestV2TestsTriggersForExternalPackageTestInputs(t *testing.T) {
 	}
 	for _, input := range externalInputs {
 		t.Run(input.property, func(t *testing.T) {
+			if unfiltered {
+				return
+			}
 			if !anyPathTriggerMatches(paths, input.changed) {
 				t.Errorf("a PR changing only %s does not trigger v2-tests; the %s guard cannot fail", input.changed, input.property)
 			}

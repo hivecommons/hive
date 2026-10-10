@@ -1,0 +1,1 @@
+- Update stale automerge PR branches when GitHub reports required checks are expected so newly required contexts can run before the next merge attempt.

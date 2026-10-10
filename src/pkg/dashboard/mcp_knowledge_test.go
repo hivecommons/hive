@@ -259,7 +259,7 @@ func TestPublicKnowledgeMCPHandshakeAndToolsList(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(names, ","); got != "knowledge_search,knowledge_get,knowledge_export" {
+	if got := strings.Join(names, ","); got != "knowledge_search,knowledge_toc,knowledge_get,knowledge_export" {
 		t.Fatalf("tools = %s", got)
 	}
 }

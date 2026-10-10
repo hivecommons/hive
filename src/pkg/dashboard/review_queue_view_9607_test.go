@@ -6,10 +6,65 @@ import (
 	"testing"
 )
 
-// The review-queue view (#9607) is JS inside index.html, invisible to the Go
-// compiler. These tests pin its wiring and execute its renderer so the ranked
-// list, the review-priority/* badge, the reasons list and the limit/offset/
-// has_more paging stay correct.
+// The review section's queue view (#9607) is JS inside index.html, invisible to
+// the Go compiler. These tests pin its wiring and execute its renderer so the
+// ranked list, the review-priority/* badge, the reasons list and the
+// limit/offset/has_more paging stay correct.
+
+func TestReviewSectionNavAndSubsectionOrder(t *testing.T) {
+	html := indexHTML(t)
+	navStart := strings.Index(html, `<div class="oc-nav-group">
+      <div class="oc-nav-label">Admin</div>`)
+	if navStart < 0 {
+		t.Fatal("admin nav group not found")
+	}
+	navEnd := strings.Index(html[navStart:], `<div class="oc-nav-group">
+      <div class="oc-nav-label">Help</div>`)
+	if navEnd < 0 {
+		t.Fatal("admin nav group end not found")
+	}
+	nav := html[navStart : navStart+navEnd]
+	if !strings.Contains(nav, `<span class="oc-nav-text">Review</span>`) {
+		t.Fatal("admin nav must contain Review")
+	}
+	for _, forbidden := range []string{`<span class="oc-nav-text">Review Queue</span>`, `<span class="oc-nav-text">Review Pipeline</span>`, `data-section="review-pipeline-section"`} {
+		if strings.Contains(nav, forbidden) {
+			t.Fatalf("admin nav still contains standalone review entry %q", forbidden)
+		}
+	}
+	cardStart := strings.Index(html, `id="review-queue-section" data-dashboard-section="review-queue-section"`)
+	if cardStart < 0 {
+		t.Fatal("merged Review card not found")
+	}
+	cardEnd := strings.Index(html[cardStart:], `id="nous-section"`)
+	if cardEnd < 0 {
+		t.Fatal("could not isolate merged Review card")
+	}
+	card := html[cardStart : cardStart+cardEnd]
+	pipeline := strings.Index(card, `id="review-pipeline-subsection"`)
+	queue := strings.Index(card, `id="review-queue-subsection"`)
+	if pipeline < 0 || queue < 0 {
+		t.Fatalf("Review card must contain Pipeline and Queue subsections; pipeline=%d queue=%d", pipeline, queue)
+	}
+	if pipeline > queue {
+		t.Fatal("Review card must show Pipeline before Queue")
+	}
+	if strings.Contains(card, `data-dashboard-section="review-pipeline-section"`) {
+		t.Fatal("Review Pipeline must not remain a standalone dashboard card")
+	}
+	for _, want := range []string{
+		`<div class="review-subsection-body dash-card-body section-body" id="review-pipeline-body">`,
+		`<div class="review-subsection-body dash-card-body section-body" id="review-queue-body">`,
+		`data-arg0="review-pipeline-subsection"`,
+		`data-arg0="review-queue-subsection"`,
+		`.review-subsection-body.dash-card-body { padding: var(--sp-4); }`,
+		`.review-subsection-body > .review-queue-panel { padding: 0; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("Review subsections must share padded body chrome; missing %q", want)
+		}
+	}
+}
 
 func TestReviewQueueViewStaticWiring(t *testing.T) {
 	html := indexHTML(t)
@@ -20,6 +75,9 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`data-action="reviewQueuePrevPage"`,
 		`data-action="reviewQueueNextPage"`,
 		`fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset)`,
+		`reviewEvidenceButtonHtml(e.repo, e.number) +`,
+		`function reviewEvidenceButtonHtml(repo, number)`,
+		`data-action="openReviewEvidence"`,
 		`() => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),`,
 	} {
 		if !strings.Contains(html, want) {
@@ -60,6 +118,9 @@ func TestReviewQueueEntryRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
+	// The evidence button is role-gated on window state that does not exist
+	// under node; its wiring is pinned in TestReviewQueueViewStaticWiring.
+	source.WriteString("function reviewEvidenceButtonHtml() { return ''; }\n")
 	for _, name := range []string{"esc", "reviewQueuePriorityMeta", "reviewQueueAgeLabel", "renderReviewQueueEntry"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')

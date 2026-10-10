@@ -69,23 +69,34 @@ func notifySaveObserver() {
 var dashboardAuthTokenFile = "/secrets/dashboard-token"
 
 type Config struct {
-	Project       ProjectConfig          `yaml:"project"`
-	Policies      PoliciesConfig         `yaml:"policies"`
-	Agents        map[string]AgentConfig `yaml:"agents"`
-	Governor      GovernorConfig         `yaml:"governor"`
-	GitHub        GitHubConfig           `yaml:"github"`
-	GitLab        GitLabConfig           `yaml:"gitlab,omitempty"`
-	Gitea         GiteaConfig            `yaml:"gitea,omitempty"`
-	Notifications NotificationsConfig    `yaml:"notifications"`
-	Dashboard     DashboardConfig        `yaml:"dashboard"`
-	Data          DataConfig             `yaml:"data"`
-	Deployment    DeploymentConfig       `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
-	Hub           HubConfig              `yaml:"hub"`
-	Contribute    ContributeConfig       `yaml:"contribute,omitempty" json:"contribute,omitempty"`
-	HiveID        string                 `yaml:"hive_id"`
-	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables     VariablesConfig        `yaml:"variables,omitempty"`
+	Project  ProjectConfig          `yaml:"project"`
+	Policies PoliciesConfig         `yaml:"policies"`
+	Agents   map[string]AgentConfig `yaml:"agents"`
+	// AgentsGitHubAPIHourlyCap is the fleet default for per-agent GitHub API
+	// reads through the proxy. It is encoded under agents.github_api_hourly_cap
+	// by Config's YAML hooks so existing agent-name keys remain unchanged.
+	AgentsGitHubAPIHourlyCap    int `yaml:"-" json:"-"`
+	agentsGitHubAPIHourlyCapSet bool
+	Governor                    GovernorConfig      `yaml:"governor"`
+	GitHub                      GitHubConfig        `yaml:"github"`
+	GitLab                      GitLabConfig        `yaml:"gitlab,omitempty"`
+	Gitea                       GiteaConfig         `yaml:"gitea,omitempty"`
+	Notifications               NotificationsConfig `yaml:"notifications"`
+	Dashboard                   DashboardConfig     `yaml:"dashboard"`
+	Data                        DataConfig          `yaml:"data"`
+	Deployment                  DeploymentConfig    `yaml:"deployment,omitempty" json:"deployment,omitempty"`
+	Knowledge                   KnowledgeConfig     `yaml:"knowledge"`
+	Hub                         HubConfig           `yaml:"hub"`
+	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
+	// at pack apply and by PUT /api/config/agent/{name}/models.
+	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Issues tunes issue lifecycle automation. Zero value keeps the safe
+	// defaults: close issues after their fix PR merges, and backfill hourly.
+	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
+	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
+	HiveID     string           `yaml:"hive_id"`
+	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables  VariablesConfig  `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
@@ -114,8 +125,17 @@ type Config struct {
 	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Quality      QualityConfig      `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
-	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
-	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
+	// Sentinel flags PRs that look like security overrides, privilege
+	// escalation or codebase damage, from any author. Default on; see
+	// SentinelConfig.
+	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+	// Evidence controls the review evidence bundles the review relay writes
+	// (hivecommons/hive#11060). Default on, unsigned; see EvidenceConfig.
+	Evidence EvidenceConfig `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	// Compliance selects framework profiles; see ComplianceConfig.
+	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
+	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Jev configures the shared Jev (TypeSafe AI typed-decision model) client
 	// that agents with jev_mode: assist reach through the hive's local decision
 	// endpoint (hivecommons/hive#8939). Zero value: OpenRouter-hosted
@@ -186,6 +206,98 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+const (
+	DefaultAgentsGitHubAPIHourlyCap = 300
+	DefaultGitHubAgentReserveFloor  = 400
+)
+
+// UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap
+// scalar alongside the existing agents.<name> map entries. The Agents field
+// remains a plain map everywhere else in the codebase.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	type plain Config
+	node := cloneYAMLNode(value)
+	if agents := mappingValueNode(&node, "agents"); agents != nil && agents.Kind == yaml.MappingNode {
+		for i := 0; i < len(agents.Content)-1; i += 2 {
+			if agents.Content[i].Value != "github_api_hourly_cap" {
+				continue
+			}
+			var cap int
+			if err := agents.Content[i+1].Decode(&cap); err != nil {
+				return fmt.Errorf("agents.github_api_hourly_cap: %w", err)
+			}
+			c.AgentsGitHubAPIHourlyCap = cap
+			c.agentsGitHubAPIHourlyCapSet = true
+			agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
+			break
+		}
+	}
+	var decoded plain
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	cap, capSet := c.AgentsGitHubAPIHourlyCap, c.agentsGitHubAPIHourlyCapSet
+	*c = Config(decoded)
+	c.AgentsGitHubAPIHourlyCap = cap
+	c.agentsGitHubAPIHourlyCapSet = capSet
+	return nil
+}
+
+func cloneYAMLNode(in *yaml.Node) yaml.Node {
+	if in == nil {
+		return yaml.Node{}
+	}
+	out := *in
+	if len(in.Content) > 0 {
+		out.Content = make([]*yaml.Node, len(in.Content))
+		for i, child := range in.Content {
+			clone := cloneYAMLNode(child)
+			out.Content[i] = &clone
+		}
+	}
+	return out
+}
+
+func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
+	node = mappingNode(node)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func mappingNode(node *yaml.Node) *yaml.Node {
+	if node != nil && node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return node.Content[0]
+	}
+	return node
+}
+
+func (c *Config) AgentGitHubAPIHourlyCap(agentName string) int {
+	if c == nil {
+		return DefaultAgentsGitHubAPIHourlyCap
+	}
+	if c.AgentsGitHubAPIHourlyCap == 0 && !c.agentsGitHubAPIHourlyCapSet {
+		return DefaultAgentsGitHubAPIHourlyCap
+	}
+	if a, ok := c.Agents[agentName]; ok && a.GitHubAPIHourlyCap != nil {
+		return *a.GitHubAPIHourlyCap
+	}
+	return c.AgentsGitHubAPIHourlyCap
+}
+
+func (c *Config) GitHubAgentReserveFloor() int {
+	if c == nil || c.GitHub.AgentReserveFloor == 0 {
+		return DefaultGitHubAgentReserveFloor
+	}
+	return c.GitHub.AgentReserveFloor
 }
 
 // DefaultOTelServiceName is the OTLP resource service.name used when the
@@ -1180,6 +1292,39 @@ func (c *Config) JevAssistEnabled(agent string) bool {
 // the prompt editor), answered with a warning by
 // scheduler.WarnDanglingKickTemplates and shown in the prompt editor
 // (hivecommons/hive#7390).
+// MaxBobSessionLabelLen bounds bob reporting labels:
+// governor.bob.session_prefix + <agent> and agents.<name>.bob.session_label.
+const MaxBobSessionLabelLen = 64
+
+// MaxBobDisplayNameLen bounds the legacy agents.<name>.bob_display_name alias.
+const MaxBobDisplayNameLen = MaxBobSessionLabelLen
+
+// ValidateBobSessionLabel checks an optional bob reporting label component.
+// Empty is valid. Non-empty values must be at most MaxBobSessionLabelLen bytes
+// of ASCII letters, digits, '-', '_' or '.', so the label is safe in env vars,
+// file names, Bob --instance-id, and report keys.
+func ValidateBobSessionLabel(field, v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > MaxBobSessionLabelLen {
+		return fmt.Errorf("%s %q is longer than %d characters", field, v, MaxBobSessionLabelLen)
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return fmt.Errorf("%s %q contains %q (allowed: letters, digits, '-', '_', '.')", field, v, r)
+		}
+	}
+	return nil
+}
+
+// ValidateBobDisplayName checks the legacy flat bob reporting label.
+func ValidateBobDisplayName(v string) error {
+	return ValidateBobSessionLabel("bob_display_name", v)
+}
+
 func ValidateKickTemplateName(v string) error {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -1390,6 +1535,10 @@ type AgentConfig struct {
 	// would otherwise join.
 	ReposOwner string `yaml:"repos_owner,omitempty" json:"repos_owner,omitempty"`
 
+	// GitHubAPIHourlyCap overrides agents.github_api_hourly_cap for this agent.
+	// Nil inherits the global value; 0 disables the cap for this agent.
+	GitHubAPIHourlyCap *int `yaml:"github_api_hourly_cap,omitempty" json:"github_api_hourly_cap,omitempty"`
+
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
 	LaunchCmd       string `yaml:"launch_cmd" json:"launch_cmd,omitempty"`
@@ -1404,6 +1553,11 @@ type AgentConfig struct {
 	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
 	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string        `yaml:"description" json:"description,omitempty"`
+	// Bob holds bob-backend-only per-agent options. Empty is default-off.
+	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
+	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is
+	// kept for backwards compatibility; new configs should use bob.session_label.
+	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
 	Role           string   `yaml:"role" json:"role,omitempty"`
@@ -1924,8 +2078,12 @@ func (a *AgentConfig) EnabledExplicitlySet() bool {
 }
 
 type GovernorConfig struct {
-	Modes         map[string]ModeConfig `yaml:"modes"`
-	EvalIntervalS int                   `yaml:"eval_interval_s"`
+	Modes                      map[string]ModeConfig `yaml:"modes"`
+	EvalIntervalS              int                   `yaml:"eval_interval_s"`
+	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
+	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -3436,6 +3594,17 @@ type BobConfig struct {
 	// is a normal, backwards-compatible state that the dashboard renders as
 	// "(unnamed)" rather than an error.
 	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
+	// SessionPrefix is an optional global prefix for bob --instance-id, used
+	// to make Bob/Bobalytics sessions distinguishable without renaming Hive
+	// agents. Empty is default-off and preserves the exact launch command.
+	SessionPrefix string `yaml:"session_prefix,omitempty" json:"session_prefix,omitempty"`
+}
+
+// AgentBobConfig holds per-agent bob backend options.
+type AgentBobConfig struct {
+	// SessionLabel overrides governor.bob.session_prefix + agent name for Bob
+	// --instance-id. It never changes the Hive agent identity.
+	SessionLabel string `yaml:"session_label,omitempty" json:"session_label,omitempty"`
 }
 
 // ResolveAPIKey returns the bob API key, or "" when none is configured.
@@ -3879,7 +4048,20 @@ type GitHubConfig struct {
 	DocsInstallationID int64  `yaml:"docs_installation_id"`
 	KeyFile            string `yaml:"key_file"`
 	Token              string `yaml:"token"`
-	OAuthClientID      string `yaml:"oauth_client_id"`
+	// AgentReserveFloor keeps agents from draining the shared App installation
+	// core bucket below the daemon's merge/scan reserve.
+	AgentReserveFloor int    `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id"`
+	// PRDetailTTLS bounds reuse of per-PR detail GETs whose head SHA and
+	// updated_at still match the cheap /pulls list payload. Zero uses the
+	// 30-minute default; HIVE_GITHUB_PR_DETAIL_TTL overrides it for tests.
+	PRDetailTTLS int `yaml:"pr_detail_ttl_s,omitempty"`
+	// GraphQLPRBatch replaces per-PR detail/check-run fan-out during scans with
+	// one paginated GraphQL query per repository. Default ON (nil == true).
+	GraphQLPRBatch *bool `yaml:"graphql_pr_batch,omitempty" json:"graphql_pr_batch,omitempty"`
+	// GraphQLPRBatchPageSize controls the pullRequests(first:) page size.
+	// Zero uses DefaultGraphQLPRBatchPageSize.
+	GraphQLPRBatchPageSize int `yaml:"graphql_pr_batch_page_size,omitempty" json:"graphql_pr_batch_page_size,omitempty"`
 	// Forge_ names the GitHub instance this hive's App and repos live on, as a
 	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
 	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
@@ -3901,6 +4083,10 @@ type GitHubConfig struct {
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
 	APIURL string `yaml:"api_url"`
+	// APIReserve is the core REST quota floor where Hive sheds optional work.
+	APIReserve int `yaml:"api_reserve,omitempty"`
+	// APICritical is the lower core REST quota floor where Hive enters critical mode.
+	APICritical int `yaml:"api_critical,omitempty"`
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
@@ -3981,6 +4167,47 @@ type GitHubConfig struct {
 // spoke committed to App auth, failed to read a PEM that was never provisioned,
 // and exited before the HTTP listener bound — invisible from the dashboard.
 const PlaceholderAppID int64 = 999999999
+
+const (
+	// DefaultGitHubPRDetailTTL is the default freshness window for cached
+	// GET /repos/{owner}/{repo}/pulls/{number} detail responses.
+	DefaultGitHubPRDetailTTL      = 30 * time.Minute
+	GitHubPRDetailTTLEnv          = "HIVE_GITHUB_PR_DETAIL_TTL"
+	DefaultGraphQLPRBatchPageSize = 50
+)
+
+func (g GitHubConfig) PRDetailTTL() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(GitHubPRDetailTTLEnv)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
+			return d
+		}
+		if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	if g.PRDetailTTLS > 0 {
+		return time.Duration(g.PRDetailTTLS) * time.Second
+	}
+	return DefaultGitHubPRDetailTTL
+}
+
+func (g GitHubConfig) GraphQLPRBatchEnabled() bool {
+	return g.GraphQLPRBatch == nil || *g.GraphQLPRBatch
+}
+
+func (g GitHubConfig) EffectiveGraphQLPRBatchPageSize() int {
+	return NormalizeGraphQLPRBatchPageSize(g.GraphQLPRBatchPageSize)
+}
+
+func NormalizeGraphQLPRBatchPageSize(n int) int {
+	if n <= 0 {
+		return DefaultGraphQLPRBatchPageSize
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
+}
 
 const (
 	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).
@@ -4581,8 +4808,11 @@ type SlackConfig struct {
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
-	BotToken       string `yaml:"bot_token"`
-	ChannelID      string `yaml:"channel_id"`
+	// RequestsWebhookURL posts new hosted-hive provision requests to the
+	// community request channel. Secret; do not expose over JSON/status APIs.
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
+	BotToken           string `yaml:"bot_token"`
+	ChannelID          string `yaml:"channel_id"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel
@@ -4692,6 +4922,9 @@ type HubConfig struct {
 	// entries (issue #9619). Hub-only and a secret: never logged, and excluded
 	// from JSON. HIVE_NPS_RELAY_PULL_SECRET overrides it.
 	NPSRelayPullSecret string `yaml:"nps_relay_pull_secret,omitempty" json:"-"`
+	// Notifications contains hub-only notification sinks. Secrets below this
+	// node are intentionally excluded from JSON/status output.
+	Notifications HubNotificationsConfig `yaml:"notifications,omitempty" json:"-"`
 	// Contribute title/author/label filters use a single list plus a mode:
 	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
 	//     matches the list (a non-empty list is required for the filter to gate;
@@ -4768,7 +5001,7 @@ type HubConfig struct {
 	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
 	// ContributeCloseAlreadyDone is a deprecated compatibility key. Verified
 	// already-done PR evidence now runs the normal issue close path; human-filed
-	// bugs still wait for reporter confirmation unless explicitly opted in.
+	// bugs close by default unless they explicitly opted into reporter confirmation.
 	ContributeCloseAlreadyDone *bool `yaml:"contribute_close_already_done,omitempty"`
 	// ContributeAlreadyDoneLabel is applied to issues a contributor found already
 	// resolved. It is also in the default contribute skip label set, so labelled
@@ -4852,6 +5085,14 @@ type HubConfig struct {
 	DisabledTiers              []string               `yaml:"disabled_tiers"`
 	TierLimits                 map[string]TierRate    `yaml:"tier_limits"`
 	SnapshotIntervalMin        int                    `yaml:"snapshot_interval_min"`
+}
+
+type HubNotificationsConfig struct {
+	Discord HubDiscordNotificationsConfig `yaml:"discord,omitempty" json:"-"`
+}
+
+type HubDiscordNotificationsConfig struct {
+	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
@@ -5933,6 +6174,12 @@ const (
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
+	defaultEvalIntervalMaxS       = 1800
+	defaultEvalIntervalWebhookS   = 900
+	defaultConserveIntervalMult   = 2
+	defaultOptionalSweepEveryN    = 1
+	defaultGitHubAPIReserve       = 800
+	defaultGitHubAPICritical      = 250
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeEngine        = "llm-wiki"
@@ -6005,6 +6252,12 @@ func (c *Config) applyCoinBudgetDefaults() {
 }
 
 func (c *Config) applyDefaults() {
+	if !c.agentsGitHubAPIHourlyCapSet {
+		c.AgentsGitHubAPIHourlyCap = DefaultAgentsGitHubAPIHourlyCap
+	}
+	if c.GitHub.AgentReserveFloor == 0 {
+		c.GitHub.AgentReserveFloor = DefaultGitHubAgentReserveFloor
+	}
 	c.applyUpstreamWatchDefaults()
 	// Runs before any review default so the pointer is settled on every load
 	// path (boot, reload, dashboard save) and Save() persists the explicit
@@ -6039,6 +6292,24 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
+	}
+	if c.Governor.EvalIntervalMaxS == 0 {
+		c.Governor.EvalIntervalMaxS = defaultEvalIntervalMaxS
+	}
+	if c.Governor.EvalIntervalWebhookS == 0 {
+		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
+	}
+	if c.Governor.ConserveIntervalMultiplier == 0 {
+		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult
+	}
+	if c.Governor.OptionalSweepEveryNCycles == 0 {
+		c.Governor.OptionalSweepEveryNCycles = defaultOptionalSweepEveryN
+	}
+	if c.GitHub.APIReserve == 0 {
+		c.GitHub.APIReserve = defaultGitHubAPIReserve
+	}
+	if c.GitHub.APICritical == 0 {
+		c.GitHub.APICritical = defaultGitHubAPICritical
 	}
 	if c.Governor.Trajectory.IsEnabled() {
 		if c.Governor.Trajectory.OnDivergence == "" {
@@ -6835,7 +7106,26 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			out.Agents[name] = agent
 		}
 	}
-	return out, nil
+	var node yaml.Node
+	if err := node.Encode(out); err != nil {
+		return nil, err
+	}
+	root := mappingNode(&node)
+	if root == nil {
+		return out, nil
+	}
+	agents := mappingValueNode(root, "agents")
+	if agents == nil {
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "agents"}, &yaml.Node{Kind: yaml.MappingNode})
+		agents = root.Content[len(root.Content)-1]
+	}
+	if c.agentsGitHubAPIHourlyCapSet && agents.Kind == yaml.MappingNode {
+		agents.Content = append([]*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "github_api_hourly_cap"},
+			{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(c.AgentsGitHubAPIHourlyCap)},
+		}, agents.Content...)
+	}
+	return &node, nil
 }
 
 func (c *Config) EnabledAgents() map[string]AgentConfig {
@@ -7513,6 +7803,10 @@ type ReviewConfig struct {
 	// aggregate has no consumer and the reviewer is silent by construction.
 	// Turning this on is what makes a review reach the human who has to decide.
 	PostComments bool `yaml:"post_comments,omitempty" json:"post_comments,omitempty"`
+	// EventDriven and EventDebounceS control webhook-triggered review
+	// dispatch (hivecommons/hive#11091); see review_dispatch.go.
+	EventDriven    *bool `yaml:"event_driven,omitempty" json:"event_driven,omitempty"`
+	EventDebounceS int   `yaml:"event_debounce_s,omitempty" json:"event_debounce_s,omitempty"`
 	// MaxPerspectivesPerPR caps how many review perspectives one PR may be
 	// given, as a LIFETIME budget per head SHA — not a per-cycle limit. It
 	// exists because parallel review slots are a fixed budget spent in PR
@@ -7680,6 +7974,12 @@ type ReviewConfig struct {
 	// (hivecommons/hive#8317), which scores a PR against the approved plan
 	// wave its Hive-Run / Hive-Plan trailers name.
 	PlanMatch PlanMatchConfig `yaml:"plan_match,omitempty" json:"plan_match,omitempty"`
+	// Severity is the blocking line for review findings
+	// (hivecommons/hive#11088). See ReviewSeverityConfig.
+	Severity ReviewSeverityConfig `yaml:"severity,omitempty" json:"severity,omitempty"`
+	// Backlog is where findings below the blocking line are filed
+	// (hivecommons/hive#11088). See ReviewBacklogConfig.
+	Backlog ReviewBacklogConfig `yaml:"backlog,omitempty" json:"backlog,omitempty"`
 }
 
 // PlanMatchConfig is the switch for the plan_match review perspective
@@ -7812,6 +8112,11 @@ type AutoMergeConfig struct {
 	// author must be in authorized_users at the configured role, and by default
 	// GitHub must also report push/maintain/admin permission on the repository.
 	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
+	// intent.guardrail_path_patterns) for paths a person must merge. Unset
+	// means no such paths. This key only declares the paths; enforcement
+	// lives in the merge sweeps.
+	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
 }
 
 type TrustedAuthorAutoMergeConfig struct {
@@ -7913,6 +8218,18 @@ func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
 
 func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
+}
+
+// HumanMergePathsFor returns the human-merge path patterns configured for repo
+// (owner/repo, matched case-insensitively), or nil when none are set.
+func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
+	repo = strings.TrimSpace(repo)
+	for k, patterns := range a.HumanMergePaths {
+		if strings.EqualFold(strings.TrimSpace(k), repo) && len(patterns) > 0 {
+			return patterns
+		}
+	}
+	return nil
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a

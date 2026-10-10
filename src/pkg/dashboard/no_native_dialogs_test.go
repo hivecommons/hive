@@ -1,8 +1,10 @@
 package dashboard
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,10 +12,8 @@ import (
 
 func TestNoNativeBrowserDialogsRatchet(t *testing.T) {
 	native := regexp.MustCompile(`\b(?:window\.)?(?:prompt|alert|confirm)\s*\(|showModalDialog\s*\(|\.showModal\s*\(|onbeforeunload`)
-	files := map[string]string{
-		"static/index.html":     indexHTML(t),
-		"contribute_landing.go": mustReadDashboardFile(t, "contribute_landing.go"),
-	}
+	files := servedUIFiles(t)
+	files["contribute_landing.go"] = mustReadDashboardFile(t, "contribute_landing.go")
 	var offenders []string
 	for name, body := range files {
 		for i, line := range strings.Split(body, "\n") {
@@ -23,8 +23,54 @@ func TestNoNativeBrowserDialogsRatchet(t *testing.T) {
 		}
 	}
 	if len(offenders) > 0 {
-		t.Fatalf("native browser dialog calls are forbidden in spoke UI; use hivePrompt, hiveConfirm, hiveAlert/showToast, or the contribute in-app admin modal:\n  %s", strings.Join(offenders, "\n  "))
+		t.Fatalf("native browser dialog calls are forbidden in served UI; use hivePrompt, hiveConfirm, hiveAlert/showToast, or an in-app modal:\n  %s", strings.Join(offenders, "\n  "))
 	}
+}
+
+func TestNoForcedBrowserDownloadsRatchet(t *testing.T) {
+	forced := regexp.MustCompile(`(?i)(?:\.\s*download\s*=|<[^>]*\sdownload(?:\s*=|[\s>])|createObjectURL\s*\()`)
+	var offenders []string
+	for name, body := range servedUIFiles(t) {
+		for i, line := range strings.Split(body, "\n") {
+			if forced.MatchString(line) {
+				offenders = append(offenders, name+":"+itoaNoNativeDialog(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("served UI must not force browser downloads; render exports in-app with copy/open affordances instead:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+func servedUIFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := map[string]string{
+		"static/index.html": indexHTML(t),
+	}
+	for _, root := range []string{"../hub/static", "../hub/assets"} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".html" && ext != ".js" {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			files[filepath.ToSlash(path)] = string(b)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking served UI files under %s: %v", root, err)
+		}
+	}
+	return files
 }
 
 func mustReadDashboardFile(t *testing.T, name string) string {
@@ -58,6 +104,8 @@ func TestHivePromptAndConfirmNode(t *testing.T) {
 	script := dialogHarnessJS() +
 		extractJSFunction(t, html, "hiveDialogEscape") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveNormalizeDialogOptions") + "\n    }\n" +
+		"let _hiveModalSequence = 0;\n" +
+		extractJSFunction(t, html, "hiveRememberModalOpen") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveWireDialog") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveConfirmIsDanger") + "\n    }\n" +
 		extractJSFunction(t, html, "hiveConfirm") + "\n    }\n" +
@@ -103,7 +151,7 @@ function parse(html, root){ const re=/<(div|button|input|label)[^>]*>/g; let m; 
 function match(el,sel){ if(sel.startsWith('#'))return el.id===sel.slice(1); if(sel.startsWith('.'))return (el.className||'').split(/\s+/).includes(sel.slice(1)); if(sel==='button')return el.tagName==='BUTTON'; if(sel==='input')return el.tagName==='INPUT'; let m=sel.match(/^\[data-([^=\]]+)(?:="([^"]*)")?\]$/); if(m){let k=m[1].replace(/-([a-z])/g,(_,c)=>c.toUpperCase()); return m[2]===undefined ? el.dataset[k]!==undefined : el.dataset[k]===m[2];} return false; }
 function query(root,sel,one){ let out=[]; function walk(n){ for(const c of n.children){ if(match(c,sel))out.push(c); walk(c); } } walk(root); return one ? (out[0]||null) : out; }
 const document = { body:new Element('body'), activeElement:null, listeners:{}, createElement:t=>new Element(t), addEventListener(t,fn){(this.listeners[t]||(this.listeners[t]=[])).push(fn);}, removeEventListener(t,fn){this.listeners[t]=(this.listeners[t]||[]).filter(x=>x!==fn);}, querySelector(sel){return this.body.querySelector(sel);}, querySelectorAll(sel){return this.body.querySelectorAll(sel);} };
-function dispatchKey(key){ (document.listeners.keydown||[]).forEach(fn=>fn({key, preventDefault(){}})); }
+function dispatchKey(key){ (document.listeners.keydown||[]).forEach(fn=>fn({key, preventDefault(){}, stopPropagation(){}, stopImmediatePropagation(){}})); }
 function tick(){ return new Promise(r=>setTimeout(r,1)); }
 global.document=document;
 `

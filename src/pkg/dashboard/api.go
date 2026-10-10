@@ -34,6 +34,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerSwarmRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+	s.mux.HandleFunc("GET /api/version/release-notes", s.handleVersionReleaseNotes)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
 	s.mux.HandleFunc("GET /api/themes", s.handleThemesList)
 	s.mux.HandleFunc("GET /api/theme.css", s.handleThemeCSS)
@@ -269,6 +270,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerOpenRouterRoutes()
 	s.registerLinearAgentRoutes()
 	s.mux.HandleFunc("GET /api/upstream-watch", s.handleUpstreamWatch)
+	s.mux.HandleFunc("PUT /api/config/upstream-watch", s.handleUpstreamWatchConfigPut)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -311,6 +313,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)
 	s.mux.HandleFunc("PUT /api/acmm-recommendation/repo-pin", s.handleACMMRepoPin)
 	s.mux.HandleFunc("GET /api/hive-advice", s.handleHiveAdvice)
+	s.mux.HandleFunc("GET /api/compliance/status", s.handleComplianceStatus)
+	s.mux.HandleFunc("GET /api/compliance/posture", s.handleCompliancePosture)
+	s.mux.HandleFunc("POST /api/compliance/posture/run", s.handleCompliancePostureRun)
+	s.mux.HandleFunc("GET /api/compliance/posture/history", s.handleCompliancePostureHistory)
+	s.mux.HandleFunc("GET /api/compliance/export", s.handleComplianceExport)
+	s.mux.HandleFunc("GET /api/compliance/attestations", s.handleComplianceAttestations)
+	s.mux.HandleFunc("POST /api/compliance/attestations", s.handleComplianceAttestationCreate)
 
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
@@ -320,6 +329,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)
 	s.mux.HandleFunc("GET /api/knowledge/export", s.handleKnowledgeExport)
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)
+	s.mux.HandleFunc("GET /api/knowledge/toc", s.handleKnowledgeTOC)
+	s.mux.HandleFunc("GET /api/knowledge/effective", s.handleKnowledgeEffective)
+	s.mux.HandleFunc("GET /api/knowledge/entry/{id}", s.handleKnowledgeEntry)
+	s.mux.HandleFunc("PUT /api/knowledge/entry/{id}/state", s.handleKnowledgeEntryState)
 	// Anonymous, owner-switched, read-only MCP surface (#10615). POST only —
 	// the mux answers other verbs with 405, and there is no SSE stream.
 	s.mux.HandleFunc("POST /mcp/knowledge", s.handlePublicKnowledgeMCP) // path == publicKnowledgeMCPPath
@@ -352,6 +365,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("DELETE /api/knowledge/vaults", s.handleVaultsDisconnect)
 	s.mux.HandleFunc("POST /api/knowledge/vaults/reindex", s.handleVaultsReindex)
 	s.mux.HandleFunc("GET /api/knowledge/vaults/{name}/facts", s.handleVaultFacts)
+	s.mux.HandleFunc("GET /api/config/knowledge/connectors", s.handleKnowledgeConnectorsGet)
+	s.mux.HandleFunc("PUT /api/config/knowledge/connectors", s.handleKnowledgeConnectorsPut)
+	s.mux.HandleFunc("GET /api/config/knowledge/connectors/status", s.handleKnowledgeConnectorsStatus)
+	s.mux.HandleFunc("POST /api/config/knowledge/connectors/validate", s.handleKnowledgeConnectorsValidate)
+	s.mux.HandleFunc("POST /api/config/knowledge/connectors/{name}/sync", s.handleKnowledgeConnectorsSync)
+	s.mux.HandleFunc("GET /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesGet)
+	s.mux.HandleFunc("PUT /api/config/knowledge/agent-scopes", s.handleKnowledgeAgentScopesPut)
 	s.mux.HandleFunc("GET /api/knowledge/git-sources", s.handleGitSourcesList)
 	s.mux.HandleFunc("POST /api/knowledge/git-sources", s.handleGitSourcesConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/git-sources", s.handleGitSourcesDisconnect)
@@ -435,10 +455,25 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or contributor-authored, in one ranked order with the reasons for each
 	// position. Read-only; paged like /api/v1/queue (#6537).
 	s.mux.HandleFunc("GET /api/review/queue", s.handleReviewQueue)
+	// Review pipeline (#11086): the same queue, one card per PR placed in its
+	// review stage (unreviewed … approved) with reviewers, severity counts,
+	// loop counter and next action. Read-only; paged like /api/review/queue.
+	s.mux.HandleFunc("GET /api/review/pipeline", s.handleReviewPipeline)
+	s.mux.HandleFunc("POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human", s.handleReviewPipelineSendToHuman)
+	// Review evidence (#11061): the per-PR evidence bundle as sealed on disk,
+	// or zipped with the artifacts it references; owner/merger only.
+	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
+	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
 	s.mux.HandleFunc("PUT /api/config/write-surface", s.handleWriteSurfacePut)
+	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
+	// Registered last so the api-reference citations above do not shift.
+	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
+	s.registerKnowledgeConnectorRoutes()
+	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 }
 
 var (
@@ -1011,6 +1046,7 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 			"busy":       a.Busy,
 			"next_kick":  a.NextKick,
 			"nextKick":   a.NextKick,
+			"nextKickAt": a.NextKickAt,
 			"nextKickIn": a.NextKickIn,
 		})
 	}

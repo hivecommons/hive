@@ -31,6 +31,8 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Subtests reuse acme/widget#7 with different authors; bypass the shared PR-detail cache.
+			t.Setenv(config.GitHubPRDetailTTLEnv, "0")
 			var labelAdded, reviewCreated bool
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {

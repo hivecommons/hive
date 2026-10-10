@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -96,68 +97,200 @@ type CommitCIOptions struct {
 	RequiredKnown           bool
 	RequiredKnownFromConfig bool
 	ExpectedChecks          map[string]bool
-	MinHeadAge              time.Duration
-	HeadPushedAt            time.Time
-	Now                     func() time.Time
+	// UnknownRequiredChecksServerEnforced means the caller will attempt the
+	// merge and rely on GitHub's merge endpoint to reject unsatisfied required
+	// checks when the required set cannot be discovered. In that mode,
+	// completed failures do not block locally; pending checks still do.
+	UnknownRequiredChecksServerEnforced bool
+	MinHeadAge                          time.Duration
+	HeadPushedAt                        time.Time
+	Now                                 func() time.Time
 }
 
-// RequiredStatusCheckContexts returns the set of status-check contexts /
-// check-run names that are actually required for branch, and whether that
-// set could be determined at all. Membership in this set is what makes a
-// check "required" (must be green) versus ignorable (any state/conclusion,
-// never blocks).
-//
-// Precedence (first available source wins):
-//  1. Config: configSet/configKnown, i.e. the operator-declared
-//     auto_merge.required_checks list (config.AutoMergeConfig.RequiredCheckSet).
-//     This needs NO GitHub API call and NO administration:read scope, so it
-//     is checked first and is the primary path in practice.
-//  2. GitHub's branch-protection API (Repositories.GetRequiredStatusChecks).
-//     gh.ErrBranchNotProtected means "this branch legitimately requires
-//     nothing" - that IS a known, empty required set, not a failure to
-//     determine it, so requiredKnown is true with an empty map.
-//  3. Neither available (no config list AND branch empty / API call failed
-//     for a reason other than "not protected") -> requiredKnown=false. The
-//     caller must fall back to the isMetaCheck/isIgnorableCICheck allowlist.
 func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (map[string]bool, bool) {
-	if configKnown {
-		return configSet, true
-	}
+	required, known, _, _ := RequiredStatusCheckContextsDetailed(ctx, client, owner, repo, branch, configSet, configKnown)
+	return required, known
+}
+
+// RequiredStatusCheckContextsDetailed returns the branch-protection-required
+// status/check contexts. GitHub branch protection is authoritative; the
+// non-admin branch and rules endpoints are fallbacks when protection cannot be
+// read, and the config set is the final operator-declared fallback.
+func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool) {
+	required, known, fromConfig, fallback, _ = RequiredStatusCheckContextsDetailedWithSource(ctx, client, owner, repo, branch, configSet, configKnown)
+	return required, known, fromConfig, fallback
+}
+
+func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool, source string) {
 	if client == nil || strings.TrimSpace(branch) == "" {
-		return nil, false
+		if configKnown {
+			return configSet, true, true, true, "config"
+		}
+		return nil, false, false, false, "none"
 	}
 	cacheKey := requiredChecksForbiddenCacheKey(client, owner, repo, branch)
-	if sharedRequiredChecksForbiddenCache.get(cacheKey) {
-		return nil, false
-	}
-	rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
-	if err != nil {
+	if !sharedRequiredChecksForbiddenCache.get(cacheKey) {
+		rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
+		if err == nil {
+			if rsc == nil {
+				return map[string]bool{}, true, false, false, "protection"
+			}
+			required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
+			return required, true, false, false, "protection"
+		}
 		if errors.Is(err, gh.ErrBranchNotProtected) {
-			return map[string]bool{}, true
+			return map[string]bool{}, true, false, false, "protection-unprotected"
 		}
 		if isRequiredChecksForbiddenCacheable(err) {
 			sharedRequiredChecksForbiddenCache.put(cacheKey)
 		}
-		return nil, false
 	}
-	if rsc == nil {
-		return map[string]bool{}, true
+
+	if branchRequired, branchKnown, err := requiredStatusChecksFromBranchEndpoint(ctx, client, owner, repo, branch); err == nil && branchKnown {
+		return branchRequired, true, false, false, "branch"
 	}
+	if rulesRequired, rulesKnown, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch); err == nil && rulesKnown {
+		return rulesRequired, true, false, false, "rules"
+	}
+	if configKnown {
+		return configSet, true, true, true, "config"
+	}
+	return nil, false, false, false, "none"
+}
+
+func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.RequiredStatusCheck) map[string]bool {
 	required := make(map[string]bool)
-	if rsc.Contexts != nil {
-		for _, name := range *rsc.Contexts {
-			required[name] = true
+	if contexts != nil {
+		for _, name := range *contexts {
+			if strings.TrimSpace(name) != "" {
+				required[name] = true
+			}
 		}
 	}
-	if rsc.Checks != nil {
-		for _, check := range *rsc.Checks {
-			if check == nil {
+	if checks != nil {
+		for _, check := range *checks {
+			if check == nil || strings.TrimSpace(check.Context) == "" {
 				continue
 			}
 			required[check.Context] = true
 		}
 	}
-	return required, true
+	return required
+}
+
+func requiredStatusChecksFromBranchEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, false, nil
+	}
+	path := fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, url.PathEscape(branch))
+	req, err := client.NewRequest("GET", path, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	var resp struct {
+		Protected  bool `json:"protected"`
+		Protection *struct {
+			RequiredStatusChecks *struct {
+				Contexts []string `json:"contexts"`
+				Checks   []struct {
+					Context string `json:"context"`
+				} `json:"checks"`
+			} `json:"required_status_checks"`
+		} `json:"protection"`
+	}
+	if _, err := client.Do(ctx, req, &resp); err != nil {
+		return nil, false, err
+	}
+	if !resp.Protected {
+		return map[string]bool{}, true, nil
+	}
+	if resp.Protection == nil || resp.Protection.RequiredStatusChecks == nil {
+		return nil, false, nil
+	}
+	required := make(map[string]bool)
+	for _, name := range resp.Protection.RequiredStatusChecks.Contexts {
+		if strings.TrimSpace(name) != "" {
+			required[name] = true
+		}
+	}
+	for _, check := range resp.Protection.RequiredStatusChecks.Checks {
+		if strings.TrimSpace(check.Context) != "" {
+			required[check.Context] = true
+		}
+	}
+	return required, true, nil
+}
+
+func requiredStatusChecksFromRulesEndpoint(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, false, nil
+	}
+	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s", owner, repo, url.PathEscape(branch))
+	req, err := client.NewRequest("GET", path, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	var payload any
+	if _, err := client.Do(ctx, req, &payload); err != nil {
+		return nil, false, err
+	}
+	required := make(map[string]bool)
+	known := collectRequiredStatusCheckRules(payload, required)
+	if !known {
+		return nil, false, nil
+	}
+	return required, true, nil
+}
+
+func collectRequiredStatusCheckRules(v any, required map[string]bool) bool {
+	switch x := v.(type) {
+	case []any:
+		known := false
+		for _, item := range x {
+			if collectRequiredStatusCheckRules(item, required) {
+				known = true
+			}
+		}
+		return known
+	case map[string]any:
+		if typ, _ := x["type"].(string); typ == "required_status_checks" {
+			known := true
+			addRequiredStatusCheckContexts(x["parameters"], required)
+			addRequiredStatusCheckContexts(x["required_status_checks"], required)
+			return known
+		}
+		if rules, ok := x["rules"]; ok {
+			return collectRequiredStatusCheckRules(rules, required)
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func addRequiredStatusCheckContexts(v any, required map[string]bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		addRequiredStatusCheckContexts(x["required_status_checks"], required)
+		addRequiredStatusCheckContexts(x["required_status_check_contexts"], required)
+		if context, _ := x["context"].(string); strings.TrimSpace(context) != "" {
+			required[context] = true
+		}
+	case []any:
+		for _, item := range x {
+			addRequiredStatusCheckContexts(item, required)
+		}
+	case []string:
+		for _, context := range x {
+			if strings.TrimSpace(context) != "" {
+				required[context] = true
+			}
+		}
+	case string:
+		if strings.TrimSpace(x) != "" {
+			required[x] = true
+		}
+	}
 }
 
 func requiredChecksForbiddenCacheKey(client *gh.Client, owner, repo, branch string) string {
@@ -191,15 +324,17 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 	return func() { sharedRequiredChecksForbiddenCache = old }
 }
 
-// EvaluateCommitCI walks every commit status and check run on sha and
-// reports the CommitCIState. required/requiredKnown come from
-// RequiredStatusCheckContexts. When requiredKnown is false the fail-closed
-// allowlist fallback applies: meta checks are skipped and only the
-// isIgnorableCICheck names may be non-green without blocking. Later blockers
-// are still walked after the first so that Evidence and MissingRequired are
-// complete for the caller. A non-nil error means the evidence could not be
-// gathered; Reason then names the failing API ("status-check" or
-// "check-runs").
+// EvaluateCommitCI walks every commit status and check run on sha and reports
+// the CommitCIState. required/requiredKnown come from
+// RequiredStatusCheckContexts. When requiredKnown is false and
+// UnknownRequiredChecksServerEnforced is set, completed failing checks do not
+// block: the merge call is the source of truth for required checks. Pending
+// statuses/check-runs still block so the sweep does not race in-flight CI.
+// Without that option the older fail-closed positive-evidence policy applies.
+// Later blockers are still walked after the first so that Evidence and
+// MissingRequired are complete for the caller. A non-nil error means the
+// evidence could not be gathered; Reason then names the failing API
+// ("status-check" or "check-runs").
 func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha string, opts CommitCIOptions) (CommitCIState, error) {
 	var st CommitCIState
 	if client == nil {
@@ -208,6 +343,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	required := opts.Required
 	requiredKnown := opts.RequiredKnown
+	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
 	// block records the first blocker; later ones are still walked so that
@@ -235,8 +371,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 				if !required[ctxName] {
 					continue
 				}
-			} else if isMetaCheck(ctxName) {
-				// Fail-closed fallback path (required set unavailable).
+			} else if !serverEnforcedUnknown && isMetaCheck(ctxName) {
 				continue
 			}
 			switch s.GetState() {
@@ -245,12 +380,17 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 					requiredSuccess[ctxName] = true
 				}
 			case "pending":
-				block("status-pending")
-			default: // "failure", "error"
-				if !requiredKnown && isIgnorableCICheck(ctxName) {
-					continue
+				if requiredKnown {
+					block("required-check-pending:" + ctxName)
+				} else {
+					block("status-pending")
 				}
-				block("status-" + s.GetState())
+			default: // "failure", "error"
+				if requiredKnown {
+					block("required-check-failing:" + ctxName)
+				} else if !serverEnforcedUnknown && !isIgnorableCICheck(ctxName) {
+					block("status-" + s.GetState())
+				}
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -281,14 +421,18 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if !required[name] {
 				continue
 			}
-		} else if isMetaCheck(name) {
+		} else if !serverEnforcedUnknown && isMetaCheck(name) {
 			continue
 		}
 		if cr.GetStatus() != "completed" {
-			if !requiredKnown && isIgnorableCICheck(name) {
+			if !requiredKnown && !serverEnforcedUnknown && isIgnorableCICheck(name) {
 				continue
 			}
-			block("check-pending")
+			if requiredKnown {
+				block("required-check-pending:" + name)
+			} else {
+				block("check-pending")
+			}
 			continue
 		}
 		switch cr.GetConclusion() {
@@ -298,10 +442,11 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			}
 		case "neutral", "skipped":
 		default:
-			if !requiredKnown && isIgnorableCICheck(name) {
-				continue
+			if requiredKnown {
+				block("required-check-failing:" + name)
+			} else if !serverEnforcedUnknown && !isIgnorableCICheck(name) {
+				block("check-" + cr.GetConclusion())
 			}
-			block("check-" + cr.GetConclusion())
 		}
 	}
 
@@ -312,9 +457,12 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			}
 		}
 		sort.Strings(st.MissingRequired)
+		if len(st.MissingRequired) > 0 {
+			block("required-check-missing:" + st.MissingRequired[0])
+		}
 	}
 
-	if !requiredKnown && st.Reason == "" {
+	if !requiredKnown && !serverEnforcedUnknown && st.Reason == "" {
 		missingExpected := make([]string, 0)
 		for name := range opts.ExpectedChecks {
 			if !seen[name] {
@@ -346,7 +494,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 }
 
 func commitCIReasonIsPending(reason string) bool {
-	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ")
+	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ") || strings.HasPrefix(reason, "required-check-missing:")
 }
 
 // ExpectedCommitChecksFromRef returns the check-run names that should appear on

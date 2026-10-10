@@ -69,6 +69,7 @@ func (c StallConfig) maxReplans() int {
 type SnapBead struct {
 	ID          string
 	Title       string
+	ExternalRef string
 	Type        beads.BeadType
 	Status      beads.Status
 	ParentEpic  string // parent_epic metadata ("" for non-children)
@@ -88,6 +89,9 @@ type StalledPlan struct {
 	EpicID string
 	// EpicTitle is the stalled epic's title.
 	EpicTitle string
+	// EpicExternalRef is the epic's source reference, for example
+	// "gh-owner/repo#123" for issue-sourced plans.
+	EpicExternalRef string
 	// Remaining are the epic's children that are still open, in-progress, or
 	// blocked (the unfinished work).
 	Remaining []SnapBead
@@ -112,13 +116,14 @@ func SnapshotFromStore(store *beads.Store) []SnapBead {
 	out := make([]SnapBead, 0, len(all))
 	for _, b := range all {
 		sb := SnapBead{
-			ID:         b.ID,
-			Title:      b.Title,
-			Type:       b.Type,
-			Status:     b.Status,
-			ParentEpic: b.Meta(MetaParentEpic),
-			PlanStatus: b.Meta(MetaPlanStatus),
-			UpdatedAt:  b.UpdatedAt.Time,
+			ID:          b.ID,
+			Title:       b.Title,
+			ExternalRef: b.ExternalRef,
+			Type:        b.Type,
+			Status:      b.Status,
+			ParentEpic:  b.Meta(MetaParentEpic),
+			PlanStatus:  b.Meta(MetaPlanStatus),
+			UpdatedAt:   b.UpdatedAt.Time,
 		}
 		if b.ClosedAt != nil {
 			sb.ClosedAt = b.ClosedAt.Time
@@ -213,12 +218,13 @@ func DetectStalledPlans(snap []SnapBead, now time.Time, cfg StallConfig) []Stall
 			continue // still making progress within the window
 		}
 		out = append(out, StalledPlan{
-			EpicID:      epicID,
-			EpicTitle:   epic.Title,
-			Remaining:   a.active,
-			ReplanCount: epic.ReplanCount,
-			CapReached:  epic.ReplanCount >= cap,
-			StalledFor:  stalledFor,
+			EpicID:          epicID,
+			EpicTitle:       epic.Title,
+			EpicExternalRef: epic.ExternalRef,
+			Remaining:       a.active,
+			ReplanCount:     epic.ReplanCount,
+			CapReached:      epic.ReplanCount >= cap,
+			StalledFor:      stalledFor,
 		})
 	}
 

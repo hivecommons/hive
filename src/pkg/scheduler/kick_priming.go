@@ -6,6 +6,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agentsmd"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/skillreg"
 )
 
@@ -230,10 +231,12 @@ func capSkills(skills []skillreg.Skill, capBytes int) (kept []skillreg.Skill, dr
 }
 
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
-// and returns a formatted section for injection into the kick message.
-func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
+// and returns a formatted section for injection into the kick message. The
+// facts are restricted to agentName's knowledge.agent_scopes entry, if any.
+func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) string {
 	s.mu.RLock()
 	primer := s.primer
+	cfg := s.cfg
 	s.mu.RUnlock()
 	if primer == nil || len(issues) == 0 {
 		return ""
@@ -251,7 +254,12 @@ func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
 	}
 
 	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
-	primed := primer.Prime(context.Background(), nil, keywords)
+	var scope *knowledge.TOCScope
+	if sc, ok := cfg.KnowledgeAgentScope(agentName); ok {
+		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)
+		scope = &agentScope
+	}
+	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
 	result := primed.FormatForPrompt()
 	if result != "" {
 		s.logger.Info("knowledge primer: injecting facts into kick", "facts", len(primed.Facts), "chars", len(result))

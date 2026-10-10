@@ -57,6 +57,11 @@ type filePage struct {
 	Path       string
 	ModTime    time.Time
 	Embedding  []float64
+
+	// Lifecycle frontmatter (#11102); see resolveLifecycleState for defaults.
+	State        LifecycleState
+	Supersedes   string
+	SupersededBy string
 }
 
 // NewFileStore creates a store that indexes markdown files under rootDir.
@@ -184,7 +189,7 @@ func (s *FileStore) reindex() {
 		embeddingText := parsed.title + " " + strings.Join(parsed.tags, " ") + " " + parsed.body
 		embedding := s.embedCache.Embed(embeddingText)
 
-		pages[slug] = filePage{
+		page := filePage{
 			Slug:       slug,
 			Title:      parsed.title,
 			Type:       parsed.factType,
@@ -201,6 +206,10 @@ func (s *FileStore) reindex() {
 			ModTime:    info.ModTime(),
 			Embedding:  embedding,
 		}
+		page.State = parsed.state
+		page.Supersedes = parsed.supersedes
+		page.SupersededBy = parsed.supersededBy
+		pages[slug] = page
 
 		return nil
 	})
@@ -313,6 +322,7 @@ func (s *FileStore) Search(query string, limit int) []Fact {
 			Related:    m.page.Related,
 			Layer:      m.page.effectiveLayer(),
 		}, m.page.confidenceInput(s.accessCounts[m.page.Slug]))
+		m.page.applyLifecycle(&facts[i])
 	}
 	return facts
 }
@@ -383,6 +393,7 @@ func (s *FileStore) ReadPage(slug string) (*Fact, error) {
 		Related:    p.Related,
 		Layer:      p.effectiveLayer(),
 	}, p.confidenceInput(s.accessCounts[p.Slug]))
+	p.applyLifecycle(&f)
 	return &f, nil
 }
 
@@ -411,7 +422,7 @@ func (s *FileStore) ListPages(tagFilter string) []Fact {
 		if runes := []rune(snippet); len(runes) > maxSnippetRunes {
 			snippet = string(runes[:maxSnippetRunes]) + "…"
 		}
-		facts = append(facts, applyConfidence(Fact{
+		f := applyConfidence(Fact{
 			Slug:       p.Slug,
 			Title:      p.Title,
 			Type:       p.Type,
@@ -421,7 +432,9 @@ func (s *FileStore) ListPages(tagFilter string) []Fact {
 			Tags:       p.Tags,
 			Related:    p.Related,
 			Layer:      p.effectiveLayer(),
-		}, p.confidenceInput(s.accessCounts[p.Slug])))
+		}, p.confidenceInput(s.accessCounts[p.Slug]))
+		p.applyLifecycle(&f)
+		facts = append(facts, f)
 	}
 
 	sort.Slice(facts, func(i, j int) bool {
@@ -479,6 +492,10 @@ type parsedObsidianFile struct {
 	source     string
 	sourceURL  string
 	sourceDate time.Time
+
+	state        LifecycleState
+	supersedes   string
+	supersededBy string
 }
 
 var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
@@ -523,6 +540,15 @@ func parseObsidianFileDetailed(content string, fallbackTitle string) parsedObsid
 				}
 				if strings.HasPrefix(line, "status:") {
 					parsed.status = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "status:")), "\"'")
+				}
+				if strings.HasPrefix(line, "state:") {
+					parsed.state = LifecycleState(strings.ToLower(strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "state:")), "\"'")))
+				}
+				if strings.HasPrefix(line, "supersedes:") {
+					parsed.supersedes = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "supersedes:")), "\"'")
+				}
+				if strings.HasPrefix(line, "superseded_by:") {
+					parsed.supersededBy = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "superseded_by:")), "\"'")
 				}
 				if strings.HasPrefix(line, "source:") {
 					parsed.source = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "source:")), "\"'")
@@ -613,6 +639,20 @@ func (p filePage) effectiveLayer() LayerType {
 		return p.Layer
 	}
 	return LayerPersonal
+}
+
+// applyLifecycle copies the page's lifecycle and TOC metadata onto f, defaulting
+// legacy pages without a recorded state to approved.
+func (p filePage) applyLifecycle(f *Fact) {
+	f.Supersedes = p.Supersedes
+	f.SupersededBy = p.SupersededBy
+	f.State = resolveLifecycleState(p.State, p.Status, p.SupersededBy)
+	f.Updated = p.ModTime
+	f.BodySize = len(p.Body)
+	f.Origin = p.SourceURL
+	if f.Origin == "" {
+		f.Origin = p.Source
+	}
 }
 
 func (p filePage) confidenceInput(accesses int) confidenceInput {

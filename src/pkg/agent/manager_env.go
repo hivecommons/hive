@@ -156,6 +156,32 @@ func agentGitIdentity(agentName string) (name, email string, ok bool) {
 	return gitidentity.AgentIdentity(agentName)
 }
 
+// bobSessionLabel is the bob reporting label (#11273): the per-agent
+// bob.session_label (or legacy bob_display_name), falling back to
+// governor.bob.session_prefix + agent name. It never alters the functional
+// agent identity.
+func bobSessionLabel(agent *AgentProcess, prefix string) string {
+	if label := strings.TrimSpace(agent.Config.Bob.SessionLabel); label != "" {
+		return label
+	}
+	if label := strings.TrimSpace(agent.Config.BobDisplayName); label != "" {
+		return label
+	}
+	if prefix = strings.TrimSpace(prefix); prefix != "" {
+		return prefix + agent.Name
+	}
+	return ""
+}
+
+// bobDisplayName preserves the legacy HIVE_BOB_DISPLAY_NAME value: configured
+// label when present, otherwise the agent name.
+func bobDisplayName(agent *AgentProcess, prefix string) string {
+	if label := bobSessionLabel(agent, prefix); label != "" {
+		return label
+	}
+	return agent.Name
+}
+
 func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	model := agent.Config.Model
 	if agent.ModelOverride != "" {
@@ -360,6 +386,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		// bug fixed in #2228, so the auth type must ride the always-reapplied
 		// path or a relaunch into an existing session loses it.
 		vars = append(vars, agentEnvPair{config.BobAuthTypeEnvVar, config.BobAuthTypeAPIKey, false})
+		label := bobSessionLabel(agent, m.project.BobSessionPrefix)
+		if label != "" {
+			vars = append(vars, agentEnvPair{"HIVE_BOB_SESSION_LABEL", label, false})
+		}
+		vars = append(vars, agentEnvPair{"HIVE_BOB_DISPLAY_NAME", bobDisplayName(agent, m.project.BobSessionPrefix), false})
 	}
 	// BD_DIR tells the `bd` CLI where to read/write beads. Without this,
 	// bd falls back to cwd (/data/agents/<name>) instead of the configured

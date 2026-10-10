@@ -95,10 +95,31 @@ func TestDashboardSectionHelpCoverage(t *testing.T) {
 			t.Errorf("section %q has no entry in DASHBOARD_SECTION_HELP", m[1])
 		}
 	}
-	for _, id := range []string{"governor", "token-panel", "cost-panel", "advisory-digest-section", "governor-pr-models-section"} {
+	for _, id := range []string{"governor", "token-panel", "cost-panel", "advisory-digest-section", "governor-pr-models-section", "lifecycle-section"} {
 		if _, ok := byID[id]; !ok {
 			t.Errorf("section %q has no entry in DASHBOARD_SECTION_HELP", id)
 		}
+	}
+
+	navTargets := regexp.MustCompile(`<a class="oc-nav-item"[^>]*data-section="([\w-]+)"`).FindAllStringSubmatch(html, -1)
+	if len(navTargets) == 0 {
+		t.Fatal("dashboard sidebar has no section nav items")
+	}
+	foundLifecycleNav := false
+	for _, m := range navTargets {
+		id := m[1]
+		if !strings.Contains(html, `id="`+id+`"`) {
+			t.Errorf("sidebar nav target %q has no matching section id", id)
+		}
+		if _, ok := byID[id]; !ok {
+			t.Errorf("sidebar nav target %q has no entry in DASHBOARD_SECTION_HELP", id)
+		}
+		if id == "lifecycle-section" {
+			foundLifecycleNav = true
+		}
+	}
+	if !foundLifecycleNav {
+		t.Error("Lifecycle Timeline is missing from the dashboard sidebar nav")
 	}
 
 	// Runs and Platform are documented for the v6 line but are not v5 sections.

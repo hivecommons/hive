@@ -1,5 +1,5 @@
 # fixture (basename)<TAB>expected verdict. Every .log here must be listed.
-# Real excerpts from failed hivecommons/hive jobs on 2026-09-29 (toolcache-*: 2026-10-02), trimmed to
+# Real excerpts from failed hivecommons/hive jobs on 2026-09-29 (toolcache-*: 2026-10-02, toolcache-clobbered-rmdir: 2026-10-09), trimmed to
 # the runner header and the failing step (job id in the comment).
 infra-gocache-permission-build	infra:gocache-permission
 infra-gocache-permission-list	infra:gocache-permission
@@ -11,6 +11,7 @@ infra-runner-lost	infra:runner-lost
 infra-test-list-empty	infra:test-list-empty
 infra-toolcache-clobbered-go	infra:toolcache-clobbered
 infra-toolcache-clobbered-copyfile	infra:toolcache-clobbered
+infra-toolcache-clobbered-rmdir	infra:toolcache-clobbered
 infra-toolcache-clobbered-npm	infra:toolcache-clobbered
 infra-upstream-download-5xx	infra:upstream-download-5xx
 derived-shard-gate	derived

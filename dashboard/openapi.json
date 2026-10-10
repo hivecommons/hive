@@ -1720,6 +1720,103 @@
         }
       }
     },
+    "/api/version/release-notes": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Changelog delta between two revisions",
+        "description": "Returns the changelog.d sections present at `to` and absent at `from`, so the dashboard can show what an upgrade brings. Fetch failures are reported in-band with source `unavailable`; only a malformed request is an error status.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Commit SHA of the currently running build",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Target channel, branch, tag or commit SHA",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release-notes delta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "object",
+                      "properties": {
+                        "sha": { "type": "string" },
+                        "version": { "type": "string" }
+                      }
+                    },
+                    "to": {
+                      "type": "object",
+                      "properties": {
+                        "sha": { "type": "string" },
+                        "ref": { "type": "string" },
+                        "version": { "type": "string" }
+                      }
+                    },
+                    "sections": {
+                      "type": "array",
+                      "description": "Released changelog sections newer than `from`, newest first",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "version": { "type": "string" },
+                          "title": { "type": "string" },
+                          "date": { "type": "string" },
+                          "categories": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "array",
+                              "items": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "unreleased": {
+                      "type": "object",
+                      "description": "Pending changelog.d fragments at `to` not yet in a released section; omitted when none"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "True when the delta was cut at the section cap"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": ["changelog", "unavailable"],
+                      "description": "Where the sections came from; `unavailable` when the fetch failed"
+                    },
+                    "error": {
+                      "type": "string",
+                      "description": "In-band fetch/resolve failure detail; omitted on success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "from is not a commit SHA, or to is not a channel, branch, tag or SHA"
+          }
+        }
+      }
+    },
     "/api/config": {
       "get": {
         "tags": [
@@ -11022,6 +11119,935 @@
         }
       }
     },
+    "/api/knowledge/connectors": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List knowledge connectors",
+        "description": "Returns the status of every `knowledge.connectors` entry in config order. `connectors` is empty when none are configured.",
+        "responses": {
+          "200": {
+            "description": "Connector statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "example": "confluence"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string",
+                            "example": "1h0m0s"
+                          },
+                          "last_sync": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_attempt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "pages": {
+                            "type": "integer",
+                            "description": "Pages emitted by the last successful sync"
+                          },
+                          "facts": {
+                            "type": "integer",
+                            "description": "Live facts written by this connector"
+                          },
+                          "deprecated": {
+                            "type": "integer",
+                            "description": "Facts tombstoned (status: deprecated)"
+                          },
+                          "last_error": {
+                            "type": "string"
+                          },
+                          "cursor": {
+                            "type": "string"
+                          },
+                          "running": {
+                            "type": "boolean"
+                          },
+                          "truncated": {
+                            "type": "boolean",
+                            "description": "Last sync stopped at the connector's page cap"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/connectors/{name}/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sync a knowledge connector now",
+        "description": "Owner-only. Starts one sync of the named connector in the background (enabled or not) and returns its status; poll `GET /api/knowledge/connectors` for the outcome.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Connector name"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "example": "confluence"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string",
+                      "example": "1h0m0s"
+                    },
+                    "last_sync": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "last_attempt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "pages": {
+                      "type": "integer",
+                      "description": "Pages emitted by the last successful sync"
+                    },
+                    "facts": {
+                      "type": "integer",
+                      "description": "Live facts written by this connector"
+                    },
+                    "deprecated": {
+                      "type": "integer",
+                      "description": "Facts tombstoned (status: deprecated)"
+                    },
+                    "last_error": {
+                      "type": "string"
+                    },
+                    "cursor": {
+                      "type": "string"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Last sync stopped at the connector's page cap"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, or no connectors configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A sync of this connector is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/publish/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Publish the knowledge mirror now",
+        "description": "Owner-only. Asks the running publish mirror for an immediate batch and returns its status; poll `GET /api/knowledge/connectors` for the outcome.",
+        "responses": {
+          "202": {
+            "description": "Publish batch requested; returns the publish mirror status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connector": {"type": "string"},
+                    "layers": {"type": "array", "items": {"type": "string"}},
+                    "root": {"type": "string"},
+                    "dry_run": {"type": "boolean"},
+                    "active": {"type": "boolean"},
+                    "running": {"type": "boolean"},
+                    "last_run": {"type": "string", "format": "date-time"},
+                    "last_success": {"type": "string", "format": "date-time"},
+                    "pages": {"type": "integer"},
+                    "pages_created": {"type": "integer"},
+                    "pages_updated": {"type": "integer"},
+                    "pages_deprecated": {"type": "integer"},
+                    "pages_unchanged": {"type": "integer"},
+                    "collisions": {"type": "array", "items": {"type": "string"}},
+                    "last_error": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A publish batch is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Publish mirror is not running (configure knowledge.publish and restart the hive)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List configured knowledge connectors",
+        "description": "Returns knowledge.connectors plus the registered connector types. Credentials are never stored here, only an env var name or secret file path.",
+        "responses": {
+          "200": {
+            "description": "Configured connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Replace knowledge connectors",
+        "description": "Replaces knowledge.connectors with the posted list after validating every entry (names, layer, interval, scope keys, auth). Inline secrets are rejected. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connectors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "interval": {
+                          "type": "string"
+                        },
+                        "layer": {
+                          "type": "string"
+                        },
+                        "scope": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "auth": {
+                          "type": "object",
+                          "description": "Env var name or secret file path only; inline secrets are rejected.",
+                          "properties": {
+                            "env": {
+                              "type": "string"
+                            },
+                            "file": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "type",
+                        "layer"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "connectors"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "Env var name or secret file path only; inline secrets are rejected.",
+                            "properties": {
+                              "env": {
+                                "type": "string"
+                              },
+                              "file": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "layer"
+                        ]
+                      }
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/status": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Knowledge connector status",
+        "description": "Per-connector status pill (ok, syncing, error, disabled, pending), last sync, pages, facts and last error. Configuration only when the connector syncer is not running.",
+        "responses": {
+          "200": {
+            "description": "Connector status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runtime": {
+                      "type": "boolean"
+                    },
+                    "connectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "type": "string"
+                          },
+                          "last_sync": {
+                            "type": "string"
+                          },
+                          "pages": {
+                            "type": "integer"
+                          },
+                          "facts": {
+                            "type": "integer"
+                          },
+                          "last_error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/validate": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Validate a knowledge connector entry",
+        "description": "Dry-run validation: config rules, the connector's own scope/auth checks, and that the named credential source resolves locally. No network access; the credential is never echoed. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "interval": {
+                    "type": "string"
+                  },
+                  "layer": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "auth": {
+                    "type": "object",
+                    "description": "Env var name or secret file path only; inline secrets are rejected.",
+                    "properties": {
+                      "env": {
+                        "type": "string"
+                      },
+                      "file": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "layer"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/agent-scopes": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "List per-agent knowledge scopes",
+        "description": "Returns knowledge.agent_scopes: the layers, repos, types, tags and include_states each agent's kick primer and ?agent= knowledge reads are restricted to.",
+        "responses": {
+          "200": {
+            "description": "Configured agent scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent_scopes": {
+                      "type": "object",
+                      "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "layers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "repos": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "include_states": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "states": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Replace per-agent knowledge scopes",
+        "description": "Replaces knowledge.agent_scopes after validating layer and lifecycle state names, persists hive.yaml and writes a config_knowledge_agent_scopes audit entry. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent_scopes": {
+                    "type": "object",
+                    "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "layers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "include_states": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "agent_scopes"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved agent scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent_scopes": {
+                      "type": "object",
+                      "description": "Agent name to knowledge scope. A missing agent or an empty field is unrestricted.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "layers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "repos": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "include_states": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "layers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "states": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "403": {
+            "description": "Owner role required"
+          }
+        }
+      }
+    },
+    "/api/config/knowledge/connectors/{name}/sync": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Sync a knowledge connector now",
+        "description": "Starts an immediate background sync of the named connector. Poll the status endpoint for progress. Requires owner role.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync started"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown connector"
+          },
+          "409": {
+            "description": "Sync already in progress"
+          },
+          "503": {
+            "description": "Connector syncer is not running"
+          }
+        }
+      }
+    },
     "/api/knowledge/git-sources": {
       "get": {
         "tags": [
@@ -11479,6 +12505,607 @@
           },
           "400": {
             "description": "Neither q nor tag provided"
+          }
+        }
+      }
+    },
+    "/api/knowledge/toc": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Scoped knowledge table of contents",
+        "description": "Capped, body-free table of contents of the knowledge visible under the requested scope. Approved entries only unless `include_states` is set. Read an entry in full with `/api/knowledge/entry/{id}`. Returns `{\"enabled\": false, \"entries\": []}` if knowledge is not enabled.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Calling agent; restricts the result to its `knowledge.agent_scopes` entry, which the other scope parameters can only narrow"
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum entries (default 50, max 200)"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Set to `prompt` to also return a size-bounded markdown rendering in `prompt`"
+          },
+          {
+            "name": "max_chars",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Character budget for `format=prompt` (default 4000)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table of contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          },
+                          "confidence": {
+                            "type": "number"
+                          },
+                          "updated": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "size_bytes": {
+                            "type": "integer"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "superseded_by": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "In-scope entries before the cap"
+                    },
+                    "returned": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          }
+        }
+      }
+    },
+    "/api/knowledge/effective": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Effective knowledge for an agent",
+        "description": "Explains the knowledge an agent would receive: its `knowledge.agent_scopes` entry (unrestricted when the agent has none) intersected with the request scope, which defaults to approved knowledge only. Returns the TOC entries the agent receives and the entries filtered out, each with the reason code of the first failing check (lifecycle, layer, repo, type, tag). Returns `{\"enabled\": false}` with empty lists if knowledge is not enabled.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name whose `knowledge.agent_scopes` entry is explained"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Lifecycle states the request admits besides approved (draft, deprecated, superseded, or `all`); the agent's own `include_states` still applies"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Maximum entries per list (default 50, max 200)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective knowledge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "object",
+                      "description": "Resolved scope applied",
+                      "properties": {
+                        "agent": {
+                          "type": "string"
+                        },
+                        "configured": {
+                          "type": "boolean",
+                          "description": "Whether the agent has a knowledge.agent_scopes entry"
+                        },
+                        "layers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "include_states": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "included": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "excluded": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "draft",
+                              "approved",
+                              "deprecated",
+                              "superseded"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "lifecycle",
+                              "layer",
+                              "repo",
+                              "type",
+                              "tag"
+                            ],
+                            "description": "First failing check, in the order lifecycle, layer, repo, type, tag"
+                          }
+                        }
+                      }
+                    },
+                    "included_total": {
+                      "type": "integer"
+                    },
+                    "excluded_total": {
+                      "type": "integer"
+                    },
+                    "included_returned": {
+                      "type": "integer"
+                    },
+                    "excluded_returned": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Either list was capped at limit"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing agent or invalid include_states"
+          }
+        }
+      }
+    },
+    "/api/knowledge/entry/{id}": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read one knowledge entry in full",
+        "description": "Returns the complete markdown (YAML front-matter plus body) of one entry. The same scope and lifecycle filter as the table of contents applies; an entry outside it returns 404.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Calling agent; restricts the result to its `knowledge.agent_scopes` entry, which the other scope parameters can only narrow"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Entry id (slug) from the table of contents"
+          },
+          {
+            "name": "layers",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated layer allow-list (personal, project, org, community)"
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated repositories; entries tagged `repo:<name>` outside the list are hidden, untagged (org-wide) entries always pass"
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated fact type allow-list"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated tag allow-list (match any)"
+          },
+          {
+            "name": "include_states",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Operator opt-in for non-approved entries: comma-separated draft, deprecated, superseded, or `all`. Default is approved only"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "markdown": {
+                      "type": "string"
+                    },
+                    "fact": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid include_states value"
+          },
+          "404": {
+            "description": "Entry not found or outside the requested scope"
+          }
+        }
+      }
+    },
+    "/api/knowledge/entry/{id}/state": {
+      "put": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Change the lifecycle state of a knowledge entry",
+        "description": "Owner-only lifecycle change (draft, approved, deprecated, superseded) of an entry in a locally writable channel. `superseded` requires `superseded_by` naming another entry in the same channel; any other state rejects it. Every change is written to the audit log with the actor, previous and new state and the operator's reason (truncated to 500 characters).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Entry id (slug)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "approved",
+                      "deprecated",
+                      "superseded"
+                    ]
+                  },
+                  "superseded_by": {
+                    "type": "string",
+                    "description": "Replacement entry id; required when state is superseded"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Operator reason recorded in the audit log"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lifecycle change applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "previous_state": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "superseded_by": {
+                      "type": "string"
+                    },
+                    "fact": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown state, superseded/superseded_by mismatch, self-supersede, or replacement not in the same channel"
+          },
+          "403": {
+            "description": "Caller is not an owner"
+          },
+          "404": {
+            "description": "Entry not found in a writable channel"
+          },
+          "500": {
+            "description": "State change could not be written"
+          },
+          "503": {
+            "description": "Knowledge not enabled"
           }
         }
       }
@@ -18001,6 +19628,101 @@
         }
       }
     },
+    "/api/config/upstream-watch": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Edit the upstream_watch block",
+        "description": "Owner-only. Edits upstream_watch from the Features tab: the global enabled switch, the poll interval, and per-repo add / update / remove. Every field is optional and an omitted key leaves that setting unchanged; a repo mapped to null is removed. Repo keys are stored as the bare repo name (an org-qualified key is rewritten). The candidate block is validated with the config loader's own rules before the live config changes, then persisted with saveConfig and recorded as a config_upstream_watch audit entry. The poll loop reads the live config each tick, so no restart is needed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Turn the watch on or off."
+                  },
+                  "interval": {
+                    "type": "string",
+                    "description": "Poll interval as a Go duration (for example 6h or 30m); empty restores the default."
+                  },
+                  "repos": {
+                    "type": "object",
+                    "description": "Per-repo patches keyed by repo name. null removes the repo; an absent field in a patch is left unchanged.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "upstream": {
+                          "type": "string",
+                          "description": "owner/repo this fork follows."
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Upstream sources to watch (commits, prs); empty means both."
+                        },
+                        "pr_labels": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Only surface upstream PRs carrying one of these labels; empty means all."
+                        },
+                        "max_issues_per_run": {
+                          "type": "integer",
+                          "description": "Cap on fork issues opened per run."
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "Label applied to the fork issues the watch opens."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Config updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "updated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, nothing to update, bad interval, or the candidate block failed validation (config unchanged)"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "500": {
+            "description": "Config could not be persisted (live config rolled back)"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/upstream-watch": {
       "get": {
         "tags": [
@@ -18271,6 +19993,56 @@
         }
       }
     },
+    "/api/webhook/github": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GitHub App webhook receiver",
+        "description": "Public webhook endpoint for GitHub App deliveries, sent directly by GitHub or relayed by the hub. Fails closed without GITHUB_WEBHOOK_SECRET and verifies X-Hub-Signature-256 over the raw body. pull_request, pull_request_review, check_suite, check_run, status, issue_comment (on PRs) and push events invalidate the matching cached PR state and mark it dirty for the next eval cycle; every delivery for a managed repository refreshes webhook health. Deliveries for unmanaged repositories are ignored.",
+        "responses": {
+          "200": {
+            "description": "Processed or ignored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "invalidated": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing X-GitHub-Event header or malformed payload"
+          },
+          "401": {
+            "description": "Invalid signature"
+          },
+          "503": {
+            "description": "No webhook secret configured"
+          }
+        }
+      }
+    },
     "/api/linear/webhook": {
       "post": {
         "tags": [
@@ -18453,6 +20225,606 @@
           },
           "500": {
             "description": "Failed to render QR"
+          }
+        }
+      }
+    },
+    "/api/compliance/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance control status",
+        "description": "Evaluates every control of the frameworks selected in compliance.frameworks (pkg/compliance profiles: soc2-type2, fedramp-moderate, iso27001-annex-a) against the live config and reports meets/deviates/off/not_covered per control with current vs recommended values per mapped setting. Posture-check results are served by /api/compliance/posture. Read-only; requires merger or owner role. Not a certification.",
+        "responses": {
+          "200": {
+            "description": "compliance.Report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "frameworks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "unknown_frameworks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "available": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "controls": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "posture_check_interval": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "meets": {
+                          "type": "integer"
+                        },
+                        "deviates": {
+                          "type": "integer"
+                        },
+                        "off": {
+                          "type": "integer"
+                        },
+                        "not_covered": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "controls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.ControlStatus: framework, control_id, title, text, citation, domain, status, not_covered, rationale, settings[] (setting_path, kind, description, evaluator, current, recommended, status, builtin)"
+                      }
+                    },
+                    "profile_load_error": {
+                      "type": "string"
+                    },
+                    "posture_checks_pending": {
+                      "type": "boolean"
+                    },
+                    "posture_checks_tracking": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture-check results",
+        "description": "Returns the posture-check catalogue (pkg/compliance: non-author review, owner not auto-merge author, audit retention, agent confinement, sentinel enabled, no secrets in config, dashboard auth, hold labels exist) and the latest pass, persisted under /data. With ?since= (RFC 3339 time, YYYY-MM-DD date or a look-back duration such as 168h) also returns every pass since then, oldest first, capped at 1000. Requires merger or owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Return the history since this RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "interval": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "history_days": {
+                      "type": "integer"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureCheckInfo: id, title, control_ids[]"
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "nullable": true,
+                      "description": "compliance.PostureRun: at, trigger (schedule|manual), summary {pass, fail, skip, error}, results[] (check_id, title, control_ids, at, pass, status pass|fail|skip|error, detail, evidence_refs)"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureRun"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since parameter"
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/history": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get compliance posture history as per-check time series",
+        "description": "Settings \u2192 Compliance posture panel (#11081). Returns the posture-check history in [since, until) grouped into one series per check: points (at, status), status counts, the last failure time and the latest result with its detail and evidence refs. At most the 1000 most recent runs are included (truncated: true when more matched). Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.compliancePostureHistoryResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "until": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "runs": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.PostureSeries: check_id, title, control_ids[], points[] (at, status pass|fail|skip|error), summary {pass, fail, skip, error}, last_fail_at, last (compliance.Result)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/export": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Download compliance evidence",
+        "description": "Settings \u2192 Compliance evidence exports (#11081). Downloads (Content-Disposition: attachment) one evidence kind for [since, until): controls = control-mapping report (json|md); posture = posture history (json|csv); audit = audit log slice with covered_from, the oldest entry found, because the log rotates by size (json); config = redacted effective config with the sha256 of its exact embedded bytes (json); attestations = owner attestations (json|csv); bundle = all of the above (json). JSON exports carry meta {kind, disclaimer, hive_id, generated_at, since, until}. Every export is audited as compliance_export. Requires owner role. Not a certification.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "controls",
+                "posture",
+                "audit",
+                "config",
+                "attestations",
+                "bundle"
+              ]
+            },
+            "description": "Evidence kind"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "md",
+                "csv"
+              ]
+            },
+            "description": "Output format; defaults to json. md is valid for controls, csv for posture and attestations"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range start: RFC 3339 time, YYYY-MM-DD date or look-back duration (e.g. 168h). Default: 30 days before until"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Range end (exclusive): RFC 3339 time, or YYYY-MM-DD meaning the end of that day. Default: now"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown kind, unsupported format, or invalid since/until"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "500": {
+            "description": "Export could not be built"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/attestations": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List compliance owner attestations",
+        "description": "Settings \u2192 Compliance attestations (#11081). Every recorded attestation (\"reviewed <framework> on <date> by <login>\"), newest first, persisted under /data. ?framework= filters to one profile id. Requires owner role. An attestation records that a person reviewed the controls; it is not a pass/fail verdict.",
+        "parameters": [
+          {
+            "name": "framework",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Profile id to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "dashboard.complianceAttestationsResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "attestations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "framework": {
+                            "type": "string"
+                          },
+                          "reviewed_on": {
+                            "type": "string",
+                            "description": "YYYY-MM-DD"
+                          },
+                          "by": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record a compliance owner attestation",
+        "description": "Settings \u2192 Compliance attestations (#11081). The signed-in owner records that they reviewed a framework's controls on reviewed_on (YYYY-MM-DD, not in the future) with an optional note (at most 2000 characters). The attesting login comes from the session, not the body. Written to the audit log as compliance_attestation and to the attestation store. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "framework",
+                  "reviewed_on"
+                ],
+                "properties": {
+                  "framework": {
+                    "type": "string",
+                    "description": "Shipped profile id, e.g. soc2-type2"
+                  },
+                  "reviewed_on": {
+                    "type": "string",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "compliance.Attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "framework": {
+                      "type": "string"
+                    },
+                    "reviewed_on": {
+                      "type": "string",
+                      "description": "YYYY-MM-DD"
+                    },
+                    "by": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown framework, bad or future date, or note too long"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
+    "/api/config/governor/compliance": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Select compliance framework profiles",
+        "description": "Settings \u2192 Compliance framework picker (#11080). Sets compliance.frameworks to the given profile ids (case-insensitive; an empty list deselects every framework; an absent key leaves the selection unchanged). Unknown, malformed, blank or duplicate ids are rejected with 400 before anything changes. Persists the config, is audited as config_compliance, and returns the re-evaluated compliance.Report. Requires owner role. Selecting a framework is not a certification claim.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "frameworks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "compliance.Report (same shape as GET /api/compliance/status)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or framework id"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
+    "/api/compliance/posture/run": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Run the compliance posture checks now",
+        "description": "Runs one posture-check pass immediately and records it in the history like a scheduled pass; the run is written to the audit log (compliance_posture_run). Requires merger or owner role.",
+        "responses": {
+          "200": {
+            "description": "compliance.PostureRun",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "pass": {
+                          "type": "integer"
+                        },
+                        "fail": {
+                          "type": "integer"
+                        },
+                        "skip": {
+                          "type": "integer"
+                        },
+                        "error": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "compliance.Result: check_id, title, control_ids, at, pass, status, detail, evidence_refs"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Merger or owner access required"
+          },
+          "409": {
+            "description": "No compliance framework selected, or a posture run is already in progress"
+          },
+          "503": {
+            "description": "Config unavailable"
           }
         }
       }
@@ -18821,6 +21193,56 @@
           },
           "403": {
             "description": "Not signed in, or read-only role"
+          }
+        }
+      }
+    },
+    "/api/system-alerts/dismiss": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dismiss a plan-stall system alert",
+        "description": "Owner-only acknowledgement for a needs-human plan-stall banner. The replan lane may reassert the alert if the plan remains stalled.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or non-dismissible alert id"
+          },
+          "403": {
+            "description": "Owner access required"
           }
         }
       }
@@ -20197,6 +22619,62 @@
                     "type": "integer",
                     "nullable": true,
                     "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
+                  },
+                  "severity": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.severity blocking line (hivecommons/hive#11088). block_at also drives classification.review_bots.min_priority when that is not set explicitly.",
+                    "properties": {
+                      "block_at": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["", "P1", "P2", "P3"]
+                      },
+                      "comment_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      },
+                      "backlog_below": {
+                        "type": "boolean",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "backlog": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "review.backlog destination for findings below the blocking line (hivecommons/hive#11088). github_project, linear and jira require the matching governor.work_source.type.",
+                    "properties": {
+                      "destination": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": ["github_issue", "github_project", "linear", "jira"]
+                      },
+                      "project_column_id": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "linear_state": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "jira_status": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "labels": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "max_per_pr_per_day": {
+                        "type": "integer",
+                        "nullable": true,
+                        "minimum": 0
+                      }
+                    }
                   }
                 }
               }
@@ -20302,6 +22780,755 @@
           },
           "500": {
             "description": "Review verdicts unreadable"
+          }
+        }
+      }
+    },
+    "/api/review/evidence": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review evidence bundle for a PR",
+        "description": "Owner or merger role. Returns the signed review-evidence bundle (pkg/evidence) persisted for a PR. Default is the bundle for the latest head; `head` selects a specific head SHA (full or unique 7+ char prefix). `format=json` (default) returns the bundle bytes exactly as stored so the hash/signature verify offline; `download=1` adds a Content-Disposition attachment. `format=zip` streams a zip with bundle.json, verdicts.json (matching review verdict reports), review-links.json (the PR's review-links slice) and manifest.json (sha256 per file plus the signing public key when available).",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository as owner/repo."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          },
+          {
+            "name": "head",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Head SHA (or unique prefix of at least 7 characters) selecting one bundle; default is the newest bundle."
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "zip"
+              ],
+              "default": "json"
+            },
+            "description": "Response format."
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "When 1 with format=json, sets Content-Disposition: attachment."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence bundle (JSON) or zip archive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "head_sha": {
+                      "type": "string"
+                    },
+                    "previous_bundle_id": {
+                      "type": "string"
+                    },
+                    "verdicts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "merge": {
+                      "type": "object"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "signed": {
+                      "type": "boolean"
+                    },
+                    "hash": {
+                      "type": "string"
+                    },
+                    "signature": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid repo/number/format"
+          },
+          "403": {
+            "description": "Caller lacks owner or merger role"
+          },
+          "404": {
+            "description": "No bundle for the PR/head. `status` is `expired` (with `expired: true`) when the retention policy aged the bundle out, otherwise `not_found`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "expired",
+                        "not_found"
+                      ]
+                    },
+                    "expired": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "head": {
+                      "type": "string"
+                    },
+                    "retention": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "head prefix matches more than one bundle"
+          }
+        }
+      }
+    },
+    "/api/review/evidence/list": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review evidence bundles recorded for a PR",
+        "description": "Owner or merger role. Lists every retained evidence bundle for a PR (oldest first) with its id, head, hash, signed flag, verdict count and merged flag; `latest` names the bundle /api/review/evidence returns by default. `expired` is true when bundles existed but retention removed them.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository as owner/repo."
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence bundle index for the PR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "latest": {
+                      "type": "string"
+                    },
+                    "bundles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "previous_bundle_id": {
+                            "type": "string"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updated_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "hash": {
+                            "type": "string"
+                          },
+                          "signed": {
+                            "type": "boolean"
+                          },
+                          "verdicts": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "expired": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "retention": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid repo/number"
+          },
+          "403": {
+            "description": "Caller lacks owner or merger role"
+          }
+        }
+      }
+    },
+    "/api/review/pipeline": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Review pipeline stage per PR",
+        "description": "One card per review-queue PR, placed in its review pipeline stage (unreviewed, reviewing, changes_requested, fixing, human_hold, approved, merged, abandoned) by the pure pkg/review/pipeline derivation, with since, reviewers, P0-P3 severity counts, loop count vs cap, the next action and the reasons. Reads only the last enumeration snapshot, the review verdict artifact, the review dispatch state and the review-links ledger, so a request never calls GitHub. Keeps review-queue order; repo and stage filter before paging with limit/offset.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only PRs in this repository (owner/repo or bare name)."
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unreviewed",
+                "reviewing",
+                "changes_requested",
+                "fixing",
+                "human_hold",
+                "approved",
+                "merged",
+                "abandoned"
+              ]
+            },
+            "description": "Only cards in this pipeline stage."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of cards to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of review pipeline cards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "snapshot_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "cards": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "hive_authored": {
+                            "type": "boolean"
+                          },
+                          "ci_state": {
+                            "type": "string"
+                          },
+                          "stage": {
+                            "type": "string",
+                            "enum": [
+                              "unreviewed",
+                              "reviewing",
+                              "changes_requested",
+                              "fixing",
+                              "human_hold",
+                              "approved",
+                              "merged",
+                              "abandoned"
+                            ]
+                          },
+                          "since": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "perspective": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "severity": {
+                            "type": "object",
+                            "properties": {
+                              "p0": {
+                                "type": "integer"
+                              },
+                              "p1": {
+                                "type": "integer"
+                              },
+                              "p2": {
+                                "type": "integer"
+                              },
+                              "p3": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "loop_count": {
+                            "type": "integer"
+                          },
+                          "loop_cap": {
+                            "type": "integer"
+                          },
+                          "next_action": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "reasons": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "enum": [
+                              "event",
+                              "event_pending",
+                              "cadence"
+                            ],
+                            "description": "How the current head reached review: event (webhook dispatch fired), event_pending (queued), or cadence. Omitted when neither applies."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit, offset or stage"
+          },
+          "500": {
+            "description": "Review verdicts, dispatch state or review links unreadable"
+          }
+        }
+      }
+    },
+    "/api/review/dispatch/events": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Webhook review dispatch queue",
+        "description": "The in-memory queue of webhook-triggered review dispatches (pull_request opened, reopened, synchronize, ready_for_review, review_requested). A delivery is debounced per PR (review.event_debounce_s, default 90 s) so a push burst fires once for its final head; a head that already fired is not dispatched again; the queue is bounded. Firing wakes the governor for an early eval cycle with the PR first in line, so every cadence gate still applies. Read-only; never calls GitHub.",
+        "responses": {
+          "200": {
+            "description": "Queue status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "webhooks_configured": {
+                      "type": "boolean"
+                    },
+                    "debounce_s": {
+                      "type": "integer"
+                    },
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "recent": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "due_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "coalesced": {
+                            "type": "integer"
+                          },
+                          "fired_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "received": {
+                          "type": "integer"
+                        },
+                        "queued": {
+                          "type": "integer"
+                        },
+                        "coalesced": {
+                          "type": "integer"
+                        },
+                        "duplicates": {
+                          "type": "integer"
+                        },
+                        "dropped": {
+                          "type": "integer"
+                        },
+                        "fired": {
+                          "type": "integer"
+                        },
+                        "wakes": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "max_pending": {
+                      "type": "integer"
+                    },
+                    "last_wake": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review/pipeline/{owner}/{repo}/{number}/send-to-human": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Hand a review-pipeline PR to a human",
+        "description": "Applies the needs-human label to the PR and, once, posts the loop-safety comment explaining why the automated review loop stopped. Merger or owner role required. Idempotent: a PR that already carries the marker comment only gets the label refreshed.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository owner."
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository name."
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Pull request number."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the PR is handed to a human; defaults to the loop-safety cap wording."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PR labelled and comment posted (or already present)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "sent_to_human"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "posted": {
+                      "type": "boolean",
+                      "description": "true when this call posted the loop-safety comment; false when it was already present."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository, PR number or JSON body"
+          },
+          "403": {
+            "description": "Merger/owner role required, authenticated user required, or repository not managed by this hive"
+          },
+          "502": {
+            "description": "GitHub label or comment write failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
           }
         }
       }

@@ -185,6 +185,93 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWithoutDispatchState(t *testin
 	}
 }
 
+func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 2, review.PerspectiveSecurity, "reviewer"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+
+	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 || artifact.Items[0].Repo != "o/r" || artifact.Items[0].Number != 1 || artifact.Items[0].HeadSHA != "abc123" {
+		t.Fatalf("advisory verdict with unrelated dispatch state was not collected: %+v", artifact.Items)
+	}
+}
+
+// A lane this hive does not review with must not be able to record a verdict
+// that no dispatch row binds: the verdict feeds the merge gate and the
+// close recommendation, so a non-reviewer that can reach the relay could
+// otherwise approve or veto any PR it did not author.
+func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchMatch(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{
+		pendingVerdict("o/r", 1, review.PerspectiveSecurity, "reviewer"),
+	}})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("non-reviewer verdict without dispatch was recorded: %v", matches)
+	}
+}
+
+func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchState(t *testing.T) {
+	dir := t.TempDir()
+	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath
+	review.ReviewDispatchStatePath = filepath.Join(dir, "missing", review.ReviewDispatchStateFile)
+	review.LegacyReviewDispatchStatePath = filepath.Join(dir, "missing-legacy", review.ReviewDispatchStateFile)
+	t.Cleanup(func() {
+		review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath = oldPath, oldLegacy
+	})
+	reportDir := filepath.Join(dir, "reports")
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "reject", "abc123")
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("non-reviewer verdict without dispatch state was recorded: %v", matches)
+	}
+}
+
+// The configured reviewer set, not the lane's name, decides when an operator
+// has named review.reviewer_agents: a lane called "reviewer" that is not in
+// the set is refused, and a lane with no review token that is in the set is
+// accepted.
+func TestRecordReviewVerdictHonoursConfiguredReviewerSet(t *testing.T) {
+	dir := t.TempDir()
+	reportDir := filepath.Join(dir, "reports")
+	reviewers := review.ReviewerAgentSet([]string{"auditor"})
+	c := &Client{logger: testLogger(), reviewerAgent: func(agent string) bool {
+		return review.ReviewCapable(review.AgentCapability{Name: agent}, reviewers)
+	}}
+	withVerdictDispatchState(t, review.DispatchState{})
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("lane outside reviewer_agents was recorded: %v", matches)
+	}
+
+	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "auditor", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 || artifact.Items[0].HeadSHA != "abc123" {
+		t.Fatalf("configured reviewer verdict was not collected: %+v", artifact.Items)
+	}
+}
+
 func TestRecordReviewVerdictRejectsAdvisoryVerdictWithoutHead(t *testing.T) {
 	dir := t.TempDir()
 	oldPath, oldLegacy := review.ReviewDispatchStatePath, review.LegacyReviewDispatchStatePath

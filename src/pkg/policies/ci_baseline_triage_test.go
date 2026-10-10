@@ -118,3 +118,17 @@ func TestFixPoliciesStampSharedCIIncidentMarker(t *testing.T) {
 		})
 	}
 }
+
+func TestScannerPoliciesNeverPushContentToUnauthoredPRs(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"scanner.md", "scanner-full.md", "scanner-holdgated.md", "scanner-automerge.md"} {
+		embedded, err := DefaultPolicies.ReadFile(path.Join("defaults", name))
+		if err != nil {
+			t.Fatalf("read embedded policy: %v", err)
+		}
+		if !bytes.Contains(embedded, []byte("Never push content to PRs this hive did not author")) {
+			t.Errorf("%s is missing the no-content-push rule for PRs the hive did not author", name)
+		}
+	}
+}

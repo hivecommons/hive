@@ -86,39 +86,69 @@ func (s *Scheduler) agentRole(agentName string) string {
 	return baseName
 }
 
+// Idle reasons for a reviewer-lane kick that has nothing to do. They are the
+// reason a scheduled kick is skipped (#11046) and are logged with the skip.
+const reviewerLaneIdleNothingToAdjudicate = "nothing to adjudicate"
+
+func reviewerLaneIdleDormant() string {
+	return fmt.Sprintf("dormant below ACMM %d", reviewerLaneMinACMMLevel)
+}
+
+// reviewerLaneGate is the single place that answers "is the reviewer lane
+// awake, and does it have work?". It returns the hive's ACMM level, the
+// escalated work list, and a non-empty idleReason when either gate says the
+// lane has nothing to do this kick.
+//
+// THE TWO GATES ARE EVALUATED IN GO, BEFORE ANY TEMPLATE IS READ, AND THAT IS
+// THE WHOLE REASON A TEMPLATE IS SAFE TO SHIP (#5617 item 2).
+//
+// loadNamedTemplate honours operator overrides on disk, so the contract text
+// is editable — which is the point of templating it. Neither of these
+// decisions is: an edited template must not be able to un-dormant the lane on
+// a low-trust hive, and must not be able to invent work when the queue is
+// empty. Keeping both in code means the worst an operator can do to this
+// template is change the WORDING of a kick that was already going to be sent.
+func (s *Scheduler) reviewerLaneGate() (level int, workList, idleReason string) {
+	if s.cfg.ACMMLevel != nil {
+		level = *s.cfg.ACMMLevel
+	}
+	if level < reviewerLaneMinACMMLevel {
+		return level, "", reviewerLaneIdleDormant()
+	}
+	workList = s.buildReviewerWorkList()
+	if workList == "" {
+		return level, "", reviewerLaneIdleNothingToAdjudicate
+	}
+	return level, workList, ""
+}
+
 // buildReviewerMessage is the hardcoded-fallback kick for reviewer-role
 // agents, mirroring buildQualityMessage's structure. It renders the escalated
 // hive-authored PR work list (from ci-failing.json) and the adjudication
 // contract — or a dormant notice when the hive's ACMM level is below the gate.
 func (s *Scheduler) buildReviewerMessage(agentName string, actionable *github.ActionableResult) string {
-	level := 0
-	if s.cfg.ACMMLevel != nil {
-		level = *s.cfg.ACMMLevel
-	}
+	msg, _ := s.buildReviewerLaneMessage(agentName, actionable)
+	return msg
+}
 
-	// THE TWO GATES BELOW ARE EVALUATED IN GO, BEFORE ANY TEMPLATE IS READ, AND
-	// THAT IS THE WHOLE REASON A TEMPLATE IS SAFE TO SHIP (#5617 item 2).
-	//
-	// loadNamedTemplate honours operator overrides on disk, so the contract text
-	// is editable — which is the point of templating it. Neither of these
-	// decisions is: an edited template must not be able to un-dormant the lane on
-	// a low-trust hive, and must not be able to invent work when the queue is
-	// empty. Keeping both in code means the worst an operator can do to this
-	// template is change the WORDING of a kick that was already going to be sent.
-	if level < reviewerLaneMinACMMLevel {
+// buildReviewerLaneMessage is buildReviewerMessage plus the idle reason from
+// reviewerLaneGate. A non-empty idleReason means the returned message is a
+// stand-down: scheduled kicks drop it (#11046), and a forced kick renders it
+// without any instruction to go and work a repo (#11045).
+func (s *Scheduler) buildReviewerLaneMessage(agentName string, actionable *github.ActionableResult) (message, idleReason string) {
+	level, workList, idleReason := s.reviewerLaneGate()
+	switch {
+	case level < reviewerLaneMinACMMLevel:
 		return reviewerKickHeader(agentName) + fmt.Sprintf(
 			"⛔ REVIEWER LANE DORMANT: this hive runs at ACMM level %d; the escalated-PR\n"+
 				"adjudication lane requires level %d or above. The needs-human queue belongs\n"+
 				"entirely to human operators at this level. Do NOT touch, comment on, relabel,\n"+
 				"rebase, or close any PR. Stand down this kick.\n",
-			level, reviewerLaneMinACMMLevel)
-	}
-
-	workList := s.buildReviewerWorkList()
-	if workList == "" {
+			level, reviewerLaneMinACMMLevel), idleReason
+	case idleReason != "":
 		return reviewerKickHeader(agentName) +
 			"ESCALATED PRs AWAITING ADJUDICATION: (none)\n" +
-			"Nothing to adjudicate — stand down this kick. Do NOT go hunting for other work.\n"
+			"Nothing to adjudicate — stand down this kick. Do NOT go hunting for other work.\n", idleReason
 	}
 
 	// The shipped template renders the same contract from
@@ -129,9 +159,9 @@ func (s *Scheduler) buildReviewerMessage(agentName string, actionable *github.Ac
 	// override that reads as empty — because a reviewer with no contract is far
 	// worse than one with the compiled-in wording.
 	if rendered := s.renderReviewerLaneTemplate(agentName, actionable, level, workList); rendered != "" {
-		return rendered
+		return rendered, ""
 	}
-	return s.buildReviewerMessageHardcoded(agentName, level, workList)
+	return s.buildReviewerMessageHardcoded(agentName, level, workList), ""
 }
 
 // reviewerKickHeader is the two-line preamble every reviewer kick opens with,

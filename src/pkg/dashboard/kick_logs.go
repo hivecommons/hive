@@ -60,9 +60,8 @@ func (s *Server) handleAgentKickLog(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentKickHistoryPage serves GET /agents/{name}/kicks: a minimal HTML
 // index of the agent's run-log history — the live log of the current run
-// first, then every archived kick, newest first, each with view and download
-// links. It follows the dashboard's open-in-a-new-tab pattern for logs
-// rather than embedding a viewer.
+// first, then every archived kick, newest first, each with an inline view link.
+// Download remains an explicit API opt-in, not a browser UI affordance.
 func (s *Server) handleAgentKickHistoryPage(w http.ResponseWriter, r *http.Request) {
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		http.Error(w, "agent manager unavailable", http.StatusServiceUnavailable)
@@ -98,8 +97,8 @@ table{border-collapse:collapse;margin-top:1rem}td,th{padding:.3rem .9rem;text-al
 		for _, info := range infos {
 			id := html.EscapeString(info.ID)
 			_, _ = fmt.Fprintf(w,
-				`<tr><td>%s</td><td>%s</td><td>%d B</td><td><a href="/api/agents/%s/kicks/%s" target="_blank">view</a> · <a href="/api/agents/%s/kicks/%s?download=1">download</a></td></tr>`,
-				info.Timestamp.UTC().Format(time.RFC3339), html.EscapeString(info.Reason), info.SizeBytes, esc, id, esc, id)
+				`<tr><td>%s</td><td>%s</td><td>%d B</td><td><a href="/api/agents/%s/kicks/%s" target="_blank">view</a></td></tr>`,
+				info.Timestamp.UTC().Format(time.RFC3339), html.EscapeString(info.Reason), info.SizeBytes, esc, id)
 		}
 		_, _ = fmt.Fprint(w, `</table>`)
 	}

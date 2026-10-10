@@ -59,8 +59,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: src/go.mod
+          sparse-checkout: |
+            src/go.mod
+            .github/scripts/go-toolcache-guard.sh
           sparse-checkout-cone-mode: false
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6.3.0
         with:
           go-version-file: src/go.mod

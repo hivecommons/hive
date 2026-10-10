@@ -128,6 +128,8 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"staleTimeout":        staleTimeout,
 			"restartStrategy":     restartStrategy,
 			"model":               model,
+			"bobSessionLabel":     firstNonEmpty(agentCfg.Bob.SessionLabel, agentCfg.BobDisplayName),
+			"bobSessionPrefix":    s.deps.Config.Governor.Bob.SessionPrefix,
 			"clearOnKick":         agentCfg.ClearOnKick,
 			"onDemand":            agentCfg.OnDemand,
 			"continuous":          agentCfg.Continuous,
@@ -429,6 +431,27 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["launchCmd"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.LaunchCmd = sanitizeString(s)
+		}
+	}
+	if v, ok := body["bobSessionLabel"]; ok {
+		if str, ok := v.(string); ok {
+			label := sanitizeString(str)
+			if err := config.ValidateBobSessionLabel("bob.session_label", label); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if label == "" {
+				prefix := strings.TrimSpace(s.deps.Config.Governor.Bob.SessionPrefix)
+				if prefix != "" && len(prefix+name) > config.MaxBobSessionLabelLen {
+					jsonError(w, fmt.Sprintf("bob.session_label is required for %q because governor.bob.session_prefix plus agent name is longer than %d characters", name, config.MaxBobSessionLabelLen), http.StatusBadRequest)
+					return
+				}
+			}
+			agentCfg.Bob.SessionLabel = label
+			// The dashboard writes the new nested spelling. If an old flat alias
+			// was loaded, clearing it here prevents the stale alias from winning
+			// after the operator edits or blanks the field in the UI.
+			agentCfg.BobDisplayName = ""
 		}
 	}
 	if v, ok := body["staleTimeout"]; ok {
@@ -946,6 +969,10 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		// kick path, with the agent silently never launching.
 		if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !s.deps.Config.BackendAllowed(backend) {
+			jsonError(w, fmt.Sprintf("backend %q is disabled on this spoke by the backends allow/deny list in hive.yaml", backend), http.StatusBadRequest)
 			return
 		}
 		agentCfg.Backend = backend

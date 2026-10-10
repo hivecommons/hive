@@ -74,7 +74,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token := strings.TrimSpace(string(tokenData))
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	user, err := github.ValidateTokenCached(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"logged_in": false, "error": "token expired or revoked"})
 		return
@@ -157,7 +157,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
-	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
+	token, status, scope, err := github.PollDeviceFlowWithScope(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
 		s.deviceFlowID = ""
@@ -177,7 +177,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// user's token must never be written to disk or wired in as the hive's user
 	// client — otherwise a rejected login would still leak its token into the
 	// shared client and become the hive's identity.
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	user, err := github.ValidateTokenCached(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
 		s.deviceFlowID = ""
@@ -219,13 +219,9 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		role = resolvedRole
 	}
 
-	// The login token is used ONLY to prove identity (username + role, above).
-	// It is deliberately NOT persisted and NOT installed as a hive write
-	// identity: every GitHub write goes through the App installation token, so
-	// there is nothing for a user token to do. This is what lets the device flow
-	// request no scope at all (issue #1927) — an owner logging in no longer has
-	// to grant "read and write all repositories" just to administer their hive.
-	// Both owners and viewers get an identity-only per-user session below.
+	// The login token stays bound to THIS per-user session. It is used only when
+	// GitHub granted public_repo/repo so feedback issues can be created as the
+	// submitter; it is never installed as the hive's shared GitHub identity.
 
 	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username, "role", role)
 
@@ -239,7 +235,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// rejected the request and the login page bounced forever (same failure
 	// handleSSO fixed). The session store is the authority on identity here and
 	// does not depend on a shared token existing.
-	sid := s.createUserSession(username, role)
+	sid := s.createUserSessionWithToken(username, role, token, scope)
 	if sid == "" {
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
 		return
@@ -494,11 +490,16 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
 	if loggedOutRole == config.RoleOwner {
+		var removedToken string
+		if tokenData, err := os.ReadFile(userTokenPath); err == nil {
+			removedToken = strings.TrimSpace(string(tokenData))
+		}
 		if err := os.Remove(userTokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.deps.Logger.Error("GitHub user token removal failed", "error", err)
 			jsonError(w, "failed to remove persisted GitHub credentials", http.StatusInternalServerError)
 			return
 		}
+		github.InvalidateTokenIdentity(removedToken)
 	}
 	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")

@@ -45,6 +45,29 @@ This guide follows the current hub and dashboard UI:
 5. Wait for an admin to approve and provision the request. When the hive is
    ready it appears under **My Hives** with its dashboard URL.
 
+### Notify Discord when a request is filed
+
+Hub operators can mirror each new hosted-hive request into the community
+Discord `#requests` channel. In Discord, open **Channel settings →
+Integrations → Webhooks → New Webhook** for `#requests`, then copy the webhook
+URL. Store it as a hub secret and expose it only to the `hive-hub` container:
+
+```yaml
+env:
+  - name: HIVE_HUB_DISCORD_REQUESTS_WEBHOOK
+    valueFrom:
+      secretKeyRef:
+        name: hive-hub-secrets
+        key: HIVE_HUB_DISCORD_REQUESTS_WEBHOOK
+        optional: true
+```
+
+The same value can also be configured in hub YAML as
+`hub.notifications.discord.requests_webhook_url`, but the environment variable
+is preferred for Kubernetes because the Discord URL is a secret. The hub posts
+only after a new provision request is persisted; edits, approvals, denials, and
+status changes do not send messages.
+
 ## 3. Finish first-run setup on the spoke dashboard
 
 Open the hive dashboard from **My Hives**. The dashboard's welcome checklist and

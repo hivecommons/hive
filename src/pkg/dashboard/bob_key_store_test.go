@@ -401,7 +401,7 @@ func TestBobKeyUILivesOnGovernorTab(t *testing.T) {
 		{"tab is wired into render dispatch", "case GOVERNOR_BOB_TAB: return renderGovBob();"},
 		{"tab renderer exists", "function renderGovBob() {"},
 		{"status loader exists", "async function loadBobKeyStatus() {"},
-		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source, keyName) {"},
+		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source, keyName, sessionPrefix) {"},
 		{"dialog is opened from the panel", "openBobKeyDialog(configured, source, keyName)"},
 		{"clear is reachable from the panel", "clearBtn.addEventListener('click', clearBobKey)"},
 	}
@@ -485,9 +485,10 @@ func TestBobKeyUINoLongerTellsUserToStartAgents(t *testing.T) {
 }
 
 // TestBobKeyUINeverRendersTheKeyValue asserts the dashboard never puts a key
-// value into markup. The panel is built from `configured` (bool) and the safe
-// `source` string only; the input that carries the value is a password field
-// that is cleared before the dialog node is removed.
+// value into markup. The panel is built from `configured` (bool), the safe
+// `source` string, safe key label, and non-secret session prefix only; the
+// input that carries the value is a password field that is cleared before the
+// dialog node is removed.
 func TestBobKeyUINeverRendersTheKeyValue(t *testing.T) {
 	html := indexHTML(t)
 	if !strings.Contains(html, `<input id="bob-key-input" type="password"`) {
@@ -496,10 +497,10 @@ func TestBobKeyUINeverRendersTheKeyValue(t *testing.T) {
 	if !strings.Contains(html, "// Drop the secret from the DOM before removing the node.") {
 		t.Error("the dialog must clear the input value before removing the node")
 	}
-	// The panel must render presence + source + the safe key NAME only, never a
-	// value field. keyName is an operator-chosen label, not the secret.
-	if !strings.Contains(html, "renderBobKeyPanel(host, d.configured === true, d.source || '', d.keyName || '')") {
-		t.Error("the panel must be fed only `configured`, the safe `source` string, and the safe `keyName` label")
+	// The panel must render presence + source + safe labels only, never a value
+	// field. keyName is an operator-chosen label, and sessionPrefix is config.
+	if !strings.Contains(html, "renderBobKeyPanel(host, d.configured === true, d.source || '', d.keyName || '', d.sessionPrefix || '')") {
+		t.Error("the panel must be fed only `configured`, the safe `source` string, the safe `keyName` label, and the non-secret session prefix")
 	}
 }
 

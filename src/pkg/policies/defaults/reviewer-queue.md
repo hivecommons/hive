@@ -343,6 +343,19 @@ question a human needs to answer" is a complete and valuable contribution.
 State the question in one sentence, so the human can answer without re-deriving
 your analysis.
 
+**Always route, never approve**, when a PR carries the sentinel alert label
+(`sentinel-alert` unless the operator renamed it) or a `<!-- hive-sentinel -->`
+comment, or when you can see for yourself that it touches trust surfaces:
+OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, workflow or CI
+permissions, branch protection, dependabot/codeql config, Hive policy or proxy
+rules, deploy/infra manifests, or credentials. These are the files an attacker
+edits to gain or keep access — a contributor adding themselves to OWNERS, a
+workflow gaining `contents: write`, a test or required check quietly removed,
+a `curl | sh` added to a build script. Verify the facts (what changed, who the
+author is, whether they already hold the role they are claiming), state them
+plainly, and name the owner who must decide. Do not speculate about motive;
+the trust decision belongs to a person.
+
 ## Tone
 
 You are writing to people whose queue is overwhelming, some of whom did not ask

@@ -549,6 +549,7 @@ func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
 // of string or a -/_// separator) so a version string like "bump-v2-1" or a
 // SHA-ish suffix cannot be mistaken for an issue number.
 var branchIssuePattern = regexp.MustCompile(`(?i)(?:^|[/_-])(?:issue[/_-]?|fix[/_-]|gh[/_-])?(\d+)(?:[/_-]|$)`)
+var branchDatePattern = regexp.MustCompile(`(?:^|[/_-])(?:19|20)\d{2}(?:\d{4}|[/_-]\d{2}[/_-]\d{2})(?:[/_-]|$)`)
 
 // headRef returns the PR's head branch name, guarding the nested pointers.
 func headRef(pr *gh.PullRequest) string {
@@ -591,15 +592,27 @@ func issueFromBranchName(branch string) (int, bool) {
 	if branch == "" {
 		return 0, false
 	}
-	m := branchIssuePattern.FindStringSubmatch(branch)
-	if len(m) < 2 {
+	m := branchIssuePattern.FindStringSubmatchIndex(branch)
+	if len(m) < 4 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(m[1])
+	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(branch[m[2]:m[3]])
 	if err != nil || n <= 0 {
 		return 0, false
 	}
 	return n, true
+}
+
+func branchIssueMatchOverlapsDate(branch string, start, end int) bool {
+	for _, span := range branchDatePattern.FindAllStringIndex(branch, -1) {
+		if start < span[1] && end > span[0] {
+			return true
+		}
+	}
+	return false
 }
 
 // HiveIdentity describes which PR authors count as "this hive". A PR opened by
@@ -911,13 +924,20 @@ func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr 
 	if c == nil || c.client == nil || pr.GetNumber() <= 0 {
 		return ""
 	}
-	full, _, err := c.client.PullRequests.Get(ctx, owner, repo, pr.GetNumber())
+	fullRepo := owner + "/" + repo
+	// Claim history only annotates who merged an already-terminal PR; bounded
+	// staleness is fine and avoids repeating the detail lookup across scans.
+	if full, ok := c.cachedPRDetailMergedBy(fullRepo, pr.GetNumber()); ok {
+		return safeGetLogin(full.GetMergedBy())
+	}
+	full, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_terminal_merged_by"), owner, repo, pr.GetNumber())
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Debug("merged PR actor lookup failed", "repo", owner+"/"+repo, "number", pr.GetNumber(), "error", err)
 		}
 		return ""
 	}
+	c.storePRDetail(fullRepo, pr.GetNumber(), full)
 	return safeGetLogin(full.GetMergedBy())
 }
 
@@ -1464,6 +1484,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		if claim.ExternalAuthor || claim.Reference {
 			if claim.ExternalAuthor && !claim.MergedPR {
 				suppressed++
+				appendRepoWorkIssueDetail(result, issue, "claimed_by_pr", fmt.Sprintf("Open external PR #%d covers this issue", claim.PRNumber))
 				if logger != nil {
 					logger.Info("suppressing issue: open external PR covers it",
 						"repo", issue.Repo,
@@ -1495,6 +1516,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			continue
 		}
 		suppressed++
+		appendRepoWorkIssueDetail(result, issue, "claimed_by_pr", fmt.Sprintf("Open hive-authored PR #%d already claims this issue", claim.PRNumber))
 		if logger != nil {
 			logger.Info("suppressing issue already claimed by a hive PR",
 				"repo", issue.Repo,

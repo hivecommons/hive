@@ -392,6 +392,12 @@ flowchart LR
 ```
 
 - `/api/status` — full fleet + governor state (`BuildFrontendStatus`).
+- Dashboard timestamps are sent as machine-readable UTC/RFC3339 fields where the
+  UI needs absolute time (for example `governor.nextKickAt` and agent
+  `nextKickAt`) and formatted in the browser through the shared display-timezone
+  helper. Users can choose **Settings → Appearance → Display timezone**:
+  browser local time (default), the hive server timezone from `/api/status`,
+  UTC, or an IANA zone.
 - `/api/audit` — recent audit entries for read-write users: dashboard config changes, logins, GitHub App setup changes, and agent lifecycle events such as start, stop, launch failure, pause/resume/kick, add/remove, backend changes, and model changes. Entries are kept in memory and, when `/data` exists, appended to `/data/audit.jsonl` with lumberjack rotation (5 MB files, 3 backups, 90 days).
 - The machine-readable dashboard API reference is [dashboard/openapi.json](../../dashboard/openapi.json).
 - `/api/events` — Server-Sent Events; the dashboard is pushed a fresh snapshot on

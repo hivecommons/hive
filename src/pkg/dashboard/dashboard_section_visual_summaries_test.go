@@ -52,6 +52,7 @@ var localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: 
 var document = { getElementById: id => ({ textContent: id === 'repos-needs-human' ? '1' : '' }) };
 var prtLast = { buckets: [{ opened: 1, merged: 0 }, { opened: 2, merged: 1 }, { opened: 3, merged: 2 }] };
 function escapeHtml(v) { return String(v == null ? '' : v).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
+function formatNumber(value, locale, options) { try { return new Intl.NumberFormat(locale || undefined, options || {}).format(value); } catch (e) { return String(value); } }
 function fmtSparkVal(v) { return Number.isFinite(Number(v)) ? String(Number(v)) : '—'; }
 function renderSparkline(_el, series, opts) { lastSparkSeries = series; return '<span class="sparkline"><svg class="' + opts.svgClass + '" role="img"><title>' + escapeHtml(opts.title || '') + '</title><polyline class="sparkline-line" points="0,0 1,1"/></svg></span>'; }
 function _getAgentColor() { return 'var(--cyan)'; }
@@ -181,6 +182,7 @@ func TestDashboardCostTileMathFormatting(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 function fmtCostDateTime(ms) { return new Date(ms).toISOString(); }
+function formatNumber(value, locale, options) { try { return new Intl.NumberFormat(locale || undefined, options || {}).format(value); } catch (e) { return String(value); } }
 ` + block + `
 assert.equal(fmtUSD(0), '$0.00');
 assert.equal(fmtUSD(0.004321), '$0.00432');
@@ -205,6 +207,12 @@ assert.equal(none.title, 'no cost records yet');
 let div0 = costPerUnitDisplay(5.48, 0, 'hive-attributed closed issues');
 assert.equal(div0.value, '—');
 assert.equal(div0.title, 'no hive-attributed closed issues yet');
+
+let unavailable = costPerUnitDisplay(5.48, 0, 'hive-attributed closed issues', false, 'counts unavailable (GitHub rate-limited)');
+assert.equal(unavailable.value, '—');
+assert.equal(unavailable.title, 'counts unavailable (GitHub rate-limited)');
+assert.equal(costCountLabel({count_available:false}, 0, 'hive-attributed merged PRs', 'since Jul 24'), 'counts unavailable (GitHub rate-limited)');
+assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'persisted'}, 937, 'hive-attributed merged PRs', 'since Jul 24'), '937 hive-attributed merged PRs since Jul 24 · persisted');
 `
 
 	cmd := exec.Command(node, "-e", script)

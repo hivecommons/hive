@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,16 +22,10 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	// deviceScope is empty: dashboard login only proves the user's identity
-	// (ValidateToken → GET /user, which works with a no-scope token). It never
-	// needs repository access, because ALL GitHub writes — issues, PRs,
-	// comments, merges, the advisory digest — go through the hive's App
-	// installation token (kubestellar-hive[bot]), not the user token. Requesting
-	// "repo" here forced every viewer/owner through GitHub's "read and write all
-	// public and private repository data" authorization just to look at a
-	// dashboard (issue #1927). This mirrors the hub browser-OAuth path, which
-	// has used an empty scope for the same reason.
-	deviceScope = ""
+	// deviceScope is the narrowest GitHub OAuth grant the dashboard needs to let
+	// a signed-in public-GitHub user author feedback issues as themselves. The
+	// dashboard does not request private-repository "repo" access for this path.
+	deviceScope = "public_repo"
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.
@@ -115,6 +110,14 @@ type pollResponse struct {
 // baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
 // for default github.com behavior.
 func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string, status string, err error) {
+	token, status, _, err = PollDeviceFlowWithScope(clientID, deviceCode, baseURL, apiURL)
+	return token, status, err
+}
+
+// PollDeviceFlowWithScope polls for a completed device flow token exchange and
+// also returns GitHub's granted scope list so callers can avoid using a
+// re-consent-pending token for write operations.
+func PollDeviceFlowWithScope(clientID, deviceCode, baseURL, apiURL string) (token string, status string, scope string, err error) {
 	_, tokURL, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id":   {clientID},
@@ -123,34 +126,34 @@ func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string,
 	}
 	req, err := http.NewRequest("POST", tokURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := deviceFlowClient.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("token poll request: %w", err)
+		return "", "", "", fmt.Errorf("token poll request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("reading token poll response: %w", err)
+		return "", "", "", fmt.Errorf("reading token poll response: %w", err)
 	}
 
 	var pr pollResponse
 	if err := json.Unmarshal(body, &pr); err != nil {
-		return "", "", fmt.Errorf("parsing token poll response: %w", err)
+		return "", "", "", fmt.Errorf("parsing token poll response: %w", err)
 	}
 
 	if pr.AccessToken != "" {
-		return pr.AccessToken, "complete", nil
+		return pr.AccessToken, "complete", pr.Scope, nil
 	}
 	if pr.Error == "authorization_pending" || pr.Error == "slow_down" {
-		return "", pr.Error, nil
+		return "", pr.Error, "", nil
 	}
-	return "", pr.Error, fmt.Errorf("%s: %s", pr.Error, pr.ErrorDesc)
+	return "", pr.Error, "", fmt.Errorf("%s: %s", pr.Error, pr.ErrorDesc)
 }
 
 type GitHubUser struct {
@@ -162,8 +165,19 @@ type GitHubUser struct {
 // apiURL allows overriding the API endpoint for GHE; pass empty string for
 // default github.com behavior.
 func ValidateToken(token, apiURL string) (*GitHubUser, error) {
+	return ValidateTokenWithContext(context.Background(), token, apiURL)
+}
+
+// ValidateTokenWithContext validates a GitHub token by fetching the authenticated user.
+// apiURL allows overriding the API endpoint for GHE; pass empty string for
+// default github.com behavior.
+func ValidateTokenWithContext(ctx context.Context, token, apiURL string) (*GitHubUser, error) {
 	_, _, uURL := deviceFlowURLs("", apiURL)
-	req, err := http.NewRequest("GET", uURL, nil)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = WithRESTCaller(ctx, "hive:validate_token")
+	req, err := http.NewRequestWithContext(ctx, "GET", uURL, nil)
 	if err != nil {
 		return nil, err
 	}

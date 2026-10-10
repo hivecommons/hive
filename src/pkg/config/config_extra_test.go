@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -1018,5 +1019,67 @@ func TestBotLogin_RequiresUsableApp(t *testing.T) {
 	c := &Config{GitHub: GitHubConfig{AppID: PlaceholderAppID}}
 	if got := c.EffectiveAIAuthor(); got != "" {
 		t.Errorf("App-less EffectiveAIAuthor() = %q, want empty (UI shows —)", got)
+	}
+}
+
+func TestGitHubPRDetailTTLDefaultConfigAndEnv(t *testing.T) {
+	if got := (GitHubConfig{}).PRDetailTTL(); got != DefaultGitHubPRDetailTTL {
+		t.Fatalf("default PRDetailTTL = %v, want %v", got, DefaultGitHubPRDetailTTL)
+	}
+	if got := (GitHubConfig{PRDetailTTLS: 42}).PRDetailTTL(); got != 42*time.Second {
+		t.Fatalf("configured PRDetailTTL = %v, want 42s", got)
+	}
+	t.Setenv(GitHubPRDetailTTLEnv, "250ms")
+	if got := (GitHubConfig{PRDetailTTLS: 42}).PRDetailTTL(); got != 250*time.Millisecond {
+		t.Fatalf("env duration PRDetailTTL = %v, want 250ms", got)
+	}
+	t.Setenv(GitHubPRDetailTTLEnv, "7")
+	if got := (GitHubConfig{}).PRDetailTTL(); got != 7*time.Second {
+		t.Fatalf("env seconds PRDetailTTL = %v, want 7s", got)
+	}
+}
+
+func TestGitHubGraphQLPRBatchEnabledDefaultsOn(t *testing.T) {
+	if !(GitHubConfig{}).GraphQLPRBatchEnabled() {
+		t.Fatalf("unset graphql_pr_batch should default to enabled")
+	}
+	on, off := true, false
+	if !(GitHubConfig{GraphQLPRBatch: &on}).GraphQLPRBatchEnabled() {
+		t.Fatalf("graphql_pr_batch: true reported disabled")
+	}
+	if (GitHubConfig{GraphQLPRBatch: &off}).GraphQLPRBatchEnabled() {
+		t.Fatalf("graphql_pr_batch: false reported enabled")
+	}
+}
+
+func TestGitHubGraphQLPRBatchPageSizeNormalization(t *testing.T) {
+	for _, tt := range []struct{ in, want int }{
+		{in: -5, want: DefaultGraphQLPRBatchPageSize},
+		{in: 0, want: DefaultGraphQLPRBatchPageSize},
+		{in: 1, want: 1},
+		{in: 37, want: 37},
+		{in: 100, want: 100},
+		{in: 101, want: 100},
+		{in: 5000, want: 100},
+	} {
+		if got := NormalizeGraphQLPRBatchPageSize(tt.in); got != tt.want {
+			t.Fatalf("NormalizeGraphQLPRBatchPageSize(%d) = %d, want %d", tt.in, got, tt.want)
+		}
+		if got := (GitHubConfig{GraphQLPRBatchPageSize: tt.in}).EffectiveGraphQLPRBatchPageSize(); got != tt.want {
+			t.Fatalf("EffectiveGraphQLPRBatchPageSize(%d) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestGitHubGraphQLPRBatchYAMLRoundTrip(t *testing.T) {
+	var cfg GitHubConfig
+	if err := yaml.Unmarshal([]byte("graphql_pr_batch: false\ngraphql_pr_batch_page_size: 25\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GraphQLPRBatchEnabled() {
+		t.Fatalf("yaml graphql_pr_batch: false not honoured")
+	}
+	if got := cfg.EffectiveGraphQLPRBatchPageSize(); got != 25 {
+		t.Fatalf("yaml page size = %d, want 25", got)
 	}
 }

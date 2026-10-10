@@ -114,8 +114,23 @@ The Features tab of the dashboard carries an **Upstream Watch** panel: one
 table per watched fork with the upstream it follows, the watermark and the
 time of the last run, the surfaced / ported / dismissed / skipped counts, and
 the recent upstream refs with their fork issue and state. Each recent pull
-request offers *port this* — a link to the upstream patch. The panel renders a
-"not configured" shell when `upstream_watch.repos` is empty.
+request offers *port this* — a link to the upstream patch.
+
+The panel is also the editor for the block, so `hive.yaml` is optional:
+
+- **Watch enabled** switches `upstream_watch.enabled`; **Poll interval** sets
+  `interval` (blank = 6h).
+- **Add fork** lists only repos already in `project.repos` that are not yet
+  watched, and adds the bare repo name — the same spelling the Repos tab
+  stores.
+- Each watched fork has its own row: `upstream` (blank = the GitHub fork
+  parent), the sources (releases, merged PRs), the PR label filter, the
+  per-run cap and the issue label, with **Save** and **Remove**.
+
+Edits are persisted to the config and take effect on the next poll — no
+restart. Removing a repo in the Repos tab also drops its `upstream_watch`
+entry (and an org change clears them all), so the saved config always passes
+the loader's validation.
 
 It reads `GET /api/upstream-watch` (owner only), which is the same view as
 JSON:
@@ -149,14 +164,38 @@ JSON:
 }
 ```
 
-The endpoint is strictly read-only: it reads the config and the state file and
-never polls GitHub, so refreshing the panel costs no API quota. `state` is the
+The response also carries `interval`, `project_repos` (the repos the editor
+may add) and, per repo, `config` — the entry as configured, which the editor
+prefills.
+
+The GET endpoint is strictly read-only: it reads the config and the state file
+and never polls GitHub, so refreshing the panel costs no API quota. `state` is the
 recorded outcome as the watch knows it — `surfaced` while the fork issue is
 open, `ported` once the issue is completed, `dismissed` when it was closed as
 *not planned* or labelled `upstream/dismissed`, `skipped` when no touched file
 exists in the fork. A repo that is configured but has never run appears with
 empty times and zero counts; an unreadable state file is reported as
 `state_error` rather than silently looking idle.
+
+Edits go to `PUT /api/config/upstream-watch` (owner only). Every key is
+optional and an absent key is left unchanged; a repo mapped to `null` is
+removed, and a repo key may be bare or qualified with `project.org` (it is
+stored bare):
+
+```json
+{
+  "enabled": true,
+  "interval": "6h",
+  "repos": {
+    "forked-thing": {"upstream": "origin-owner/thing", "sources": ["prs"], "pr_labels": ["bug"], "max_issues_per_run": 5, "label": "upstream/port"},
+    "old-fork": null
+  }
+}
+```
+
+The edit is validated with the same rules as `hive.yaml` before anything
+changes; a rejected edit returns `400` with the reason and leaves the config
+untouched.
 
 ## Port this
 

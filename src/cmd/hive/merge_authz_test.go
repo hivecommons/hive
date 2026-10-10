@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // TestTrustedMergerFunc covers the merger-tier gate handed to the auto-merge
@@ -48,6 +49,40 @@ func TestTrustedMergerFunc(t *testing.T) {
 			t.Error("nil config must fail closed")
 		}
 	})
+}
+
+func TestSentinelTrustedAuthorFuncReusesAutoMergeTrust(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Dashboard.AuthorizedUsers = []string{"olivia:owner", "mia:merger"}
+	cfg.AutoMerge.TrustedBotAuthors = []string{"github-actions[bot]"}
+	cfg.AutoMerge.TrustedAuthors.Enabled = true
+	cfg.AutoMerge.TrustedAuthors.RequireRole = config.RoleMerger
+	cfg.AutoMerge.TrustedAuthors.Repos = []string{"hivecommons/hive"}
+	ghClient := hgithub.NewClient("", "hivecommons", []string{"hivecommons/hive"}, nil, "")
+	ghClient.SetAppBotLogin("hivecommons-hive[bot]")
+	trust := sentinelTrustedAuthorFunc(cfg, ghClient)
+
+	tests := []struct {
+		name       string
+		repo       string
+		login      string
+		wantReason string
+	}{
+		{"hive app", "hivecommons/hive", "hivecommons-hive[bot]", "hive agent"},
+		{"trusted bot", "hivecommons/hive", "github-actions[bot]", "allow-listed bot"},
+		{"owner", "hivecommons/hive", "olivia", "owner"},
+		{"trusted author policy", "hivecommons/hive", "mia", "trusted author"},
+		{"repo outside trusted author policy", "hivecommons/other", "mia", ""},
+		{"untrusted fork author", "hivecommons/hive", "mallory", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trust(tt.repo, tt.login)
+			if got.Reason != tt.wantReason || got.Trusted != (tt.wantReason != "") {
+				t.Fatalf("trust(%q, %q) = %+v, want reason %q", tt.repo, tt.login, got, tt.wantReason)
+			}
+		})
+	}
 }
 
 // TestBindMergeAuthz covers the merge-relay authorizer composition: the inner

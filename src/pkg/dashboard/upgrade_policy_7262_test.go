@@ -415,8 +415,13 @@ func TestBuildUpgradeAttemptStatusSupersededByLaterRoll(t *testing.T) {
 	if !moved.Superseded || moved.RunningCommit != "ffe1e19" {
 		t.Errorf("Superseded=%v RunningCommit=%q, want true/ffe1e19", moved.Superseded, moved.RunningCommit)
 	}
-	if strings.Contains(moved.Detail, "running the target image") || !strings.Contains(moved.Detail, "since moved to ffe1e19") {
-		t.Errorf("Detail = %q, must say the hive has since moved", moved.Detail)
+	if strings.Contains(moved.Detail, "running the target image") || !strings.Contains(moved.Detail, "superseded") {
+		t.Errorf("Detail = %q, must say the recorded upgrade was superseded", moved.Detail)
+	}
+	// #11194: the running commit must lead, so the old target is not read as
+	// the current version.
+	if !strings.HasPrefix(moved.Detail, "The hive is running ffe1e19.") {
+		t.Errorf("Detail = %q, must lead with the running commit", moved.Detail)
 	}
 }
 
@@ -470,14 +475,14 @@ func TestReconcileDashboardUpgradeStateClearsStaleInProgress(t *testing.T) {
 	stale := s.reconcileDashboardUpgradeState(&dashboardUpgradeState{
 		State:     dashboardUpgradeStateStarted,
 		Target:    "990d0b2",
-		StartedAt: now.Add(-31 * time.Minute),
-		UpdatedAt: now.Add(-31 * time.Minute),
+		StartedAt: now.Add(-16 * time.Minute),
+		UpdatedAt: now.Add(-16 * time.Minute),
 	}, "1234567abcdef", now, nil)
-	if stale.State != dashboardUpgradeStateSuperseded {
-		t.Fatalf("stale state = %+v, want superseded", stale)
+	if stale.State != dashboardUpgradeStateFailed {
+		t.Fatalf("stale state = %+v, want failed", stale)
 	}
-	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptSuperseded {
-		t.Fatalf("attempt from stale state = %+v, want superseded", at)
+	if at := upgradeAttemptFromDashboardState(stale); at == nil || at.State != upgradeAttemptFailed || !strings.Contains(at.Detail, "no rollout or completion signal") {
+		t.Fatalf("attempt from stale state = %+v, want visible failure", at)
 	}
 }
 

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -73,15 +74,22 @@ func TestDashboardSectionTitlesMatchSidebarLabels(t *testing.T) {
 func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`data-action="toggleOverviewChartSettings" data-stop="1"`,
 		`data-action="openACMMDialog" data-stop="1"`,
 		`id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1"`,
-		`data-action="openNousConfig" data-stop="1"`,
 		`id="agents-compact-all-btn" data-action="toggleAllAgentsCompact" data-stop="1"`,
-		`data-action="openConfigDialog" data-arg0="governor" data-stop="1"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("header action is missing data-stop propagation guard: %s", want)
+		}
+	}
+	settingsGearBody := jsFunctionBody(t, html, "function sectionSettingsGear(label, action, title, extraAttrs)")
+	for _, want := range []string{
+		`data-action="${esc(action)}"`,
+		`data-stop="1"`,
+		`aria-label="${esc(label)} settings"`,
+	} {
+		if !strings.Contains(settingsGearBody, want) {
+			t.Fatalf("shared section settings gear is missing propagation/accessibility guard %q", want)
 		}
 	}
 	for _, want := range []string{
@@ -112,6 +120,81 @@ func TestDashboardSectionCardActionsStopPropagationAndShareClass(t *testing.T) {
 	ensureBody := jsFunctionBody(t, html, "function ensureSectionCard(sectionId)")
 	if !strings.Contains(ensureBody, `el.setAttribute('data-stop', '1')`) {
 		t.Fatal("runtime-migrated header links/buttons are not forced to stop propagation")
+	}
+}
+
+func TestDashboardSectionSettingsGearsRenderNextToHelp(t *testing.T) {
+	html := indexHTML(t)
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: dashboard section gear placement was not executed")
+	}
+	script := `const assert = require('node:assert/strict');
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function textOrDash(v) { return String(v || '—'); }
+function visualSectionSummary(_id, html) { return html; }
+const DASHBOARD_HELP_PAGE = 'dashboard-sections';
+const DASHBOARD_HELP_CLICK_LINE = 'Click (or press Enter) for the full explanation';
+const DASHBOARD_SECTION_HELP = {
+  'overview-section': { heading: 'Overview', help: 'Overview help.' },
+  'governor': { heading: 'Governor', help: 'Governor help.' },
+  'repos-section': { heading: 'Projects', help: 'Projects help.' },
+  'nous-section': { heading: 'Strategy Lab', help: 'Strategy Lab help.' },
+};
+function dashboardDocsHref(page, anchor) { return '/docs/' + page + '.md' + (anchor ? '#' + anchor : ''); }
+function dashboardSectionHelpAnchor(heading) { return String(heading || '').toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s/g, '-'); }
+` + jsFunctionBody(t, html, "function dashboardSectionHelpMark(sectionId)") + "\n" +
+		jsFunctionBody(t, html, "function sectionSettingsGear(label, action, title, extraAttrs)") + "\n" +
+		jsFunctionBody(t, html, "function sectionCardHeader(opts)") + `
+const cases = [
+  ['overview-section', '🍩 Overview', sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"')],
+  ['governor', '📊 Governor', sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration', ' data-arg0="governor"')],
+  ['repos-section', '📦 Projects', sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects')],
+  ['nous-section', '🧪 Strategy Lab', sectionSettingsGear('Strategy Lab', 'openNousConfig', 'Strategy Lab Configuration')],
+];
+for (const [id, title, settingsHtml] of cases) {
+  const header = sectionCardHeader({ id, title, settingsHtml });
+  const m = header.match(/<span class="dash-card-title">([\s\S]*?)<\/span><span class="dash-card-badges">/);
+  assert.ok(m, id + ' title cluster not found');
+  const titleCluster = m[1];
+  assert.ok(titleCluster.includes('section-help-mark'), id + ' lacks help mark');
+  assert.ok(titleCluster.includes('section-settings-gear'), id + ' lacks settings gear in title cluster');
+  assert.ok(titleCluster.indexOf('section-help-mark') < titleCluster.indexOf('section-settings-gear'), id + ' gear is not after help');
+  assert.match(titleCluster, /<\/a><button type="button" class="config-info section-settings-gear"/, id + ' gear is not the next sibling after help');
+  assert.doesNotMatch(header, /<span class="dash-card-actions">[\s\S]*(section-settings-gear|data-section-settings|⚙)/, id + ' gear rendered in far-right actions');
+}
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("node dashboard section gear placement failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}
+
+func TestDashboardSectionSettingsGearsAvoidLegacyFarRightActions(t *testing.T) {
+	html := indexHTML(t)
+	for _, forbidden := range []string{
+		".governor-card .dash-card-actions { margin-left: 0; }",
+		`actionsHtml: '<button class="config-gear" data-action="openConfigDialog" data-arg0="governor"`,
+		`class="hv-btn config-gear btn-sm" data-action="toggleOverviewChartSettings"`,
+		`class="hv-btn config-gear btn-sm" data-action="gh1"`,
+		`class="hv-btn btn-danger btn-sm" data-action="openNousConfig"`,
+	} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("legacy far-right section settings gear remains: %s", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"function sectionSettingsGear(label, action, title, extraAttrs)",
+		`settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings'`,
+		`settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog'`,
+		`settingsHtml: sectionSettingsGear('Projects', 'gh1'`,
+		`settingsHtml: sectionSettingsGear('Strategy Lab', 'openNousConfig'`,
+		".section-settings-gear",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("shared section settings gear path missing %q", want)
+		}
 	}
 }
 
@@ -180,7 +263,7 @@ func TestDashboardCardPolishBatchStaticContracts(t *testing.T) {
 		`Project inception runs on <a href="https://github.com/jumppad-labs/spektacular"`,
 		`summary: '0 facts'`,
 		"kbFactsLabel(kbTotalFactsFromStats",
-		"No lifecycle events in the last 6h.",
+		"No pull requests in the window yet.",
 		"function lcJourneyHasContent(j)",
 		"repo-header-badges",
 		"repo-header-actions",
@@ -235,10 +318,14 @@ func TestGovernorPRModelsNestedSubsectionIsCollapsible(t *testing.T) {
 
 func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
 	html := indexHTML(t)
+	config := jsConstObject(t, html, "const DASHBOARD_SECTION_CARD_CONFIG")
 	for _, id := range []string{"advisory-digest-section", "hive-advice-section", "fleet-report-section", "acmm-reco-section", "lifecycle-section", "pr-throughput-section"} {
 		idx := strings.Index(html, `id="`+id+`"`)
 		if idx < 0 {
 			t.Fatalf("missing advisory subsection %s", id)
+		}
+		if !strings.Contains(config, "'"+id+"':") {
+			t.Fatalf("%s is not registered for shared dashboard card chrome", id)
 		}
 		window := html[idx:]
 		if len(window) > 700 {
@@ -247,7 +334,7 @@ func TestAdvisoryNestedSubsectionsUseSeparatedHeaderPattern(t *testing.T) {
 		if !strings.Contains(window, "advisory-subsection") {
 			t.Fatalf("%s does not use advisory-subsection spacing pattern", id)
 		}
-		if id != "advisory-digest-section" && !strings.Contains(window, "advisory-subsection-card") {
+		if !strings.Contains(window, "advisory-subsection-card") {
 			t.Fatalf("%s body card does not start below its header", id)
 		}
 	}

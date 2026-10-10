@@ -1228,6 +1228,22 @@ const (
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
+func (m *Manager) SendGitHubAPIBudgetNudge(name, message string) {
+	m.mu.Lock()
+	agent := m.agents[name]
+	m.mu.Unlock()
+	if agent == nil || message == "" {
+		return
+	}
+	if m.tmuxSessionHasAttachedClientForAgent(agent) {
+		return
+	}
+	m.logger.Warn("agent reached GitHub API budget, sending stop-polling nudge", "name", agent.Name)
+	m.tmuxSendLiteralForAgent(agent, message)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+}
+
 // ciPollCommandRe matches the CI-status commands the #9673 guard counts.
 // Alongside `gh run watch|view|list` and `gh pr checks`, agents commonly
 // poll their own PR's checks via `gh pr view --json statusCheckRollup` (and

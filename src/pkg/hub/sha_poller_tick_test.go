@@ -137,6 +137,7 @@ func TestPollLatestSHAsTick_InvokesThrottledLanes(t *testing.T) {
 		"sweepOrphanedUpgradesIfDue (lastOrphanedUpgradeSweep)": s.lastOrphanedUpgradeSweep,
 		"sweepStuckAssignmentsIfDue (lastStuckAssignmentSweep)": s.lastStuckAssignmentSweep,
 		"reconcileNetAdminIfDue (lastNetAdminReconcile)":        s.lastNetAdminReconcile,
+		"reconcileNodeHealthRBACIfDue":                          s.lastNodeHealthRBACReconcile,
 		"reconcilePerHiveEnvIfDue (lastPerHiveEnvReconcile)":    s.lastPerHiveEnvReconcile,
 		"reapOrphanedPodsIfDue (lastOrphanedPodReap)":           s.lastOrphanedPodReap,
 		"retireExpiredGenerationsIfDue (lastGenerationRetire)":  s.lastGenerationRetire,

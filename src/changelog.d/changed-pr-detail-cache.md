@@ -1,0 +1,1 @@
+- Cache per-PR GitHub detail fetches while list freshness markers still match to reduce charged `GET /pulls/{number}` quota burn.

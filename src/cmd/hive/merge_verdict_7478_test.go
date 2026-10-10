@@ -78,7 +78,7 @@ func TestClassifyMergeEligibility_VerdictTracksBucket(t *testing.T) {
 			held:       true,
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictOutstanding,
-			wantReason: []string{"held"},
+			wantReason: []string{"label:hold"},
 		},
 		{
 			name:       "pending with non-required checks outstanding is eligible (the 2026-08-04 rule)",
@@ -108,9 +108,9 @@ func TestClassifyMergeEligibility_VerdictTracksBucket(t *testing.T) {
 			// name the rule yet, but must say that, not just "blocked".
 			name:       "blocked with green CI is blocked and says a branch-protection rule is unsatisfied",
 			pr:         github.PullRequest{Number: 603, Mergeable: github.MergeableNo, MergeableState: "blocked", CIStatus: "success"},
-			wantBucket: mergeBucketSkip,
-			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"blocked — all sweep gates pass", "branch-protection rule"},
+			wantBucket: mergeBucketEligible,
+			wantState:  github.MergeVerdictEligible,
+			wantReason: []string{"would merge", "GitHub: blocked"},
 		},
 		{
 			name:       "a draft is blocked and says how to enter the sweep",
@@ -154,7 +154,7 @@ func TestClassifyMergeEligibility_VerdictTracksBucket(t *testing.T) {
 			held:       true,
 			wantBucket: mergeBucketSkip,
 			wantState:  github.MergeVerdictBlocked,
-			wantReason: []string{"merge conflicts with the base branch", "held"},
+			wantReason: []string{"merge conflicts with the base branch", "label:hold"},
 		},
 	}
 	for _, tc := range cases {
@@ -219,7 +219,7 @@ func TestWriteMergeEligible_ReturnsVerdictsForEveryPR(t *testing.T) {
 			t.Errorf("%s: state = %q, want %q (reason %q)", key, v.State, state, v.Reason)
 		}
 	}
-	if !strings.Contains(got[github.MergeVerdictKey(heldGreen)].Reason, "held") {
+	if !strings.Contains(got[github.MergeVerdictKey(heldGreen)].Reason, "label:hold") {
 		t.Errorf("held PR's reason does not name the hold: %q", got[github.MergeVerdictKey(heldGreen)].Reason)
 	}
 }
