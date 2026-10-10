@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.158.2)
+
+### Fixed
+
+- The `hive-open-pr` content gate no longer rejects forward-merge/sync PRs that merely edit a line already carrying an attribution or run-metadata marker on the base; a marker that is only added is still rejected (#11404).
+
 ## 2026-10-10 (v5.158.1)
 
 ### Fixed
