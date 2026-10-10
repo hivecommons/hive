@@ -25,6 +25,7 @@ import (
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/upstreamwatch"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
@@ -1986,6 +1987,12 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		repoRows[full] = repoName
 	}
 
+	var watchState upstreamwatch.State
+	if len(cfg.UpstreamWatch.Repos) > 0 {
+		// An unreadable state file only hides the last-check time.
+		watchState, _ = upstreamwatch.NewFileStore(upstreamWatchStatePath).Load()
+	}
+
 	issuesByRepo := make(map[string][]any)
 	prsByRepo := make(map[string][]any)
 	heldIssuesByRepo := make(map[string][]any)
@@ -2080,6 +2087,24 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			r.PauseReason = rp.Reason
 			if rp.At != nil && !rp.At.IsZero() {
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
+			}
+		}
+		watchKey := repoName
+		wc, watched := cfg.UpstreamWatch.Repos[watchKey]
+		if !watched {
+			watchKey = full
+			wc, watched = cfg.UpstreamWatch.Repos[watchKey]
+		}
+		if watched {
+			r.Upstream = strings.TrimSpace(wc.Upstream)
+			r.UpstreamWatchOn = cfg.UpstreamWatch.Enabled
+			if sum, ok := watchState.Summary(watchKey, 1); ok {
+				if sum.Upstream != "" {
+					r.Upstream = sum.Upstream
+				}
+				if !sum.LastRunAt.IsZero() {
+					r.UpstreamLastCheck = sum.LastRunAt.UTC().Format(time.RFC3339)
+				}
 			}
 		}
 		if actionable != nil && !r.Paused && !countsPresent {
