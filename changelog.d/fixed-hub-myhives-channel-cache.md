@@ -1,1 +1,0 @@
-- Keep the Hub My Hives API responsive by serving cached release-channel metadata while slow GitHub/GHCR refreshes run in the background.

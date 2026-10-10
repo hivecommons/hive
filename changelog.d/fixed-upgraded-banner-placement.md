@@ -1,1 +1,0 @@
-- Move the upgraded release-notes banner into the dashboard top notice stack so it appears with other warnings.

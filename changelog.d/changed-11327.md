@@ -1,1 +1,0 @@
-- Container base images are now pulled from the ECR Public mirror of Docker Official Images (same pinned digests) to avoid Docker Hub anonymous rate limits.
