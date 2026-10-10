@@ -1,1 +1,0 @@
-- The quality coverage goal is now configurable: set `governor.coverage_target` (percent, 1–100, default 91) in config or on the Governor config Thresholds tab, and the quality card, ci-maintainer coverage bar, `[COVERAGE]` agent preamble, and ACMM full-autonomy coverage gate all follow it ([#11459](https://github.com/hivecommons/hive/issues/11459)).
