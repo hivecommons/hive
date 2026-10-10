@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-10 (v5.158.3)
+
+### Changed
+
+- images: bump codex 0.160.0 -> 0.162.1 (#11409)
+
+### Fixed
+
+- **Dashboard keeps repainting Projects and later sections when token burn history is sparse.** `renderTokens()` dereferenced the result of `computeHourlyBurnRates()`, which is `null` on a quiet hive (too few history points or buckets), so `render()` threw before `renderRepos()` and every later section and the error was swallowed by `refreshStatus()`. A null history now falls back to the window-average tok/hr. ([#11410](https://github.com/hivecommons/hive/issues/11410))
+- Automated CLI pin-bump PRs now squash-merge DCO-clean ([#11412](https://github.com/hivecommons/hive/issues/11412)). When `cli-pin-bump.yml` opens the PR with `TOPUP_PUSH_TOKEN`, the commit now also carries a `Signed-off-by` naming that token's owner, because GitHub's squash attributes the landing commit to the PR author; previously the lone `hive-release[bot]` sign-off landed as a mismatched-signoff on v5 (the squashes of #11407 and #11408, now waived by maintainer disposition). The pre-merge "Sign-off survives the squash" gate also recognises `hive-release@hive.kubestellar.io` and any `[bot]`-named self-signer as a bot sign-off, so this shape fails at PR time instead of slipping through when GitHub cannot resolve the author's login.
+
 ## 2026-10-10 (v5.158.2)
 
 ### Fixed
