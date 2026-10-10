@@ -30,13 +30,6 @@ func (c *Client) SetRequiredChecksForRepo(fn func(repo string) (map[string]bool,
 	c.requiredChecksForRepo = fn
 }
 
-// configRequiredChecks returns the currently installed config-declared
-// required-check set and whether one is installed. Mirrors isTrustedMerger's
-// nil-safe read pattern for c.mergerAuthz.
-func (c *Client) configRequiredChecks() (map[string]bool, bool) {
-	return c.configRequiredChecksForRepo("")
-}
-
 func (c *Client) configRequiredChecksForRepo(repo string) (map[string]bool, bool) {
 	if c == nil {
 		return nil, false
