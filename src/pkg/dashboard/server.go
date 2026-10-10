@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bufio"
 	"compress/gzip"
 	"context"
 	"crypto/subtle"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -1379,7 +1381,7 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	handler := s.withServerTiming(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -1401,6 +1403,72 @@ func (s *Server) Start() error {
 		go idx.Precompress()
 	}
 	return srv.Serve(ln)
+}
+
+type serverTimingResponseWriter struct {
+	http.ResponseWriter
+	start time.Time
+	wrote bool
+}
+
+func (w *serverTimingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *serverTimingResponseWriter) WriteHeader(status int) {
+	if !w.wrote {
+		w.Header().Set("Server-Timing", fmt.Sprintf("app;dur=%.1f", float64(time.Since(w.start).Microseconds())/1000))
+		w.wrote = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *serverTimingResponseWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *serverTimingResponseWriter) Flush() {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *serverTimingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
+}
+
+func (w *serverTimingResponseWriter) Push(target string, opts *http.PushOptions) error {
+	p, ok := w.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+	return p.Push(target, opts)
+}
+
+func (w *serverTimingResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(w.ResponseWriter, r)
+}
+
+func (s *Server) withServerTiming(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&serverTimingResponseWriter{ResponseWriter: w, start: time.Now()}, r)
+	})
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
