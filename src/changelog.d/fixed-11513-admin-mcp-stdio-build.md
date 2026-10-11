@@ -1,0 +1,1 @@
+- Stamped the stdio `hive-admin-mcp` binary with its git build, so `initialize` reports `<version>+<sha>`, `version_read` shows `stdio_build` and `skew` against the hub, and the `limit` schema now documents its 1-50 cap ([#11513](https://github.com/hivecommons/hive/issues/11513)).

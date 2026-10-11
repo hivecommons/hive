@@ -102,6 +102,8 @@ podman rm hive-admin-mcp-extract
 
 Or build it from a checkout of the `v6` branch: `cd src && go build -o hive-admin-mcp ./cmd/hive-admin-mcp`.
 
+The tool catalogue is compiled into the binary, so re-extract or rebuild it after each hub upgrade. `version_read` shows the binary's own `stdio_build` and a `skew` flag next to the hub build, and `initialize` reports `serverInfo.version` as `<version>+<short sha>`.
+
 ### Environment variables
 
 | Variable | Required | Meaning |
@@ -137,7 +139,7 @@ capped at 256 KiB.
 |------|---------|
 | `hive_status` | Hive status summary |
 | `fleet_status` | Fleet state |
-| `version_read` | Running build from `/api/version`: `currentCommit`, `branch`, `channel`, `commitsBehind`, `behind` |
+| `version_read` | Running build from `/api/version`: `currentCommit`, `branch`, `channel`, `commitsBehind`, `behind`; over stdio also `stdio_build` (`version`, `sha`, `short`, `branch`) and `skew` (true when the stdio and hub short SHAs are both known and differ) |
 | `agents_list` | Agents |
 | `runs_list` | Runs |
 | `leases_list` | Leases |

@@ -403,7 +403,7 @@ func writeMetadata(enabled bool, unavailableReason string) ToolMetadata {
 }
 
 func inputSchema(name string) map[string]any {
-	props := map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit}}
+	props := map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit, "description": fmt.Sprintf("Rows to return, 1-%d (default %d). issues_by_band, prs_by_band and review_queue page further with offset.", MaxResultLimit, DefaultResultLimit)}}
 	required := []string{}
 	switch name {
 	case ToolRefuseOperation:

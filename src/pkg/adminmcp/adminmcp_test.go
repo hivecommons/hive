@@ -714,3 +714,18 @@ func TestVersionReadToolReadsAPIVersion(t *testing.T) {
 		t.Fatal("version_read tool not listed")
 	}
 }
+
+func TestLimitSchemaDescribesCap(t *testing.T) {
+	for _, tool := range Tools() {
+		schema, _ := tool["inputSchema"].(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		limit, ok := props["limit"].(map[string]any)
+		if !ok {
+			continue
+		}
+		desc, _ := limit["description"].(string)
+		if desc == "" || !strings.Contains(desc, "50") {
+			t.Errorf("%v: limit description = %q, want non-empty mentioning 50", tool["name"], desc)
+		}
+	}
+}

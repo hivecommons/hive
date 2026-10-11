@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,53 @@ const (
 	envEnableWrites = "HIVE_ADMIN_MCP_ENABLE_WRITES"
 	envPendingFile  = "HIVE_ADMIN_MCP_PENDING_FILE"
 )
+
+// Stamped by -ldflags in the image build, mirroring cmd/hive.
+var (
+	gitHash   = "unknown"
+	gitShort  = "unknown"
+	gitBranch = "unknown"
+	version   = ""
+)
+
+type stdioBuild struct{ Version, SHA, Short, Branch string }
+
+// buildInfo reports this binary's build: ldflag values when stamped, else the
+// vcs.revision Go embeds for a checkout build, else "unknown".
+func buildInfo() stdioBuild {
+	b := stdioBuild{Version: version, SHA: gitHash, Short: gitShort, Branch: gitBranch}
+	if b.SHA == "" || b.SHA == "unknown" {
+		b.SHA = "unknown"
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, kv := range info.Settings {
+				if kv.Key == "vcs.revision" && kv.Value != "" {
+					b.SHA = kv.Value
+				}
+			}
+		}
+	}
+	if b.Short == "" || b.Short == "unknown" {
+		b.Short = "unknown"
+		if b.SHA != "unknown" {
+			b.Short = b.SHA[:min(7, len(b.SHA))]
+		}
+	}
+	if b.Branch == "" {
+		b.Branch = "unknown"
+	}
+	return b
+}
+
+// buildSkew is true only when both builds are known and their short SHAs
+// differ; an unknown side is never reported as skew.
+func buildSkew(stdioShort, hubShort string) bool {
+	a, b := strings.TrimSpace(stdioShort), strings.TrimSpace(hubShort)
+	if a == "" || b == "" || a == "unknown" || b == "unknown" {
+		return false
+	}
+	n := min(len(a), len(b), 7)
+	return !strings.EqualFold(a[:n], b[:n])
+}
 
 type hiveConfig struct {
 	Name    string `json:"name"`
@@ -55,7 +103,7 @@ func main() {
 		log.Printf("hive-admin-mcp configuration error: %v", err)
 		os.Exit(2)
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: adminmcp.ServerName, Version: adminmcp.ServerVersion}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: adminmcp.ServerName, Version: adminmcp.ServerVersion + "+" + buildInfo().Short}, nil)
 	provider := readProvider{roster: r, writesEnabled: adminMCPWritesEnabled(), pendingStore: adminmcp.NewFilePendingStore(adminMCPPendingPath())}
 	for _, def := range adminmcp.ToolsWithWritesEnabled(provider.writesEnabled) {
 		name, _ := def["name"].(string)
@@ -222,6 +270,17 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	}
 	if tool == adminmcp.ToolGovernorSetup {
 		return adminmcp.GovernorSetupProposal(data)
+	}
+	if tool == adminmcp.ToolVersionRead {
+		if m, ok := data.(map[string]any); ok {
+			b := buildInfo()
+			hubShort, _ := m["short"].(string)
+			if hubShort == "" {
+				hubShort, _ = m["currentCommit"].(string)
+			}
+			m["stdio_build"] = map[string]any{"version": b.Version, "sha": b.SHA, "short": b.Short, "branch": b.Branch}
+			m["skew"] = buildSkew(b.Short, hubShort)
+		}
 	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 }
