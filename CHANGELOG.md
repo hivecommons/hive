@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-11 (v5.161.1)
+
+### Fixed
+
+- Close-on-merge no longer undoes a reopen ([#11449](https://github.com/hivecommons/hive/issues/11449)). When GitHub's closing keyword (not Hive) closed an issue at merge time, a person's later reopen, or `/reopen`, was silently reverted by the ledger sweep or the hourly backfill, because no `<!-- hive-close-on-merge -->` marker existed. Hive now reads the issue timeline since the PR's merge before closing; a `reopened` event by anyone but Hive keeps the issue open, and a one-time `<!-- hive-reopened-after-merge pr=N -->` comment stops later sweeps rereading the timeline for that PR. A different PR that merges after the reopen still closes the issue; a timeline read error leaves it open until the next sweep.
+
 ## 2026-10-10 (v5.161.0)
 
 ### Added
