@@ -1,0 +1,1 @@
+Fixed a v6 build break after the v5→v6 forward-merge: `DefaultCoverageTarget`, `ValidateCoverageTarget` and `GovernorConfig.EffectiveCoverageTarget` were declared in both `pkg/config/coverage_target.go` and `pkg/config/governor_thresholds.go`. The duplicate in `governor_thresholds.go` is removed.
