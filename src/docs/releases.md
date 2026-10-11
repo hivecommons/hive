@@ -427,7 +427,8 @@ chosen over a hand-rolled `go list -m -json all` walk.
 request touching `src/go.mod`, `src/go.sum`, or the generator script itself
 (plus weekly, since an upstream dependency's license text can change without
 a version bump), and fails the build if the committed file differs from a
-fresh run. A generated file that can silently go stale is worse than no file
+fresh run, ignoring the `Source:` lines (go-licenses resolves them with a
+remote lookup that can transiently yield `Unknown`, #11497). A generated file that can silently go stale is worse than no file
 at all — it would make a false completeness claim the moment a dependency
 changed. There is deliberately no special-case to tolerate an out-of-date
 `NOTICE`: the fix is always "run the script, commit the result."

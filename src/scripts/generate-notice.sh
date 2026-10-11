@@ -166,8 +166,21 @@ HEADER
     # the Go module is src/, so go-licenses' upward search stops at src/ and
     # reports Hive packages as unlicensed. Hive's own code does not belong in
     # a THIRD-PARTY notice regardless, so excluding it is the correct scope.
-    "${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
-      --ignore github.com/hivecommons/hive ./...
+    # The Source: URL comes from a remote lookup that transiently yields
+    # "Unknown" (#11497); retry so a flake is not written into NOTICE.
+    report=""
+    for ((attempt = 1; attempt <= 3; attempt++)); do
+      # Trailing "x" sentinel preserves trailing newlines through $(...).
+      report="$("${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
+        --ignore github.com/hivecommons/hive ./... && echo x)"
+      report="${report%x}"
+      if ! grep -q '^Source:[[:space:]]*Unknown$' <<< "${report}"; then
+        break
+      fi
+      echo "go-licenses resolved a Source: URL to Unknown; retrying (${attempt}/3)..." >&2
+      sleep $((attempt * 2))
+    done
+    printf '%s' "${report}"
   # Preserve the complete text while normalizing insignificant end-of-line
   # whitespace from upstream license files, so the committed output passes
   # repository whitespace checks and stays stable across tooling/editors.
