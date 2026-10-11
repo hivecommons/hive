@@ -115,6 +115,8 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 			})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "body": "body", "labels": []map[string]string{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
@@ -224,6 +226,8 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 						return
 					}
 					_ = json.NewEncoder(w).Encode([]map[string]string{})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					if tc.commentStatus != 0 {
 						w.WriteHeader(tc.commentStatus)
@@ -297,6 +301,8 @@ func TestCloseOnMergeAwaitingCommentFailureNoops(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "body": "body", "labels": []map[string]string{{"name": "needs-human"}}})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			w.WriteHeader(http.StatusForbidden)
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/"):
