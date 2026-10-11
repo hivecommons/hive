@@ -2031,7 +2031,9 @@ test('#11528 omp staging treats a provider as usable when any of its rows is act
     // No provider named by the model: an unrelated provider's tombstone does not block.
     const tomb = new sqlite.DatabaseSync(hostDb);
     tomb.exec("UPDATE auth_credentials SET disabled_cause = NULL WHERE provider = 'anthropic' AND identity_key IS NULL");
+    tomb.exec("UPDATE auth_credentials SET disabled_cause = 'deleted by user' WHERE provider = 'openai-codex'");
     tomb.close();
+    fs.rmSync(path.join(agentDir, 'config.yml'));
     const none = ompBackend.describeOmpHost(hostOmp, '');
     assert.strictEqual(none.selection.source, 'none');
     assert.deepStrictEqual(none.disabledProviders, []);
