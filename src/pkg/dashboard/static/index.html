@@ -14135,7 +14135,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         {
           title: 'Issues — left chip is the band',
           entries: issueBandLegendEntries.concat([
-            { cls: 'repo-issue-pill held', kind: 'issue:filtered', label: 'FILTERED', caption: 'skipped by the issue filter or a hard-suppress label', tip: 'Excluded by the project issue filter or a hard-suppress label' },
+            { cls: 'repo-issue-pill held', kind: 'issue:filtered', label: 'FILTERED', caption: 'skipped by the issue filter or an exempt label', tip: 'Excluded by the project issue filter or an exempt label' },
+            { cls: 'repo-issue-pill waiting', kind: 'issue:needs_human', label: 'NEEDS HUMAN', caption: 'needs-human — waiting on a person', tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' },
+            { cls: 'repo-issue-pill waiting', kind: 'issue:needs_decision', label: 'NEEDS DECISION', caption: 'needs-decision / needs-direction / needs-spec — parked for a maintainer', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
+            { cls: 'repo-issue-pill waiting', kind: 'issue:reporter_confirmation', label: 'WAITING ON REPORTER', caption: 'needs-reporter-confirmation', tip: 'Waiting on the reporter to confirm — not dropped by a filter' },
             { cls: 'repo-issue-pill held', kind: 'issue:hive_advisory', label: 'ADVISORY', caption: 'Hive advisory report, not agent work', tip: 'Hive advisory report — counted, but not agent work' },
             { cls: 'repo-issue-pill agent-filed', kind: 'issue:role', label: 'STRATEGIST', labelCls: 'pill-role', caption: 'role of the agent that filed it', tip: 'Filed by an agent; the badge names the agent role and the tooltip says whether a human has acknowledged it' }
           ])
@@ -14790,11 +14793,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
 
+    function repoParkedIssueSpecs() {
+      return {
+        'needs-human': { key: 'needs_human', label: 'Needs human', short: 'needs human', tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' },
+        'needs-decision': { key: 'needs_decision', label: 'Needs decision', short: 'needs decision', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
+        'needs-direction': { key: 'needs_direction', label: 'Needs direction', short: 'needs direction', tip: 'Parked by Hive for maintainer direction — reply `/hive approve` or `/hive decision <text>`' },
+        'needs-spec': { key: 'needs_spec', label: 'Needs spec', short: 'needs spec', tip: 'Parked by Hive until it has a spec — reply `/hive approve` or `/hive decision <text>`' },
+      };
+    }
+
+    // Reason sent by the server, falling back to the label for payloads without `reason`.
+    function repoParkedIssueReason(issue) {
+      const specs = repoParkedIssueSpecs();
+      const reason = String((issue && issue.reason) || '').toLowerCase();
+      if (specs[reason]) return reason;
+      if (reason) return '';
+      return Object.keys(specs).find(r => ((issue && issue.labels) || []).some(l => String(l).toLowerCase() === r)) || '';
+    }
+
     function repoNonActionableIssueBucketSpec(issue) {
       const bucket = String((issue && issue.bucket) || 'other');
-      if (bucket === 'filtered' && repoItemNeedsHuman(issue)) return { key: 'needs_human', label: 'Needs human', short: 'needs human', rank: -1, tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' };
+      if (bucket === 'filtered') {
+        const parked = repoParkedIssueSpecs()[repoParkedIssueReason(issue)];
+        if (parked) return Object.assign({ rank: -1, waiting: true }, parked);
+        if (String((issue && issue.reason) || '').toLowerCase() === 'needs-reporter-confirmation') return { key: 'reporter_confirmation', label: 'Waiting on reporter', short: 'waiting on reporter', rank: -1, waiting: true, tip: 'Waiting on the reporter to confirm — not dropped by a filter' };
+      }
+      if (bucket === 'filtered' && repoItemNeedsHuman(issue)) return { key: 'needs_human', label: 'Needs human', short: 'needs human', rank: -1, waiting: true, tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' };
       if (bucket === 'hive_advisory') return { key: bucket, label: 'Advisory', short: 'advisory', rank: 0, tip: 'Hive advisory report — counted, but not agent work' };
-      if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or a hard-suppress label' };
+      if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or an exempt label' };
       if (bucket === 'reporter_triage') return { key: bucket, label: 'Needs triage', short: 'triage', rank: 2, tip: 'Waiting for a maintainer triage/admission label before agents can work it' };
       if (bucket === 'dependency_dashboard') return { key: bucket, label: 'Dependency dashboard', short: 'deps', rank: 3, tip: 'Bot control-panel issue — counted, but not work' };
       if (bucket === 'claimed_by_pr') return { key: bucket, label: 'Claimed by PR', short: 'claimed', rank: 4, tip: 'Originally actionable, but withheld from agent queues because an open PR already claims it' };
@@ -16447,7 +16473,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // ledger gave up on) is waiting on a person exactly as much as an
       // unheld one is, and it now has a pill on the card to match.
       const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).concat(r.heldPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length
-        + (r.actionableIssues || []).concat(r.heldIssues || [], r.nonActionableIssues || []).filter(repoItemNeedsHuman).length, 0);
+        + (r.actionableIssues || []).concat(r.heldIssues || []).filter(repoItemNeedsHuman).length
+        + (r.nonActionableIssues || []).filter(i => repoItemNeedsHuman(i) || (String(i.bucket || '') === 'filtered' && repoParkedIssueReason(i))).length, 0);
       const nhEl = document.getElementById('repos-needs-human');
       if (nhEl) {
         if (needHumanTotal > 0) {
@@ -16548,7 +16575,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const reason = i.reason || spec.tip;
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
           const rowKinds = ['issue:non-actionable', 'issue:' + spec.key];
-          const nhClass = spec.key === 'needs_human' ? 'waiting' : 'held';
+          const nhClass = spec.waiting ? 'waiting' : 'held';
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill ${nhClass} repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main ${nhClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
         };
         const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {

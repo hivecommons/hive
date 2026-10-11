@@ -151,6 +151,8 @@ func TestRepoCardIssueGroupsCoverHeaderIssueTotal(t *testing.T) {
 	}
 	funcs := []string{
 		"repoItemNeedsHuman",
+		"repoParkedIssueSpecs",
+		"repoParkedIssueReason",
 		"gHasNeedsHuman",
 		"issueBandRank",
 		"issueUpdatedAt",
@@ -211,6 +213,21 @@ assert.equal(headerTotal, repo.issues);
 assert.equal(repoCardIssueRenderedCount(groups), headerTotal);
 assert.deepEqual(groups.issueGroups.map(g => [g.band, g.issues.length]), [['waiting', 1], ['ready', 2], ['in-progress', 2], ['agent-filed', 1], ['done', 1]]);
 assert.deepEqual(groups.nonActionableIssueGroups.map(g => [g.key, g.issues.length]), [['hive_advisory', 1], ['filtered', 3], ['reporter_triage', 1], ['claimed_by_pr', 2]]);
+for (const [reason, key, short, waiting] of [
+  ['needs-human', 'needs_human', 'needs human', true],
+  ['needs-decision', 'needs_decision', 'needs decision', true],
+  ['needs-direction', 'needs_direction', 'needs direction', true],
+  ['needs-spec', 'needs_spec', 'needs spec', true],
+  ['needs-reporter-confirmation', 'reporter_confirmation', 'waiting on reporter', true],
+  ['Exempt label', 'filtered', 'filtered', undefined],
+  ['Project issue filter', 'filtered', 'filtered', undefined],
+]) {
+  const spec = repoNonActionableIssueBucketSpec({ bucket: 'filtered', reason });
+  assert.equal(spec.key, key, reason);
+  assert.equal(spec.short, short, reason);
+  assert.equal(spec.waiting, waiting, reason);
+}
+assert.equal(repoNonActionableIssueBucketSpec({ bucket: 'filtered', labels: ['needs-spec'] }).key, 'needs_spec');
 const seen = new Set();
 for (const group of groups.issueGroups) for (const entry of group.issues) assert.equal(seen.has(entry.issue.number), false), seen.add(entry.issue.number);
 for (const group of groups.nonActionableIssueGroups) for (const issue of group.issues) assert.equal(seen.has(issue.number), false), seen.add(issue.number);
