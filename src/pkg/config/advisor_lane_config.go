@@ -66,9 +66,10 @@ type ModelRole struct {
 	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
 	// Model is the model id. Required.
 	Model string `yaml:"model" json:"model"`
-	// ReasoningEffort for backends that expose an effort control. Optional;
-	// validated against ReasoningEffortsByBackend when both it and Backend
-	// are set.
+	// ReasoningEffort for backends that expose an effort control. Optional.
+	// Not validated when Backend is empty (the consumer's backend applies at
+	// launch); for omp it must be one of OMPThinkingLevels; otherwise it is
+	// validated against ReasoningEffortsByBackend.
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
 }
 
@@ -252,6 +253,26 @@ func (c *Config) ResolveAdvisorRuntime(agentName string) (AdvisorRuntime, bool) 
 	}, true
 }
 
+// OMPThinkingLevels is omp's global `--thinking` vocabulary that hive passes.
+// Per-model levels are narrower and only checkable where omp is probed.
+var OMPThinkingLevels = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+
+func validateRoleReasoningEffort(role ModelRole) error {
+	if role.ReasoningEffort == "" || role.Backend == "" {
+		return nil
+	}
+	if role.Backend != AdvisorOMPBackend {
+		return ValidateReasoningEffort(role.Backend, role.ReasoningEffort)
+	}
+	for _, v := range OMPThinkingLevels {
+		if v == role.ReasoningEffort {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid reasoning effort %q for backend %s (accepted: %s)",
+		role.ReasoningEffort, role.Backend, strings.Join(OMPThinkingLevels, ", "))
+}
+
 // validateAdvisorLane checks the model_roles map, the fleet advisor block and
 // every per-agent override. Called from ValidateWithOptions alongside the
 // other block validators.
@@ -263,10 +284,8 @@ func (c *Config) validateAdvisorLane() error {
 		if strings.TrimSpace(role.Model) == "" {
 			return fmt.Errorf("model_roles.%s: model is required", name)
 		}
-		if role.ReasoningEffort != "" {
-			if err := ValidateReasoningEffort(role.Backend, role.ReasoningEffort); err != nil {
-				return fmt.Errorf("model_roles.%s: %w", name, err)
-			}
+		if err := validateRoleReasoningEffort(role); err != nil {
+			return fmt.Errorf("model_roles.%s: %w", name, err)
 		}
 	}
 	if err := c.validateAdvisorModelRef("advisor.model", c.Advisor.Model); err != nil {

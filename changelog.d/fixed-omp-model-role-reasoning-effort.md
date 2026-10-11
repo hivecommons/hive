@@ -1,0 +1,1 @@
+- A `model_roles` entry with `backend: omp` (or no backend) can now carry `reasoning_effort`; omp roles accept omp's thinking levels instead of being rejected at config load.

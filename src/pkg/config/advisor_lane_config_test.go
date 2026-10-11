@@ -307,3 +307,35 @@ agents:
 		t.Fatalf("round trip lost fields: %+v %+v", back.Advisor, back.ModelRoles)
 	}
 }
+
+func TestValidateModelRoleReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name, backend, effort, wantErr string
+	}{
+		{"omp high", "omp", "high", ""},
+		{"omp max", "omp", "max", ""},
+		{"omp bogus", "omp", "bogus", "minimal, low, medium, high, xhigh, max"},
+		{"no backend", "", "high", ""},
+		{"codex xhigh", "codex", "xhigh", ""},
+		{"codex max", "codex", "max", "invalid reasoning effort"},
+		{"claude max", "claude", "max", ""},
+		{"claude bogus", "claude", "bogus", "invalid reasoning effort"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{ModelRoles: map[string]ModelRole{
+				"advisor": {Backend: tt.backend, Model: "anthropic/claude-opus-5", ReasoningEffort: tt.effort},
+			}}
+			err := c.validateAdvisorLane()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
