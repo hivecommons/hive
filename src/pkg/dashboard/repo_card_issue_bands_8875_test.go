@@ -21,7 +21,9 @@ func TestRepoCardIssueBandsStaticWiring(t *testing.T) {
 		"${r.issues >= 0 ? r.issues : '?'}",
 		"const issuePills = repoIssueGroups.issueGroups.map(g => {",
 		"const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {",
-		"repoNonActionableIssueBucketSpec(i).key",
+		"repoNonActionableIssueKinds(repoNonActionableIssueBucketSpec(i))",
+		"info.chip || issueBandShortLabel(info.band)",
+		"spec.chip || spec.short",
 		"bucket === 'claimed_by_pr'",
 		"Claimed by PR",
 		"repoStaleIssueCount(r.actionableIssues || [])",
@@ -77,6 +79,7 @@ func TestRepoLegendRedesign(t *testing.T) {
 		"repoIssueBandConfig",
 		"repoLegendCollapsedKey",
 		"isRepoLegendCollapsed",
+		"repoIssueChipKind",
 		"renderRepoLegend",
 		"esc",
 	}
@@ -124,7 +127,12 @@ assert.match(out, /Review, links &amp; actions/);
 assert.deepEqual(bandCalls.slice(0, OVERVIEW_ISSUE_BAND_ORDER.length), OVERVIEW_ISSUE_BAND_ORDER);
 for (const band of OVERVIEW_ISSUE_BAND_ORDER) assert.match(out, new RegExp('band-' + band));
 assert.match(out, /<span>nobody on it/);
-assert.match(out, /⛔ blocked · ❓ needs a decision/);
+assert.match(out, /any other waiting label/);
+for (const chip of ['HUMAN', 'DIRECTION', 'DECISION', 'SPEC', 'REPORTER', 'BLOCKED', 'DISCUSSING', 'EPIC', 'UNTRIAGED']) {
+  assert.equal((out.match(new RegExp('>' + chip + '<', 'g')) || []).length, 1, chip);
+  assert.ok(chip.length <= 10, chip);
+}
+for (const gone of ['NEEDS HUMAN', 'NEEDS DECISION', 'WAITING ON REPORTER', 'issue:needs_decision']) assert.equal(out.includes(gone), false, gone);
 assert.match(out, /on an issue: verified linked PR/);
 assert.match(out, /on a PR: issue it closes on merge/);
 assert.match(out, /queued for auto-merge/);
@@ -214,19 +222,21 @@ assert.equal(repoCardIssueRenderedCount(groups), headerTotal);
 assert.deepEqual(groups.issueGroups.map(g => [g.band, g.issues.length]), [['waiting', 1], ['ready', 2], ['in-progress', 2], ['agent-filed', 1], ['done', 1]]);
 assert.deepEqual(groups.nonActionableIssueGroups.map(g => [g.key, g.issues.length]), [['hive_advisory', 1], ['filtered', 3], ['reporter_triage', 1], ['claimed_by_pr', 2]]);
 for (const [reason, key, short, waiting] of [
-  ['needs-human', 'needs_human', 'needs human', true],
-  ['needs-decision', 'needs_decision', 'needs decision', true],
-  ['needs-direction', 'needs_direction', 'needs direction', true],
-  ['needs-spec', 'needs_spec', 'needs spec', true],
-  ['needs-reporter-confirmation', 'reporter_confirmation', 'waiting on reporter', true],
+  ['needs-human', 'needs_human', 'human', true],
+  ['needs-decision', 'needs_decision', 'decision', true],
+  ['needs-direction', 'needs_direction', 'direction', true],
+  ['needs-spec', 'needs_spec', 'spec', true],
+  ['needs-reporter-confirmation', 'reporter_confirmation', 'reporter', true],
   ['Exempt label', 'filtered', 'filtered', undefined],
   ['Project issue filter', 'filtered', 'filtered', undefined],
 ]) {
   const spec = repoNonActionableIssueBucketSpec({ bucket: 'filtered', reason });
   assert.equal(spec.key, key, reason);
   assert.equal(spec.short, short, reason);
+  assert.equal(spec.chip, waiting ? short : undefined, reason);
   assert.equal(spec.waiting, waiting, reason);
 }
+assert.equal(repoNonActionableIssueBucketSpec({ bucket: 'filtered', labels: ['needs-human'] }).chip, 'human');
 assert.equal(repoNonActionableIssueBucketSpec({ bucket: 'filtered', labels: ['needs-spec'] }).key, 'needs_spec');
 const seen = new Set();
 for (const group of groups.issueGroups) for (const entry of group.issues) assert.equal(seen.has(entry.issue.number), false), seen.add(entry.issue.number);

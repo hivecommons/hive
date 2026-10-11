@@ -23,6 +23,22 @@ var (
 	holdLabelSpellings        = []string{"hold", "on-hold", "hold/review"}
 )
 
+// issueLabelChips names the label that put an issue in the waiting band, in
+// precedence order: the hard-suppress classifier's order (needs-human,
+// needs-direction, needs-decision, needs-spec) first, then the remaining
+// waiting labels. The parked-issue chips in index.html use the same words.
+var issueLabelChips = []struct{ label, chip string }{
+	{"needs-human", "human"},
+	{"needs-direction", "direction"},
+	{"needs-decision", "decision"},
+	{"needs-spec", "spec"},
+	{"needs-reporter-confirmation", "reporter"},
+	{"blocked", "blocked"},
+	{"2-discussing", "discussing"},
+	{"epic", "epic"},
+	{"needs-triage", "untriaged"},
+}
+
 type Signal struct {
 	Glyph string `json:"glyph,omitempty"`
 	Role  string `json:"role,omitempty"`
@@ -37,6 +53,7 @@ type IssueBandInfo struct {
 	HoldReason   string   `json:"hold_reason,omitempty"`
 	Stale        bool     `json:"stale"`
 	Signals      []Signal `json:"signals"`
+	Chip         string   `json:"chip,omitempty"`
 }
 
 type PRBandInfo struct {
@@ -160,7 +177,23 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if stale {
 		signals = append(signals, Signal{Glyph: "🕒", Label: fmt.Sprintf("stale: no activity > %dd", norm.StaleDays)})
 	}
-	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, ""), Stale: stale, Signals: signals}
+	chip := ""
+	if band == "waiting" {
+		chip = issueLabelChip(labels)
+	}
+	return IssueBandInfo{Band: band, Role: role, Acknowledged: acknowledged, Held: held, HoldReason: heldReason(issue.Labels, false, ""), Stale: stale, Signals: signals, Chip: chip}
+}
+
+// issueLabelChip returns the chip word for the highest-precedence waiting
+// label in labels (a lower-cased label set), or "" when none matches so the
+// frontend falls back to the band's short label.
+func issueLabelChip(labels map[string]bool) string {
+	for _, entry := range issueLabelChips {
+		if labels[entry.label] {
+			return entry.chip
+		}
+	}
+	return ""
 }
 
 type linkedPRState struct{ open, merged bool }
