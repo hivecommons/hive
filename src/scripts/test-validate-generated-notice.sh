@@ -100,6 +100,25 @@ if output="$("${VALIDATOR}" "${TMP}/NOTICE.unknown" 2>&1)"; then
 fi
 grep -qF 'unknown or empty license identifier' <<< "${output}"
 
+# --- unresolved source URL ---------------------------------------------------
+# go-licenses degrades Source to the literal "Unknown" when its HTTP go-import
+# lookup times out. The autofix must not commit that: it strips attribution
+# links and bakes a phantom diff into the next green regeneration.
+write_good_notice "${TMP}/NOTICE.nosource"
+printf 'Package:  gopkg.in/example/four.v4\nVersion:  v4.0.0\nLicense:  MIT\nSource:   Unknown\n\ntext\n' >> "${TMP}/NOTICE.nosource"
+if output="$("${VALIDATOR}" "${TMP}/NOTICE.nosource" 2>&1)"; then
+  echo "FAIL: NOTICE with unresolved Source URL accepted" >&2; exit 1
+fi
+grep -qF 'source URL go-licenses could not resolve' <<< "${output}"
+grep -qF 'gopkg.in/example/four.v4' <<< "${output}"
+grep -qF 'regenerate rather than committing' <<< "${output}"
+# The word "Unknown" inside license BODY text must not trigger it.
+write_good_notice "${TMP}/NOTICE.unknownprose"
+printf 'Package:  github.com/example/five\nVersion:  v5.0.0\nLicense:  MIT\nSource:   https://example.invalid/five\n\nSource:   Unknown is a phrase in prose, not a field\nUnknown\n' >> "${TMP}/NOTICE.unknownprose"
+if ! output="$("${VALIDATOR}" "${TMP}/NOTICE.unknownprose" 2>&1)"; then
+  echo "FAIL: prose containing 'Unknown' rejected: ${output}" >&2; exit 1
+fi
+
 # --- FORBIDDEN licenses must fail loudly -------------------------------------
 # This is the invariant that matters most: the autofix must never launder a
 # copyleft dependency into a green check (#5016 caught AGPL-3.0 go-docx).

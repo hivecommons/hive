@@ -75,6 +75,19 @@ if grep -qE "${UNKNOWN_SPDX_PATTERN}" -- "${GENERATED_NOTICE}"; then
   fail=1
 fi
 
+# go-licenses renders "Source:   Unknown" when its live go-import lookup for a
+# module's repository failed (a 20s HTTP timeout, logged only as a warning).
+# That is a transient resolver failure, not a property of the dependency: the
+# committed NOTICE carries a real URL for every entry. Auto-committing it would
+# both strip attribution links and bake a phantom diff into the next green run.
+UNRESOLVED_SOURCE_PATTERN='^Source:   Unknown$'
+
+if grep -qE "${UNRESOLVED_SOURCE_PATTERN}" -- "${GENERATED_NOTICE}"; then
+  echo "::error::${GENERATED_NOTICE} contains entries whose source URL go-licenses could not resolve ('Source:   Unknown'). This is a network lookup failure in the generator, not a dependency change; regenerate rather than committing. Offending entries:" >&2
+  grep -B 3 -E "${UNRESOLVED_SOURCE_PATTERN}" -- "${GENERATED_NOTICE}" | grep '^Package:  ' >&2 || true
+  fail=1
+fi
+
 # 4. LICENSE POLICY -----------------------------------------------------------
 # Hive ships under Apache-2.0. A strong-copyleft dependency entering the module
 # graph is exactly the event the notice-drift gate exists to surface — it is how

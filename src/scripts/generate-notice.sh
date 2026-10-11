@@ -110,7 +110,60 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
 REPORT_TEMPLATE="${WORK_DIR}/notice.tpl"
+REPORT_BODY="${WORK_DIR}/notice.body"
 GENERATED_NOTICE="${WORK_DIR}/NOTICE.generated"
+
+# Marker go-licenses writes into the Source field when it could not resolve a
+# module's repository URL (report.go: LicenseURL defaults to UNKNOWN and is only
+# replaced when Library.FileURL succeeds). FileURL is a live HTTP go-import
+# lookup with a 20s client timeout — for gopkg.in/* modules it GETs
+# "http://gopkg.in/<mod>?go-get=1" — and a timeout is logged as a klog
+# WARNING, not returned as an error. The entry is still rendered, with the URL
+# degraded to this literal, and the byte-exact drift gate then reports a
+# transient network failure as NOTICE drift.
+UNRESOLVED_SOURCE_PATTERN='^Source:   Unknown$'
+
+render_report() {
+  (
+    cd "${SRC_DIR}"
+    # --ignore the project's own module: LICENSE lives at the REPO root while
+    # the Go module is src/, so go-licenses' upward search stops at src/ and
+    # reports Hive packages as unlicensed. Hive's own code does not belong in
+    # a THIRD-PARTY notice regardless, so excluding it is the correct scope.
+    "${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
+      --ignore github.com/hivecommons/hive ./...
+  # Preserve the complete text while normalizing insignificant end-of-line
+  # whitespace from upstream license files, so the committed output passes
+  # repository whitespace checks and stays stable across tooling/editors.
+  ) | sed 's/[[:space:]]\+$//' > "$1"
+}
+
+# Re-run the walk when any Source URL came back unresolved: the module cache
+# is warm after the first attempt, so a retry costs only the metadata lookups
+# that failed. The last attempt's output is kept either way — the downstream
+# gates (validate-generated-notice.sh, check-notice-drift.sh) name the
+# unresolved entries rather than this script guessing a URL.
+render_report_with_retry() {
+  local attempt max_attempts sleep_seconds unresolved
+  max_attempts="${NOTICE_SOURCE_LOOKUP_ATTEMPTS:-3}"
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    echo "Walking the module graph and rendering license entries (attempt ${attempt}/${max_attempts})..." >&2
+    render_report "$1"
+    unresolved="$(grep -cE "${UNRESOLVED_SOURCE_PATTERN}" -- "$1" || true)"
+    if (( unresolved == 0 )); then
+      return 0
+    fi
+    echo "generate-notice.sh: ${unresolved} entr(y/ies) rendered with 'Source:   Unknown' — go-licenses could not resolve the module's source URL (network go-import lookup). Affected:" >&2
+    grep -B 3 -E "${UNRESOLVED_SOURCE_PATTERN}" -- "$1" | grep '^Package:  ' >&2 || true
+    if (( attempt == max_attempts )); then
+      echo "generate-notice.sh: giving up after ${max_attempts} attempts; the unresolved entries are left in the output for the validation gates to reject." >&2
+      return 0
+    fi
+    sleep_seconds=$((attempt * 5))
+    echo "retrying in ${sleep_seconds}s..." >&2
+    sleep "${sleep_seconds}"
+  done
+}
 
 cat > "${REPORT_TEMPLATE}" <<'TEMPLATE'
 {{range . -}}
@@ -159,19 +212,8 @@ release (see src/docs/releases.md, "Software bill of materials (SBOM)").
 
 HEADER
 
-  echo "Walking the module graph and rendering license entries..." >&2
-  (
-    cd "${SRC_DIR}"
-    # --ignore the project's own module: LICENSE lives at the REPO root while
-    # the Go module is src/, so go-licenses' upward search stops at src/ and
-    # reports Hive packages as unlicensed. Hive's own code does not belong in
-    # a THIRD-PARTY notice regardless, so excluding it is the correct scope.
-    "${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
-      --ignore github.com/hivecommons/hive ./...
-  # Preserve the complete text while normalizing insignificant end-of-line
-  # whitespace from upstream license files, so the committed output passes
-  # repository whitespace checks and stays stable across tooling/editors.
-  ) | sed 's/[[:space:]]\+$//'
+  render_report_with_retry "${REPORT_BODY}"
+  cat "${REPORT_BODY}"
 } > "${GENERATED_NOTICE}"
 
 # Replace the requested output only after generation succeeds, so a failed
