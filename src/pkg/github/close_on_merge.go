@@ -15,6 +15,11 @@ const (
 	CloseOnMergeMarker          = "<!-- hive-close-on-merge -->"
 	closeOnMergeAwaitingMarker  = "<!-- hive-close-on-merge: awaiting-confirmation -->"
 	closeOnMergeCommentPageSize = 100
+	// reopenedAfterMergeMarkerFormat marks an issue a person reopened after
+	// the given PR merged. It is PR-specific and must not contain
+	// CloseOnMergeMarker, which is matched issue-wide and would also block a
+	// later close for a different PR.
+	reopenedAfterMergeMarkerFormat = "<!-- hive-reopened-after-merge pr=%d -->"
 )
 
 var coveredByPRCommentPattern = regexp.MustCompile(`(?i)\bcovered\s+by\s+(?:open\s+)?(?:pr|pull request)\s+#(\d+)\b`)
@@ -310,8 +315,28 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "issue_not_open"
 		return res
 	}
-	if c.hasCloseOnMergeMarker(ctx, owner, repoName, issueNumber) {
+	closedMarker, reopenedMarker := c.closeOnMergeMarkers(ctx, owner, repoName, issueNumber, pr.GetNumber())
+	if closedMarker {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "marker_present"
+		return res
+	}
+	if reopenedMarker {
+		res.Action, res.Reason = CloseOnMergeSkipped, "reopened_after_merge"
+		return res
+	}
+	events, err := c.IssueTimelineSince(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, pr.GetMergedAt().Time)
+	if err != nil {
+		res.Action, res.Reason = CloseOnMergeSkipped, "timeline_read_failed"
+		if opts.Logger != nil {
+			opts.Logger.Warn("close-on-merge: reading issue timeline failed; will retry", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "error", err)
+		}
+		return res
+	}
+	if closeOnMergeReopenedAfter(events, opts.Identity) {
+		res.Action, res.Reason = CloseOnMergeSkipped, "reopened_after_merge"
+		if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(closeOnMergeReopenedComment(pr))}); err != nil && opts.Logger != nil {
+			opts.Logger.Warn("close-on-merge: posting reopened-after-merge marker failed", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "error", err)
+		}
 		return res
 	}
 	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
@@ -332,7 +357,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeNoop, "close_comment_failed"
 		return res
 	}
-	err := c.CloseIssue(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, IssueCloseOptions{
+	err = c.CloseIssue(WithRESTCaller(ctx, "hive:close_on_merge"), issueRepo, issueNumber, IssueCloseOptions{
 		OverrideReason:          fmt.Sprintf("fixed by merged PR #%d", pr.GetNumber()),
 		SuppressOverrideComment: true,
 		StateReason:             IssueStateReasonCompleted,
@@ -366,6 +391,29 @@ func closeOnMergeAwaitingComment(pr *gh.PullRequest) string {
 		CloseOnMergeMarker, closeOnMergeAwaitingMarker, pr.GetNumber())
 }
 
+// closeOnMergeReopenedComment records that the issue was reopened after pr
+// merged, so later sweeps skip pr without another timeline read.
+func closeOnMergeReopenedComment(pr *gh.PullRequest) string {
+	return fmt.Sprintf("%s\nReopened by a person after #%d merged. Hive will not close this issue for #%d again; close it by hand or with a new PR.",
+		closeOnMergeReopenedMarker(pr.GetNumber()), pr.GetNumber(), pr.GetNumber())
+}
+
+func closeOnMergeReopenedMarker(pr int) string {
+	return fmt.Sprintf(reopenedAfterMergeMarkerFormat, pr)
+}
+
+// closeOnMergeReopenedAfter reports a reopened event among events (already
+// limited to after the PR merged) by any actor, bots such as the /reopen
+// workflow's github-actions[bot] included, except the hive itself.
+func closeOnMergeReopenedAfter(events []IssueEvent, identity HiveIdentity) bool {
+	for _, e := range events {
+		if e.Event == "reopened" && !identity.Matches(e.Actor) {
+			return true
+		}
+	}
+	return false
+}
+
 func closeOnMergeShortSHA(sha string) string {
 	sha = strings.TrimSpace(sha)
 	if len(sha) > 12 {
@@ -378,19 +426,35 @@ func closeOnMergeShortSHA(sha string) string {
 }
 
 func (c *Client) hasCloseOnMergeMarker(ctx context.Context, owner, repo string, number int) bool {
+	closed, _ := c.closeOnMergeMarkers(ctx, owner, repo, number, 0)
+	return closed
+}
+
+// closeOnMergeMarkers reports, in one pass over the issue's comments, whether
+// Hive's close-on-merge marker is present and whether the reopened-after-merge
+// marker for pr is present.
+func (c *Client) closeOnMergeMarkers(ctx context.Context, owner, repo string, number, pr int) (closed, reopened bool) {
+	reopenedMarker := ""
+	if pr > 0 {
+		reopenedMarker = closeOnMergeReopenedMarker(pr)
+	}
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: closeOnMergeCommentPageSize}}
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, number, opts)
 		if err != nil {
-			return false
+			return closed, reopened
 		}
 		for _, comment := range comments {
-			if strings.Contains(comment.GetBody(), CloseOnMergeMarker) {
-				return true
+			body := comment.GetBody()
+			if strings.Contains(body, CloseOnMergeMarker) {
+				return true, reopened
+			}
+			if reopenedMarker != "" && strings.Contains(body, reopenedMarker) {
+				reopened = true
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
-			return false
+			return closed, reopened
 		}
 		opts.Page = resp.NextPage
 	}
