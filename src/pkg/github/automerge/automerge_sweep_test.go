@@ -1307,9 +1307,18 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 			name:           "unprotected branch with no real successful CI is unverified",
 			protectionCode: 0,
 			checks: []struct{ name, status, conclusion string }{
-				{"anything", "completed", "failure"},
+				{"anything", "completed", "neutral"},
 			},
 			wantReason: "ci-unverified",
+		},
+		{
+			name:           "unprotected branch blocks completed failing check",
+			protectionCode: 0,
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"some-custom-check", "completed", "failure"},
+			},
+			wantReason: "check-failure",
 		},
 	}
 	for _, tt := range tests {
@@ -1578,6 +1587,38 @@ func TestCommitGreenUnknownRequiredChecksSkipsExpectedReferenceChecks(t *testing
 	}
 	if mergedPRFetches != 0 {
 		t.Fatalf("merged PR list fetched %d times, want 0", mergedPRFetches)
+	}
+}
+
+// TestCommitGreenKnownEmptyRequiredChecksBlocksFailedCheck locks in #11489:
+// an unprotected base reports a known-empty required set, so GitHub's merge
+// endpoint enforces nothing and a completed CI failure must block locally.
+func TestCommitGreenKnownEmptyRequiredChecksBlocksFailedCheck(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"message": "Branch not protected"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "check_runs": []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "failure"},
+				{"name": "lint", "status": "completed", "conclusion": "success"},
+			}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	green, reason, err := c.commitGreenForPR(context.Background(), "acme", "widget", "main", "sha", 7, time.Time{}, newExpectedCheckCache())
+	if err != nil {
+		t.Fatalf("commitGreenForPR returned error: %v", err)
+	}
+	if green || reason != "check-failure" {
+		t.Fatalf("commitGreenForPR = (%v,%q), want (false,\"check-failure\")", green, reason)
 	}
 }
 

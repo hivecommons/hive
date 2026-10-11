@@ -120,6 +120,12 @@ type CommitCIOptions struct {
 	// the set is unknown, so Hive still requires positive CI evidence instead of
 	// treating absent CI or metadata-only statuses as green.
 	RequireEvidence bool
+	// RequiredKnownEmpty means GitHub reported a known-empty required-check
+	// set (unprotected base, or protection without required checks). The
+	// server then enforces nothing, so completed non-ignorable CI failures
+	// must block locally even when UnknownRequiredChecksServerEnforced is set
+	// for metadata handling.
+	RequiredKnownEmpty bool
 }
 
 func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (map[string]bool, bool) {
@@ -345,8 +351,9 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 // UnknownRequiredChecksServerEnforced is set, completed failing checks do not
 // block: the merge call is the source of truth for required checks. Pending
 // real CI statuses/check-runs still block so the sweep does not race in-flight
-// CI, while known metadata contexts are ignored. Without that option the older
-// fail-closed positive-evidence policy applies.
+// CI, while known metadata contexts are ignored. Without that option, or when
+// RequiredKnownEmpty says the server enforces nothing, completed failures
+// still block locally (the older fail-closed positive-evidence policy).
 // Later blockers are still walked after the first so that Evidence and
 // MissingRequired are complete for the caller. A non-nil error means the
 // evidence could not be gathered; Reason then names the failing API
@@ -360,6 +367,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	required := opts.Required
 	requiredKnown := opts.RequiredKnown
 	serverEnforcedUnknown := opts.UnknownRequiredChecksServerEnforced
+	blockCompletedFailures := !serverEnforcedUnknown || opts.RequiredKnownEmpty
 	seen := make(map[string]bool)
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
@@ -444,7 +452,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		default: // "failure", "error"
 			if requiredKnown {
 				block("required-check-failing:" + ctxName)
-			} else if !serverEnforcedUnknown && !isIgnorableCICheck(ctxName) {
+			} else if blockCompletedFailures && !isIgnorableCICheck(ctxName) {
 				block("status-" + s.GetState())
 			}
 		}
@@ -489,7 +497,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		default:
 			if requiredKnown {
 				block("required-check-failing:" + name)
-			} else if !serverEnforcedUnknown && !isIgnorableCICheck(name) {
+			} else if blockCompletedFailures && !isIgnorableCICheck(name) {
 				block("check-" + cr.GetConclusion())
 			}
 		}

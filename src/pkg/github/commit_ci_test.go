@@ -82,6 +82,21 @@ func TestEvaluateCommitCIFreshHeadExpectedChecks(t *testing.T) {
 			want: "pending: head pushed 1m0s ago (< min_head_age)",
 		},
 		{
+			name: "failure with known-empty required set blocks locally",
+			checks: []map[string]string{
+				{"name": "build", "status": "completed", "conclusion": "failure"},
+				{"name": "lint", "status": "completed", "conclusion": "success"},
+			},
+			opts: CommitCIOptions{
+				RequiredKnownEmpty: true,
+				RequireEvidence:    true,
+				MinHeadAge:         3 * time.Minute,
+				HeadPushedAt:       now.Add(-10 * time.Minute),
+				Now:                func() time.Time { return now },
+			},
+			want: "check-failure",
+		},
+		{
 			name: "require evidence refuses empty actual-required repos with no statuses",
 			opts: CommitCIOptions{
 				RequireEvidence: true,

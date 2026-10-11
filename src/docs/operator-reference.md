@@ -336,6 +336,10 @@ branch rule. Hive still fails closed with `ci-unverified` unless at least one
 real, non-meta check-run has succeeded on the head SHA, so an unprotected branch
 with only tide/DCO and no CI does not merge. The sweep logs the carve-out once
 per PR as `automerge ignoring meta contexts on unprotected base`.
+Completed failures are only deferred to the merge endpoint when the required
+set is genuinely unknown; a known-empty set means GitHub enforces nothing, so
+any completed non-meta, non-ignorable CI failure blocks locally with
+`check-failure` / `status-failure` (#11489).
 
 When `required_checks` is unset and GitHub's branch-protection API is not
 available, the sweep also waits for every non-meta, non-ignorable PR-context
