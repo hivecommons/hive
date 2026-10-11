@@ -50,7 +50,7 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - **Test coverage** appears at the end of the row when `HIVE_COVERAGE_BADGE_URL` is configured and readable. It shows the primary repository's current coverage and goal, using the same reading as the quality agent.
 - The last part of Outside is **hold-adjacent/other**. It is whatever is left after every named reason is counted. Hive cannot say more about these items.
 - The Outside tile exists on the v5 line only. On v6 the same items are part of the totals but have no tile of their own.
-- **Issues by band** groups tracked and held issues. The bands are Unclaimed, Claimed, Needs triage, Needs human and Confirm & close.
+- **Issues by band** groups tracked and held issues. The bands are Unclaimed, Claimed, Needs triage, Needs human and Confirm & close. Issues Hive has parked with `needs-human`, `needs-decision`, `needs-direction` or `needs-spec` show an orange chip (needs human, needs decision, needs direction, needs spec) and count toward the "need human review" total in the section header. Issues with `needs-reporter-confirmation` show an orange "waiting on reporter" chip and are not counted there. The grey FILTERED chip is only for issues skipped by the project issue filter or an exempt label.
 - Unclaimed means nobody is assigned. Claimed means a person or a Hive worker took it. Needs triage means a Hive worker filed it and no person has approved it yet.
 - Needs human means a label such as `blocked` or `needs-decision` asks a person to act. Confirm & close means a worker thinks the issue is already done.
 - **PRs by band** groups open and held pull requests. The bands are Needs human, Merge-eligible, Blocked, In review, Open and Draft.
