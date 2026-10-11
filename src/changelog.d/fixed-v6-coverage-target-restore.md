@@ -1,0 +1,1 @@
+Restore `pkg/config/coverage_target.go` (`DefaultCoverageTarget`, `ValidateCoverageTarget`, `EffectiveCoverageTarget`) after two concurrent de-duplication fixes (#11485, #11483) each removed one copy and left `v6` without any declaration.
