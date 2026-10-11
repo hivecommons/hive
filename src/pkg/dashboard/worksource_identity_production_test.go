@@ -415,6 +415,14 @@ func TestPromptCarriesNativeKeyAndURL(t *testing.T) {
 	if strings.Contains(gh, "work source") {
 		t.Errorf("github prompt gained an external-source hint it should not have:\n%s", gh)
 	}
+	// hivecommons/hive#11443: a GitHub issue is read with its comments; an
+	// external item has no `gh issue view` at all.
+	if !strings.Contains(gh, "read the issue with its comments ('gh issue view 42 --repo acme/repo --comments')") {
+		t.Errorf("github prompt does not name the comment-reading command:\n%s", gh)
+	}
+	if strings.Contains(prompt, "gh issue view") {
+		t.Errorf("external prompt must not ask for gh issue view:\n%s", prompt)
+	}
 }
 
 // TestCanonicalKeyRoundTripsThroughParse proves the persisted-key reader and

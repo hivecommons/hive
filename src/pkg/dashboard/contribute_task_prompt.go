@@ -84,8 +84,17 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 	// was put back on v5 by the agent, because the plan it had already formed
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
-	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide) +
+	// hivecommons/hive#11443: a GitHub issue's comments often carry the
+	// decisions and corrections the body lacks, and a plain `gh issue view`
+	// prints the body alone. Only GitHub issues get the command — a Linear or
+	// Jira ticket has no `gh issue view`.
+	readIssue := "read the issue"
+	if ref.IsGitHubIssue() {
+		readIssue = fmt.Sprintf("read the issue with its comments ('gh issue view %d --repo %s --comments')",
+			ref.Number, repoFull)
+	}
+	return buildTaskPromptBodyWithIssueRead(repoFull, issueRef, title, sourceHint,
+		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide, readIssue) +
 		artifactTrailerPromptInstruction(issueRef)
 }
 
@@ -336,6 +345,10 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 }
 
 func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide string) string {
+	return buildTaskPromptBodyWithIssueRead(repoFull, issueRef, title, sourceHint, baseBranch, canPush, guide, "read the issue")
+}
+
+func buildTaskPromptBodyWithIssueRead(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide, readIssue string) string {
 	// The workspace contract (kubestellar/hive#2545): your tmux pane already
 	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
 	// launches the session with -c pointed there), but nothing had put a repo
@@ -466,7 +479,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 
 	return fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+
-			"%sThen 'cd' into that checkout, read the issue, "+
+			"%sThen 'cd' into that checkout, %s, "+
 			"understand what's needed, and take action. "+
 			// #7159: precedence. Everything else in this prompt is hive's
 			// generic default for a repository hive cannot see; the repo states
@@ -624,7 +637,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"appear after your verdict, you may be asked once to address the "+
 			"ones that apply and print the HIVE_VERDICT line again — do so; that "+
 			"second line is expected, and it is final.",
-		repoFull, issueRef, title, sourceHint, checkoutHint, baseHint, guideHint, pushHint,
+		repoFull, issueRef, title, sourceHint, checkoutHint, readIssue, baseHint, guideHint, pushHint,
 	)
 }
 

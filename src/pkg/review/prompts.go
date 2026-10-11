@@ -354,7 +354,7 @@ func scopeContractSection(pr PullRequest) string {
 	}
 	b.WriteString("- Classify every finding with review_scope: \"in-scope\" when it affects whether this PR satisfies that contract, or \"out-of-scope\" when it is a real adjacent/pre-existing concern for later work.\n")
 	b.WriteString("- Only in-scope findings may affect your verdict. Out-of-scope findings need file:line evidence too, but they do not block this PR; the hive will file them as backlog issues.\n")
-	b.WriteString("- If the contract is an issue reference, read that issue with `gh issue view` before deciding intent alignment; do not rely on the PR author's summary alone.\n\n")
+	b.WriteString("- If the contract is an issue reference, read that issue and its comments with `gh issue view <n> --comments` before deciding intent alignment; do not rely on the PR author's summary alone.\n\n")
 	return b.String()
 }
 
