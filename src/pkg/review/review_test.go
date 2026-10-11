@@ -99,7 +99,7 @@ func TestOutOfScopeFindingsDoNotDriveVerdictOrConfidence(t *testing.T) {
 func TestPromptBuilders(t *testing.T) {
 	pr := PullRequest{Repo: "hivecommons/hive", Number: 2807, Title: "review swarm", Author: "bot", HeadSHA: testSHA, URL: "https://example.invalid/pr/2807", ScopeContract: "linked issue hivecommons/hive#8662 from the PR closing keyword"}
 	prompt := BuildPerspectivePrompt(PerspectiveSecurity, pr)
-	for _, want := range []string{"[review-perspective:security]", "hivecommons/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA, "SCOPE CONTRACT", "hivecommons/hive#8662", "review_scope"} {
+	for _, want := range []string{"[review-perspective:security]", "hivecommons/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA, "SCOPE CONTRACT", "hivecommons/hive#8662", "review_scope", "`gh issue view <n> --comments`"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}

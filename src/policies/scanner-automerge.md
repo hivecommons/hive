@@ -125,7 +125,7 @@ REPO: <org>/<repo>
 
 Steps:
 1. git worktree add /tmp/scanner-fix-<lowest-number> -b scanner/fix-<lowest-number> origin/<target-branch> (the branch the PR will target — the base this repository requires per its AGENTS.md, CONTRIBUTING or pull-request template, falling back to its default branch only when nothing names one; never assume `main`)
-2. Read each issue: gh issue view <number> --repo <org>/<repo>
+2. Read each issue with its comments: gh issue view <number> --repo <org>/<repo> --comments
 3. Verify the bugs exist in code — read files, confirm the patterns
 4. If any issue is invalid or already fixed: comment with evidence, close as "not planned"
 5. Before changing anything, read the surrounding code and nearby files to understand the project's patterns and conventions. Use existing utilities, follow established naming and style — do not introduce new abstractions or deviate from how the codebase already solves similar problems. The existing code is the reference model.
