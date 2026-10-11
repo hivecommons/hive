@@ -55,7 +55,9 @@ jobs:
       - name: Guard shared Go cache (fall back when the runner volume is full)
         if: matrix.lane == 'latest'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
-      - name: OMP smoke (latest)
+      # Proves only the in-process extwork omp adapter (handshake + dispatch);
+      # the omp CLI is not started in this lane.
+      - name: extwork omp adapter test (latest)
         if: matrix.lane == 'latest'
         working-directory: src
         run: |
@@ -77,10 +79,67 @@ jobs:
           if command -v podman >/dev/null 2>&1; then podman --version; exit 0; fi
           echo '::error::pinned omp-smoke needs podman to run inside ghcr.io/hivecommons/hive-contributor:latest'
           exit 1
-      - name: OMP smoke (pinned image)
+      # Proves the omp binary baked into the contributor image is the version
+      # pinned in src/Dockerfile.contributor and still lists the launch flags
+      # hive passes (manager_launch.go, advisor_omp.go, backend_resume.go).
+      - name: omp binary version and flags (pinned image)
         if: matrix.lane == 'pinned'
         run: |
-          podman pull ghcr.io/hivecommons/hive-contributor:latest
+          IMAGE=ghcr.io/hivecommons/hive-contributor:latest
+          podman pull "$IMAGE"
+          want=$(sed -n 's/^ARG OMP_VERSION=//p' src/Dockerfile.contributor | head -n1)
+          if [ -z "$want" ]; then echo '::error::OMP_VERSION not found in src/Dockerfile.contributor'; exit 1; fi
+          got=$(podman run --rm --entrypoint omp "$IMAGE" --version | tr -d '\r' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)?' | head -n1)
+          echo "pinned OMP_VERSION=$want, image omp --version=$got"
+          if [ "$got" != "$want" ]; then
+            echo "::error::omp --version ($got) != OMP_VERSION ($want); rebuild the contributor image"
+            exit 1
+          fi
+          help=$(podman run --rm --entrypoint omp "$IMAGE" --help)
+          missing=0
+          for flag in --approval-mode --thinking --model --resume --extension --config always-ask write yolo; do
+            if ! printf '%s\n' "$help" | grep -qF -- "$flag"; then
+              echo "::error::omp --help no longer lists $flag"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      # Proves a keyless interactive launch still renders the chrome hive's
+      # pane detectors key on (composer corner and status line marker).
+      - name: omp keyless launch chrome (pinned image)
+        if: matrix.lane == 'pinned'
+        run: |
+          mkdir -p omp-chrome
+          podman run --rm --entrypoint /bin/bash \
+            -v "$GITHUB_WORKSPACE/omp-chrome:/out:Z" \
+            ghcr.io/hivecommons/hive-contributor:latest \
+            -lc 'export HOME=$(mktemp -d) OMP_SKIP_SETUP=1 TERM=xterm-256color LANG=C.UTF-8
+              tmux -u new-session -d -s smoke -x 200 -y 50 "omp --approval-mode yolo"
+              sleep 8
+              tmux capture-pane -p -t smoke > /out/omp-pane.txt
+              tmux kill-server || true'
+          cat omp-chrome/omp-pane.txt
+          fail=0
+          for marker in '╰─' '▶─'; do
+            if ! grep -qF -- "$marker" omp-chrome/omp-pane.txt; then
+              echo "::error::omp pane capture is missing chrome marker $marker"
+              fail=1
+            fi
+          done
+          exit "$fail"
+      - name: Upload omp pane capture
+        if: matrix.lane == 'pinned' && always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omp-pane-${{ github.run_id }}-${{ github.run_attempt }}
+          path: omp-chrome/omp-pane.txt
+          retention-days: 14
+          if-no-files-found: ignore
+      # Proves the in-process extwork omp adapter test also builds and passes
+      # inside the contributor image; the omp CLI is not started here.
+      - name: extwork omp adapter test (pinned image)
+        if: matrix.lane == 'pinned'
+        run: |
           podman run --rm --entrypoint /bin/bash \
             -v "$GITHUB_WORKSPACE:/opt/hive-src:ro,Z" \
             ghcr.io/hivecommons/hive-contributor:latest \
