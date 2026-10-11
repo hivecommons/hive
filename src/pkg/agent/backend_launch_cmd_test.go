@@ -165,10 +165,35 @@ func TestBackendLaunchCmd_OMPPassesModelEffortAndApproval(t *testing.T) {
 }
 
 func TestBackendLaunchCmd_OMPApprovalModeIsConfigurable(t *testing.T) {
-	t.Setenv("HIVE_OMP_APPROVAL_MODE", "auto-approve")
+	t.Setenv("HIVE_OMP_APPROVAL_MODE", "write")
 	got := backendLaunchCmd("omp", "anthropic/claude-opus-5", "omp", false, "")
-	want := "omp --approval-mode auto-approve --model anthropic/claude-opus-5"
+	want := "omp --approval-mode write --model anthropic/claude-opus-5"
 	if got != want {
 		t.Fatalf("omp launch with custom approval = %q, want %q", got, want)
+	}
+}
+
+func TestBackendLaunchCmd_OMPInvalidApprovalModeFallsBackToYolo(t *testing.T) {
+	t.Setenv("HIVE_OMP_APPROVAL_MODE", "auto-approve; echo pwned")
+	got := backendLaunchCmd("omp", "anthropic/claude-opus-5", "omp", false, "")
+	want := "omp --approval-mode yolo --model anthropic/claude-opus-5"
+	if got != want {
+		t.Fatalf("omp launch with invalid approval = %q, want %q", got, want)
+	}
+}
+
+func TestBackendLaunchCmd_OMPInvalidEffortDropped(t *testing.T) {
+	got := backendLaunchCmd("omp", "anthropic/claude-opus-5", "omp", false, "high; echo pwned")
+	want := "omp --approval-mode yolo --model anthropic/claude-opus-5"
+	if got != want {
+		t.Fatalf("omp launch with invalid effort = %q, want %q", got, want)
+	}
+}
+
+func TestBackendLaunchCmd_OMPQuotesModelMetacharacters(t *testing.T) {
+	got := backendLaunchCmd("omp", "evil;touch x", "omp", false, "high")
+	want := "omp --approval-mode yolo --model 'evil;touch x' --thinking high"
+	if got != want {
+		t.Fatalf("omp launch with metachar model = %q, want %q", got, want)
 	}
 }

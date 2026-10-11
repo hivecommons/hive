@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -41,7 +42,7 @@ import (
 // then never read, leaving the CLI idle at its prompt after every launch.
 func backendDefersStartupKick(backend string) bool {
 	switch backend {
-	case "claude", "copilot", "gemini", "pi", bobBackend, "agy":
+	case "claude", "copilot", "gemini", "pi", bobBackend, "agy", "omp":
 		return true
 	default:
 		return false
@@ -220,7 +221,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.recordPrompt(agent.Name, "startup", bootstrapPrompt)
 
 		// Only goose (and unknown backends, which never embed) reach this
-		// block — claude/copilot/gemini/bob bootstrap prompts were deferred to
+		// block — claude/copilot/gemini/pi/bob/agy/omp bootstrap prompts were deferred to
 		// deliverStartupKick above, so no /tmp/.hive-bootstrap-<name>.txt is
 		// written for them. bob used to land here and get a file nothing ever
 		// read; that dead write is gone with the deferral above.
@@ -1182,17 +1183,42 @@ func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFil
 
 const ompDefaultApprovalMode = "yolo"
 
+var (
+	ompApprovalModes  = map[string]bool{"always-ask": true, "write": true, "yolo": true}
+	ompThinkingLevels = map[string]bool{"off": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true, "auto": true}
+)
+
+// ompShellArg quotes v only when it holds characters outside a conservative
+// plain-token set, so ordinary model ids render unchanged.
+func ompShellArg(v string) string {
+	plain := strings.IndexFunc(v, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:@+=,", r))
+	}) < 0
+	if plain && v != "" {
+		return v
+	}
+	return shellQuote(v)
+}
+
 func ompLaunchCmd(binary, model, effort string) string {
 	approval := strings.TrimSpace(os.Getenv("HIVE_OMP_APPROVAL_MODE"))
 	if approval == "" {
 		approval = ompDefaultApprovalMode
+	} else if !ompApprovalModes[approval] {
+		slog.Warn("invalid HIVE_OMP_APPROVAL_MODE; falling back to default",
+			"value", approval, "default", ompDefaultApprovalMode)
+		approval = ompDefaultApprovalMode
 	}
-	cmd := fmt.Sprintf("%s --approval-mode %s", binary, approval)
+	cmd := fmt.Sprintf("%s --approval-mode %s", binary, ompShellArg(approval))
 	if model != "" {
-		cmd += fmt.Sprintf(" --model %s", model)
+		cmd += fmt.Sprintf(" --model %s", ompShellArg(model))
 	}
 	if effort != "" {
-		cmd += fmt.Sprintf(" --thinking %s", effort)
+		if ompThinkingLevels[effort] {
+			cmd += fmt.Sprintf(" --thinking %s", ompShellArg(effort))
+		} else {
+			slog.Warn("invalid omp thinking level; launching without --thinking", "value", effort)
+		}
 	}
 	return cmd
 }

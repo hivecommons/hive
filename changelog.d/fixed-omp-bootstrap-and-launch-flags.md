@@ -1,0 +1,1 @@
+- omp agents now receive their bootstrap prompt at launch, and `HIVE_OMP_APPROVAL_MODE` and the reasoning effort are validated against omp's accepted values and shell-quoted instead of being passed through unchecked.

@@ -28,6 +28,8 @@ func TestBackendDefersStartupKick(t *testing.T) {
 			"bob is an interactive TUI with no embedded-prompt mechanism"},
 		{"pi defers (the fix)", "pi", true,
 			"pi is an interactive TUI with no embedded-prompt mechanism"},
+		{"omp defers (the fix)", "omp", true,
+			"omp is an interactive TUI with no embedded-prompt mechanism"},
 		{"claude unchanged", "claude", true,
 			"pre-existing deferred backend"},
 		{"copilot unchanged", "copilot", true,
