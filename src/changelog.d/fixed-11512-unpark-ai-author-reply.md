@@ -1,1 +1,0 @@
-- issues: the un-park sweep now replies and logs when a `/hive approve`/`/hive decision` comes from the account named in `project.ai_author` instead of ignoring it; boot warns when `ai_author` is a user login on an App-authenticated hive (#11512)
