@@ -34,18 +34,27 @@ func TestUpstreamWatchParsesAllKnobs(t *testing.T) {
 	cfg := parseUpstreamWatch(t, upstreamWatchBase+
 		"upstream_watch:\n  enabled: true\n  interval: 2h\n  repos:\n    acme/forked-thing:\n"+
 		"      upstream: origin/thing\n      sources: [releases]\n      pr_labels: [bug, security]\n"+
-		"      max_issues_per_run: 5\n      label: upstream/custom\n")
+		"      max_issues_per_run: 5\n      label: upstream/custom\n      start_from: 2026-06-01\n")
 	w := cfg.UpstreamWatch
 	r := w.Repos["acme/forked-thing"]
 	if !w.Enabled || w.Interval != 2*time.Hour {
 		t.Errorf("enabled/interval = %v/%s", w.Enabled, w.Interval)
 	}
 	if r.Upstream != "origin/thing" || len(r.Sources) != 1 || r.Sources[0] != "releases" ||
-		len(r.PRLabels) != 2 || r.MaxIssuesPerRun != 5 || r.Label != "upstream/custom" {
+		len(r.PRLabels) != 2 || r.MaxIssuesPerRun != 5 || r.Label != "upstream/custom" || r.StartFrom != "2026-06-01" {
 		t.Errorf("repo parsed wrong: %+v", r)
 	}
 	if err := cfg.validateUpstreamWatch(); err != nil {
 		t.Errorf("valid config rejected: %v", err)
+	}
+	if at, ok := r.StartFromTime(); !ok || !at.Equal(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("StartFromTime = %v/%v, want 2026-06-01 00:00 UTC", at, ok)
+	}
+}
+
+func TestUpstreamWatchStartFromTimeUnset(t *testing.T) {
+	if at, ok := (UpstreamWatchRepo{}).StartFromTime(); ok || !at.IsZero() {
+		t.Errorf("unset start_from = %v/%v, want zero/false", at, ok)
 	}
 }
 
@@ -76,6 +85,9 @@ func TestUpstreamWatchValidation(t *testing.T) {
 		{"deep upstream", "forked-thing:\n      upstream: a/b/c\n", "must be owner/repo"},
 		{"bad source", "forked-thing:\n      sources: [commits]\n", "invalid source"},
 		{"negative cap", "forked-thing:\n      max_issues_per_run: -1\n", "must be positive"},
+		{"bad start_from", "forked-thing:\n      start_from: yesterday\n", "invalid start_from"},
+		{"start_from with time", "forked-thing:\n      start_from: \"2026-06-01T00:00:00Z\"\n", "invalid start_from"},
+		{"impossible start_from", "forked-thing:\n      start_from: \"2026-02-30\"\n", "invalid start_from"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

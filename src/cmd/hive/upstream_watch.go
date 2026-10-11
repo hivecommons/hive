@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -85,11 +86,13 @@ func runUpstreamWatch(ctx context.Context, cfg *config.Config, ghClient *github.
 		if strings.TrimSpace(label) == "" {
 			label = config.DefaultUpstreamWatchLabel
 		}
+		startFrom, _ := rc.StartFromTime()
 		w := upstreamwatch.New(upstreamwatch.Options{
 			Repo:            key,
 			Upstream:        upstream,
 			Label:           label,
 			MaxIssuesPerRun: rc.MaxIssuesPerRun,
+			StartFrom:       startFrom,
 		}, src,
 			upstreamwatch.NewGitHubForkContents(client, owner, repo),
 			store,
@@ -100,6 +103,16 @@ func runUpstreamWatch(ctx context.Context, cfg *config.Config, ghClient *github.
 			"filed", len(res.Filed), "skipped", len(res.Skipped),
 			"deduped", len(res.Deduped), "dismissed", len(res.Dismissed),
 			"capped", res.Capped, "remaining", res.Remaining,
+			"first_pass", res.FirstPass,
+		}
+		if res.FirstPass && !res.Start.IsZero() {
+			attrs = append(attrs, "start", res.Start)
+		}
+		var truncated *upstreamwatch.TruncatedError
+		if errors.As(err, &truncated) {
+			logger.Warn("upstream watch: upstream listing truncated; nothing filed, watermark unchanged",
+				append(attrs, "window", truncated.Window(), "advice", upstreamWatchTruncatedAdvice(key, res.FirstPass), "error", err)...)
+			continue
 		}
 		if err != nil {
 			logger.Warn("upstream watch pass failed", append(attrs, "error", err)...)
@@ -111,6 +124,17 @@ func runUpstreamWatch(ctx context.Context, cfg *config.Config, ghClient *github.
 			logger.Debug("upstream watch pass", attrs...)
 		}
 	}
+}
+
+// upstreamWatchTruncatedAdvice is the remedy logged with a truncated listing.
+// start_from only moves a first pass, so a repo with history needs its state
+// entry removed first; issues already filed are found again by their marker.
+func upstreamWatchTruncatedAdvice(key string, firstPass bool) string {
+	advice := "set a later upstream_watch.repos." + key + ".start_from (YYYY-MM-DD) so the listing fits the window"
+	if firstPass {
+		return advice
+	}
+	return "start_from applies only to a first pass: remove the " + key + " entry from " + upstreamWatchStatePath + " and " + advice
 }
 
 // upstreamWatchFork resolves an upstream_watch.repos key to the fork's

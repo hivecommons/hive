@@ -60,6 +60,10 @@ type Options struct {
 	Label string
 	// MaxIssuesPerRun caps issues filed per run. Zero or less means no cap.
 	MaxIssuesPerRun int
+	// StartFrom, when set, is where a first pass starts instead of the
+	// fork point (Source.ForkPoint). It is ignored once the repo has
+	// history: any saved ref or a non-zero watermark.
+	StartFrom time.Time
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -91,6 +95,12 @@ type Result struct {
 	// Remaining counts them. They stay behind the watermark for next run.
 	Capped    bool
 	Remaining int
+	// FirstPass is true when the repo had no saved refs and a zero
+	// watermark, so the run started at StartFrom or the fork point.
+	FirstPass bool
+	// Start is where a first pass started; zero when FirstPass is false or
+	// the start point could not be found.
+	Start time.Time
 }
 
 // Watch is the upstream watch loop for one fork repo: list upstream items
@@ -115,6 +125,12 @@ func New(opts Options, source Source, contents ForkContents, store Store, filer 
 // labelled DismissedLabel). The state is saved even when either half stops
 // early, so every item handled before an error stays handled; the watermark
 // never moves past an item that was not filed, skipped or deduped.
+//
+// A first pass (no saved refs, zero watermark) starts at Options.StartFrom,
+// or else at the fork point; when the fork point cannot be found the pass
+// files nothing and leaves the watermark zero so the next pass retries. A
+// listing the source reports as truncated (*TruncatedError) is never handled:
+// the pass files nothing and the watermark stays where it was.
 func (w *Watch) Run(ctx context.Context) (Result, error) {
 	var res Result
 	state, err := w.store.Load()
@@ -141,9 +157,26 @@ func (w *Watch) Run(ctx context.Context) (Result, error) {
 }
 
 func (w *Watch) process(ctx context.Context, rs *RepoState, res *Result, justFiled map[string]bool) error {
-	items, err := w.source.List(ctx, rs.Watermark)
+	since := rs.Watermark
+	if rs.firstPass() {
+		res.FirstPass = true
+		start, err := w.startPoint(ctx)
+		if err != nil {
+			return err
+		}
+		res.Start = start
+		since = start
+	}
+	items, err := w.source.List(ctx, since)
 	if err != nil {
 		return fmt.Errorf("list upstream items: %w", err)
+	}
+	// Written directly, and only once the listing is complete: a failed or
+	// truncated first pass keeps a zero watermark, so the next pass is a
+	// first pass again and honours a start_from set in the meantime.
+	// AdvanceWatermark is not used because it only moves forward.
+	if res.FirstPass {
+		rs.Watermark = since
 	}
 	filed := 0
 	for i, item := range items {
@@ -257,6 +290,23 @@ func (w *Watch) reconcile(ctx context.Context, rs *RepoState, res *Result, justF
 		}
 	}
 	return nil
+}
+
+// startPoint returns where a first pass starts: Options.StartFrom when set,
+// else the fork's last commit in common with its upstream. It never returns
+// a zero time without an error, so a first pass never scans from zero.
+func (w *Watch) startPoint(ctx context.Context) (time.Time, error) {
+	if !w.opts.StartFrom.IsZero() {
+		return w.opts.StartFrom, nil
+	}
+	at, err := w.source.ForkPoint(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("find fork point: %w", err)
+	}
+	if at.IsZero() {
+		return time.Time{}, errors.New("find fork point: no commit date for the merge base")
+	}
+	return at, nil
 }
 
 // holdBehind keeps the watermark strictly before an unhandled item. The

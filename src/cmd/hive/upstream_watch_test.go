@@ -93,3 +93,14 @@ func TestUpstreamWatchFiler_NeutralizesMentions(t *testing.T) {
 		t.Fatalf("marker was rewritten: %q", rec.got.Body)
 	}
 }
+
+func TestUpstreamWatchTruncatedAdvice(t *testing.T) {
+	first := upstreamWatchTruncatedAdvice("widgets", true)
+	if !strings.Contains(first, "upstream_watch.repos.widgets.start_from") || strings.Contains(first, upstreamWatchStatePath) {
+		t.Errorf("first-pass advice = %q", first)
+	}
+	later := upstreamWatchTruncatedAdvice("widgets", false)
+	if !strings.Contains(later, "upstream_watch.repos.widgets.start_from") || !strings.Contains(later, upstreamWatchStatePath) {
+		t.Errorf("advice with history = %q", later)
+	}
+}

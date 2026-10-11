@@ -52,6 +52,7 @@ func TestUpstreamWatchConfigPutRejected(t *testing.T) {
 		{"bad upstream", `{"repos":{"repo1":{"upstream":"nope"}}}`, "invalid upstream"},
 		{"bad source", `{"repos":{"repo2":{"sources":["tags"]}}}`, "invalid source"},
 		{"negative cap", `{"repos":{"repo1":{"max_issues_per_run":-1}}}`, "max_issues_per_run"},
+		{"bad start_from", `{"repos":{"repo1":{"start_from":"June"}}}`, "start_from"},
 		{"foreign org", `{"repos":{"other/repo2":{}}}`, "not listed in project.repos"},
 	}
 	for _, tc := range cases {
@@ -121,6 +122,11 @@ func TestUpstreamWatchConfigPutEdits(t *testing.T) {
 			if len(r.Sources) != 1 || r.Sources[0] != "prs" || len(r.PRLabels) != 1 || r.PRLabels[0] != "bug" ||
 				r.MaxIssuesPerRun != 3 || r.Label != "port" {
 				t.Errorf("repo1 = %+v", r)
+			}
+		}},
+		{"start_from round-trips", `{"repos":{"repo1":{"start_from":"2026-06-01"}}}`, func(t *testing.T, w config.UpstreamWatchConfig) {
+			if r := w.Repos["repo1"]; r.StartFrom != "2026-06-01" || r.Upstream != "up/stream" {
+				t.Errorf("repo1 = %+v, want start_from 2026-06-01 and upstream unchanged", r)
 			}
 		}},
 		{"clear upstream", `{"repos":{"repo1":{"upstream":""}}}`, func(t *testing.T, w config.UpstreamWatchConfig) {

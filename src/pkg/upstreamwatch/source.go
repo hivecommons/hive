@@ -2,6 +2,7 @@ package upstreamwatch
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -60,6 +61,42 @@ type Item struct {
 type Source interface {
 	// List returns every upstream PR merged after since and every non-draft
 	// release published after since, filtered by the configured sources and
-	// pr_labels, sorted oldest-first by Timestamp.
+	// pr_labels, sorted oldest-first by Timestamp. When a page cap is
+	// reached before the listing gets back to since, it returns no items and
+	// a *TruncatedError, so the caller never moves its watermark past items
+	// it was not shown.
 	List(ctx context.Context, since time.Time) ([]Item, error)
+	// ForkPoint returns the commit date of the fork's last commit in common
+	// with its upstream: the merge base of the upstream's default branch and
+	// the fork's.
+	ForkPoint(ctx context.Context) (time.Time, error)
+}
+
+// TruncatedError reports that an upstream listing hit its page cap before
+// reaching the watermark, so older items after the watermark were not seen.
+type TruncatedError struct {
+	// Kind is the listing that was cut short.
+	Kind ItemKind
+	// Limit is how many items the capped listing covers (pages × page size).
+	Limit int
+	// Since is the watermark the listing was asked to reach.
+	Since time.Time
+}
+
+// Window describes the listing window that was exceeded.
+func (e *TruncatedError) Window() string {
+	since := "the start"
+	if !e.Since.IsZero() {
+		since = e.Since.UTC().Format(time.RFC3339)
+	}
+	switch e.Kind {
+	case KindRelease:
+		return fmt.Sprintf("more than %d releases since %s", e.Limit, since)
+	default:
+		return fmt.Sprintf("more than %d pull requests updated since %s", e.Limit, since)
+	}
+}
+
+func (e *TruncatedError) Error() string {
+	return "upstream listing truncated: " + e.Window()
 }
