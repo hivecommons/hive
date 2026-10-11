@@ -227,6 +227,90 @@ func TestSweepIssueUnparkCommandsApproveClearsParkingLabels(t *testing.T) {
 	}
 }
 
+func TestSweepIssueUnparkCommandsAIAuthorCommenterGetsRefusalReply(t *testing.T) {
+	command := humanComment(11, "owner", "/hive approve")
+	issues := []unparkWireIssue{parkedIssue(7, command)}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"owner": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetHiveIdentity(HiveIdentity{AIAuthor: "owner", AppLogin: "hive[bot]"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 0 {
+		t.Fatalf("an ai_author command must not un-park, got %+v", result.Unparked)
+	}
+	if result.Replies != 1 {
+		t.Fatalf("replies = %d, want 1", result.Replies)
+	}
+	if len(rec.removed[7]) != 0 || len(rec.added[7]) != 0 {
+		t.Fatalf("labels changed: removed=%v added=%v", rec.removed[7], rec.added[7])
+	}
+	var refusals int
+	for _, body := range rec.posted[7] {
+		if strings.Contains(body, unparkNoticeMarker) {
+			continue
+		}
+		if !strings.Contains(body, "project.ai_author") || !strings.Contains(body, "hive:unpark-reply:9879 id=11") {
+			t.Fatalf("unexpected reply %q", body)
+		}
+		refusals++
+	}
+	if refusals != 1 {
+		t.Fatalf("expected one refusal reply, got %v", rec.posted[7])
+	}
+
+	// Second sweep sees what the first one posted and must not post again.
+	comments := []unparkWireComment{command}
+	for i, body := range rec.posted[7] {
+		comments = append(comments, unparkWireComment{
+			ID:        int64(100 + i),
+			Body:      body,
+			User:      wireUser{Login: "hive[bot]"},
+			CreatedAt: unparkNow(),
+			UpdatedAt: unparkNow(),
+		})
+	}
+	server2, rec2 := newUnparkServer(t, "org", "repo", []unparkWireIssue{parkedIssue(7, comments...)}, map[string]string{"owner": "admin"})
+	c2 := newTestClient(t, server2, "org", []string{"repo"})
+	c2.SetHiveIdentity(HiveIdentity{AIAuthor: "owner", AppLogin: "hive[bot]"})
+
+	result, err = c2.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if result.Replies != 0 || len(rec2.posted[7]) != 0 {
+		t.Fatalf("second sweep must not post again: replies=%d posted=%v", result.Replies, rec2.posted[7])
+	}
+	if len(rec2.removed[7]) != 0 || len(rec2.added[7]) != 0 {
+		t.Fatalf("labels changed on second sweep: removed=%v added=%v", rec2.removed[7], rec2.added[7])
+	}
+}
+
+func TestSweepIssueUnparkCommandsAIAuthorProseStaysSilent(t *testing.T) {
+	issues := []unparkWireIssue{parkedIssue(7, humanComment(11, "owner", "go ahead"))}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"owner": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetHiveIdentity(HiveIdentity{AIAuthor: "owner", AppLogin: "hive[bot]"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Replies != 0 {
+		t.Fatalf("replies = %d, want 0", result.Replies)
+	}
+	if len(result.Unparked) != 0 {
+		t.Fatalf("expected no un-park, got %+v", result.Unparked)
+	}
+	for _, body := range rec.posted[7] {
+		if !strings.Contains(body, unparkNoticeMarker) {
+			t.Fatalf("only the What-to-reply notice may be posted, got %q", body)
+		}
+	}
+}
+
 func TestSweepIssueUnparkCommandsDecisionRecordsText(t *testing.T) {
 	issues := []unparkWireIssue{parkedIssue(8, humanComment(21, "maintainer", "/hive decision keep 10 stable tags"))}
 	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "maintain"})

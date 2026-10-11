@@ -191,7 +191,7 @@ project:
   name: ${TARGET_REPO_NAME}
   repos:
     - ${TARGET_REPO_NAME}
-  ai_author: clubanderson
+  # ai_author: <bot-login>   # leave unset to author as the App bot; never a maintainer's own login
   primary_repo: ${TARGET_REPO_NAME}
   acmm_level: ${ACMM_LEVEL}
   open_prs: ${PR_ENABLED}

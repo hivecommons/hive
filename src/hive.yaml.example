@@ -11,7 +11,7 @@ project:
   repos:                                 # Repositories to manage
     - repo-one
     - repo-two
-  ai_author: your-bot-user               # GitHub username for AI commits
+  ai_author: your-bot-user               # Login agents author as. Leave unset on App-authenticated hives (the App bot is used). Never a maintainer's own login: Hive treats this account as itself and ignores its /hive commands.
   primary_repo: repo-one                 # Main repo for priority routing
   # Optional: host-local directory holding one checkout per repo, as
   # <checkouts_dir>/<repo name>. Supplies the repo root Hive reads AGENTS.md

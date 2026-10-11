@@ -58,6 +58,11 @@ const (
 	unparkCommandApprove  unparkCommandKind = "approve"
 	unparkCommandDecision unparkCommandKind = "decision"
 	unparkCommandHelp     unparkCommandKind = "help"
+
+	// unparkCommandRefusedAIAuthor is a `/hive` command from the account named
+	// in project.ai_author. Hive treats that account as itself, so it refuses
+	// out loud instead of acting or staying silent.
+	unparkCommandRefusedAIAuthor unparkCommandKind = "refused-ai-author"
 )
 
 // unparkCommand is a parsed `/hive …` comment.
@@ -194,6 +199,18 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return false, nil
 	}
 	actor := safeGetLogin(candidate.GetUser())
+
+	if command.Kind == unparkCommandRefusedAIAuthor {
+		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAIAuthorRefusal(actor)); err != nil {
+			return false, err
+		}
+		result.Replies++
+		if c.logger != nil {
+			c.logger.Warn("unpark sweep: /hive command ignored, commenter is project.ai_author",
+				"repo", displayRepo, "issue", number, "login", actor)
+		}
+		return true, nil
+	}
 
 	if labelDriven {
 		body := unparkLabelDrivenReply
@@ -374,6 +391,9 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		if !c.isHumanAuthor(cm.GetUser()) {
+			if isCommand && c.isAIAuthorUser(cm.GetUser()) {
+				return cm, unparkCommand{Kind: unparkCommandRefusedAIAuthor}, nil
+			}
 			continue
 		}
 		checked++
@@ -387,6 +407,33 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 		return cm, cmd, nil
 	}
 	return nil, unparkCommand{}, nil
+}
+
+// isAIAuthorUser reports whether isHumanAuthor rejected the user only because
+// the login is the configured project.ai_author: a user account, not a bot and
+// not the App's own bot login.
+func (c *Client) isAIAuthorUser(user *gh.User) bool {
+	if c == nil {
+		return false
+	}
+	login := strings.TrimSpace(user.GetLogin())
+	if login == "" {
+		return false
+	}
+	if strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(login, "[bot]") {
+		return false
+	}
+	if c.appBotLogin != "" && strings.EqualFold(login, c.appBotLogin) {
+		return false
+	}
+	return c.getHiveIdentity().Matches(login)
+}
+
+// renderUnparkAIAuthorRefusal explains why a `/hive` command from the
+// project.ai_author account was not acted on.
+func renderUnparkAIAuthorRefusal(login string) string {
+	return "@" + login + " is configured as this hive's `project.ai_author`, so Hive treats comments from it as its own and will not act on `/hive` commands from it. " +
+		"To un-park this issue, remove the parking label by hand, or set `project.ai_author` to an account that is not a maintainer (clear it to author as the GitHub App bot)."
 }
 
 // parseUnparkCommand reads a `/hive …` command off the first line of a comment.
