@@ -14063,11 +14063,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const repoText = state.repo ? `${state.repo} · ` : '';
       return `<span class="repo-filtered-chip">🔎 filtered · ${esc(repoText)}${counts.shown} of ${counts.total}<button type="button" data-action="clearRepoPillFilter" data-stop="1" data-prevent="1" aria-label="Clear repository pill filter" title="Clear filter">✕</button></span>`;
     }
+    // One filter kind per chip word, shared by waiting-band and parked rows (#11505).
+    function repoIssueChipKind(chip) {
+      return 'issue:chip-' + String(chip || '').toLowerCase();
+    }
+    function repoNonActionableIssueKinds(spec) {
+      const kinds = ['issue:non-actionable', 'issue:' + spec.key];
+      if (spec.chip) kinds.push(repoIssueChipKind(spec.chip));
+      return kinds;
+    }
     function repoIssueFilterKinds(issue, info, held) {
       const issueLabels = ((issue && issue.labels) || []).map(l => String(l).toLowerCase());
       const labels = new Set(issueLabels);
       const kinds = ['issue:' + ((info && info.band) || 'ready')];
       if (held) kinds.push('issue:held');
+      if (info && info.chip) kinds.push(repoIssueChipKind(info.chip));
       if (labels.has('needs-human')) kinds.push('needs-human', 'issue:needs-human');
       if (labels.has('blocked')) kinds.push('issue:blocked');
       if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
@@ -14117,7 +14127,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ready: 'nobody on it — pick up or assign',
         'in-progress': 'assigned to a human or agent',
         'agent-filed': 'agent-filed, not yet acknowledged',
-        waiting: '⛔ blocked · ❓ needs a decision',
+        waiting: 'any other waiting label — known labels show their own chip below',
         done: 'agent thinks it landed — confirm & close'
       };
       const issueBandLegendEntries = OVERVIEW_ISSUE_BAND_ORDER.map(band => {
@@ -14136,9 +14146,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           title: 'Issues — left chip is the band',
           entries: issueBandLegendEntries.concat([
             { cls: 'repo-issue-pill held', kind: 'issue:filtered', label: 'FILTERED', caption: 'skipped by the issue filter or an exempt label', tip: 'Excluded by the project issue filter or an exempt label' },
-            { cls: 'repo-issue-pill waiting', kind: 'issue:needs_human', label: 'NEEDS HUMAN', caption: 'needs-human — waiting on a person', tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' },
-            { cls: 'repo-issue-pill waiting', kind: 'issue:needs_decision', label: 'NEEDS DECISION', caption: 'needs-decision / needs-direction / needs-spec — parked for a maintainer', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
-            { cls: 'repo-issue-pill waiting', kind: 'issue:reporter_confirmation', label: 'WAITING ON REPORTER', caption: 'needs-reporter-confirmation', tip: 'Waiting on the reporter to confirm — not dropped by a filter' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('human'), label: 'HUMAN', caption: 'needs-human — waiting on a person', tip: 'Labelled needs-human — waiting on a person' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('direction'), label: 'DIRECTION', caption: 'needs-direction — parked for maintainer direction', tip: 'Parked by Hive for maintainer direction — reply `/hive approve` or `/hive decision <text>`' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('decision'), label: 'DECISION', caption: 'needs-decision — parked for a maintainer decision', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('spec'), label: 'SPEC', caption: 'needs-spec — parked until it has a spec', tip: 'Parked by Hive until it has a spec — reply `/hive approve` or `/hive decision <text>`' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('reporter'), label: 'REPORTER', caption: 'needs-reporter-confirmation — waiting on the reporter', tip: 'Waiting on the reporter to confirm' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('blocked'), label: 'BLOCKED', caption: 'blocked', tip: 'Labelled blocked' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('discussing'), label: 'DISCUSSING', caption: '2-discussing — still under discussion', tip: 'Labelled 2-discussing' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('epic'), label: 'EPIC', caption: 'Epic', tip: 'Labelled Epic' },
+            { cls: 'repo-issue-pill waiting', kind: repoIssueChipKind('untriaged'), label: 'UNTRIAGED', caption: 'needs-triage — no maintainer triage yet', tip: 'Labelled needs-triage' },
             { cls: 'repo-issue-pill held', kind: 'issue:hive_advisory', label: 'ADVISORY', caption: 'Hive advisory report, not agent work', tip: 'Hive advisory report — counted, but not agent work' },
             { cls: 'repo-issue-pill agent-filed', kind: 'issue:role', label: 'STRATEGIST', labelCls: 'pill-role', caption: 'role of the agent that filed it', tip: 'Filed by an agent; the badge names the agent role and the tooltip says whether a human has acknowledged it' }
           ])
@@ -14795,10 +14811,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function repoParkedIssueSpecs() {
       return {
-        'needs-human': { key: 'needs_human', label: 'Needs human', short: 'needs human', tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' },
-        'needs-decision': { key: 'needs_decision', label: 'Needs decision', short: 'needs decision', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
-        'needs-direction': { key: 'needs_direction', label: 'Needs direction', short: 'needs direction', tip: 'Parked by Hive for maintainer direction — reply `/hive approve` or `/hive decision <text>`' },
-        'needs-spec': { key: 'needs_spec', label: 'Needs spec', short: 'needs spec', tip: 'Parked by Hive until it has a spec — reply `/hive approve` or `/hive decision <text>`' },
+        'needs-human': { key: 'needs_human', label: 'Needs human', short: 'human', chip: 'human', tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' },
+        'needs-decision': { key: 'needs_decision', label: 'Needs decision', short: 'decision', chip: 'decision', tip: 'Parked by Hive for a maintainer decision — reply `/hive approve` or `/hive decision <text>`' },
+        'needs-direction': { key: 'needs_direction', label: 'Needs direction', short: 'direction', chip: 'direction', tip: 'Parked by Hive for maintainer direction — reply `/hive approve` or `/hive decision <text>`' },
+        'needs-spec': { key: 'needs_spec', label: 'Needs spec', short: 'spec', chip: 'spec', tip: 'Parked by Hive until it has a spec — reply `/hive approve` or `/hive decision <text>`' },
       };
     }
 
@@ -14816,9 +14832,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (bucket === 'filtered') {
         const parked = repoParkedIssueSpecs()[repoParkedIssueReason(issue)];
         if (parked) return Object.assign({ rank: -1, waiting: true }, parked);
-        if (String((issue && issue.reason) || '').toLowerCase() === 'needs-reporter-confirmation') return { key: 'reporter_confirmation', label: 'Waiting on reporter', short: 'waiting on reporter', rank: -1, waiting: true, tip: 'Waiting on the reporter to confirm — not dropped by a filter' };
+        if (String((issue && issue.reason) || '').toLowerCase() === 'needs-reporter-confirmation') return { key: 'reporter_confirmation', label: 'Waiting on reporter', short: 'reporter', chip: 'reporter', rank: -1, waiting: true, tip: 'Waiting on the reporter to confirm — not dropped by a filter' };
       }
-      if (bucket === 'filtered' && repoItemNeedsHuman(issue)) return { key: 'needs_human', label: 'Needs human', short: 'needs human', rank: -1, waiting: true, tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' };
+      if (bucket === 'filtered' && repoItemNeedsHuman(issue)) return { key: 'needs_human', label: 'Needs human', short: 'human', chip: 'human', rank: -1, waiting: true, tip: 'Labelled needs-human — waiting on a person, not dropped by a filter' };
       if (bucket === 'hive_advisory') return { key: bucket, label: 'Advisory', short: 'advisory', rank: 0, tip: 'Hive advisory report — counted, but not agent work' };
       if (bucket === 'filtered') return { key: bucket, label: 'Filtered', short: 'filtered', rank: 1, tip: 'Excluded by the project issue filter or an exempt label' };
       if (bucket === 'reporter_triage') return { key: bucket, label: 'Needs triage', short: 'triage', rank: 2, tip: 'Waiting for a maintainer triage/admission label before agents can work it' };
@@ -16526,7 +16542,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const overviewPRKeys = overviewRepoMatches ? new Set(filteredOpenPrs.concat(filteredHeldPrs).map(p => String(p.number))) : null;
         const heldIssueKeys = new Set((r.heldIssues || []).map(i => String(i.number)));
         const repoIssueFilterRows = filteredIssues.map(i => ({ kinds: repoIssueFilterKinds(i, i, heldIssueKeys.has(String(i.number))) }));
-        const repoNonActionableFilterRows = filteredNonActionableIssues.map(i => ({ kinds: ['issue:non-actionable', 'issue:' + repoNonActionableIssueBucketSpec(i).key] }));
+        const repoNonActionableFilterRows = filteredNonActionableIssues.map(i => ({ kinds: repoNonActionableIssueKinds(repoNonActionableIssueBucketSpec(i)) }));
         const repoPRFilterRows = filteredOpenPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, false, pr) })).concat(filteredHeldPrs.map(pr => ({ kinds: repoPRFilterKinds(pr, true, pr) })));
         const repoFilterCounts = repoPillFilterRowCounts(repoIssueFilterRows.concat(repoNonActionableFilterRows, repoPRFilterRows), pillFilter);
         const repoIssueGroups = repoCardIssueGroups(r, overviewIssueKeys);
@@ -16560,8 +16576,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const statusTip = (isHeldIssue ? heldTip + ' — band: ' : '') + issueBandTip(info.band) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
           const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
-          const statusKind = isHeldIssue ? 'issue:held' : ('issue:' + info.band);
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
+          const statusKind = isHeldIssue ? 'issue:held' : (info.chip ? repoIssueChipKind(info.chip) : ('issue:' + info.band));
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
         };
         const issuePills = repoIssueGroups.issueGroups.map(g => {
           const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
@@ -16574,9 +16590,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const labels = (i.labels || []).map(l => String(l)).filter(Boolean).join(', ');
           const reason = i.reason || spec.tip;
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
-          const rowKinds = ['issue:non-actionable', 'issue:' + spec.key];
+          const rowKinds = repoNonActionableIssueKinds(spec);
           const nhClass = spec.waiting ? 'waiting' : 'held';
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill ${nhClass} repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs('issue:' + spec.key)}>${esc(spec.short)}</button><a class="repo-issue-pill repo-pill-main ${nhClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill ${nhClass} repo-pill-filter-toggle" title="${esc(spec.tip)}"${repoPillFilterAttrs(spec.chip ? repoIssueChipKind(spec.chip) : ('issue:' + spec.key))}>${esc(spec.chip || spec.short)}</button><a class="repo-issue-pill repo-pill-main ${nhClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span><span class="pill-state" title="${esc(reason)}">ⓘ</span></a></span>`;
         };
         const nonActionableIssuePills = repoIssueGroups.nonActionableIssueGroups.map(g => {
           const items = g.issues.map(renderNonActionableIssuePill).join('');
