@@ -45,6 +45,6 @@ func advisorRecordsSchema() map[string]any {
 		"since": map[string]any{"type": "string", "format": "date-time", "description": "RFC3339 start of the window (inclusive)."},
 		"until": map[string]any{"type": "string", "format": "date-time", "description": "RFC3339 end of the window (inclusive)."},
 		"hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 720, "description": "Lookback from now in hours, instead of since (24 = the last day)."},
-		"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit},
+		"limit": limitSchema(),
 	}
 }

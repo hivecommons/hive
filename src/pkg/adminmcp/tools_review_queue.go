@@ -231,7 +231,7 @@ func rowNumber(v any) float64 {
 func reviewQueueSchema() map[string]any {
 	return map[string]any{
 		"repo":   map[string]any{"type": "string", "description": "owner/name; unset reads every repo this hive tracks."},
-		"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit},
+		"limit":  limitSchema(),
 		"offset": map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page."},
 	}
 }

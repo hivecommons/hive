@@ -402,8 +402,19 @@ func writeMetadata(enabled bool, unavailableReason string) ToolMetadata {
 	return ToolMetadata{Preview: PreviewContract{Mode: "preview_confirm", Enabled: enabled, Note: note}, Confirm: ConfirmContract{Required: true, Note: "Confirmations are one-use, hive-bound, action-bound, and expire."}, Writes: true}
 }
 
+// limitSchema is the one JSON-schema entry for the shared `limit` argument so
+// every tool that accepts it describes the same cap and default.
+func limitSchema() map[string]any {
+	return map[string]any{
+		"type":        "integer",
+		"minimum":     1,
+		"maximum":     MaxResultLimit,
+		"description": fmt.Sprintf("Rows to return, 1-%d (default %d). issues_by_band, prs_by_band and review_queue page further with offset.", MaxResultLimit, DefaultResultLimit),
+	}
+}
+
 func inputSchema(name string) map[string]any {
-	props := map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": MaxResultLimit, "description": fmt.Sprintf("Rows to return, 1-%d (default %d). issues_by_band, prs_by_band and review_queue page further with offset.", MaxResultLimit, DefaultResultLimit)}}
+	props := map[string]any{"limit": limitSchema()}
 	required := []string{}
 	switch name {
 	case ToolRefuseOperation:
