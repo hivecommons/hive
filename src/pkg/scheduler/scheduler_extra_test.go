@@ -106,11 +106,19 @@ func TestBuildKickMessages_IncludesGovernorWorkSourceRule(t *testing.T) {
 		"The PRs/issues for this kick are listed in this prompt by the governor",
 		"Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work",
 		"blocked by the hive proxy for agents",
-		"Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers",
+		"Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments.",
 	} {
 		if !strings.Contains(msgs[0].Message, want) {
 			t.Errorf("expected governor work-source rule to contain %q:\n%s", want, msgs[0].Message)
 		}
+	}
+	// hivecommons/hive#11443: the constant and the quality templates must carry
+	// the identical sentence, or addGovernorWorkSourceRule appends a second one.
+	if got := strings.Count(msgs[0].Message, "only on supplied GitHub issue numbers"); got != 1 {
+		t.Errorf("expected the work-source rule exactly once, got %d:\n%s", got, msgs[0].Message)
+	}
+	if !strings.Contains(governorWorkSourceRule, "`gh issue view <n> --comments`") {
+		t.Errorf("governorWorkSourceRule must read issues with their comments: %q", governorWorkSourceRule)
 	}
 }
 
