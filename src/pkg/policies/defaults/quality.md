@@ -120,4 +120,4 @@ ${ISSUE_LIST}
 ACTIONABLE PRs:
 ${PR_LIST}
 
-⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n>` only on supplied GitHub issue numbers.
+⛔ The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments.
