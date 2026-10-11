@@ -2240,7 +2240,7 @@ func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owne
 	}
 	if prNumber > 0 {
 		c.info("automerge required checks source", "repo", owner+"/"+repo, "pr", prNumber, "branch", branch, "source", source, "known", requiredKnown, "count", len(required))
-		if !requiredKnown && serverEnforceUnknown {
+		if !requiredKnown && !positiveEvidenceGate && serverEnforceUnknown {
 			c.info("automerge required checks unknown; relying on server-side enforcement", "repo", owner+"/"+repo, "pr", prNumber, "branch", branch, "source", source)
 		}
 	}
@@ -2252,6 +2252,7 @@ func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owne
 		RequiredKnown:                       requiredKnown,
 		RequiredKnownFromConfig:             fromConfig,
 		UnknownRequiredChecksServerEnforced: serverEnforceUnknown && !requiredKnown,
+		RequiredKnownEmpty:                  positiveEvidenceGate,
 		RequireEvidence:                     !requiredKnown,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,
