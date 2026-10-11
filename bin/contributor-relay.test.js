@@ -2006,6 +2006,100 @@ test('omp sync-back does not roll a host sign-in back to an older staged copy', 
   }
 });
 
+test('#11528 omp staging treats a provider as usable when any of its rows is active', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-mixed-'));
+  try {
+    const hostOmp = path.join(tmpDir, 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    const host = new sqlite.DatabaseSync(hostDb);
+    host.prepare("INSERT INTO auth_credentials (provider, credential_type, identity_key, data, disabled_cause) VALUES ('anthropic', 'oauth', 'acct-2', '{}', 'deleted by user')").run();
+    host.close();
+    const stage = path.join(tmpDir, 'stage', '.omp');
+    const report = ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.disabledProviders, []);
+    assert.ok(providersIn(path.join(stage, 'agent', 'agent.db')).includes('anthropic'));
+
+    // Only disabled rows left: still refused.
+    const onlyDisabled = new sqlite.DatabaseSync(hostDb);
+    onlyDisabled.exec("UPDATE auth_credentials SET disabled_cause = 'deleted by user' WHERE provider = 'anthropic'");
+    onlyDisabled.close();
+    assert.throws(() => ompBackend.stageOmp(hostOmp, path.join(tmpDir, 'refused', '.omp'), 'anthropic/claude-opus-5'), /disabled on this host: anthropic \(deleted by user\)/);
+
+    // No provider named by the model: an unrelated provider's tombstone does not block.
+    const tomb = new sqlite.DatabaseSync(hostDb);
+    tomb.exec("UPDATE auth_credentials SET disabled_cause = NULL WHERE provider = 'anthropic' AND identity_key IS NULL");
+    tomb.close();
+    const none = ompBackend.describeOmpHost(hostOmp, '');
+    assert.strictEqual(none.selection.source, 'none');
+    assert.deepStrictEqual(none.disabledProviders, []);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('#11527 omp sync-back validates the container row before writing it over the host row', () => {
+  if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp sync-back not exercised'); return; }
+  const sqlite = require('node:sqlite');
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'omp-syncval-'));
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const hostData = JSON.stringify({ access: 'host-access', refresh: 'host-refresh', email: 'a@example.com', accountId: 'acct-1' });
+    const cases = [
+      { name: 'far-future updated_at', stamp: 9000000000000, data: { access: 'x', refresh: 'y', email: 'a@example.com', accountId: 'acct-1' }, written: false },
+      { name: 'non-JSON data', stamp: now + 10, data: 'not json', written: false },
+      { name: 'changed identity', stamp: now + 10, data: { access: 'x', refresh: 'y', email: 'b@example.com', accountId: 'acct-1' }, written: false },
+      { name: 'genuine refresh', stamp: now + 10, data: { access: 'x', refresh: 'y', email: 'a@example.com', accountId: 'acct-1' }, written: true },
+    ];
+    for (const c of cases) {
+      const dir = path.join(tmpDir, c.name.replace(/\W+/g, '-'));
+      const hostOmp = path.join(dir, 'host-omp');
+      const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+      const hostDb = path.join(agentDir, 'agent.db');
+      const h = new sqlite.DatabaseSync(hostDb);
+      h.prepare("UPDATE auth_credentials SET data = ?, updated_at = ? WHERE provider = 'anthropic'").run(hostData, now - 100);
+      h.close();
+      const stage = path.join(dir, 'stage', '.omp');
+      ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+      const c2 = new sqlite.DatabaseSync(path.join(stage, 'agent', 'agent.db'));
+      c2.prepare("UPDATE auth_credentials SET data = ?, updated_at = ? WHERE provider = 'anthropic'")
+        .run(typeof c.data === 'string' ? c.data : JSON.stringify(c.data), c.stamp);
+      c2.close();
+      const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+      const row = credentialRow(hostDb, 'anthropic');
+      if (c.written) {
+        assert.deepStrictEqual(report.syncedProviders, ['anthropic'], c.name);
+        assert.strictEqual(row.updated_at, c.stamp, c.name);
+      } else {
+        assert.deepStrictEqual(report.syncedProviders, [], c.name);
+        assert.strictEqual(row.data, hostData, `${c.name}: the host row must be untouched`);
+        assert.ok(report.skipped.some((s) => /anthropic: rejected/.test(s)), c.name);
+        assert.match(ompBackend.syncBackLines(report).join('\n'), /not written back/, c.name);
+      }
+    }
+
+    // An api_key row is never written back, however newer it looks.
+    const hostOmp = path.join(tmpDir, 'apikey', 'host-omp');
+    const agentDir = makeFakeOmpHome(hostOmp, { configYml: OMP_CONFIG_YML });
+    const hostDb = path.join(agentDir, 'agent.db');
+    const h = new sqlite.DatabaseSync(hostDb);
+    h.exec("UPDATE auth_credentials SET credential_type = 'api_key', data = '{\"key\":\"host-key\"}', updated_at = 1000 WHERE provider = 'anthropic'");
+    h.close();
+    const stage = path.join(tmpDir, 'apikey', 'stage', '.omp');
+    ompBackend.stageOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    const c2 = new sqlite.DatabaseSync(path.join(stage, 'agent', 'agent.db'));
+    c2.exec(`UPDATE auth_credentials SET data = '{"key":"container-key"}', updated_at = ${now} WHERE provider = 'anthropic'`);
+    c2.close();
+    const report = ompBackend.syncBackOmp(hostOmp, stage, 'anthropic/claude-opus-5');
+    assert.deepStrictEqual(report.syncedProviders, []);
+    assert.strictEqual(credentialRow(hostDb, 'anthropic').data, '{"key":"host-key"}');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('omp container staging refuses a sign-in omp has disabled, and the preflight names the cause', () => {
   if (ompBackend.sqliteBackend() !== 'node:sqlite') { console.log('SKIP: node:sqlite unavailable on this Node; omp staging not exercised'); return; }
   const sqlite = require('node:sqlite');
@@ -10529,6 +10623,18 @@ test('#7935 the follow-up the relay types names the notes below the verdict, not
       'the bare event-only wording is what #7935 replaced');
     assert.ok(!/\n/.test(typed), 'still one line');
   } finally { console.log = log; teardown(relay); }
+});
+
+test('#11526 postVerdictConcerns reads a plural "Advisor N notes" header', () => {
+  const relay = loadRelay({ backend: 'omp' });
+  try {
+    const m = relay.POST_VERDICT_REVIEW_MARKERS.omp;
+    const v = 'HIVE_VERDICT: complete — x';
+    const lines = [v, ' ⓘ Advisor 2 notes · 1 blocker', '   ▎ ⟦blocker⟧ stop', '   ▎ ⟦concern⟧ a'];
+    const all = relay.postVerdictConcerns(lines, v, m);
+    assert.deepStrictEqual(all, ['   ▎ ⟦blocker⟧ stop', '   ▎ ⟦concern⟧ a']);
+    assert.deepStrictEqual(all.filter((l) => m.blocker.test(l)), ['   ▎ ⟦blocker⟧ stop']);
+  } finally { teardown(relay); }
 });
 
 test('#7759 postVerdictConcerns reads only bracketed concerns inside a note block below the verdict', () => {

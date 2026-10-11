@@ -5378,7 +5378,7 @@ function detectCompletionVerdict(lines, baselineLine = deliveredVerdictBaseline)
 //              accepted.
 const POST_VERDICT_REVIEW_MARKERS = Object.freeze({
   omp: Object.freeze({
-    note: /\bAdvisor \d+ note\b/,
+    note: /\bAdvisor \d+ notes?\b/,
     concern: /⟦blocker⟧|\[blocker\]|⟦concern⟧|\[concern\]/,
     // #7879: the strictly-stronger subset that alone can earn the SECOND
     // follow-up.

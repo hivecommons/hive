@@ -372,9 +372,12 @@ function describeOmpHost(ompDir, model) {
   // start with "No API key found for <provider>" and fall back to whatever
   // provider lists any model — on the observed host, an unreachable local
   // ollama — while the relay keeps reporting the selected model to the hub.
+  // A provider is unusable only when none of its rows is active — the relay's
+  // rule, and omp reads only rows whose disabled_cause is NULL.
   const kept = new Set(report.keptProviders);
+  const activeProviders = new Set(rows.filter((r) => !r.disabledCause).map((r) => r.provider.toLowerCase()));
   report.disabledProviders = rows
-    .filter((r) => r.disabledCause && kept.has(r.provider.toLowerCase()))
+    .filter((r) => r.disabledCause && kept.has(r.provider.toLowerCase()) && !activeProviders.has(r.provider.toLowerCase()))
     .map((r) => ({ provider: r.provider.toLowerCase(), cause: r.disabledCause }));
   for (const d of report.disabledProviders) {
     report.warnings.push(`the ${d.provider} sign-in on this host is disabled — ${d.cause}. Run omp on the host and /login to ${d.provider} again; until then the container would start with no usable ${d.provider} credential.`);
@@ -498,10 +501,44 @@ function stageOmp(ompDir, stageDir, model) {
 // read, config.yml and models.db never travel back. What the container can
 // do to the host through this is overwrite a credential it was already
 // holding — which it could revoke anyway.
+//
+// Each staged row is also validated before it travels back (reported in the
+// --sync-back output when rejected): its updated_at may not be more than
+// OMP_SYNC_BACK_SKEW_SECONDS ahead of now (omp stores epoch seconds, and a
+// refresh is never in the future); only oauth rows are written (api_key rows
+// are never refreshed, the host value is authoritative); data must parse as a
+// JSON object with non-empty access and refresh strings; and the identity
+// fields (email, accountId) the host row carries must be unchanged.
+const OMP_SYNC_BACK_SKEW_SECONDS = 300;
+const OMP_IDENTITY_FIELDS = ['email', 'accountId'];
+
+function parseJsonObject(text) {
+  try {
+    const v = JSON.parse(String(text));
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch (_) { return null; }
+}
+
+// Returns why a staged row must not be written over the host row, or ''.
+function syncBackRejection(s, h, nowSeconds) {
+  const stamp = Number(s.updated_at);
+  if (!Number.isFinite(stamp) || stamp > nowSeconds + OMP_SYNC_BACK_SKEW_SECONDS) return `updated_at ${s.updated_at} is in the future`;
+  if (s.credential_type !== 'oauth') return `${s.credential_type} rows are never written back`;
+  const data = parseJsonObject(s.data);
+  if (!data) return 'the container\'s credential data is not a JSON object';
+  if (typeof data.access !== 'string' || !data.access || typeof data.refresh !== 'string' || !data.refresh) return 'the container\'s credential lacks access/refresh tokens';
+  const hostData = parseJsonObject(h.data) || {};
+  for (const field of OMP_IDENTITY_FIELDS) {
+    if (hostData[field] !== undefined && hostData[field] !== data[field]) return `the container\'s credential changed ${field}`;
+  }
+  return '';
+}
+
 function syncBackOmp(ompDir, stageDir, model) {
   const report = describeOmpHost(ompDir, model);
   report.syncedProviders = [];
   report.skipped = [];
+  report.rejected = [];
   const hostDb = path.join(report.agentDir, 'agent.db');
   const stagedDb = path.join(stageDir, 'agent', 'agent.db');
   if (!fs.existsSync(stagedDb) || !fs.existsSync(hostDb) || !report.sqlite) return report;
@@ -528,6 +565,12 @@ function syncBackOmp(ompDir, stageDir, model) {
       report.skipped.push(`${provider}: the container's copy is disabled, not written back`);
       continue;
     }
+    const rejection = syncBackRejection(s, h, Math.floor(Date.now() / 1000));
+    if (rejection) {
+      report.skipped.push(`${provider}: rejected, ${rejection}`);
+      report.rejected.push(`${provider}: ${rejection}`);
+      continue;
+    }
     if (!(Number(s.updated_at) > Number(h.updated_at))) { report.skipped.push(`${provider}: host row is as new or newer`); continue; }
     const where = `lower(provider) = ${quoteSql(provider)} AND credential_type = ${quoteSql(s.credential_type)} AND ` +
       (s.identity_key == null ? 'identity_key IS NULL' : `identity_key = ${quoteSql(s.identity_key)}`) +
@@ -549,6 +592,7 @@ function syncBackLines(report) {
   } else {
     lines.push(`omp sign-in: nothing newer in the container to write back to ${report.agentDir}`);
   }
+  for (const r of report.rejected || []) lines.push(`omp sign-in: container row not written back — ${r}`);
   return lines;
 }
 
