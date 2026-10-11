@@ -32,7 +32,9 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 The un-park sweep only honors `/hive approve`, `/hive decision <text>`, and the
 sweep fallback for `/hive help` when the command is the first non-empty line of
 the comment, outside quoted text and fenced code. The comment must be newer than
-seven days, unedited, authored by a human rather than the hive or another bot,
+seven days, unedited, authored by a human rather than the hive or another bot
+(the account named in `project.ai_author` counts as the hive, so a maintainer
+who is also `ai_author` cannot use these commands; Hive replies saying so),
 and posted by someone who currently has `write`, `maintain`, or `admin`
 permission on the repository. A `/hive decision` must include non-empty
 instructions.

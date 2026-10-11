@@ -153,6 +153,9 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 	// mistaking it for a human's. The App bot is recognised without this;
 	// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 	client.SetHiveIdentity(hiveIdentity(b.cfg))
+	if a := strings.TrimSpace(b.cfg.Project.AIAuthor); a != "" && !strings.HasSuffix(a, "[bot]") && strings.TrimSpace(b.cfg.GitHub.Token) == "" {
+		b.logger.Warn("config: project.ai_author names a user account on an App-authenticated hive; /hive commands from that account are ignored. Clear ai_author to author as the App bot (EffectiveAIAuthor).", "ai_author", a)
+	}
 	client.SetPRRepoPolicyGate(b.prRepoPolicyGate)
 	// github.app_signed_commits: re-author each agent branch through
 	// createCommitOnBranch before the PR opens, so its commit is
