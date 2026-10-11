@@ -550,3 +550,36 @@ func TestReadPathGovernorSetup(t *testing.T) {
 		t.Fatalf("path = %q ok=%v", path, ok)
 	}
 }
+
+func TestVersionReadReportsStdioBuild(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/version" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"short":"abc1234","branch":"v6"}`))
+	}))
+	defer server.Close()
+	orig := gitShort
+	t.Cleanup(func() { gitShort = orig })
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	for _, tc := range []struct {
+		short string
+		skew  bool
+	}{{"def5678", true}, {"abc1234", false}} {
+		gitShort = tc.short
+		data, err := (readProvider{roster: r}).Read(context.Background(), adminmcp.ToolVersionRead, nil)
+		if err != nil {
+			t.Fatalf("Read err = %v", err)
+		}
+		m, ok := data.(map[string]any)
+		if !ok {
+			t.Fatalf("data = %#v", data)
+		}
+		build, _ := m["stdio_build"].(map[string]any)
+		if build["short"] != tc.short || m["skew"] != tc.skew || m["short"] != "abc1234" {
+			t.Fatalf("short=%s: result = %#v", tc.short, m)
+		}
+	}
+}

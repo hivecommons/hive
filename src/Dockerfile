@@ -66,7 +66,7 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-admin-mcp ./cmd/hive-admin-mcp
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive-admin-mcp ./cmd/hive-admin-mcp
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
