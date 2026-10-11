@@ -12,11 +12,27 @@ import (
 const testUpstream = "up/widgets"
 
 // fakeSource returns items listed strictly after since, oldest-first, and
-// records every since it was asked for.
+// records every since it was asked for. ForkPoint answers forkPoint (t0 when
+// unset) or forkErr, and counts its calls.
 type fakeSource struct {
 	items  []Item
 	err    error
 	sinces []time.Time
+
+	forkPoint time.Time
+	forkErr   error
+	forkCalls int
+}
+
+func (f *fakeSource) ForkPoint(context.Context) (time.Time, error) {
+	f.forkCalls++
+	if f.forkErr != nil {
+		return time.Time{}, f.forkErr
+	}
+	if f.forkPoint.IsZero() {
+		return t0, nil
+	}
+	return f.forkPoint, nil
 }
 
 func (f *fakeSource) List(_ context.Context, since time.Time) ([]Item, error) {
@@ -275,7 +291,7 @@ func TestWatchRun_NextRunResumesFromWatermark(t *testing.T) {
 	if !reflect.DeepEqual(res.Filed, []string{"upstream#3"}) || res.Capped {
 		t.Fatalf("second run = %+v", res)
 	}
-	if len(src.sinces) != 2 || !src.sinces[0].IsZero() || !src.sinces[1].Equal(t0.Add(2*time.Hour)) {
+	if len(src.sinces) != 2 || !src.sinces[0].Equal(t0) || !src.sinces[1].Equal(t0.Add(2*time.Hour)) {
 		t.Fatalf("List since = %v", src.sinces)
 	}
 	if len(filer.filed) != 3 {
@@ -309,9 +325,15 @@ func TestWatchRun_Errors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
 			}
+			// A failed listing leaves a first pass's watermark zero; once the
+			// listing succeeded it sits at the fork point (t0).
+			want := t0
+			if tc.name == "list" {
+				want = time.Time{}
+			}
 			if tc.name != "load" {
-				if rs := tc.store.state["widgets"]; rs == nil || !rs.Watermark.IsZero() {
-					t.Fatalf("state after error = %+v, want saved with zero watermark", rs)
+				if rs := tc.store.state["widgets"]; rs == nil || !rs.Watermark.Equal(want) {
+					t.Fatalf("state after error = %+v, want saved with watermark %v", rs, want)
 				}
 			}
 		})
@@ -412,5 +434,253 @@ func TestWatchRun_ReconcileError(t *testing.T) {
 	rec, ok := store.state["widgets"].Record("upstream#1")
 	if !ok || rec.Status != StatusFiled {
 		t.Fatalf("status = %+v, want unchanged StatusFiled", rec)
+	}
+}
+
+// TestWatchRun_FirstPassStartsAtForkPoint: a repo with no history lists only
+// items after the fork point and saves the fork point as its watermark even
+// when nothing after it applies.
+func TestWatchRun_FirstPassStartsAtForkPoint(t *testing.T) {
+	fork := t0.Add(10 * time.Hour)
+	tests := []struct {
+		name          string
+		items         []Item
+		wantFiled     []string
+		wantWatermark time.Time
+	}{
+		{
+			name:          "files only items after the fork point",
+			items:         []Item{prItem(1, t0.Add(time.Hour), "a.go"), prItem(2, fork.Add(time.Hour), "a.go")},
+			wantFiled:     []string{"upstream#2"},
+			wantWatermark: fork.Add(time.Hour),
+		},
+		{
+			name:          "nothing after the fork point still saves it",
+			items:         []Item{prItem(1, t0.Add(time.Hour), "a.go")},
+			wantWatermark: fork,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memStore{state: State{}}
+			src := &fakeSource{items: tc.items, forkPoint: fork}
+			filer := &fakeFiler{}
+			w := New(Options{Repo: "widgets", Upstream: testUpstream}, src, &fakeContents{exists: map[string]bool{"a.go": true}}, store, filer)
+			res, err := w.Run(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.FirstPass || !res.Start.Equal(fork) {
+				t.Errorf("FirstPass/Start = %v/%v, want true/%v", res.FirstPass, res.Start, fork)
+			}
+			if strings.Join(res.Filed, ",") != strings.Join(tc.wantFiled, ",") {
+				t.Errorf("Filed = %v, want %v", res.Filed, tc.wantFiled)
+			}
+			if src.forkCalls != 1 || len(src.sinces) != 1 || !src.sinces[0].Equal(fork) {
+				t.Errorf("forkCalls/sinces = %d/%v, want 1/[%v]", src.forkCalls, src.sinces, fork)
+			}
+			if rs := store.state["widgets"]; !rs.Watermark.Equal(tc.wantWatermark) {
+				t.Errorf("Watermark = %v, want %v", rs.Watermark, tc.wantWatermark)
+			}
+			// The next pass has history: it resumes from the watermark and
+			// never asks for the fork point again.
+			if _, err := w.Run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if src.forkCalls != 1 || len(src.sinces) != 2 || !src.sinces[1].Equal(tc.wantWatermark) {
+				t.Errorf("second pass forkCalls/sinces = %d/%v", src.forkCalls, src.sinces)
+			}
+		})
+	}
+}
+
+// TestWatchRun_StartFrom: start_from replaces the fork point on a first pass,
+// whether it is earlier or later, and is ignored once the repo has history.
+func TestWatchRun_StartFrom(t *testing.T) {
+	fork := t0.Add(10 * time.Hour)
+	items := []Item{
+		prItem(1, t0.Add(time.Hour), "a.go"),
+		prItem(2, t0.Add(11*time.Hour), "a.go"),
+		prItem(3, t0.Add(30*time.Hour), "a.go"),
+	}
+	tests := []struct {
+		name      string
+		startFrom time.Time
+		seed      func(State)
+		wantSince time.Time
+		wantFiled []string
+	}{
+		{
+			name:      "earlier than the fork point",
+			startFrom: t0,
+			wantSince: t0,
+			wantFiled: []string{"upstream#1", "upstream#2", "upstream#3"},
+		},
+		{
+			name:      "later than the fork point",
+			startFrom: t0.Add(24 * time.Hour),
+			wantSince: t0.Add(24 * time.Hour),
+			wantFiled: []string{"upstream#3"},
+		},
+		{
+			name:      "ignored with saved refs",
+			startFrom: t0.Add(24 * time.Hour),
+			seed: func(s State) {
+				s.Repo("widgets").Put(Outcome{Ref: "upstream#9", Status: StatusFiled, IssueNumber: 7}, t0)
+			},
+			wantFiled: []string{"upstream#1", "upstream#2", "upstream#3"},
+		},
+		{
+			name:      "ignored with a saved watermark",
+			startFrom: t0,
+			seed:      func(s State) { s.Repo("widgets").Watermark = t0.Add(20 * time.Hour) },
+			wantSince: t0.Add(20 * time.Hour),
+			wantFiled: []string{"upstream#3"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memStore{state: State{}}
+			if tc.seed != nil {
+				tc.seed(store.state)
+			}
+			src := &fakeSource{items: items, forkPoint: fork}
+			w := New(Options{Repo: "widgets", Upstream: testUpstream, StartFrom: tc.startFrom},
+				src, &fakeContents{exists: map[string]bool{"a.go": true}}, store, &fakeFiler{issues: map[int]IssueOutcome{7: {Open: true}}})
+			res, err := w.Run(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if src.forkCalls != 0 {
+				t.Errorf("ForkPoint called %d times, want none", src.forkCalls)
+			}
+			if len(src.sinces) != 1 || !src.sinces[0].Equal(tc.wantSince) {
+				t.Errorf("List since = %v, want %v", src.sinces, tc.wantSince)
+			}
+			if !reflect.DeepEqual(res.Filed, tc.wantFiled) {
+				t.Errorf("Filed = %v, want %v", res.Filed, tc.wantFiled)
+			}
+		})
+	}
+}
+
+// TestWatchRun_ForkPointError: a failed comparison files nothing, keeps the
+// watermark zero and is retried on the next pass.
+func TestWatchRun_ForkPointError(t *testing.T) {
+	store := &memStore{state: State{}}
+	src := &fakeSource{items: []Item{prItem(1, t0.Add(time.Hour), "a.go")}, forkErr: errors.New("compare 404")}
+	filer := &fakeFiler{}
+	w := New(Options{Repo: "widgets", Upstream: testUpstream}, src, &fakeContents{exists: map[string]bool{"a.go": true}}, store, filer)
+	for pass := 1; pass <= 2; pass++ {
+		res, err := w.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "find fork point") || !strings.Contains(err.Error(), "compare 404") {
+			t.Fatalf("pass %d err = %v, want it to name the fork point error", pass, err)
+		}
+		if !res.FirstPass || len(res.Filed) != 0 {
+			t.Fatalf("pass %d res = %+v", pass, res)
+		}
+		if rs := store.state["widgets"]; rs == nil || !rs.Watermark.IsZero() {
+			t.Fatalf("pass %d state = %+v, want saved with zero watermark", pass, rs)
+		}
+	}
+	if src.forkCalls != 2 || len(src.sinces) != 0 || len(filer.filed) != 0 {
+		t.Fatalf("forkCalls/sinces/filed = %d/%v/%d, want 2/none/0", src.forkCalls, src.sinces, len(filer.filed))
+	}
+}
+
+// truncatingSource reports a truncated listing while truncated is set.
+type truncatingSource struct {
+	fakeSource
+	truncated bool
+}
+
+func (f *truncatingSource) List(ctx context.Context, since time.Time) ([]Item, error) {
+	if f.truncated {
+		f.sinces = append(f.sinces, since)
+		return nil, &TruncatedError{Kind: KindPR, Limit: 1000, Since: since}
+	}
+	return f.fakeSource.List(ctx, since)
+}
+
+// TestWatchRun_Truncated: a truncated listing files nothing and keeps the
+// watermark, on a first pass and on a repo with history alike; a first pass
+// files normally once a later start_from brings the listing inside the window.
+func TestWatchRun_Truncated(t *testing.T) {
+	items := []Item{prItem(1, t0.Add(time.Hour), "a.go"), prItem(2, t0.Add(48*time.Hour), "a.go")}
+	t.Run("first pass then later start_from", func(t *testing.T) {
+		store := &memStore{state: State{}}
+		src := &truncatingSource{fakeSource: fakeSource{items: items}, truncated: true}
+		filer := &fakeFiler{}
+		contents := &fakeContents{exists: map[string]bool{"a.go": true}}
+		res, err := New(Options{Repo: "widgets", Upstream: testUpstream}, src, contents, store, filer).Run(context.Background())
+		var trunc *TruncatedError
+		if !errors.As(err, &trunc) {
+			t.Fatalf("err = %v, want a *TruncatedError", err)
+		}
+		if !strings.Contains(trunc.Window(), "more than 1000 pull requests") {
+			t.Errorf("Window = %q", trunc.Window())
+		}
+		if !res.FirstPass || len(res.Filed) != 0 || len(filer.filed) != 0 {
+			t.Fatalf("res = %+v, filed %d", res, len(filer.filed))
+		}
+		if rs := store.state["widgets"]; !rs.Watermark.IsZero() || len(rs.Refs) != 0 {
+			t.Fatalf("state = %+v, want still a first pass", rs)
+		}
+		src.truncated = false
+		res, err = New(Options{Repo: "widgets", Upstream: testUpstream, StartFrom: t0.Add(24 * time.Hour)}, src, contents, store, filer).Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.FirstPass || !reflect.DeepEqual(res.Filed, []string{"upstream#2"}) {
+			t.Fatalf("res after start_from = %+v", res)
+		}
+		if rs := store.state["widgets"]; !rs.Watermark.Equal(t0.Add(48 * time.Hour)) {
+			t.Errorf("Watermark = %v", rs.Watermark)
+		}
+	})
+	t.Run("repo with history keeps its watermark", func(t *testing.T) {
+		store := &memStore{state: State{}}
+		store.state.Repo("widgets").Put(Outcome{Ref: "upstream#9", Status: StatusFiled, ItemTime: t0, IssueNumber: 7}, t0)
+		src := &truncatingSource{fakeSource: fakeSource{items: items}, truncated: true}
+		filer := &fakeFiler{issues: map[int]IssueOutcome{7: {Open: true}}}
+		res, err := New(Options{Repo: "widgets", Upstream: testUpstream, StartFrom: t0.Add(24 * time.Hour)}, src,
+			&fakeContents{exists: map[string]bool{"a.go": true}}, store, filer).Run(context.Background())
+		var trunc *TruncatedError
+		if !errors.As(err, &trunc) {
+			t.Fatalf("err = %v, want a *TruncatedError", err)
+		}
+		if res.FirstPass || len(filer.filed) != 0 || src.forkCalls != 0 {
+			t.Fatalf("res = %+v, filed %d, forkCalls %d", res, len(filer.filed), src.forkCalls)
+		}
+		if rs := store.state["widgets"]; !rs.Watermark.Equal(t0) {
+			t.Errorf("Watermark = %v, want unchanged %v", rs.Watermark, t0)
+		}
+	})
+}
+
+// TestWatchRun_FirstPassCapIsOptIn: unset, a first pass files every item after
+// its start point; set, it stops at the cap and the rest waits behind the
+// watermark.
+func TestWatchRun_FirstPassCapIsOptIn(t *testing.T) {
+	items := []Item{
+		prItem(1, t0.Add(time.Hour), "a.go"),
+		prItem(2, t0.Add(2*time.Hour), "a.go"),
+		prItem(3, t0.Add(3*time.Hour), "a.go"),
+	}
+	for _, limit := range []int{0, 2} {
+		store := &memStore{state: State{}}
+		filer := &fakeFiler{}
+		res, err := New(Options{Repo: "widgets", Upstream: testUpstream, MaxIssuesPerRun: limit}, &fakeSource{items: items},
+			&fakeContents{exists: map[string]bool{"a.go": true}}, store, filer).Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantFiled, wantCapped := 3, false
+		if limit > 0 {
+			wantFiled, wantCapped = limit, true
+		}
+		if len(filer.filed) != wantFiled || res.Capped != wantCapped {
+			t.Errorf("max_issues_per_run %d: filed %d capped %v, want %d/%v", limit, len(filer.filed), res.Capped, wantFiled, wantCapped)
+		}
 	}
 }

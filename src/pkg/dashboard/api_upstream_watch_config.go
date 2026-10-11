@@ -18,6 +18,7 @@ type upstreamWatchRepoPatch struct {
 	PRLabels        *[]string `json:"pr_labels,omitempty"`
 	MaxIssuesPerRun *int      `json:"max_issues_per_run,omitempty"`
 	Label           *string   `json:"label,omitempty"`
+	StartFrom       *string   `json:"start_from,omitempty"`
 }
 
 // handleUpstreamWatchConfigPut edits the upstream_watch block from the
@@ -113,6 +114,9 @@ func (s *Server) handleUpstreamWatchConfigPut(w http.ResponseWriter, r *http.Req
 		}
 		if patch.Label != nil {
 			entry.Label = sanitizeString(*patch.Label)
+		}
+		if patch.StartFrom != nil {
+			entry.StartFrom = sanitizeString(*patch.StartFrom)
 		}
 		next.Repos[bare] = entry
 	}

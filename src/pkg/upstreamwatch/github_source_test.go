@@ -3,6 +3,7 @@ package upstreamwatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -219,6 +220,7 @@ type releaseStub struct {
 	Body        string  `json:"body,omitempty"`
 	HTMLURL     string  `json:"html_url,omitempty"`
 	PublishedAt *string `json:"published_at,omitempty"`
+	CreatedAt   *string `json:"created_at,omitempty"`
 	Draft       bool    `json:"draft,omitempty"`
 }
 
@@ -542,5 +544,207 @@ func TestList_SortsOldestFirstAcrossKinds(t *testing.T) {
 		if gotOrder[i] != want[i] {
 			t.Fatalf("order = %v, want %v", gotOrder, want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// truncation and the release early stop
+// ---------------------------------------------------------------------------
+
+// pagedHandler serves body for every page and always links a next page,
+// counting the calls.
+func pagedHandler(path, body string, calls *int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(calls, 1)
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?page=%d>; rel="next"`, r.Host, path, n+1))
+		writeJSON(w, body)
+	}
+}
+
+func TestList_PRTruncatedAtPageCap(t *testing.T) {
+	since := mustTime(t, "2026-01-01T00:00:00Z")
+	mergedAt := "2026-02-01T00:00:00Z"
+	body, _ := json.Marshal([]pullStub{{Number: 1, Title: "new", UpdatedAt: "2026-02-02T00:00:00Z", MergedAt: &mergedAt}})
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets/pulls", pagedHandler("/repos/upstream/widgets/pulls", string(body), &calls))
+	mux.HandleFunc("/repos/upstream/widgets/pulls/1/files", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("touched files fetched for a truncated listing")
+		writeJSON(w, `[]`)
+	})
+	s := NewGitHubSource(newTestClient(t, mux), "f", "r", config.UpstreamWatchRepo{
+		Upstream: "upstream/widgets", Sources: []string{config.UpstreamSourcePRs},
+	})
+	items, err := s.List(context.Background(), since)
+	var trunc *TruncatedError
+	if !errors.As(err, &trunc) || len(items) != 0 {
+		t.Fatalf("items/err = %v/%v, want none and a *TruncatedError", items, err)
+	}
+	if trunc.Kind != KindPR || trunc.Limit != maxPRPages*githubPerPage || !trunc.Since.Equal(since) {
+		t.Errorf("TruncatedError = %+v", trunc)
+	}
+	if got := trunc.Window(); !strings.Contains(got, "more than 1000 pull requests updated since 2026-01-01") {
+		t.Errorf("Window = %q", got)
+	}
+	if atomic.LoadInt32(&calls) != maxPRPages {
+		t.Errorf("pulls called %d times, want %d", calls, maxPRPages)
+	}
+}
+
+func TestList_PRLastPageAtCapIsNotTruncated(t *testing.T) {
+	since := mustTime(t, "2026-01-01T00:00:00Z")
+	mergedAt := "2026-02-01T00:00:00Z"
+	body, _ := json.Marshal([]pullStub{{Number: 1, Title: "new", UpdatedAt: "2026-02-02T00:00:00Z", MergedAt: &mergedAt}})
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets/pulls", func(w http.ResponseWriter, r *http.Request) {
+		if n := atomic.AddInt32(&calls, 1); n < maxPRPages {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s/repos/upstream/widgets/pulls?page=%d>; rel="next"`, r.Host, n+1))
+		}
+		writeJSON(w, string(body))
+	})
+	mux.HandleFunc("/repos/upstream/widgets/pulls/1/files", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, `[]`) })
+	s := NewGitHubSource(newTestClient(t, mux), "f", "r", config.UpstreamWatchRepo{
+		Upstream: "upstream/widgets", Sources: []string{config.UpstreamSourcePRs},
+	})
+	items, err := s.List(context.Background(), since)
+	if err != nil || len(items) != maxPRPages {
+		t.Fatalf("items/err = %d/%v, want %d items and no error", len(items), err, maxPRPages)
+	}
+}
+
+func TestList_ReleasesTruncatedAtPageCap(t *testing.T) {
+	since := mustTime(t, "2026-01-01T00:00:00Z")
+	body, _ := json.Marshal([]releaseStub{{TagName: "v9", PublishedAt: pStr("2026-04-01T00:00:00Z")}})
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets/releases", pagedHandler("/repos/upstream/widgets/releases", string(body), &calls))
+	s := NewGitHubSource(newTestClient(t, mux), "f", "r", config.UpstreamWatchRepo{
+		Upstream: "upstream/widgets", Sources: []string{config.UpstreamSourceReleases},
+	})
+	items, err := s.List(context.Background(), since)
+	var trunc *TruncatedError
+	if !errors.As(err, &trunc) || len(items) != 0 {
+		t.Fatalf("items/err = %v/%v, want none and a *TruncatedError", items, err)
+	}
+	if trunc.Kind != KindRelease || trunc.Limit != maxReleasePages*githubPerPage {
+		t.Errorf("TruncatedError = %+v", trunc)
+	}
+	if got := trunc.Window(); !strings.Contains(got, "more than 500 releases") {
+		t.Errorf("Window = %q", got)
+	}
+	if atomic.LoadInt32(&calls) != maxReleasePages {
+		t.Errorf("releases called %d times, want %d", calls, maxReleasePages)
+	}
+}
+
+func TestList_ReleasesAllOlderShortcut(t *testing.T) {
+	since := mustTime(t, "2026-01-01T00:00:00Z")
+	b1, _ := json.Marshal([]releaseStub{{TagName: "v2", PublishedAt: pStr("2026-02-01T00:00:00Z"), CreatedAt: pStr("2026-02-01T00:00:00Z")}})
+	b2, _ := json.Marshal([]releaseStub{
+		{TagName: "v1", PublishedAt: pStr("2025-06-01T00:00:00Z"), CreatedAt: pStr("2025-06-01T00:00:00Z")},
+		{TagName: "v1-draft", Draft: true, CreatedAt: pStr("2025-05-01T00:00:00Z")},
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets/releases", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("page") {
+		case "", "1":
+			w.Header().Set("Link", `<`+"http://"+r.Host+`/repos/upstream/widgets/releases?page=2>; rel="next"`)
+			writeJSON(w, string(b1))
+		case "2":
+			w.Header().Set("Link", `<`+"http://"+r.Host+`/repos/upstream/widgets/releases?page=3>; rel="next"`)
+			writeJSON(w, string(b2))
+		default:
+			t.Errorf("unexpected release page fetch: %q", r.URL.Query().Get("page"))
+			writeJSON(w, `[]`)
+		}
+	})
+	s := NewGitHubSource(newTestClient(t, mux), "f", "r", config.UpstreamWatchRepo{
+		Upstream: "upstream/widgets", Sources: []string{config.UpstreamSourceReleases},
+	})
+	items, err := s.List(context.Background(), since)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 || items[0].Ref != "release:v2" {
+		t.Fatalf("items = %+v, want only v2", items)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ForkPoint
+// ---------------------------------------------------------------------------
+
+func forkPointMux(t *testing.T, compare http.HandlerFunc) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, `{"default_branch":"main"}`)
+	})
+	mux.HandleFunc("/repos/fork-org/fork-repo", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, `{"default_branch":"trunk"}`)
+	})
+	mux.HandleFunc("/repos/upstream/widgets/compare/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/upstream/widgets/compare/main...fork-org:trunk"; r.URL.Path != want {
+			t.Errorf("compare path = %q, want %q", r.URL.Path, want)
+		}
+		compare(w, r)
+	})
+	return mux
+}
+
+func TestForkPoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		status  int
+		want    time.Time
+		wantErr string
+	}{
+		{
+			name: "committer date of the merge base",
+			body: `{"merge_base_commit":{"sha":"abc","commit":{"committer":{"date":"2026-10-01T12:00:00Z"},"author":{"date":"2026-09-30T00:00:00Z"}}}}`,
+			want: mustTime(t, "2026-10-01T12:00:00Z"),
+		},
+		{
+			name: "author date when no committer date",
+			body: `{"merge_base_commit":{"sha":"abc","commit":{"author":{"date":"2026-09-30T00:00:00Z"}}}}`,
+			want: mustTime(t, "2026-09-30T00:00:00Z"),
+		},
+		{name: "no merge base", body: `{}`, wantErr: "no merge base"},
+		{name: "no commit date", body: `{"merge_base_commit":{"sha":"abc","commit":{}}}`, wantErr: "no commit date"},
+		{name: "compare fails", status: http.StatusNotFound, wantErr: "compare upstream/widgets main...fork-org:trunk"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := forkPointMux(t, func(w http.ResponseWriter, _ *http.Request) {
+				if tc.status != 0 {
+					http.Error(w, "not found", tc.status)
+					return
+				}
+				writeJSON(w, tc.body)
+			})
+			at, err := explicitSource(t, mux).ForkPoint(context.Background())
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !at.IsZero() {
+					t.Fatalf("at/err = %v/%v, want zero and an error mentioning %q", at, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !at.Equal(tc.want) {
+				t.Fatalf("at/err = %v/%v, want %v", at, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestForkPoint_DefaultBranchError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/upstream/widgets", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusForbidden)
+	})
+	_, err := explicitSource(t, mux).ForkPoint(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "read default branch of upstream/widgets") {
+		t.Fatalf("err = %v", err)
 	}
 }

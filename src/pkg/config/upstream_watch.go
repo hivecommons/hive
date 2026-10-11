@@ -43,6 +43,27 @@ type UpstreamWatchRepo struct {
 	MaxIssuesPerRun int `yaml:"max_issues_per_run,omitempty" json:"max_issues_per_run,omitempty"`
 	// Label is applied to filed issues. Empty means DefaultUpstreamWatchLabel.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+	// StartFrom (YYYY-MM-DD) is where the fork's first watch pass starts,
+	// instead of the fork's last commit in common with its upstream. It is
+	// ignored once the fork has upstream-watch history.
+	StartFrom string `yaml:"start_from,omitempty" json:"start_from,omitempty"`
+}
+
+// UpstreamWatchStartFromLayout is the date layout start_from is written in.
+const UpstreamWatchStartFromLayout = time.DateOnly
+
+// StartFromTime returns start_from as 00:00 UTC on that date; ok is false
+// when it is unset or not a valid YYYY-MM-DD date.
+func (r UpstreamWatchRepo) StartFromTime() (time.Time, bool) {
+	raw := strings.TrimSpace(r.StartFrom)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(UpstreamWatchStartFromLayout, raw, time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 var upstreamSources = []string{UpstreamSourceReleases, UpstreamSourcePRs}
@@ -97,6 +118,11 @@ func (c *Config) validateUpstreamWatch() error {
 		}
 		if r.MaxIssuesPerRun < 0 {
 			return fmt.Errorf("upstream_watch.repos[%s]: max_issues_per_run must be positive, got %d", key, r.MaxIssuesPerRun)
+		}
+		if strings.TrimSpace(r.StartFrom) != "" {
+			if _, ok := r.StartFromTime(); !ok {
+				return fmt.Errorf("upstream_watch.repos[%s]: invalid start_from %q (must be a YYYY-MM-DD date)", key, r.StartFrom)
+			}
 		}
 	}
 	return nil

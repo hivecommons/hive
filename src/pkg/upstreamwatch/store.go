@@ -108,6 +108,12 @@ func (s State) Repo(key string) *RepoState {
 	return r
 }
 
+// firstPass reports whether the repo has no upstream-watch history yet: no
+// saved ref and a zero watermark.
+func (r *RepoState) firstPass() bool {
+	return len(r.Refs) == 0 && r.Watermark.IsZero()
+}
+
 // Record returns the stored record for ref.
 func (r *RepoState) Record(ref string) (*RefRecord, bool) {
 	rec, ok := r.Refs[ref]

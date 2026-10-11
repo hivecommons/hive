@@ -24,6 +24,7 @@ upstream_watch:
       pr_labels: [bug, security]    # empty = all merged PRs
       max_issues_per_run: 5         # omit = no cap
       label: upstream/port          # default upstream/port
+      start_from: 2026-06-01        # optional; first pass only
 ```
 
 | Key | Default | Notes |
@@ -35,42 +36,70 @@ upstream_watch:
 | `repos.<repo>.pr_labels` | all merged PRs | Only PRs carrying one of these labels. |
 | `repos.<repo>.max_issues_per_run` | no cap | Must be positive when set. |
 | `repos.<repo>.label` | `upstream/port` | Label on filed issues. |
+| `repos.<repo>.start_from` | the fork point | `YYYY-MM-DD`. Where the repo's **first pass** starts (00:00 UTC on that date), instead of the fork's last commit in common with its upstream; it may be earlier or later than the fork point. Ignored once the repo has upstream-watch history (any saved ref or a non-zero watermark). |
 
 Loading fails if a `repos` key is not in `project.repos`, `upstream` is not
-`owner/repo`, a source is unknown, or `max_issues_per_run` is negative.
+`owner/repo`, a source is unknown, `max_issues_per_run` is negative, or
+`start_from` is not a valid `YYYY-MM-DD` date.
 
 ## The loop
 
 The governor's eval tick runs the watch at most once per `interval`. For each
 repo under `upstream_watch.repos`, in key order, one pass:
 
-1. Lists upstream PRs merged (`merged_at`) and non-draft releases published
+1. On a **first pass** — the repo has no saved refs and a zero watermark —
+   picks the start point: `start_from` when set, else the fork point, the
+   commit date of the fork's last commit in common with its upstream (the
+   merge base GitHub's compare API reports between the upstream's default
+   branch and the fork's). Only upstream items after the start point are
+   considered, and the watermark is set to it once the listing succeeds. If
+   the comparison fails, the pass logs a warning naming the error, files
+   nothing, keeps the watermark at zero and is retried next pass; it never
+   falls back to scanning the upstream from the beginning. A repo that
+   already has history keeps it and continues from its watermark.
+2. Lists upstream PRs merged (`merged_at`) and non-draft releases published
    (`published_at`) strictly after the repo's watermark, filtered by
    `sources` and `pr_labels`, oldest first.
-2. Classifies each item as `security`, `bugfix`, `feature` or `chore` from
+3. Classifies each item as `security`, `bugfix`, `feature` or `chore` from
    its labels and conventional-commit title prefix, and estimates the port
    difficulty (`easy`, `moderate`, `hard`) from files and lines changed.
-3. Checks applicability without a checkout: through the GitHub contents API,
+4. Checks applicability without a checkout: through the GitHub contents API,
    at least one touched file must exist on the fork's default branch. An item
    with none is recorded as `skipped`. Releases carry no file list and are
    always applicable.
-4. Files an issue for the rest, titled `upstream: <upstream title>`, with the
+5. Files an issue for the rest, titled `upstream: <upstream title>`, with the
    upstream link, a summary of the upstream body, the class, the affected
    files, the difficulty estimate and a hidden marker such as
    `<!-- upstream-ref: owner/repo#123 -->` (`owner/repo@<tag>` for a
    release). The configured `label` (default `upstream/port`) is applied.
    Mentions copied from upstream are neutralised so nobody upstream is pinged.
-5. Advances the watermark past every item that was filed, skipped or
+6. Advances the watermark past every item that was filed, skipped or
    deduplicated.
-6. Reconciles every previously filed ref against its fork issue: still open
+7. Reconciles every previously filed ref against its fork issue: still open
    leaves it `filed` (surfaced), closed as completed becomes `ported`, closed
    as *not planned* or labelled `upstream/dismissed` becomes `dismissed`. A
    ref filed earlier in the very same pass is left alone — it was just
    opened, so it is certainly still open. The watermark is not touched by
    this step; it already moved past a ref when the ref was first filed.
 
-`max_issues_per_run` stops a repo's pass after that many issues; the remaining
-items stay behind the watermark and are picked up next pass. A GitHub error
+The listing is bounded: at most 10 pages of 100 closed PRs (newest updated
+first) and 5 pages of 100 releases (newest first); each stops early once a
+whole page is at or before the watermark. **A truncated listing is never
+handled**, on any pass: if a cap is reached before that early stop, the pass
+files nothing, leaves the watermark unchanged, logs a warning naming the repo,
+the window that was exceeded (more than 1000 PRs updated, or more than 500
+releases, since the watermark) and the advice to set a later `start_from`, and
+moves on to the next repo. Handling it would move the watermark past older
+items the listing never returned. On a first pass, setting a later
+`start_from` is enough: the next pass starts there. A repo with history ignores
+`start_from`, so remove its entry from the state file first; issues already
+filed are found again by their marker and not refiled.
+
+`max_issues_per_run` is opt-in pacing and does not choose where a pass starts.
+Unset, a first pass files every eligible item after its start point. Set, it
+stops a repo's pass after that many issues; the remaining items stay behind
+the watermark and are picked up next pass. Set it when a fork's backlog after
+the start point is still large. A GitHub error
 stops the repo's pass the same way, after saving what was already handled.
 Cancelling the hive's context stops the loop between items with the state
 saved.
@@ -187,13 +216,14 @@ stored bare):
   "enabled": true,
   "interval": "6h",
   "repos": {
-    "forked-thing": {"upstream": "origin-owner/thing", "sources": ["prs"], "pr_labels": ["bug"], "max_issues_per_run": 5, "label": "upstream/port"},
+    "forked-thing": {"upstream": "origin-owner/thing", "sources": ["prs"], "pr_labels": ["bug"], "max_issues_per_run": 5, "label": "upstream/port", "start_from": "2026-06-01"},
     "old-fork": null
   }
 }
 ```
 
-The edit is validated with the same rules as `hive.yaml` before anything
+`start_from` has no field in the panel; it is kept from `hive.yaml` and can be
+set through this endpoint. The edit is validated with the same rules as `hive.yaml` before anything
 changes; a rejected edit returns `400` with the reason and leaves the config
 untouched.
 

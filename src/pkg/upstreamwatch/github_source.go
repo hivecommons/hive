@@ -17,12 +17,12 @@ const (
 	githubPerPage = 100
 	// maxPRPages bounds the merged-PR scan. PRs come back sorted by
 	// updated_at desc, so once a whole page's updated_at falls at or below
-	// the watermark we stop early; this ceiling is the fallback for runs
-	// that have never caught up and must not scan the upstream forever.
+	// the watermark we stop early; reaching this ceiling first is reported
+	// as a *TruncatedError rather than scanning the upstream forever.
 	maxPRPages = 10
 	// maxReleasePages bounds the release scan. Releases are listed newest
-	// first, so even a repo with hundreds of releases is well inside the
-	// window the first catch-up run needs.
+	// first and stop early the same way; reaching this ceiling first is
+	// reported as a *TruncatedError.
 	maxReleasePages = 5
 	// maxFilePages bounds the per-PR touched-files scan. One PR with more
 	// than this many files is almost always a bulk vendor sync a port
@@ -121,6 +121,54 @@ func (s *GitHubSource) Upstream(ctx context.Context) (string, error) {
 	return up.owner + "/" + up.repo, nil
 }
 
+// ForkPoint implements Source: it compares the upstream's default branch
+// with the fork's and returns the merge-base commit's committer date (the
+// author date when GitHub reports no committer date).
+func (s *GitHubSource) ForkPoint(ctx context.Context) (time.Time, error) {
+	up, err := s.resolveUpstream(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	upBranch, err := s.defaultBranch(ctx, up)
+	if err != nil {
+		return time.Time{}, err
+	}
+	forkBranch, err := s.defaultBranch(ctx, s.fork)
+	if err != nil {
+		return time.Time{}, err
+	}
+	head := s.fork.owner + ":" + forkBranch
+	cmp, _, err := s.client.Repositories.CompareCommits(ctx, up.owner, up.repo, upBranch, head, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("compare %s/%s %s...%s: %w", up.owner, up.repo, upBranch, head, err)
+	}
+	base := cmp.GetMergeBaseCommit()
+	if base.GetSHA() == "" {
+		return time.Time{}, fmt.Errorf("compare %s/%s %s...%s: GitHub returned no merge base", up.owner, up.repo, upBranch, head)
+	}
+	at := base.GetCommit().GetCommitter().GetDate().Time
+	if at.IsZero() {
+		at = base.GetCommit().GetAuthor().GetDate().Time
+	}
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("compare %s/%s %s...%s: merge base %s has no commit date", up.owner, up.repo, upBranch, head, base.GetSHA())
+	}
+	return at, nil
+}
+
+// defaultBranch returns the default branch of r.
+func (s *GitHubSource) defaultBranch(ctx context.Context, r repoRef) (string, error) {
+	repo, _, err := s.client.Repositories.Get(ctx, r.owner, r.repo)
+	if err != nil {
+		return "", fmt.Errorf("read default branch of %s/%s: %w", r.owner, r.repo, err)
+	}
+	branch := repo.GetDefaultBranch()
+	if branch == "" {
+		return "", fmt.Errorf("read default branch of %s/%s: GitHub returned none", r.owner, r.repo)
+	}
+	return branch, nil
+}
+
 // resolveUpstream returns the upstream owner/name, falling back to the fork
 // parent when cfg.Upstream was empty. An explicit cfg.Upstream always wins.
 func (s *GitHubSource) resolveUpstream(ctx context.Context) (repoRef, error) {
@@ -160,7 +208,9 @@ func (s *GitHubSource) wantsSource(name string) bool {
 
 // mergedPRs lists upstream PRs merged after since, filtered by the configured
 // pr_labels. It walks pages of closed PRs sorted by updated_at desc and stops
-// when a whole page is older than the watermark.
+// when a whole page is older than the watermark. Reaching maxPRPages before
+// that returns a *TruncatedError, and the touched-files lookups are only made
+// once the listing is known to be complete.
 func (s *GitHubSource) mergedPRs(ctx context.Context, up repoRef, since time.Time) ([]Item, error) {
 	labelFilter := labelSet(s.cfg.PRLabels)
 	opts := &gh.PullRequestListOptions{
@@ -169,8 +219,8 @@ func (s *GitHubSource) mergedPRs(ctx context.Context, up repoRef, since time.Tim
 		Direction:   prDirectionDesc,
 		ListOptions: gh.ListOptions{PerPage: githubPerPage},
 	}
-	var out []Item
-	for page := 0; page < maxPRPages; page++ {
+	var kept []*gh.PullRequest
+	for page := 0; ; page++ {
 		prs, resp, err := s.client.PullRequests.List(ctx, up.owner, up.repo, opts)
 		if err != nil {
 			return nil, fmt.Errorf("list merged PRs for %s/%s: %w", up.owner, up.repo, err)
@@ -186,38 +236,40 @@ func (s *GitHubSource) mergedPRs(ctx context.Context, up repoRef, since time.Tim
 			if pr.MergedAt == nil {
 				continue
 			}
-			merged := pr.GetMergedAt().Time
-			if !merged.After(since) {
+			if !pr.GetMergedAt().Time.After(since) {
 				continue
 			}
-			labels := labelNames(pr.Labels)
-			if labelFilter != nil && !anyLabel(labels, labelFilter) {
+			if labelFilter != nil && !anyLabel(labelNames(pr.Labels), labelFilter) {
 				continue
 			}
-			files, adds, dels, err := s.prFiles(ctx, up, pr.GetNumber())
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, Item{
-				Kind:      KindPR,
-				Ref:       formatPRRef(pr.GetNumber()),
-				Title:     pr.GetTitle(),
-				Body:      pr.GetBody(),
-				HTMLURL:   pr.GetHTMLURL(),
-				Timestamp: merged,
-				Labels:    labels,
-				Files:     files,
-				Additions: adds,
-				Deletions: dels,
-			})
+			kept = append(kept, pr)
 		}
-		if resp == nil || resp.NextPage == 0 {
+		if resp == nil || resp.NextPage == 0 || allOlder {
 			break
 		}
-		if allOlder {
-			break
+		if page+1 >= maxPRPages {
+			return nil, &TruncatedError{Kind: KindPR, Limit: maxPRPages * githubPerPage, Since: since}
 		}
 		opts.Page = resp.NextPage
+	}
+	out := make([]Item, 0, len(kept))
+	for _, pr := range kept {
+		files, adds, dels, err := s.prFiles(ctx, up, pr.GetNumber())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Item{
+			Kind:      KindPR,
+			Ref:       formatPRRef(pr.GetNumber()),
+			Title:     pr.GetTitle(),
+			Body:      pr.GetBody(),
+			HTMLURL:   pr.GetHTMLURL(),
+			Timestamp: pr.GetMergedAt().Time,
+			Labels:    labelNames(pr.Labels),
+			Files:     files,
+			Additions: adds,
+			Deletions: dels,
+		})
 	}
 	return out, nil
 }
@@ -253,17 +305,27 @@ func (s *GitHubSource) prFiles(ctx context.Context, up repoRef, number int) ([]s
 }
 
 // releases lists upstream releases published after since. Drafts are
-// skipped: a draft is not something a fork can port.
+// skipped: a draft is not something a fork can port. GitHub lists releases
+// newest first, so the walk stops once a whole page was both created and
+// published at or before the watermark; reaching maxReleasePages before that
+// returns a *TruncatedError.
 func (s *GitHubSource) releases(ctx context.Context, up repoRef, since time.Time) ([]Item, error) {
 	opts := &gh.ListOptions{PerPage: githubPerPage}
 	var out []Item
-	for page := 0; page < maxReleasePages; page++ {
+	for page := 0; ; page++ {
 		rels, resp, err := s.client.Repositories.ListReleases(ctx, up.owner, up.repo, opts)
 		if err != nil {
 			return nil, fmt.Errorf("list releases for %s/%s: %w", up.owner, up.repo, err)
 		}
+		allOlder := len(rels) > 0
 		for _, rel := range rels {
-			if rel == nil || rel.GetDraft() || rel.PublishedAt == nil {
+			if rel == nil {
+				continue
+			}
+			if rel.GetCreatedAt().Time.After(since) || rel.GetPublishedAt().Time.After(since) {
+				allOlder = false
+			}
+			if rel.GetDraft() || rel.PublishedAt == nil {
 				continue
 			}
 			published := rel.GetPublishedAt().Time
@@ -283,8 +345,11 @@ func (s *GitHubSource) releases(ctx context.Context, up repoRef, since time.Time
 				Timestamp: published,
 			})
 		}
-		if resp == nil || resp.NextPage == 0 {
+		if resp == nil || resp.NextPage == 0 || allOlder {
 			break
+		}
+		if page+1 >= maxReleasePages {
+			return nil, &TruncatedError{Kind: KindRelease, Limit: maxReleasePages * githubPerPage, Since: since}
 		}
 		opts.Page = resp.NextPage
 	}
