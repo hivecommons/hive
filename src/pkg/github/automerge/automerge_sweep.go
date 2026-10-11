@@ -330,12 +330,13 @@ var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) fo
 var requiredChecksExpectedRE = regexp.MustCompile(`(?i)(required status check ["'][^"']+["'] is expected|\d+\s+of\s+\d+\s+required status checks are expected)`)
 
 // mergeMethodFor returns the GitHub merge method the sweep should use for pr.
-// Forward-merge PRs between release lines must land as true merge commits so
-// the target line keeps the source line's ancestry; everything else keeps the
-// repository's squash convention. The classification is shared with the
-// hive-merge relay via hgithub.IsForwardMergePR.
+// Forward-merge PRs between release lines and upstream-sync PRs on forks must
+// land as true merge commits so the target keeps the source's ancestry;
+// everything else keeps the repository's squash convention. The
+// classification is shared with the hive-merge relay via
+// hgithub.IsMergeCommitPR.
 func mergeMethodFor(pr *gh.PullRequest) string {
-	if hgithub.IsForwardMergePR(pr) {
+	if hgithub.IsMergeCommitPR(pr) {
 		return "merge"
 	}
 	return "squash"

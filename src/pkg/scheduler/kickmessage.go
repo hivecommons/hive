@@ -51,6 +51,15 @@ func (s *Scheduler) upstreamPortDiffURL(issue github.Issue) string {
 	return upstreamwatch.MarkerDiffURL(ref)
 }
 
+// isUpstreamPortIssue reports whether issue carries a configured
+// upstream-port label.
+func (s *Scheduler) isUpstreamPortIssue(issue github.Issue) bool {
+	if s == nil || s.cfg == nil || len(s.cfg.UpstreamWatch.Repos) == 0 {
+		return false
+	}
+	return hasAnyIssueLabel(issue.Labels, s.upstreamPortLabels())
+}
+
 // upstreamPortLabels is the set of labels the upstream watch files issues
 // with across the configured repos (per-repo `label`, defaulting to
 // upstream/port). A label is matched against this whole set rather than the
@@ -149,6 +158,9 @@ func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, ref
 			strings.Join(labels, ","), title))
 		if diff := s.upstreamPortDiffURL(issue); diff != "" {
 			b.WriteString(fmt.Sprintf("    ↳ upstream patch: %s — read it first, then port the change to this fork by hand; do not cherry-pick across repos\n", diff))
+		}
+		if s.isUpstreamPortIssue(issue) {
+			b.WriteString(fmt.Sprintf("    ↳ if you merge the upstream branch into this fork instead, title the PR `chore: sync upstream <range>` and label it `%s` so hive lands it as a merge commit, not a squash\n", github.UpstreamSyncLabel))
 		}
 		if issue.ClaimContext != nil && issue.ClaimContext.MergedPR {
 			reason := "weakly claimed"

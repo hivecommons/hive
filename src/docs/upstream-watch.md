@@ -232,16 +232,24 @@ untouched.
 A fork issue the watch filed carries the hidden `upstream-ref` marker, so the
 kick that offers it to a fixer can hand over the upstream patch with it. When
 an issue carrying the configured label (default `upstream/port`) appears in a
-kick list, the list entry gains one line:
+kick list, the list entry gains a patch line and a sync hint:
 
 ```
   12m myorg/forked-thing#77 [upstream/port] upstream: fix the thing
     ↳ upstream patch: https://github.com/origin-owner/thing/pull/12.diff — read it first, …
+    ↳ if you merge the upstream branch into this fork instead, title the PR `chore: sync upstream <range>` and label it `upstream-sync` …
 ```
 
 The URL is rebuilt from the validated `owner/repo#number` marker, never echoed
 from the issue body, so an issue cannot inject a link of its own. A release
-marker has no diff and gets no line.
+marker has no diff and gets no patch line; every labelled issue gets the sync
+hint.
+
+A PR that merges the upstream into the fork must keep upstream's ancestry, so
+both merge paths (the automerge sweep and the serialized lane) land it as a
+merge commit instead of a squash. A PR counts as an upstream sync when it
+carries the `upstream-sync` label, its head branch starts with
+`upstream-sync/`, or its title contains `sync upstream`.
 
 ## State file
 

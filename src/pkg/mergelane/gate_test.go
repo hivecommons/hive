@@ -425,3 +425,45 @@ func TestGateFrontOnlyNeverEnqueuesOrMerges(t *testing.T) {
 		t.Fatalf("front = #%d, want #2 after the held front left", h.frontPR())
 	}
 }
+
+// A squash request on an upstream-sync or dotted forward-merge PR lands as a
+// merge commit so the target keeps the source's ancestry (#11508); a plain
+// scanner PR keeps the squash.
+func TestRESTGitHubMergeUpgradesMergeCommitPRs(t *testing.T) {
+	prs := map[string]map[string]any{
+		"4": {"title": "chore: sync upstream v1.7.12-v1.9.1", "head": map[string]any{"ref": "scanner/fix-86"}},
+		"5": {"title": "chore: catch up", "head": map[string]any{"ref": "sync/v1.7.11-to-v1.9.1"}},
+		"6": {"title": "fix: handle nil config", "head": map[string]any{"ref": "scanner/fix-88"}},
+	}
+	methods := map[string]string{}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		p := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v3"), "/repos/acme/widgets/pulls/")
+		n, isMerge := strings.CutSuffix(p, "/merge")
+		switch {
+		case r.Method == http.MethodGet && prs[n] != nil:
+			_ = json.NewEncoder(w).Encode(prs[n])
+		case r.Method == http.MethodPut && isMerge:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			methods[n], _ = body["merge_method"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "m" + n})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	client := ghub.NewClient("token", "acme", []string{"widgets"}, nil, api.URL)
+	g := &RESTGitHub{Client: func() *ghub.Client { return client }}
+
+	for n, want := range map[int]string{4: "merge", 5: "merge", 6: "squash"} {
+		method := &mergeMethod{}
+		ctx := context.WithValue(context.Background(), mergeMethodKey{}, method)
+		if _, err := g.Merge(ctx, testRepo, n, "h"); err != nil {
+			t.Fatalf("Merge(#%d): %v", n, err)
+		}
+		if got := methods[fmt.Sprint(n)]; got != want || method.used != want {
+			t.Fatalf("#%d merge_method = %q (used %q), want %q", n, got, method.used, want)
+		}
+	}
+}

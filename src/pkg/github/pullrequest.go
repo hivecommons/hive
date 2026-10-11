@@ -20,8 +20,17 @@ import (
 // forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
 // "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
 // line's ancestry and makes every later top-up re-conflict on the same
-// hunks (#9957, #9956).
-var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+`)
+// hunks (#9957, #9956). Dotted versions ("sync/v1.7.11-to-v1.9.1") match too.
+var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+(?:\.\d+)*-to-v\d+(?:\.\d+)*`)
+
+// UpstreamSyncLabel marks a PR that merges a fork's upstream into the fork
+// (upstream_watch). Such a PR must land as a merge commit so the fork keeps
+// upstream's ancestry (#11508).
+const UpstreamSyncLabel = "upstream-sync"
+
+// upstreamSyncTitleRe matches the "chore: sync upstream <range>" title the
+// upstream/port kick asks for.
+var upstreamSyncTitleRe = regexp.MustCompile(`(?i)\bsync\s+upstream\b`)
 
 // IsForwardMergePR reports whether pr is a forward-merge between release
 // lines, which must land as a merge commit rather than a squash.
@@ -31,6 +40,28 @@ func IsForwardMergePR(pr *gh.PullRequest) bool {
 	}
 	return forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) ||
 		strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge")
+}
+
+// IsUpstreamSyncPR reports whether pr merges a fork's upstream into the fork:
+// it carries UpstreamSyncLabel, its head branch starts with "upstream-sync/",
+// or its title contains "sync upstream".
+func IsUpstreamSyncPR(pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	for _, l := range pr.Labels {
+		if strings.EqualFold(l.GetName(), UpstreamSyncLabel) {
+			return true
+		}
+	}
+	return strings.HasPrefix(pr.GetHead().GetRef(), UpstreamSyncLabel+"/") ||
+		upstreamSyncTitleRe.MatchString(pr.GetTitle())
+}
+
+// IsMergeCommitPR reports whether pr must land as a merge commit rather than
+// a squash: a release-line forward-merge or an upstream sync.
+func IsMergeCommitPR(pr *gh.PullRequest) bool {
+	return IsForwardMergePR(pr) || IsUpstreamSyncPR(pr)
 }
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
@@ -245,12 +276,12 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
 	}
-	// Forward-merges keep ancestry no matter which caller (sweep or the
-	// hive-merge relay) asked for the merge. A failed lookup falls through to
-	// the requested method.
+	// Forward-merges and upstream syncs keep ancestry no matter which caller
+	// (sweep or the hive-merge relay) asked for the merge. A failed lookup
+	// falls through to the requested method.
 	if mergeMethod == "squash" {
-		if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_pr"), owner, repo, number); err == nil && IsForwardMergePR(pr) {
-			c.logger.Warn("MergePR: forcing merge commit for forward-merge PR",
+		if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_pr"), owner, repo, number); err == nil && IsMergeCommitPR(pr) {
+			c.logger.Warn("MergePR: forcing merge commit for forward-merge/upstream-sync PR",
 				slog.String("requested", mergeMethod), slog.Int("number", number))
 			mergeMethod = "merge"
 		}

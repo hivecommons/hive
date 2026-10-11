@@ -109,3 +109,23 @@ func TestUpstreamPortDiffURLAbsentWhenNotApplicable(t *testing.T) {
 		})
 	}
 }
+
+// Every upstream-port issue, including a release marker with no diff, tells
+// the fixer how to mark an upstream-merge PR so hive lands it as a merge
+// commit (#11508); other issues get no hint.
+func TestUpstreamPortKickCarriesSyncHint(t *testing.T) {
+	s := newUpstreamPortScheduler(t, map[string]config.UpstreamWatchRepo{"myorg/fork": {}})
+	release := upstreamPortIssue([]string{config.DefaultUpstreamWatchLabel}, "<!-- upstream-ref: up/stream@v1.0 -->")
+	out, _ := s.formatIssueListWithPolicy([]github.Issue{release})
+	if !strings.Contains(out, "chore: sync upstream <range>") || !strings.Contains(out, github.UpstreamSyncLabel) {
+		t.Errorf("kick list missing the upstream-sync hint:\n%s", out)
+	}
+	plain := upstreamPortIssue([]string{"bug"}, "an ordinary issue body")
+	if out, _ := s.formatIssueListWithPolicy([]github.Issue{plain}); strings.Contains(out, "sync upstream") {
+		t.Errorf("unexpected upstream-sync hint on a plain issue:\n%s", out)
+	}
+	unconfigured := newUpstreamPortScheduler(t, nil)
+	if out, _ := unconfigured.formatIssueListWithPolicy([]github.Issue{release}); strings.Contains(out, "sync upstream") {
+		t.Errorf("unexpected upstream-sync hint without upstream_watch:\n%s", out)
+	}
+}

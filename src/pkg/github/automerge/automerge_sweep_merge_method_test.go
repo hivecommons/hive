@@ -22,6 +22,10 @@ func TestMergeMethodFor(t *testing.T) {
 		}
 		return pr
 	}
+	withLabel := func(pr *gh.PullRequest, label string) *gh.PullRequest {
+		pr.Labels = append(pr.Labels, &gh.Label{Name: gh.String(label)})
+		return pr
+	}
 
 	tests := []struct {
 		name string
@@ -47,6 +51,31 @@ func TestMergeMethodFor(t *testing.T) {
 			name: "forward-merge title on an unrelated branch",
 			pr:   newPR("fix/unrelated-9999", "🌱 Forward-merge v5 into v6"),
 			want: "merge",
+		},
+		{
+			name: "dotted-version forward-merge head",
+			pr:   newPR("sync/v1.7.11-to-v1.9.1", "chore: catch up"),
+			want: "merge",
+		},
+		{
+			name: "upstream-sync title on a scanner branch (#11508)",
+			pr:   newPR("scanner/fix-86", "chore: sync upstream v1.7.12-v1.9.1"),
+			want: "merge",
+		},
+		{
+			name: "upstream-sync head branch prefix",
+			pr:   newPR("upstream-sync/v1.9.1", "chore: catch up"),
+			want: "merge",
+		},
+		{
+			name: "upstream-sync label",
+			pr:   withLabel(newPR("scanner/fix-87", "chore: catch up"), "Upstream-Sync"),
+			want: "merge",
+		},
+		{
+			name: "plain scanner PR squashes",
+			pr:   newPR("scanner/fix-88", "fix: handle nil config"),
+			want: "squash",
 		},
 		{
 			name: "plain feature branch squashes",

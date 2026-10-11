@@ -314,7 +314,8 @@ func (g *RESTGitHub) CreateIssueComment(ctx context.Context, repo string, number
 }
 
 // Merge is the REST merge with head pinned. The method is the calling path's;
-// squash is upgraded to a merge commit for forward-merge PRs, as MergePR does.
+// squash is upgraded to a merge commit for forward-merge and upstream-sync
+// PRs, as MergePR does.
 func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head string) (string, error) {
 	c, api, owner, name, err := g.rest(repo)
 	if err != nil {
@@ -329,7 +330,7 @@ func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head st
 		used = "squash"
 	}
 	if used == "squash" {
-		if pr, _, err := api.PullRequests.Get(ctx, owner, name, number); err == nil && ghub.IsForwardMergePR(pr) {
+		if pr, _, err := api.PullRequests.Get(ctx, owner, name, number); err == nil && ghub.IsMergeCommitPR(pr) {
 			used = "merge"
 		}
 	}
