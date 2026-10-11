@@ -22,13 +22,24 @@ When the agent manager creates a tmux session for an agent
 it to that session's pane with:
 
 ```
-pluk watch <tmux-session> --cli=<backend>
+PLUK_RUN_DIR=/var/run/pluk pluk watch <tmux-session> --cli=<backend> --include-raw [--patterns-dir=/opt/hive/pluk-patterns] >> <session-log>
 ```
 
 via `tmux pipe-pane`. `<backend>` is the agent's configured CLI backend
 (`claude`, `codex`, etc.), defaulting to `claude` when the backend is empty or
 is an inference backend. If the `pluk` binary is not on `PATH`, attachment is
 skipped silently — the agent still runs, it just has no peer-visible log.
+
+### Which backends get classified events
+
+With the pinned pluk, `claude`, `copilot`, `gemini` and `goose` have bundled
+pattern sets. `omp` is classified through a pattern file Hive ships at
+`src/deploy/pluk-patterns/omp.patterns` (copied to `/opt/hive/pluk-patterns/`
+in the image) and passed with `--patterns-dir` when the backend is `omp`.
+Every other backend (for example `codex`) records `raw_output` only; pluk
+accepts an unknown `--cli` silently, so Hive logs a `WARN` ("no pluk pattern
+set for cli=<backend>; only raw_output will be recorded") at attach time. A
+failed `pipe-pane` is also logged at `WARN` instead of reported as attached.
 
 Pluk also exposes a `send` subcommand. `pkg/dashboard/inception_handlers.go`
 uses `pluk send hive-<session> --text=<message> --enter` as a fallback way to

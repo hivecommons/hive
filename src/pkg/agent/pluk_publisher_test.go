@@ -203,3 +203,38 @@ func TestEnsurePlukLogFileWidensATightExistingLog(t *testing.T) {
 		t.Fatalf("a pre-existing 0600 log stayed %04o — peers still cannot read it", got)
 	}
 }
+
+func TestPlukPipePaneCmdOmpPointsAtShippedPatterns(t *testing.T) {
+	logFile := plukSessionLogPath(plukRunDir, "hive-omp")
+	cmd := plukPipePaneCmd("/usr/bin/pluk", "hive-omp", "omp", logFile)
+
+	want := "--patterns-dir=" + shellQuote(plukPatternsDir)
+	if !strings.Contains(cmd, want) {
+		t.Fatalf("omp command lacks the shell-quoted %s operand: %s", want, cmd)
+	}
+	if !strings.HasSuffix(cmd, ">> "+shellQuote(logFile)) {
+		t.Fatalf("the redirect must stay last: %s", cmd)
+	}
+}
+
+func TestPlukPipePaneCmdOtherBackendsOmitPatternsDir(t *testing.T) {
+	cmd := plukPipePaneCmd("/usr/bin/pluk", "s", "claude", "/var/run/pluk/logs/s.jsonl")
+	if strings.Contains(cmd, "--patterns-dir") {
+		t.Fatalf("claude must not get --patterns-dir: %s", cmd)
+	}
+}
+
+func TestPlukHasPatterns(t *testing.T) {
+	old := plukPatternsDir
+	defer func() { plukPatternsDir = old }()
+	plukPatternsDir = t.TempDir()
+	if plukHasPatterns("/nonexistent/pluk", "omp") {
+		t.Fatal("omp reported as having patterns with no file present")
+	}
+	if err := os.WriteFile(filepath.Join(plukPatternsDir, "omp.patterns"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !plukHasPatterns("/nonexistent/pluk", "omp") {
+		t.Fatal("omp not detected despite shipped pattern file")
+	}
+}

@@ -119,11 +119,48 @@ func ensurePlukRunDirs(runDir string) error {
 // and the log path now embeds the session name, so a name carrying a space or a
 // shell metacharacter would otherwise split the redirect target.
 func plukPipePaneCmd(plukPath, session, backend, logFile string) string {
-	return fmt.Sprintf("PLUK_RUN_DIR=%s %s watch %s --cli=%s --include-raw >> %s",
+	patternsFlag := ""
+	if _, ok := hivePlukPatternBackends[backend]; ok {
+		patternsFlag = " --patterns-dir=" + shellQuote(plukPatternsDir)
+	}
+	return fmt.Sprintf("PLUK_RUN_DIR=%s %s watch %s --cli=%s --include-raw%s >> %s",
 		shellQuote(plukRunDir),
 		shellQuote(plukPath),
 		shellQuote(session),
 		shellQuote(backend),
+		patternsFlag,
 		shellQuote(logFile),
 	)
+}
+
+// plukPatternsDir holds pattern sets Hive ships for backends the pinned pluk
+// has none for. It is a var so tests can point it at a temp dir.
+var plukPatternsDir = "/opt/hive/pluk-patterns"
+
+// hivePlukPatternBackends lists backends whose pattern file is shipped in
+// plukPatternsDir and must be passed to pluk via --patterns-dir.
+var hivePlukPatternBackends = map[string]struct{}{"omp": {}}
+
+// plukHasPatterns reports whether pluk will classify events for backend: either
+// Hive ships a pattern file for it, or the installed pluk package bundles one.
+func plukHasPatterns(plukPath, backend string) bool {
+	name := backend + ".patterns"
+	if _, ok := hivePlukPatternBackends[backend]; ok {
+		if _, err := os.Stat(filepath.Join(plukPatternsDir, name)); err == nil {
+			return true
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(plukPath)
+	if err != nil {
+		return false
+	}
+	// <pkg>/dist/cli.js or <pkg>/bin/pluk: the patterns dir sits at the package root.
+	dir := filepath.Dir(resolved)
+	for i := 0; i < 3; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "patterns", name)); err == nil {
+			return true
+		}
+		dir = filepath.Dir(dir)
+	}
+	return false
 }

@@ -665,6 +665,9 @@ RUN (ARCH="${TARGETARCH:-$(uname -m)}" && \
 ARG PLUK_VERSION=0.8.0
 RUN (npm install -g --ignore-scripts --no-fund --no-audit "@hivecommons/pluk@${PLUK_VERSION}" || \
     npm install -g --ignore-scripts --no-fund --no-audit "@kubestellar/pluk@${PLUK_VERSION}") && npm cache clean --force
+# Hive-shipped pluk pattern sets for backends the pinned pluk lacks; pluk is
+# pointed at this dir with --patterns-dir (see plukPatternsDirFor).
+COPY src/deploy/pluk-patterns/ /opt/hive/pluk-patterns/
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chown dev:node /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 2770 /var/run/pluk/logs /var/run/pluk/commands

@@ -397,8 +397,15 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 			logFile = plukSessionLogPath(plukRunDir, agent.tmuxSession)
 		}
 		pipePaneCmd := plukPipePaneCmd(plukPath, agent.tmuxSession, backend, logFile)
-		_ = m.tmuxCmd(agent, "pipe-pane", "-t", agent.tmuxSession, "-o", pipePaneCmd).Run()
-		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend, "log", logFile)
+		if err := m.tmuxCmd(agent, "pipe-pane", "-t", agent.tmuxSession, "-o", pipePaneCmd).Run(); err != nil {
+			m.logger.Warn("pluk pipe-pane attach failed; no pluk log for this session",
+				"agent", agent.Name, "cli", backend, "error", err)
+		} else if !plukHasPatterns(plukPath, backend) {
+			m.logger.Warn(fmt.Sprintf("no pluk pattern set for cli=%s; only raw_output will be recorded", backend),
+				"agent", agent.Name, "log", logFile)
+		} else {
+			m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend, "log", logFile)
+		}
 	}
 
 	return nil
