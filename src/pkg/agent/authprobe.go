@@ -147,6 +147,42 @@ func (m *Manager) ClaudeCredentialCandidatePaths() []string {
 	return paths
 }
 
+// OmpAgentHomes returns the HOME of every omp agent, sorted by agent name.
+// omp keeps sign-ins in ~/.omp/agent/agent.db, so `omp models --json` lists an
+// agent's models only when it runs under that agent's own HOME.
+func (m *Manager) OmpAgentHomes() []string {
+	if m == nil {
+		return nil
+	}
+	type agentRef struct {
+		name string
+		uid  int
+	}
+	m.mu.RLock()
+	refs := make([]agentRef, 0, len(m.agents))
+	for name, proc := range m.agents {
+		if proc == nil {
+			continue
+		}
+		backend := proc.Config.Backend
+		if proc.BackendOverride != "" {
+			backend = proc.BackendOverride
+		}
+		if backend == "omp" {
+			refs = append(refs, agentRef{name: name, uid: proc.UID})
+		}
+	}
+	m.mu.RUnlock()
+	sort.Slice(refs, func(i, j int) bool { return refs[i].name < refs[j].name })
+	homes := []string{}
+	for _, r := range refs {
+		if h := AgentHome(r.name, r.uid, "omp"); h != "" && !containsPath(homes, h) {
+			homes = append(homes, h)
+		}
+	}
+	return homes
+}
+
 // agentCopilotConfigPaths returns the Copilot credential locations to try for
 // one agent: the per-UID config.json and token dir first, then the shared path.
 func agentCopilotConfigPaths(agentName string, uid int, backend string) []string {

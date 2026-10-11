@@ -35,14 +35,14 @@ var ompStaticModels = []string{
 }
 
 var ompStaticReasoningEfforts = map[string][]string{
-	"openai-codex/gpt-5.6-terra":          {"minimal", "low", "medium", "high", "xhigh", "max"},
-	"openai-codex/gpt-5.6-sol":            {"minimal", "low", "medium", "high", "xhigh", "max"},
-	"openai-codex/gpt-5.6-luna":           {"minimal", "low", "medium", "high", "xhigh", "max"},
+	"openai-codex/gpt-5.6-terra":          {"low", "medium", "high", "xhigh", "max"},
+	"openai-codex/gpt-5.6-sol":            {"low", "medium", "high", "xhigh", "max"},
+	"openai-codex/gpt-5.6-luna":           {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-opus-5":             {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-fable-5":            {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-sonnet-5-5":         {"low", "medium", "high", "xhigh", "max"},
 	"anthropic/claude-sonnet-5":           {"low", "medium", "high", "xhigh", "max"},
-	"google-antigravity/gemini-3.7-flash": {"low", "medium", "high"},
+	"google-antigravity/gemini-3.7-flash": {"minimal", "low", "medium", "high"},
 }
 
 type ompModelEntry struct {
@@ -57,18 +57,54 @@ type ompModelsPayload struct {
 
 var runOmpModelsProbe = execOmpModelsProbe
 
+// ompAgentHomes lists the omp agents' HOMEs, where their sign-ins live.
+func (s *Server) ompAgentHomes() []string {
+	if s == nil || s.deps == nil || s.deps.AgentMgr == nil {
+		return nil
+	}
+	return s.deps.AgentMgr.OmpAgentHomes()
+}
+
+// discoverOmpModels probes each omp agent's own HOME and unions the results,
+// since the model cache is keyed by backend, not by agent. With no omp agent
+// it probes the process HOME. Any agent without a sign-in contributes nothing.
 func (s *Server) discoverOmpModels() cliModelResult {
-	models, efforts, err := runOmpModelsProbe()
-	if err != nil || len(models) == 0 {
-		if err != nil && s.logger != nil {
-			s.logger.Info("omp model discovery unavailable, serving static fallback", "err", err.Error())
+	homes := s.ompAgentHomes()
+	if len(homes) == 0 {
+		homes = []string{ompFallbackProbeHome()}
+	}
+	var models []string
+	efforts := map[string][]string{}
+	var lastErr error
+	for _, home := range homes {
+		m, e, err := runOmpModelsProbe(home)
+		if err != nil || len(m) == 0 {
+			if err == nil {
+				err = errors.New("omp models returned no selectors")
+			}
+			lastErr = err
+			if s.logger != nil {
+				s.logger.Warn("omp model discovery found no models for this HOME", "home", home, "err", err.Error())
+			}
+			continue
+		}
+		models = append(models, m...)
+		for id, levels := range e {
+			if _, ok := efforts[id]; !ok {
+				efforts[id] = levels
+			}
+		}
+	}
+	if len(models) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("omp model discovery unavailable, serving static fallback", "homes", homes, "err", fmt.Sprint(lastErr))
 		}
 		return cliModelResult{fallback: true, reasoningEfforts: cloneEffortMap(ompStaticReasoningEfforts)}
 	}
 	return cliModelResult{models: dedupeModels(models), reasoningEfforts: efforts, fallback: false}
 }
 
-func execOmpModelsProbe() ([]string, map[string][]string, error) {
+func execOmpModelsProbe(home string) ([]string, map[string][]string, error) {
 	bin, err := exec.LookPath(ompBinaryName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("omp binary not on PATH: %w", err)
@@ -76,7 +112,7 @@ func execOmpModelsProbe() ([]string, map[string][]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ompModelsProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, ompModelsSubcommand, ompModelsJSONFlag)
-	if home := ompProbeHome(); home != "" {
+	if st, err := os.Stat(home); err == nil && st.IsDir() {
 		cmd.Env = append(os.Environ(), "HOME="+home)
 		cmd.Dir = home
 	}
@@ -92,16 +128,8 @@ func execOmpModelsProbe() ([]string, map[string][]string, error) {
 	return parseOmpModelsJSON(stdout.Bytes())
 }
 
-func ompProbeHome() string {
-	for _, home := range []string{"/data/home", os.Getenv("HOME")} {
-		if home == "" {
-			continue
-		}
-		if st, err := os.Stat(home); err == nil && st.IsDir() {
-			return home
-		}
-	}
-	return ""
+func ompFallbackProbeHome() string {
+	return os.Getenv("HOME")
 }
 
 func parseOmpModelsJSON(raw []byte) ([]string, map[string][]string, error) {

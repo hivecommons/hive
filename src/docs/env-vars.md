@@ -239,6 +239,7 @@ Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONL
 |---|---:|---|---|
 | `HIVE_AGY_LAUNCH_MODE` | No | `headless` | Controls server-managed `agy` agents. The default headless shim leaves the tmux pane at a shell prompt and runs each kick as one `hive agy-turn` (agy stream-json on stdin, conversation resumed by id across kicks), avoiding the upstream interactive TUI CPU wake loop tracked in google-antigravity/antigravity-cli#945. Set to `interactive` (or `tui`) to opt back into the old attachable TUI launch. |
 | `HIVE_OMP_APPROVAL_MODE` | No | `yolo` | Approval mode passed to `omp --approval-mode` (`always-ask` \| `write` \| `yolo`; any other value falls back to `yolo` with a warning) when the manager launches a server-managed `omp` agent. |
+| `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED` | No | unset | Set to `1` to let `just contribute-hive omp local` launch omp on the host with no sandbox; omp has no verified local sandbox or deny-list, so local mode refuses without it. Container mode is the supported boundary. See [sandbox-isolation.md](sandbox-isolation.md). |
 
 ## Inside an agent session
 
@@ -445,6 +446,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_COPILOT_SESSIONS_DIR` | No | `$HOME/.copilot/session-state` | Copilot session-state directory used for best-effort model auto-detection. The relay reads only tail bytes needed to find the latest model field. |
 | `HIVE_BOB_DIR` | No | `$HOME/.bob` | Bob CLI home directory used for best-effort model auto-detection from local transcript state. |
 | `HIVE_OMP_AGENT_DIR` | No | `PI_CODING_AGENT_DIR`, then `$HOME/.omp/agent` | OMP agent directory used for model/advisor auto-detection; the relay reads `config.yml` and session sidecars under this directory when present. |
+| `HIVE_OMP_BACKEND_SQLITE` | No | `node:sqlite` when available | Test-only knob for `bin/omp-backend.js`: set to `sqlite3` to force the `sqlite3` CLI path for reading `agent.db`. Leave unset in production. |
 | `HIVE_RELAY_TEST_TIMING` | No | disabled | Test-only timing accelerator. Set exactly `1` to shorten the relay progress-report interval from `120000` ms to `100` ms. Production runs should leave it unset. |
 | `HIVE_RELAY_TEST_MODE` | No | disabled | Test-only module mode. Set exactly `1` to export relay internals, skip opening a hub connection, make sleeps no-ops, and avoid exiting on unsupported headless backends. Production runs should leave it unset. |
 | `HIVE_ENTRYPOINT_HOOK_DIR` | No | `/etc/hive/entrypoint.d` | Directory of `*.sh` hooks **sourced** by the contributor entrypoint after `contributor.env`/`backends.conf` load and before backend detection and the tmux launch — the extension seam for derived contributor images ([#2393](https://github.com/hivecommons/hive/issues/2393) item 4). Hooks can export env the agent inherits and override helpers like `backend_binary()`. See "Extending the contributor image" in `contributor-relay.md`. |

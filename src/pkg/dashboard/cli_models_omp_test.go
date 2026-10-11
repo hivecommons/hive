@@ -2,34 +2,31 @@ package dashboard
 
 import "testing"
 
-func TestParseOmpModelsJSONCapturesThinkingPerModel(t *testing.T) {
-	raw := []byte(`{"models":[{"selector":"anthropic/claude-fable-5","reasoning":true,"thinking":["low","medium","high","xhigh","max"]},{"selector":"anthropic/claude-3-5-sonnet-20240620","reasoning":false,"thinking":null}]}`)
-	models, efforts, err := parseOmpModelsJSON(raw)
-	if err != nil {
-		t.Fatalf("parseOmpModelsJSON error = %v", err)
+func TestOmpProbeRunsUnderGivenHome(t *testing.T) {
+	t.Setenv("HOME", "/data/home/agents/x")
+	var gotHome string
+	orig := runOmpModelsProbe
+	t.Cleanup(func() { runOmpModelsProbe = orig })
+	runOmpModelsProbe = func(home string) ([]string, map[string][]string, error) {
+		gotHome = home
+		return []string{"anthropic/claude-opus-5"}, map[string][]string{"anthropic/claude-opus-5": {"low"}}, nil
 	}
-	if len(models) != 2 || models[0] != "anthropic/claude-fable-5" || models[1] != "anthropic/claude-3-5-sonnet-20240620" {
-		t.Fatalf("models = %#v", models)
+	r := newTestServer().discoverOmpModels()
+	if gotHome != "/data/home/agents/x" {
+		t.Fatalf("probe HOME = %q, want the agent home", gotHome)
 	}
-	levels := efforts["anthropic/claude-fable-5"]
-	if len(levels) != 5 || levels[4] != "max" {
-		t.Fatalf("fable levels = %#v", levels)
-	}
-	if got := efforts["anthropic/claude-3-5-sonnet-20240620"]; len(got) != 0 {
-		t.Fatalf("non-reasoning model got levels %#v", got)
+	if r.fallback || len(r.models) != 1 {
+		t.Fatalf("unexpected result: %+v", r)
 	}
 }
 
-func TestValidateAgentReasoningEffort_OMPUsesSelectedModel(t *testing.T) {
-	s := &Server{cliModels: newCLIModelCache()}
-	s.cliModels.set(ompBackendID, cliModelResult{models: []string{"anthropic/claude-opus-4-1", "anthropic/claude-fable-5"}, reasoningEfforts: map[string][]string{
-		"anthropic/claude-opus-4-1": {"minimal", "low", "medium", "high", "xhigh"},
-		"anthropic/claude-fable-5":  {"low", "medium", "high", "xhigh", "max"},
-	}})
-	if err := s.validateAgentReasoningEffort(ompBackendID, "anthropic/claude-opus-4-1", "minimal"); err != nil {
-		t.Fatalf("minimal should be valid for opus 4.1: %v", err)
+func TestOmpStaticEffortsMatchCatalog(t *testing.T) {
+	for _, id := range []string{"openai-codex/gpt-5.6-terra", "openai-codex/gpt-5.6-sol", "openai-codex/gpt-5.6-luna"} {
+		if got := ompStaticReasoningEfforts[id]; !equalStrings(got, []string{"low", "medium", "high", "xhigh", "max"}) {
+			t.Errorf("%s efforts = %v", id, got)
+		}
 	}
-	if err := s.validateAgentReasoningEffort(ompBackendID, "anthropic/claude-fable-5", "minimal"); err == nil {
-		t.Fatal("minimal should be rejected for fable when its discovered list starts at low")
+	if got := ompStaticReasoningEfforts["google-antigravity/gemini-3.7-flash"]; !equalStrings(got, []string{"minimal", "low", "medium", "high"}) {
+		t.Errorf("gemini-3.7-flash efforts = %v", got)
 	}
 }

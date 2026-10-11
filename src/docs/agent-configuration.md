@@ -131,7 +131,20 @@ The dashboard shows a reasoning-effort dropdown next to the model picker for eve
 
 #### Oh My Pi (`omp`) hub agents
 
-`backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` and uses each model's `thinking` list for the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.
+`backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` once per omp agent, with `HOME` set to that agent's home, and unions the results; omp lists only models whose provider has a credential in the HOME it runs under, so an agent that is not signed in contributes nothing. When no agent has a sign-in, the dropdown serves a static fallback list, flagged `fallback: true` in the models API and logged at `WARN` with the HOME probed; sign an agent in to see its real models. Each model's `thinking` list drives the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.
+
+##### Signing an omp hub agent in
+
+omp stores credentials in the SQLite store `~/.omp/agent/agent.db` (table `auth_credentials`, one row per provider: OAuth records for subscriptions such as ChatGPT Plus/Pro and Claude Pro/Max, and stored API keys). There is no `auth.json`. Hive has no file-based credential probe for omp, so the dashboard cannot show a signed-in badge; the pane text is the only signal.
+
+1. Open the agent's pane from the dashboard. A fresh agent HOME starts omp's setup wizard ("Setup step 1 of 5 — Sign in to your providers"). With `OMP_SKIP_SETUP=1` omp starts its normal TUI instead; type `/login` to open the provider picker.
+2. Pick the provider. For a subscription, omp runs a browser or device OAuth flow and prints a URL in the pane: open it, approve, and paste the returned code into the dashboard login-code box (or into the pane). For an API key, choose the provider's API-key option and paste the key; omp stores it in `auth_credentials`.
+3. Repeat for every provider the agent needs (for example `openai-codex` for the primary model and `anthropic` for an advisor).
+4. Repeat for every omp agent: each hub agent has its own HOME under `/data/home/agents/<name>`, so sign-ins are not shared.
+5. Provider API keys that omp reads from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...) are not forwarded to agents: the manager's agent environment (`pkg/agent/manager_env.go`) exports only Hive's own variables, and `ANTHROPIC_API_KEY` there is a placeholder for inference-routed backends. Use the stored API-key sign-in above.
+6. Sign-ins survive container restarts only because `/data` is the persistent volume (`Volume=hive-data.volume:/data` in `src/deploy/quadlet/hive.container`); `/home/dev` is not persistent.
+
+After signing in, the model picker lists the agent's real models on its next poll.
 
 Sign-in is per agent: each omp hub agent signs in to its providers in its own terminal, since its `~/.omp` lives in that agent's HOME. If omp opens its first-run setup wizard ("Setup step 1 of 5", "Sign in to your providers"), Hive detects the wizard and its browser/auth-code hand-off as a login-needed state rather than a ready prompt, so no task is typed into it; complete the sign-in (or skip the wizard and use `/login`) from the agent terminal.
 

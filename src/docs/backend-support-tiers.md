@@ -323,9 +323,9 @@ agent spend, and the `advisor_records` admin MCP tool.
 | Backend | Advisor supported? | Synchronous? | What is recorded |
 | --- | --- | --- | --- |
 | `claude` | Yes: `Stop` hook in the launch settings JSON (phase 1, [#9722](https://github.com/hivecommons/hive/issues/9722)) | Yes | Full record; the turn reference is the Claude Code session id |
-| `omp` | Planned: `session_stop` extension (phase 2, [#9723](https://github.com/hivecommons/hive/issues/9723)); reported not active until it lands | Yes, once landed | Full record, once landed |
-| `copilot` | Planned: `agentStop` hook under `COPILOT_HOME` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)); reported not active until it lands | Yes, once landed; the CLI force-ends a turn after 8 consecutive blocks, so the block limit must stay below 8 | Full record, once landed |
-| `codex` | Planned: experimental `Stop` hook behind `features.hooks` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)); reported not active until it lands | Yes, once landed | Full record, once landed |
+| `omp` | Yes: `session_stop` extension passed with `--extension`, plus a roles overlay passed with `--config` (phase 2, [#9723](https://github.com/hivecommons/hive/issues/9723)) | Yes | Full record |
+| `copilot` | Yes: `agentStop` hook under `COPILOT_HOME` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)) | Yes; the CLI force-ends a turn after 8 consecutive blocks, so the block limit must stay below 8 | Full record |
+| `codex` | Yes: `Stop` hook enabled with `-c features.hooks=true` (phase 3, [#9724](https://github.com/hivecommons/hive/issues/9724)) | Yes | Full record |
 | `goose` | No | n/a | Nothing; reported not active |
 | `pi` | No | n/a | Nothing; reported not active |
 | `bob` | No | n/a | Nothing; reported not active |

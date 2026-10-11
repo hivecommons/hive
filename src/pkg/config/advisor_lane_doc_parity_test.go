@@ -42,6 +42,9 @@ func TestBackendSupportTiersAdvisorEntryCoversEveryBackend(t *testing.T) {
 			t.Errorf("advisor entry missing a row for backend %q", backend)
 			continue
 		}
+		if AdvisorSupportedBackend(backend) && !strings.HasPrefix(support, "Yes") {
+			t.Errorf("backend %q is advisor-supported in code but its doc row does not start with Yes: %q", backend, support)
+		}
 		if AdvisorSupportedBackend(backend) && strings.HasPrefix(support, "No") {
 			t.Errorf("backend %q is advisor-supported in code but its doc row says %q", backend, support)
 		}
