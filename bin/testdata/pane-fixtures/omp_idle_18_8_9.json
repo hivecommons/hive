@@ -1,0 +1,9 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "paneHasCLIMarker": true,
+    "paneShowsActiveWork": false
+  },
+  "note": "omp 18.8.9 idle pane captured in tmux (160x45, OMP_SKIP_SETUP=1, no model selected; blank lines trimmed), hivecommons/hive#11516. None of the pre-existing cliPaneMarkers appear; the status line's '\u25b6\u2500' join and '\u03c0 >' logo segment are omp's own chrome, so the crash detector, kick pre-check and startup wait must see a live CLI here."
+}

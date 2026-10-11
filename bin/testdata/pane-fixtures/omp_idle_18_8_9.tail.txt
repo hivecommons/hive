@@ -1,0 +1,4 @@
+ Warning: No default model selected. Use /login, set an API key environment variable, or select a local model with /model or --model.
+────────────────────────────────────────────────────────────────────────────────
+ π > ⬢ no-model > 🗑 hive-omp-review > ◫ 7K/? ⟲ ▶──────────────────────────────────
+╰─                                                              ⇧⇥ to change thinking effort

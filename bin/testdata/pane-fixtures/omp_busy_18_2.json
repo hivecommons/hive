@@ -3,7 +3,9 @@
   "tailLines": 15,
   "expect": {
     "getCLIState": "ready",
-    "classifyTmuxPane": "PANE_STATE_WORKING"
+    "classifyTmuxPane": "PANE_STATE_WORKING",
+    "paneShowsActiveWork": true,
+    "paneHasCLIMarker": true
   },
   "note": "omp 18.2.x pane capture shape from hivecommons/hive#7734: live turns keep an activity row and braille spinner/elapsed footer after the initial Working\u2026 label disappears."
 }

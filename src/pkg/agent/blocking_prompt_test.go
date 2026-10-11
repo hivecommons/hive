@@ -115,6 +115,10 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		{"codex update", "codex", codexUpdatePane, "3"},
 		{"codex update 0.156", "codex", codexUpdatePane0156, "3"},
 		{"codex command approval", "codex", codexCommandApprovalPane, "1"},
+		// omp's splash renders the Enter key as "⏎" in its default symbol
+		// preset (setup/scenes/splash.ts), and as "enter" with plain names.
+		{"omp splash unicode key", "omp", "press ⏎ to skip", "Enter"},
+		{"omp splash plain key", "omp", "press enter to skip", "Enter"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

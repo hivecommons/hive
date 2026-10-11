@@ -42,9 +42,16 @@ var loginPromptPatterns = []string{
 	// Antigravity OAuth hand-off
 	"accounts.google.com/o/oauth2/auth",
 	"If you aren't automatically redirected, paste the authorization code below:",
-	// OMP OAuth hand-off
+	// OMP OAuth hand-off. The auth-code prompt is matched on its prefix: the
+	// setup wizard renders it with no suffix and /login appends a
+	// preset-dependent ", then press <key>:".
 	"Complete login in your browser. If the browser cannot reach this machine",
-	"Paste the authorization code (or full redirect URL), then press Enter:",
+	"Paste the authorization code (or full redirect URL)",
+	// OMP first-run setup wizard sign-in step
+	"Sign in to your providers",
+	"Set up your providers",
+	"Select provider to login",
+	"Browser login:",
 }
 
 // fatalNetworkErrorPatterns are substrings that indicate a transient TLS or
@@ -437,6 +444,12 @@ var loginDirectiveVerbs = []string{
 	"please", "run", "type", "use", "enter", "try", "must", "need",
 }
 
+// ompLoginScreenLineRe matches omp sign-in screen lines that are too generic
+// as substrings ("Signing in to …", "Authentication required") and so must
+// make up the WHOLE line: an agent's prose reply ("Authentication required:
+// please sign in to continue.") never does.
+var ompLoginScreenLineRe = regexp.MustCompile(`^\s*(?:Setup step \d+ of \d+|Signing in to \S+|Authentication required\.?|Sign in to continue\.?)\s*$`)
+
 // Claude's renewal banner describes credentials that are still valid (#9356).
 // Match the whole warning so an expired login or an attached authentication
 // failure still reaches the normal login detector.
@@ -593,7 +606,7 @@ func paneShowsLoginPrompt(lines []string) bool {
 		if lineShowsUpstreamAuthorizationError(line) || paneShowsQuotaExhausted([]string{line}) {
 			continue
 		}
-		if lineHasLoginDirective(line) {
+		if lineHasLoginDirective(line) || ompLoginScreenLineRe.MatchString(line) {
 			return true
 		}
 		for _, pat := range loginPromptPatterns {

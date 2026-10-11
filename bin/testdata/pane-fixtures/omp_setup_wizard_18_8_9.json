@@ -1,0 +1,12 @@
+{
+  "backend": "omp",
+  "tailLines": 15,
+  "expect": {
+    "paneHasCLIMarker": true,
+    "paneShowsInputPrompt": false,
+    "paneShowsLoginPrompt": true,
+    "paneShowsBlockingPrompt": false,
+    "paneShowsActiveWork": false
+  },
+  "note": "omp 18.8.9 first-run setup wizard in an empty HOME (tmux 160x45; logo rows and blank lines trimmed), hivecommons/hive#11518. The '\u276f' list cursor and '\u2570\u2500' box corner must not read as a ready prompt \u2014 the only input is the provider search box \u2014 and the sign-in step is a login-needed state, not an Enter-dismissable onboarding prompt."
+}

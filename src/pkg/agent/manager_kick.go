@@ -814,7 +814,9 @@ func stripExplainLines(pane string) string {
 // OMP renders neither marker (verified live, omp 18.1.16/18.1.17): a tool
 // call shows "⏺ Running… (esc to cancel)" and plain generation shows a
 // spinner glyph plus "Working…", so an in-flight OMP turn read as idle
-// without these two additions.
+// without these two additions. omp 18.2+ then swaps that label for the tool
+// intent a few seconds in, leaving only an activity row and a spinner+elapsed
+// status prefix — see paneShowsOMPMidTurn.
 //
 // Copilot CLI 1.0.88 collapses its footer to "◉ Working - autopilot esc
 // interrupt" mid-turn (no "to", no ellipsis), so that shape is matched too.
@@ -824,6 +826,7 @@ func paneShowsActiveWork(pane string) bool {
 		strings.Contains(pane, cliActiveCounterMarker) ||
 		strings.Contains(pane, "Working…") ||
 		strings.Contains(pane, "Running…") ||
+		paneShowsOMPMidTurn(pane) ||
 		strings.Contains(pane, copilotWorkingMarker) ||
 		strings.Contains(pane, copilotInterruptHint)
 }

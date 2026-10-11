@@ -133,6 +133,8 @@ The dashboard shows a reasoning-effort dropdown next to the model picker for eve
 
 `backend: omp` launches the OMP CLI as a first-class dashboard method. Hive gives each agent its own durable HOME under `/data/home/agents/<name>`, so `~/.omp/agent/agent.db` can hold several provider sign-ins for that one agent (for example `openai-codex` for the primary model and `anthropic` for an advisor) without sharing refresh-token writers across agents. Select models with their provider prefix (`provider/model`). The dashboard model probe runs `omp models --json` and uses each model's `thinking` list for the effort dropdown. At launch Hive passes `--approval-mode ${HIVE_OMP_APPROVAL_MODE:-yolo}`, `--model <id>`, and `--thinking <effort>` when set.
 
+Sign-in is per agent: each omp hub agent signs in to its providers in its own terminal, since its `~/.omp` lives in that agent's HOME. If omp opens its first-run setup wizard ("Setup step 1 of 5", "Sign in to your providers"), Hive detects the wizard and its browser/auth-code hand-off as a login-needed state rather than a ready prompt, so no task is typed into it; complete the sign-in (or skip the wizard and use `/login`) from the agent terminal.
+
 
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
 

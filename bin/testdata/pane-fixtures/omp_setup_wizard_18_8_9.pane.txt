@@ -1,0 +1,18 @@
+                              Setup step 1 of 5
+
+    Sign in to your providers
+    Sign in to one or more providers. Press ⎋ when you're done.
+
+    Pick a provider to sign in — you can connect more than one.
+
+    ╭─ Select provider to login ───────────────────────────────╮
+    │ ❯ ChatGPT Plus/Pro (Codex Subscription)                  █ │
+    │   Anthropic (Claude Pro/Max)                             │ │
+    │   Z.AI (GLM Coding Plan)                                 │ │
+    │   OpenRouter                                             │ │
+    │   GitHub Copilot                                         │ │
+    │   Antigravity (Gemini 3, Claude, GPT-OSS)                │ │
+    │ Type to search                                             │
+    ╰────────────────────────────────────────────────────────────╯
+
+                 ↑/↓ select · ⏎ confirm · ⎋ skip · Ctrl+C exit setup

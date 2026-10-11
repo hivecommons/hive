@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -192,5 +194,35 @@ func TestWaitForInputPrompt_WorkingGate(t *testing.T) {
 	if !m.waitForInputPromptForAgent(agent) {
 		t.Error("working marker in scrollback only: returned not ready; " +
 			"want ready (gate must use the visible pane, not scrollback)")
+	}
+}
+
+// TestPaneShowsAgentWorking_OMPMidTurn pins the Go side of #7734: once an omp
+// 18.2+ turn swaps its "Working…" label for the tool intent, only the " ⎋ "
+// activity row and the braille spinner+elapsed status prefix show it is live.
+// Reading that pane as idle lets a kick Ctrl+C the running turn.
+func TestPaneShowsAgentWorking_OMPMidTurn(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(paneFixturesDir, name+".pane.txt"))
+		if err != nil {
+			t.Skipf("shared pane fixture %s unavailable: %v", name, err)
+		}
+		return string(b)
+	}
+	busy := read("omp_busy_18_2")
+	idle := read("omp_idle_18_2")
+
+	if !paneShowsAgentWorking(busy) {
+		t.Error("paneShowsAgentWorking(omp_busy_18_2) = false, want true")
+	}
+	if paneShowsAgentWorking(idle) {
+		t.Error("paneShowsAgentWorking(omp_idle_18_2) = true, want false")
+	}
+	if paneShowsTurnEnded(busy) {
+		t.Error("paneShowsTurnEnded(omp_busy_18_2) = true, want false: the turn is still running")
+	}
+	if !paneShowsTurnEnded(idle) {
+		t.Error("paneShowsTurnEnded(omp_idle_18_2) = false, want true")
 	}
 }

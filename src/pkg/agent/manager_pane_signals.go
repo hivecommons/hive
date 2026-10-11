@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -51,6 +52,13 @@ var cliPaneMarkers = []string{
 	// launch, reuse, crash-detection and startup-kick gates keep working
 	// without treating a bare shell as a live backend.
 	agyHeadlessReadyMarker,
+	// omp's markers. omp 18.2+ renders none of the entries above on its idle
+	// or busy panes (the 18.2.6 fixtures and a live 18.8.9 capture contain no
+	// "❯", "›", "%/" or CLI name), so without these the crash detector, the
+	// kick pre-check and the startup wait all read a healthy omp as a bare
+	// shell. See ompStatusLineMarker / ompStatusLogoMarker.
+	ompStatusLineMarker,
+	ompStatusLogoMarker,
 }
 
 const (
@@ -88,6 +96,16 @@ const (
 	// rather than a context size keeps it valid at any model/context
 	// configuration.
 	piContextMarker = "%/"
+	// ompStatusLineMarker is the "▶─" join between omp's status-line
+	// segments and its rule (unicode symbol preset, the default), present on
+	// every idle and busy omp pane from 18.1 through 18.8.9. The "╰─" composer
+	// corner below it is deliberately not used on its own: other CLIs draw
+	// "╰─" in tool-tree output.
+	ompStatusLineMarker = "▶─"
+	// ompStatusLogoMarker is the "π >" logo segment that opens omp's status
+	// line ("π > ⬢ no-model > …" on 18.8.9) when the rule is too short to
+	// reach the "▶─" join.
+	ompStatusLogoMarker = "π >"
 )
 
 // paneHasCLIMarker reports whether the given pane content contains any known
@@ -117,6 +135,23 @@ var agentWorkingMarkers = []string{
 	"◉ Working",
 }
 
+// omp 18.2+ replaces its initial "Working…" label with the current tool
+// intent a few seconds into a turn, after which a live turn shows only the
+// activity row (" ⎋ Reading skill improvement guidance") and a braille
+// spinner plus elapsed time at the head of the status line ("⠧ 4m > …").
+// Mirrors OMP_ACTIVITY_ROW_RE / OMP_BRAILLE_SPINNER_ELAPSED_RE in
+// bin/lib/pane-classifier.js (#7734). Match the VISIBLE pane only.
+var (
+	ompActivityRowRe           = regexp.MustCompile(`(?m)^\s*⎋\s+\S`)
+	ompBrailleSpinnerElapsedRe = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\d+(?:\.\d+)?[smh]\b`)
+)
+
+// paneShowsOMPMidTurn reports whether an omp turn is still running after its
+// "Working…" label has been replaced by the tool intent.
+func paneShowsOMPMidTurn(pane string) bool {
+	return ompActivityRowRe.MatchString(pane) || ompBrailleSpinnerElapsedRe.MatchString(pane)
+}
+
 // paneShowsAgentWorking reports whether the pane is showing an actively-working
 // agent rather than a ready CLI input prompt. Modern TUI backends keep the "❯"
 // input box rendered for the whole time a response streams, so a busy pane
@@ -140,7 +175,7 @@ func paneShowsAgentWorking(pane string) bool {
 			return true
 		}
 	}
-	if paneShowsBusyFooter(pane) {
+	if paneShowsBusyFooter(pane) || paneShowsOMPMidTurn(pane) {
 		return true
 	}
 	for _, marker := range agentWorkingMarkers {
@@ -222,9 +257,13 @@ var blockingPrompts = []blockingPrompt{
 	},
 	{
 		backend: "omp",
+		// omp's first-run splash: "press ⏎ to skip" in the default unicode
+		// symbol preset (setup/scenes/splash.ts), "press enter to skip" with
+		// plain key names. The setup wizard that follows it is a login
+		// screen, not a blocking prompt — Enter there would submit an empty
+		// sign-in — see paneShowsOMPSetupWizard.
 		match: func(p string) bool {
-			lower := strings.ToLower(p)
-			return strings.Contains(lower, "welcome to omp") && strings.Contains(lower, "press enter to skip")
+			return ompSplashSkipRe.MatchString(p)
 		},
 		key:   "Enter",
 		label: "omp onboarding",
@@ -376,6 +415,11 @@ func paneShowsInputPrompt(output string) bool {
 	if output == "" {
 		return false
 	}
+	// omp's first-run setup wizard draws a "❯" list cursor and the "╰─"
+	// corner, but its only input is the provider search / auth-code box.
+	if paneShowsOMPSetupWizard(output) {
+		return false
+	}
 	return strings.Contains(output, "❯") ||
 		strings.Contains(output, "goose is ready") ||
 		strings.Contains(output, "> Enter to send") ||
@@ -387,6 +431,26 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, agyHeadlessReadyMarker) ||
 		strings.Contains(output, "π >") ||
 		strings.Contains(output, "╰─")
+}
+
+// ompSplashSkipRe matches omp's first-run splash hint.
+var ompSplashSkipRe = regexp.MustCompile(`(?i)press (?:⏎|enter) to skip`)
+
+// ompSetupWizardRe matches omp's first-run setup wizard chrome (18.x
+// packages/tui/src/setup): the step header, the provider sign-in step and its
+// browser/auth-code hand-off. These are the wizard's own strings, not phrases
+// an agent's reply would plausibly contain.
+var ompSetupWizardRe = regexp.MustCompile(`Setup step \d+ of \d+|Set up your providers|Sign in to your providers|Select provider to login|Signing in to \S|Browser login:|Paste the authorization code \(or full redirect URL\)`)
+
+// ompSetupWizardTailLines bounds the wizard check to the bottom of the pane,
+// matching the relay's 15-line window: the wizard is a full-screen form, so
+// its chrome is always within the last 15 non-blank lines while it is up.
+const ompSetupWizardTailLines = 15
+
+// paneShowsOMPSetupWizard reports whether omp's first-run setup wizard (or its
+// sign-in hand-off) is on screen. It is a login state, never a ready prompt.
+func paneShowsOMPSetupWizard(pane string) bool {
+	return ompSetupWizardRe.MatchString(paneTail(pane, ompSetupWizardTailLines))
 }
 
 // paneShowsCopilotQuestionForm reports whether Copilot CLI is blocking on its

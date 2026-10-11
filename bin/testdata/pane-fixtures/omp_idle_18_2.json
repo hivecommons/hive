@@ -3,7 +3,9 @@
   "tailLines": 15,
   "expect": {
     "getCLIState": "ready",
-    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE"
+    "classifyTmuxPane": "PANE_STATE_IDLE_COMPLETE",
+    "paneShowsActiveWork": false,
+    "paneHasCLIMarker": true
   },
   "note": "omp 18.2.x idle pane shape without the activity row or spinner/elapsed prefix; the persistent percent footer and input corner alone mean idle complete, not working."
 }

@@ -36,6 +36,7 @@ type paneFixtureSidecar struct {
 		PaneShowsLoginPrompt        *bool `json:"paneShowsLoginPrompt"`
 		PaneShowsInputPrompt        *bool `json:"paneShowsInputPrompt"`
 		PaneShowsActiveWork         *bool `json:"paneShowsActiveWork"`
+		PaneHasCLIMarker            *bool `json:"paneHasCLIMarker"`
 	} `json:"expect"`
 	Note string `json:"note"`
 }
@@ -151,6 +152,12 @@ func TestPaneClassifiers_AgreeWithSharedGoldenFixtures(t *testing.T) {
 			if want := sidecar.Expect.PaneShowsActiveWork; want != nil {
 				if got := paneShowsActiveWork(pane); got != *want {
 					t.Errorf("paneShowsActiveWork(%q) = %v, want %v\nnote: %s", sidecar.Backend, got, *want, sidecar.Note)
+				}
+			}
+
+			if want := sidecar.Expect.PaneHasCLIMarker; want != nil {
+				if got := paneHasCLIMarker(pane); got != *want {
+					t.Errorf("paneHasCLIMarker(%q) = %v, want %v\nnote: %s", sidecar.Backend, got, *want, sidecar.Note)
 				}
 			}
 		})

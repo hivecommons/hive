@@ -4,7 +4,8 @@
   "expect": {
     "getCLIState": "needs-login",
     "paneShowsInputPrompt": false,
-    "paneShowsActiveWork": false
+    "paneShowsActiveWork": false,
+    "paneShowsLoginPrompt": true
   },
   "note": "An OMP provider authentication gate must not be treated as a ready prompt."
 }
