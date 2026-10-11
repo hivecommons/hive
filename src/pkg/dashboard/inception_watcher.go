@@ -473,9 +473,13 @@ func (w *InceptionWatcher) runPlukSubscriberWithSettings(ctx context.Context, lo
 		}
 	}
 
-	scanner := bufio.NewScanner(f)
-	const plukMaxLineBytes = 1 << 20 // 1 MiB — agent output can exceed 64KB default
-	scanner.Buffer(make([]byte, 0, plukMaxLineBytes), plukMaxLineBytes)
+	// A bufio.Reader (unlike bufio.Scanner) does not latch at EOF, so lines
+	// appended after start are read on a later pass. A partial trailing line is
+	// kept until its newline arrives. Truncation handling is not needed while
+	// the image pins pluk 0.8.0; pluk >= 0.9 trims the log in place and would
+	// require seeking to 0 when the file shrinks below the read offset.
+	reader := bufio.NewReaderSize(f, 64*1024)
+	var partial []byte
 	for {
 		select {
 		case <-ctx.Done():
@@ -483,8 +487,11 @@ func (w *InceptionWatcher) runPlukSubscriberWithSettings(ctx context.Context, lo
 		default:
 		}
 
-		if scanner.Scan() {
-			line := scanner.Text()
+		chunk, err := reader.ReadBytes('\n')
+		partial = append(partial, chunk...)
+		if err == nil {
+			line := strings.TrimSpace(string(partial))
+			partial = partial[:0]
 			if line == "" {
 				continue
 			}
@@ -495,20 +502,25 @@ func (w *InceptionWatcher) runPlukSubscriberWithSettings(ctx context.Context, lo
 			}
 
 			w.handlePlukEvent(event)
-		} else {
-			// No new data — wait briefly then retry (tail -f behavior)
-			time.Sleep(pollInterval)
-			// Check if file was rotated by comparing inodes
-			openStat, err1 := f.Stat()
-			diskStat, err2 := os.Stat(logFile)
-			if err1 != nil || err2 != nil {
-				w.logger.Warn("pluk log disappeared, stopping subscriber")
-				return
-			}
-			if !os.SameFile(openStat, diskStat) {
-				w.logger.Info("pluk log rotated, restarting subscriber")
-				return
-			}
+			continue
+		}
+
+		// EOF — wait briefly then retry (tail -f behavior)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pollInterval):
+		}
+		// Check if file was rotated by comparing inodes
+		openStat, err1 := f.Stat()
+		diskStat, err2 := os.Stat(logFile)
+		if err1 != nil || err2 != nil {
+			w.logger.Warn("pluk log disappeared, stopping subscriber")
+			return
+		}
+		if !os.SameFile(openStat, diskStat) {
+			w.logger.Info("pluk log rotated, restarting subscriber")
+			return
 		}
 	}
 }
@@ -536,7 +548,7 @@ func (w *InceptionWatcher) handlePlukEvent(event plukEvent) {
 
 	switch event.Type {
 	case "state_change":
-		switch event.Data["state"] {
+		switch event.Data["to"] {
 		case "idle":
 			phase := state.Phase
 

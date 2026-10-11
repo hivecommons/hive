@@ -115,7 +115,8 @@ reacts to a subset of event types:
   publisher has to pass `--include-raw` or no such event is ever emitted. It is
   the only event type `hive-panes.sh` consumes, so peer awareness depends on
   that flag.
-- `state_change` — `data.state` is `"working"` or `"idle"`. The inception
+- `state_change` — `data.from` and `data.to` carry the previous and new state
+  (`"working"` or `"idle"`; pluk >= 0.10 also adds `data.cli`). The inception
   watcher uses idle transitions to decide when to re-kick a stalled agent or
   fall back to auto-generating questions/facts.
 - `rate_limit` — `data.message` describes a provider rate limit; the watcher

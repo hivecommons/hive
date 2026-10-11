@@ -215,3 +215,58 @@ func TestRetryKickIfStaleSuppressesWhileWorkingOrRateLimited(t *testing.T) {
 		t.Fatalf("rate limit should suppress kicks, got %d", fake.sendCount.Load())
 	}
 }
+
+func TestRunPlukSubscriberSeesEventAppendedAfterStart(t *testing.T) {
+	withFastInceptionLoops(t)
+	plukSubscriberSeekEnd = true
+	w, eng, _ := covFWatcher(t)
+	if _, err := eng.Start("pluk append idea"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "brainstorm.jsonl")
+	old := `{"type":"raw_output","data":{"line":"old"}}` + "\n"
+	if err := os.WriteFile(logPath, []byte(old), 0o644); err != nil {
+		t.Fatalf("write pluk log: %v", err)
+	}
+	plukLogFile = func() string { return logPath }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		w.runPlukSubscriber(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	// Append until seen: the subscriber seeks to the end asynchronously, so
+	// an early append could land before the seek and be skipped.
+	idle := `{"type":"state_change","data":{"from":"working","to":"idle"}}` + "\n"
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("subscriber never saw event appended after start")
+		case <-tick.C:
+		}
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open pluk log: %v", err)
+		}
+		_, werr := f.WriteString(idle)
+		_ = f.Close()
+		if werr != nil {
+			t.Fatalf("append pluk log: %v", werr)
+		}
+		w.plukMu.Lock()
+		got := w.plukEventCount
+		w.plukMu.Unlock()
+		if got > 0 {
+			return
+		}
+	}
+}

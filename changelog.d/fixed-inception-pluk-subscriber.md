@@ -1,0 +1,1 @@
+- The brainstorm watcher's pluk subscriber now reads `data.to` from `state_change` events and keeps tailing the log past end-of-file, so idle transitions and appended events are no longer missed.

@@ -296,8 +296,8 @@ func TestCovF_HandlePlukEvent(t *testing.T) {
 	})
 
 	// state_change to working then idle.
-	w.handlePlukEvent(plukEvent{Type: "state_change", Data: map[string]string{"state": "working"}})
-	w.handlePlukEvent(plukEvent{Type: "state_change", Data: map[string]string{"state": "idle"}})
+	w.handlePlukEvent(plukEvent{Type: "state_change", Data: map[string]string{"from": "unknown", "to": "working"}})
+	w.handlePlukEvent(plukEvent{Type: "state_change", Data: map[string]string{"from": "unknown", "to": "idle"}})
 
 	// rate_limit + error + tool_call_completed events.
 	w.handlePlukEvent(plukEvent{Type: "rate_limit", Data: map[string]string{"message": "slow down"}})

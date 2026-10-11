@@ -29,7 +29,7 @@ import (
 
 // plukIdleEvent is the state_change/idle event every retry-path test sends.
 func plukIdleEvent() plukEvent {
-	return plukEvent{Type: "state_change", Data: map[string]string{"state": "idle"}}
+	return plukEvent{Type: "state_change", Data: map[string]string{"from": "unknown", "to": "idle"}}
 }
 
 // fakeInceptionAgentMgr satisfies inceptionAgentManager and records SendKick
