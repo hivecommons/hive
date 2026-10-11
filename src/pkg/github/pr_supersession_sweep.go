@@ -126,6 +126,12 @@ func (c *Client) listOpenPRsForSupersessionSweep(ctx context.Context, owner, rep
 }
 
 func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRepoName string, pr *gh.PullRequest, identity HiveIdentity, now time.Time, opts SupersessionSweepOptions) (SupersessionSweepEvent, string, error) {
+	// A hold or do-not-merge label is an operator's explicit instruction to
+	// leave the PR alone. Honor it the same way the automerge sweep does:
+	// no comment, no label, no close — before any GitHub call is made.
+	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
+		return SupersessionSweepEvent{}, "", nil
+	}
 	claims := claimsFromPR(pr, prRepo, identity, now)
 	if len(claims) == 0 {
 		return SupersessionSweepEvent{}, "", nil

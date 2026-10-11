@@ -370,3 +370,73 @@ func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 		t.Fatalf("labels on #13 = %v, want needs-human", got)
 	}
 }
+
+func TestSweepSupersededOpenPRs_HeldOwnPRIsLeftAlone(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	server, obs := supersessionSweepServer(t, org, repo,
+		[]supersessionPRFixture{
+			{Number: 14, Title: "fix thing", Body: "Refs #5", Author: "hive-app[bot]", Files: []string{"pkg/a.go"}, Labels: []string{"hold"}},
+			{Number: 24, Title: "landed", Body: "Fixes #5", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+		},
+		[]supersessionIssueFixture{{Number: 5, State: "closed", GraphQLCloserPR: 24}},
+	)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetAppBotLogin("hive-app[bot]")
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	if err != nil {
+		t.Fatalf("SweepSupersededOpenPRs: %v", err)
+	}
+	if len(res.Closed) != 0 || len(res.Commented) != 0 || len(obs.closed) != 0 || len(obs.comments[14]) != 0 || len(obs.labels[14]) != 0 {
+		t.Fatalf("held hive-authored PR must not be touched: result=%+v closed=%v comments=%v labels=%v", res, obs.closed, obs.comments, obs.labels)
+	}
+	if res.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1 (held PR counted as skipped)", res.Skipped)
+	}
+}
+
+func TestSweepSupersededOpenPRs_DoNotMergeContributorPRIsLeftAlone(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	server, obs := supersessionSweepServer(t, org, repo,
+		[]supersessionPRFixture{
+			{Number: 15, Title: "fix thing", Body: "Refs #6", Author: "contributor", Files: []string{"pkg/a.go"}, Labels: []string{"do-not-merge"}},
+			{Number: 25, Title: "landed", Body: "Fixes #6", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+		},
+		[]supersessionIssueFixture{{Number: 6, State: "closed", GraphQLCloserPR: 25}},
+	)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetAppBotLogin("hive-app[bot]")
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	if err != nil {
+		t.Fatalf("SweepSupersededOpenPRs: %v", err)
+	}
+	if len(res.Closed) != 0 || len(res.Commented) != 0 || len(obs.closed) != 0 || len(obs.comments[15]) != 0 || len(obs.labels[15]) != 0 {
+		t.Fatalf("do-not-merge contributor PR must not be touched: result=%+v closed=%v comments=%v labels=%v", res, obs.closed, obs.comments, obs.labels)
+	}
+}
+
+func TestSweepSupersededOpenPRs_HivePauseLabelIsLeftAlone(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	server, obs := supersessionSweepServer(t, org, repo,
+		[]supersessionPRFixture{
+			{Number: 16, Title: "fix thing", Body: "Refs #7", Author: "hive-app[bot]", Files: []string{"pkg/a.go"}, Labels: []string{"hive-pause/abc123"}},
+			{Number: 26, Title: "landed", Body: "Fixes #7", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+		},
+		[]supersessionIssueFixture{{Number: 7, State: "closed", GraphQLCloserPR: 26}},
+	)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetHoldLabels([]string{CanonicalHiveHoldLabel("abc123")})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	if err != nil {
+		t.Fatalf("SweepSupersededOpenPRs: %v", err)
+	}
+	if len(res.Closed) != 0 || len(obs.closed) != 0 || len(obs.comments[16]) != 0 {
+		t.Fatalf("hive-pause PR must not be touched: result=%+v closed=%v comments=%v", res, obs.closed, obs.comments)
+	}
+}
