@@ -456,3 +456,53 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 	}
 	assertTypedWrite(t, *recs, AuditActionReviewBacklogBatchRouted, "o/r", 5, 1)
 }
+
+type stateBacklogSink struct {
+	fakeBacklogSink
+	closed map[string]bool
+}
+
+func (s *stateBacklogSink) ItemOpen(_ context.Context, _ string, ref ReviewBacklogRef) (bool, error) {
+	return !s.closed[ref.ID], nil
+}
+
+// A finding re-raised after its backlog item was closed (the ChairLift-pin
+// shape in projectbluefin/common#1445) is re-filed, not appended to the
+// closed item.
+func TestReviewBacklogRefilesWhenLedgerItemClosed(t *testing.T) {
+	withReviewBacklogState(t)
+	srv := prCommentServer(t, map[int][]string{})
+	c := reviewTestClient(t, srv.URL)
+	c.SetReviewBacklog(func() (bool, int) { return true, 3 })
+	sink := &stateBacklogSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}, closed: map[string]bool{}}
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{
+			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5},
+			Sink:     sink,
+		}
+	})
+	ctx := context.Background()
+	day := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	finding := nit("ChairLift pin stale", "medium", "pkg/pin.go", 7, "ChairLift pin is out of date")
+
+	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: routingReport(t, 5, "abc", finding)}, day); err != nil {
+		t.Fatal(err)
+	}
+	sink.closed["id-1"] = true
+	req6 := ReviewRequest{Repo: "o/r", Number: 6, Agent: "reviewer", Report: routingReport(t, 6, "def", finding)}
+	if err := c.fileOutOfScopeReviewBacklog(ctx, req6, day); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.created) != 2 || len(sink.appends) != 0 {
+		t.Fatalf("closed item: created=%d appends=%d, want re-file (2) and no append", len(sink.created), len(sink.appends))
+	}
+	ledger, err := loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(outputschema.Finding{Title: "ChairLift pin stale", File: "pkg/pin.go", Summary: "ChairLift pin is out of date"}))
+	if !ok || rec.ItemID != "id-2" {
+		t.Fatalf("ledger record = %+v ok=%v, want id-2", rec, ok)
+	}
+}

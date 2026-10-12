@@ -1,0 +1,1 @@
+- Review-backlog and fleet-report filings now consolidate into open twins like the agent lane, and the review-backlog ledger no longer appends re-raised findings to closed issues but re-files them ([#11578](https://github.com/hivecommons/hive/issues/11578)).

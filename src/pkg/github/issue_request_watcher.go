@@ -744,7 +744,7 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 // agent issue-request watcher turns it on: agents file findings one at a time
 // and cannot see each other's, so two findings about the same files become
 // two issues, two PRs, and a merge conflict (#9376). Hive-internal callers
-// (fleet report, review backlog) keep plain create semantics.
+// (fleet report, review backlog) also turn it on; the public CreateIssue wrapper keeps plain semantics.
 func (c *Client) createIssue(ctx context.Context, repo, title, body string, labels []string, consolidateOpen bool) (CreateIssueResult, error) {
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient
