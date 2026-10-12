@@ -373,11 +373,15 @@ function describeOmpHost(ompDir, model) {
   // provider lists any model — on the observed host, an unreachable local
   // ollama — while the relay keeps reporting the selected model to the hub.
   // A provider is unusable only when none of its rows is active — the relay's
-  // rule, and omp reads only rows whose disabled_cause is NULL.
-  const kept = new Set(report.keptProviders);
+  // rule, and omp reads only rows whose disabled_cause is NULL. With no
+  // selection nothing names a provider, so an unrelated provider's tombstone
+  // must not block the launch (#11528).
+  const kept = new Set(report.selection.source === 'none' ? [] : report.keptProviders);
   const activeProviders = new Set(rows.filter((r) => !r.disabledCause).map((r) => r.provider.toLowerCase()));
+  const seenDisabled = new Set();
   report.disabledProviders = rows
     .filter((r) => r.disabledCause && kept.has(r.provider.toLowerCase()) && !activeProviders.has(r.provider.toLowerCase()))
+    .filter((r) => { const p = r.provider.toLowerCase(); if (seenDisabled.has(p)) return false; seenDisabled.add(p); return true; })
     .map((r) => ({ provider: r.provider.toLowerCase(), cause: r.disabledCause }));
   for (const d of report.disabledProviders) {
     report.warnings.push(`the ${d.provider} sign-in on this host is disabled — ${d.cause}. Run omp on the host and /login to ${d.provider} again; until then the container would start with no usable ${d.provider} credential.`);
