@@ -1,0 +1,1 @@
+Scanner and sec-check prompts now batch findings by shared root cause, search closed issues and PRs before filing, cap new issues at 5 per run, and reference the `<!-- hive-finding-folded -->` tracker.
