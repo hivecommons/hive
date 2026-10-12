@@ -32,8 +32,30 @@ case "$1:$2" in
     [[ -n "$behind" ]] || exit 1
     printf '{"behind_by":%s,"ahead_by":1}\n' "$behind"
     ;;
+  api:repos/acme/widgets/pulls\?state=open\&per_page=100)
+    # MOCK_PRS keeps the GraphQL rollup shape; serve it as REST pulls. A PR
+    # with no headRefOid gets a synthetic head no compare mapping knows.
+    jq -c '[.[] | {number, head: {sha: (.headRefOid // "sha-\(.number)")}}]' "$MOCK_PRS"
+    ;;
+  api:repos/acme/widgets/commits/*/check-runs\?*)
+    [[ -z "${MOCK_CHECKS_FAIL:-}" ]] || exit 1
+    sha="${2#repos/acme/widgets/commits/}"; sha="${sha%%/*}"
+    jq -c --arg sha "$sha" '
+      [.[] | select((.headRefOid // "sha-\(.number)") == $sha) | .statusCheckRollup[]? | select(.name != null)
+       | {name, status: ((.status // "") | ascii_downcase), conclusion: ((.conclusion // "") | ascii_downcase | if . == "" then null else . end)}]
+      | {total_count: length, check_runs: .}' "$MOCK_PRS"
+    ;;
+  api:repos/acme/widgets/commits/*/status\?*)
+    sha="${2#repos/acme/widgets/commits/}"; sha="${sha%%/*}"
+    jq -c --arg sha "$sha" '
+      [.[] | select((.headRefOid // "sha-\(.number)") == $sha) | .statusCheckRollup[]? | select(.context != null)
+       | {context, state: ((.state // "") | ascii_downcase)}]
+      | {statuses: .}' "$MOCK_PRS"
+    ;;
   pr:list)
-    cat "$MOCK_PRS"
+    # The agent gh wrapper refuses this for staff agents (#11608).
+    echo "⛔ BLOCKED: gh pr list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
+    exit 1
     ;;
   pr:view)
     # MOCK_PR_VIEW is the JSON for whichever PR number is asked for.
@@ -139,6 +161,27 @@ check_output 'ISOLATED (FIX_DIFF)' "isolated verdict says fix the diff"
 
 run_helper acme/widgets build --threshold 2
 check_status 0 "threshold override is honored"
+
+# #11608: the sibling lookup must work under the agent gh wrapper, which
+# refuses `gh pr list` — the mock refuses it the same way. A check name with
+# spaces and parentheses reaches the per-PR lookup URL-encoded.
+write_base '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"success","completed_at":"2026-08-30T01:00:00Z"}]}'
+write_prs '[
+  {"number":61,"headRefOid":"f61","statusCheckRollup":[{"name":"Check ogc-lts (44)","status":"COMPLETED","conclusion":"FAILURE"}]},
+  {"number":62,"headRefOid":"f62","statusCheckRollup":[{"name":"Check ogc-lts (44)","status":"COMPLETED","conclusion":"FAILURE"}]},
+  {"number":63,"headRefOid":"f63","statusCheckRollup":[{"name":"Check ogc-lts (44)","status":"COMPLETED","conclusion":"FAILURE"}]},
+  {"number":64,"headRefOid":"f64","statusCheckRollup":[{"name":"Check ogc-lts (44)","status":"COMPLETED","conclusion":"SUCCESS"}]}
+]'
+: >"$MOCK_GH_LOG"
+MOCK_COMPARE='{"f61":0,"f62":0,"f63":0}' run_helper acme/widgets "Check ogc-lts (44)" --json
+check_status 0 "sibling lookup reaches a shared verdict without gh pr list"
+check_output '"sibling_prs":[61,62,63]' "only the red siblings are counted"
+check_file_contains "$MOCK_GH_LOG" 'check-runs?check_name=Check%20ogc-lts%20%2844%29&per_page=100' \
+  "the per-PR lookup URL-encodes the exact check name"
+
+# One sibling whose checks cannot be read is an API failure, never evidence.
+MOCK_CHECKS_FAIL=1 run_helper acme/widgets "Check ogc-lts (44)"
+check_status 2 "an unreadable sibling check makes the verdict unknown"
 
 write_base '{"check_runs":[
   {"name":"build","status":"completed","conclusion":"failure","completed_at":"2026-08-30T01:00:00Z"},

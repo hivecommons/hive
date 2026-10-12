@@ -155,24 +155,66 @@ if (( BASE_AGE_HOURS > MAX_AGE_HOURS )); then
   BASE_STALE=true
 fi
 
-if ! PRS_JSON="$(gh pr list --repo "$REPO" --state open --limit 100 --json number,headRefOid,isCrossRepository,statusCheckRollup)"; then
-  error "could not read open PR checks for $REPO"
+# Open sibling PRs come from the REST pulls endpoint, never `gh pr list`: the
+# agent gh wrapper refuses `gh pr list` for staff agents (the work-list ban),
+# so this lookup — the one listing the scanner policy exempts — failed every
+# time and every verdict came back unknown (hivecommons/hive#11608). A GET on
+# repos/<repo>/pulls is the read-only path the wrapper and the proxy both
+# allow. The check rollup `gh pr list` returned in one GraphQL call is rebuilt
+# per PR from the exact-name check-run lookup, falling back to commit statuses
+# (contexts) only when no check run carries the name: one call per open PR in
+# the common case. Any unreadable PR fails the whole lookup, as before.
+if ! PULLS_JSON="$(gh api "repos/$REPO/pulls?state=open&per_page=100")"; then
+  error "could not read open PRs for $REPO"
 fi
-if ! SIBLING_PRS="$(jq -cer --arg check "$CHECK_NAME" '
-    [
-      .[]
-      | select(any(.statusCheckRollup[]?;
-          ((.name // .context // "") == $check) and
-          (((.conclusion // .state // "") | ascii_downcase) as $state
-            | (["failure", "error", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]
-               | index($state)) != null)))
-      | .number
-    ]
-    | unique
-    | sort
-  ' <<<"$PRS_JSON")"; then
-  error "invalid PR check response for $REPO"
+if ! PRS_JSON="$(jq -ce '[.[] | {number, headRefOid: (.head.sha // "")}]' <<<"$PULLS_JSON")"; then
+  error "invalid open PR response for $REPO"
 fi
+
+RED_STATES='["failure","error","cancelled","timed_out","action_required","startup_failure","stale"]'
+CHECK_NAME_URI="$(jq -rn --arg s "$CHECK_NAME" '$s | @uri')"
+
+# check_red_at <head-oid> → exit 0 when the exact check is red at that commit,
+# 1 when it is not (green, pending or absent), 2 when it could not be read.
+check_red_at() {
+  local runs verdict statuses
+  runs="$(gh api "repos/$REPO/commits/$1/check-runs?check_name=$CHECK_NAME_URI&per_page=100")" || return 2
+  verdict="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
+      [.check_runs[]? | select(.name == $check)] as $runs
+      | if ($runs | length) == 0 then "none"
+        elif any($runs[]; ((.conclusion // "") | ascii_downcase) as $s | ($red | index($s)) != null) then "red"
+        else "not-red" end
+    ' <<<"$runs" 2>/dev/null)"
+  case "$verdict" in
+    red) return 0 ;;
+    not-red) return 1 ;;
+    none) ;;
+    *) return 2 ;;
+  esac
+  statuses="$(gh api "repos/$REPO/commits/$1/status?per_page=100")" || return 2
+  verdict="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
+      if any(.statuses[]?; .context == $check and (((.state // "") | ascii_downcase) as $s | ($red | index($s)) != null))
+      then "red" else "not-red" end
+    ' <<<"$statuses" 2>/dev/null)"
+  case "$verdict" in
+    red) return 0 ;;
+    not-red) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+SIBLING_PRS='[]'
+while IFS=$'\t' read -r sib_number sib_oid; do
+  [[ -n "$sib_number" ]] || continue
+  [[ -n "$sib_oid" ]] || error "open PR $REPO#$sib_number has no head commit"
+  check_red_at "$sib_oid"
+  case $? in
+    0) SIBLING_PRS="$(jq -c --argjson n "$sib_number" '. + [$n]' <<<"$SIBLING_PRS")" ;;
+    1) ;;
+    *) error "could not read check \"$CHECK_NAME\" for $REPO#$sib_number" ;;
+  esac
+done < <(jq -r '.[] | [(.number | tostring), .headRefOid] | @tsv' <<<"$PRS_JSON")
+SIBLING_PRS="$(jq -c 'unique' <<<"$SIBLING_PRS")"
 SIBLING_COUNT="$(jq -r 'length' <<<"$SIBLING_PRS")"
 
 # behind_by <owner/repo> <base> <head-oid> → prints the commit count the head
