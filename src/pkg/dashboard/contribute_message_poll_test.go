@@ -8,6 +8,10 @@ import (
 // Exercise the real render and form handlers with a minimal DOM: a poll must
 // never replace a draft, and closing the final form must replay the latest data.
 func TestContributorMessageSurvivesFleetPoll(t *testing.T) {
+	_, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for the message poll regression test")
+	}
 	body := opsPageBody(t)
 	script := `
 const assert = require('node:assert/strict');
