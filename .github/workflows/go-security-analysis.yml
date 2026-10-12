@@ -336,7 +336,7 @@ jobs:
       # so the privileged workflow never has to execute PR-head code.
       - name: Publish the regenerated NOTICE for the autofix workflow
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notice-generated
           path: /tmp/NOTICE.generated
@@ -353,7 +353,7 @@ jobs:
 
       - name: Publish the PR number for the autofix workflow
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notice-pr-number
           path: /tmp/pr-number.txt
