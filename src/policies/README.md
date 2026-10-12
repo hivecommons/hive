@@ -27,6 +27,7 @@ Examples in the current packs:
 
 - `guide-issues.md` is the L4 guide policy: documentation issues are allowed, PRs are not.
 - `scanner-issues.md` is the L4 scanner policy: issue filing only.
+- `dedupe-issues.md` is the L5/L6 `dedupe` lane: a daily sweep over every open issue and PR that files and then updates in place one consolidation checklist issue per repository (hivecommons/hive#11582); it never closes or edits anyone else's items.
 - `supervisor-nogithub.md` is the supervisor policy from L2 through L6; it keeps orchestration separate from GitHub mutation.
 - `brainstorm-advisory.md` is the only brainstorm template referenced by v4, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation from the retired v2 line, so operators should not create or rely on that filename unless they also set `kick_template` to it.
 

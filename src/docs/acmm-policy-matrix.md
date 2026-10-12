@@ -66,9 +66,9 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 | **sec-check** | **holdgated** | `sec-check-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L5 — Semi-Autonomous (Semi-Automated) (13 agents)
+### L5 — Semi-Autonomous (Semi-Automated) (14 agents)
 
-Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes, and adjudicator works escalated (`needs-human`) hive PRs through the reviewer lane every 30 minutes (recommend-close only; closing is operator-only below L6). The system proposes; it does not merge autonomously.
+Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes, and adjudicator works escalated (`needs-human`) hive PRs through the reviewer lane every 30 minutes (recommend-close only; closing is operator-only below L6). Dedupe runs once a day, reads every open issue and PR, and posts one consolidation checklist issue per repository (near-duplicates, same-root-cause clusters, unlinked PR/issue pairs, already-resolved items), parked with `--needs-decision`; it never closes or edits anyone else's items. The system proposes; it does not merge autonomously.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -82,13 +82,14 @@ Agents open issues AND pull requests. Agent PRs get literal `hold` from the leve
 | strategist | holdgated | `strategist-holdgated.md` |
 | reviewer | converse | `reviewer-queue.md` |
 | adjudicator | issues+prs | `reviewer-lane.md` (by role; no `kick_template`) |
+| dedupe | issues-only | `dedupe-issues.md` |
 | telemetry (paused) | holdgated | `telemetry-holdgated.md` |
 | operations (paused) | holdgated | `operations-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L6 — Fully Autonomous (14 agents)
+### L6 — Fully Autonomous (15 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for every active repository, after which owners can toggle repositories individually. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here: `requires_human` alone does not stop the App auto-merge sweep. `review.require_approval: true` gates scanner eligibility on same-head approval, not the App sweep; use actual holds or GitHub branch rules for a universal merge stop. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for every active repository, after which owners can toggle repositories individually. Non-outreach L6 PRs do not get the level hold, but outreach PRs are still held for human review. Outreach handles community engagement. Reviewer stays advisory even here: `requires_human` alone does not stop the App auto-merge sweep. `review.require_approval: true` gates scanner eligibility on same-head approval, not the App sweep; use actual holds or GitHub branch rules for a universal merge stop. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Dedupe posts the same daily consolidation checklist as at L5 and stays recommendation-only. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -103,6 +104,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 | outreach | full | `outreach-full.md` |
 | reviewer | converse | `reviewer-queue.md` |
 | adjudicator | issues+prs | `reviewer-lane.md` (by role; no `kick_template`) |
+| dedupe | issues-only | `dedupe-issues.md` |
 | telemetry (paused) | full | `telemetry-full.md` |
 | operations (paused) | full | `operations-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
