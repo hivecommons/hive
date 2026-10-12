@@ -312,9 +312,10 @@ func TestHoldSources_LocalRecordPrunedWhenNoLongerHeld(t *testing.T) {
 	if err := RecordHoldSource(HoldKindPR, "acme/widget", 28, HoldSourceHoldguard); err != nil {
 		t.Fatalf("RecordHoldSource: %v", err)
 	}
-	time.Sleep(2 * time.Millisecond)
-	// A pass in which #28 was not held drops its record.
+	// A later pass in which #28 was not held drops its record: the detector's
+	// start is moved past the record's timestamp instead of sleeping.
 	d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget")
+	d.start = d.start.Add(time.Minute)
 	d.flush()
 
 	f.events[28] = []map[string]any{holdSourceEvent("labeled", "hold", "alice", holdSourceT0)}
