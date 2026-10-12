@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,8 @@ type issueWriteServer struct {
 
 func newIssueWriteServer(t *testing.T, s *issueWriteServer) *httptest.Server {
 	t.Helper()
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
 	write := func(w http.ResponseWriter, r *http.Request, ok any) {
 		n := int(s.writes.Add(1)) - 1
 		if n >= len(s.writeStatuses) {
@@ -38,7 +41,15 @@ func newIssueWriteServer(t *testing.T, s *issueWriteServer) *httptest.Server {
 		}
 		status := s.writeStatuses[n]
 		if status == 0 {
-			<-r.Context().Done()
+			// Drain the body first: net/http only starts the background read
+			// that cancels r.Context() on client disconnect once the request
+			// body is consumed, so a blocked POST would otherwise never see
+			// the client's deadline. done bounds the wait to the test.
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-done:
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
