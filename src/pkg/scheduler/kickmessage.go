@@ -159,6 +159,7 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		}
 	}
 	b.WriteString(formatBlockedIssuesNote(blocked))
+	b.WriteString(s.formatFoldedTrackersNote(issues))
 	return b.String(), failClosed
 }
 
