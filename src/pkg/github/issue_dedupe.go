@@ -19,6 +19,16 @@ import (
 // the stable part of the subject can be compared instead.
 var issueTitleQualifierRE = regexp.MustCompile(`\s+(?:\x{2014}|\x{2013}|--)\s+.*$`)
 
+// Leading role tag such as "[scanner]" or "[sec-check]".
+var issueTitleRolePrefixRE = regexp.MustCompile(`^\s*\[[^\]\s]+\]\s*`)
+
+// Parenthetical counts such as "(1237 lines)" that drift between scans.
+var issueTitleCountRE = regexp.MustCompile(`\s*\(\s*\d[\d,.]*\s*[A-Za-z]+\s*\)`)
+
+// Trailing "Subject: free text" qualifier; the colon must be followed by
+// whitespace so paths and "host:port" are left intact.
+var issueTitleColonRE = regexp.MustCompile(`:\s+.*$`)
+
 var issueTitleWhitespaceRE = regexp.MustCompile(`\s+`)
 
 const (
@@ -30,12 +40,15 @@ const (
 )
 
 // canonicalIssueSubject reduces an issue title to the stable subject used for
-// duplicate detection: qualifier stripped, lowercased, whitespace collapsed.
+// duplicate detection: role prefix, parenthetical counts and qualifier stripped, lowercased, whitespace collapsed.
 // It returns "" when the result is too short or too generic to be a safe
 // dedupe key, which callers must treat as "no canonical match possible".
 func canonicalIssueSubject(title string) string {
 	t := strings.TrimSpace(title)
+	t = issueTitleRolePrefixRE.ReplaceAllString(t, "")
 	t = issueTitleQualifierRE.ReplaceAllString(t, "")
+	t = issueTitleColonRE.ReplaceAllString(t, "")
+	t = issueTitleCountRE.ReplaceAllString(t, "")
 	t = issueTitleWhitespaceRE.ReplaceAllString(strings.ToLower(t), " ")
 	t = strings.TrimSpace(t)
 	if len(t) < minCanonicalSubjectLen || len(strings.Fields(t)) < minCanonicalSubjectWords {
