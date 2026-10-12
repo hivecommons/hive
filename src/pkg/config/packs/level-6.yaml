@@ -1,6 +1,6 @@
 level: 6
 name: Fully Autonomous
-description: 'Fully autonomous operation. Fourteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
+description: 'Fully autonomous operation. Fifteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
 
   '
 governor:
@@ -47,6 +47,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     busy:
@@ -59,6 +60,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     quiet:
@@ -73,6 +75,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
     idle:
@@ -87,6 +90,7 @@ governor:
       reviewer: 30m
       adjudicator: 30m
       strategist: paused
+      dedupe: 24h
       telemetry: paused
       operations: paused
 agents:
@@ -395,6 +399,38 @@ agents:
     '
   knowledge_use: 'Reads the escalated PR, its CI evidence and the base branch to decide
     whether the change is still wanted and can be made lossless.
+
+    '
+- name: dedupe
+  display_name: dedupe
+  role: dedupe
+  description: 'Scheduled issue+PR duplicate-triage lane (hivecommons/hive#11582). Once
+    a day reads every open issue and pull request in each repository, verifies
+    near-duplicates, same-root-cause clusters, unlinked PR/issue pairs and
+    already-resolved items by reading both sides, and posts ONE consolidation
+    checklist issue per repository, updated in place on later kicks. Recommendations
+    only: never closes, labels, merges or comments on the candidate items.
+
+    '
+  emoji: "🧹"
+  color: '#7f8c8d'
+  sort_order: 28
+  backend: copilot
+  model: claude-fable-5
+  bead_role: worker
+  kick_template: dedupe-issues.md
+  mode: ISSUES_ONLY
+  include_repos: true
+  on_demand: false
+  stale_timeout: 100800  # 28h — must exceed the 24h cadence
+  interactions: 'Writes to exactly one place per repository: the consolidation checklist
+    issue it owns (found by its hive:dedupe-checklist marker), filed with --needs-decision
+    so it stays out of the work queue. Complements the reviewer''s per-PR duplicate flags
+    and the mechanical PR duplicate sweep; does not repeat them.
+
+    '
+  knowledge_use: 'Reads the last-actionable snapshot, gh search results, and the body,
+    comments and diff of every candidate pair before calling anything a duplicate.
 
     '
 - name: brainstorm
