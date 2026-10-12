@@ -84,7 +84,8 @@ func (c *Client) reviewBacklogRoutingConfig() (ReviewBacklogRouting, bool) {
 }
 
 // ReviewBacklogIssueSink returns the github_issue backlog sink: issues in the
-// reviewed PR's repo, created through CreateIssue.
+// reviewed PR's repo, created through createIssue with open-twin
+// consolidation so a review finding folds into an agent finding on the same files.
 func (c *Client) ReviewBacklogIssueSink() ReviewBacklogSink {
 	return githubIssueBacklogSink{c: c}
 }
@@ -94,7 +95,7 @@ type githubIssueBacklogSink struct{ c *Client }
 func (githubIssueBacklogSink) Destination() string { return config.ReviewBacklogGitHubIssue }
 
 func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
-	res, err := s.c.CreateIssue(ctx, item.Repo, item.Title, item.Body, item.Labels)
+	res, err := s.c.createIssue(ctx, item.Repo, item.Title, item.Body, item.Labels, true)
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}
@@ -120,6 +121,29 @@ func (s githubIssueBacklogSink) AppendToItem(ctx context.Context, repo string, r
 		return fmt.Errorf("review backlog: GitHub item %q has no issue number", ref.ID)
 	}
 	return s.c.CreateIssueComment(ctx, repo, ref.Number, comment)
+}
+
+// ReviewBacklogStateChecker is an optional sink capability: sinks that can
+// tell whether a filed item is still open let the filer avoid appending
+// re-raised findings to closed items.
+type ReviewBacklogStateChecker interface {
+	ItemOpen(ctx context.Context, repo string, ref ReviewBacklogRef) (bool, error)
+}
+
+// ItemOpen reports whether the ledger's GitHub issue is still open.
+func (s githubIssueBacklogSink) ItemOpen(ctx context.Context, repo string, ref ReviewBacklogRef) (bool, error) {
+	if ref.Number <= 0 {
+		return false, fmt.Errorf("review backlog: GitHub item %q has no issue number", ref.ID)
+	}
+	if s.c == nil || s.c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, name := s.c.splitRepo(repo)
+	issue, _, err := s.c.client.Issues.Get(ctx, owner, name, ref.Number)
+	if err != nil {
+		return false, err
+	}
+	return !strings.EqualFold(issue.GetState(), "closed"), nil
 }
 
 // reviewBacklogTarget resolves the sink and labels for one filing pass. When

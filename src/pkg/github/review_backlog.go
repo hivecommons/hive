@@ -190,7 +190,20 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				Destination: destination,
 				RecordedAt:  now.UTC(),
 			}
-			if known, ok := ledger.fingerprint(req.Repo, fp); ok && known.Destination == destination && known.ItemID != "" {
+			known, ok := ledger.fingerprint(req.Repo, fp)
+			if ok && known.Destination == destination && known.ItemID != "" {
+				// A closed item must not collect new re-raises; drop the
+				// ledger entry so the finding is re-filed (the create path
+				// still folds into any open twin). A failed lookup keeps the
+				// old append behaviour.
+				if checker, can := sink.(ReviewBacklogStateChecker); can && !known.hasPR(req.Number) {
+					if open, err := checker.ItemOpen(ctx, req.Repo, known.ref()); err == nil && !open {
+						delete(ledger.Fingerprints[reviewBacklogRepoKey(req.Repo)], fp)
+						ok = false
+					}
+				}
+			}
+			if ok && known.Destination == destination && known.ItemID != "" {
 				record.IssueNumber, record.IssueURL, record.ItemKey = known.ItemNumber, known.ItemURL, known.ItemKey
 				if known.hasPR(req.Number) {
 					ledger.Items[key] = record

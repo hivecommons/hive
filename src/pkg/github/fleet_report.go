@@ -52,7 +52,7 @@ func (c *Client) EnsureFleetReport(ctx context.Context, report fleetreport.Repor
 		return FleetReportResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), Commented: true, ReactionSent: reacted}, nil
 	}
 
-	res, err := c.CreateIssue(ctx, fleetReportRepo, report.Title, report.Body, report.Labels)
+	res, err := c.createIssue(ctx, fleetReportRepo, report.Title, report.Body, report.Labels, true)
 	if err != nil {
 		return FleetReportResult{}, err
 	}
