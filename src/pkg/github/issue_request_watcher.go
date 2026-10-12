@@ -873,6 +873,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 			foldedComponentFindingComment(title, body, componentPath, componentCount, componentClosed)); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: folding into open issue #%d in %s/%s: %w", componentTwin.GetNumber(), owner, repoName, err)
 		}
+		c.foldedTrackers.add(owner+"/"+repoName, componentTwin.GetNumber())
 		c.logger.Info("CreateIssue: folded finding into the oldest open issue on the same component",
 			slog.String("repo", repoName), slog.Int("number", componentTwin.GetNumber()),
 			slog.String("path", componentPath), slog.Int("open_siblings", componentCount),

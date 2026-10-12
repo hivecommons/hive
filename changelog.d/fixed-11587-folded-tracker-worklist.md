@@ -1,0 +1,1 @@
+- The scanner kick work list now flags and lists issues that received a `<!-- hive-finding-folded -->` finding as `[FOLDED-TRACKER]`, so agents can find the tracker numbers ([#11587](https://github.com/hivecommons/hive/issues/11587)). The set is in-memory and repopulates as findings fold after a restart.
