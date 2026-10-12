@@ -248,7 +248,7 @@ jobs:
           git checkout -B "$HEAD_BRANCH"
           git add src/Dockerfile src/Dockerfile.contributor src/pkg/config/dockerfile_contributor_test.go
           {
-            echo "⬆️ images: bump ${CLI} ${OLD} -> ${NEW}"
+            echo "🌱 images: bump ${CLI} ${OLD} -> ${NEW}"
             echo
             echo "Automated pin bump (#8419). Digests recomputed from the downloaded"
             echo "release artifacts by src/scripts/cli-pin-bump.sh:"
@@ -289,7 +289,7 @@ jobs:
           EXISTING: ${{ steps.existing.outputs.number }}
         run: |
           set -euo pipefail
-          title="⬆️ images: bump ${CLI} ${OLD} -> ${NEW}"
+          title="🌱 images: bump ${CLI} ${OLD} -> ${NEW}"
           {
             echo "Part of #8419"
             echo
