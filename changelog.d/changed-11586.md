@@ -1,0 +1,1 @@
+- docs: batch scanner prompts by root cause, search closed items, cap filings (#11586)
