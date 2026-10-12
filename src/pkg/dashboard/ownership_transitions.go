@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -57,8 +58,12 @@ type ownershipTransition struct {
 // recordOwnershipTransitions compares each item's ownership identity with the
 // last one kept in the local record, writes one ownership_transition audit
 // entry per change and stores the new identities. It runs only in the status
-// refresh. The first refresh with no stored identities only stores them, and
-// an item that is gone from a complete repository leaves with one entry.
+// refresh. A repository's first complete refresh only stores its identities,
+// and an item that is gone from a repository with complete data leaves with
+// one entry. Paused repositories, repositories with incomplete counts and
+// snapshots built without enumeration data are never used to infer a change.
+// When the new record cannot be saved no entries are written, so the same
+// change is not recorded again on every refresh.
 func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 	sink := currentOwnershipAuditSink()
 	if sink == nil {
@@ -67,18 +72,20 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 	ownershipStateMu.Lock()
 	defer ownershipStateMu.Unlock()
 	state := loadOwnershipState(ownershipStatePath)
-	seeded := state.IdentitiesSeeded
 	if state.Identities == nil {
 		state.Identities = map[string]ownershipIdentity{}
 	}
+	if state.SeededRepos == nil {
+		state.SeededRepos = map[string]bool{}
+	}
 
 	present := map[string]bool{}
-	complete := map[string]bool{}
+	departable := map[string]bool{}
 	var transitions []ownershipTransition
-	changed := !seeded
+	changed := false
 	for _, repo := range repos {
 		repoName := overviewRepoName(repo)
-		if repo.CountsIncomplete {
+		if repo.CountsIncomplete || repo.Paused || repo.ownershipDataMissing {
 			// Rows may be missing: neither infer departures nor record
 			// entries from a partial view.
 			for key := range repo.Ownership {
@@ -87,7 +94,12 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 			}
 			continue
 		}
-		complete[repoName] = true
+		seeded := state.SeededRepos[repoName]
+		if !seeded {
+			state.SeededRepos[repoName] = true
+			changed = true
+		}
+		departable[repoName] = seeded
 		for key, decision := range repo.Ownership {
 			kind, num := splitOwnershipKey(key)
 			id := transitionIdentityKey(repoName, kind, num)
@@ -102,7 +114,7 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 			if !seeded || (!known && !cur.YourTurn) {
 				continue
 			}
-			transitions = append(transitions, ownershipTransition{repo: repoName, kind: kind, number: num, url: repo.ownershipURLs[key], from: old, to: cur, reason: decision.Reason})
+			transitions = append(transitions, ownershipTransition{repo: repoName, kind: kind, number: num, url: nonEmpty(repo.ownershipURLs[key], ownershipItemURL(repoName, kind, num)), from: old, to: cur, reason: decision.Reason})
 		}
 	}
 	for id, old := range state.Identities {
@@ -110,14 +122,21 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 			continue
 		}
 		repoName, kind, num, ok := splitTransitionIdentityKey(id)
-		if !ok || !complete[repoName] {
+		if !ok || !departable[repoName] {
 			continue
 		}
 		delete(state.Identities, id)
 		changed = true
-		if seeded && old.YourTurn {
-			transitions = append(transitions, ownershipTransition{repo: repoName, kind: kind, number: num, from: old, reason: "closed or merged"})
+		if old.YourTurn {
+			transitions = append(transitions, ownershipTransition{repo: repoName, kind: kind, number: num, url: ownershipItemURL(repoName, kind, num), from: old, reason: "closed or merged"})
 		}
+	}
+	if !changed {
+		return
+	}
+	if err := saveOwnershipState(ownershipStatePath, state); err != nil {
+		slog.Warn("could not save ownership identities; skipping ownership_transition entries", "path", ownershipStatePath, "error", err)
+		return
 	}
 	sort.Slice(transitions, func(a, b int) bool {
 		x, y := transitions[a], transitions[b]
@@ -129,11 +148,6 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 		}
 		return x.number < y.number
 	})
-	if !changed {
-		return
-	}
-	state.IdentitiesSeeded = true
-	saveOwnershipState(ownershipStatePath, state)
 	for _, t := range transitions {
 		sink(now, t.repo, t.number, auditDetail(
 			"item", t.repo+"#"+strconv.Itoa(t.number),
@@ -149,6 +163,16 @@ func recordOwnershipTransitions(repos []FrontendRepo, now time.Time) {
 			"url", t.url,
 		))
 	}
+}
+
+// ownershipItemURL is the item's GitHub URL for an "owner/repo" name, used
+// when a row did not carry one or the item is no longer in the snapshot.
+func ownershipItemURL(repo, kind string, number int) string {
+	path := "issues"
+	if kind == ownershipKindPR {
+		path = "pull"
+	}
+	return "https://github.com/" + repo + "/" + path + "/" + strconv.Itoa(number)
 }
 
 func splitOwnershipKey(key string) (string, int) {

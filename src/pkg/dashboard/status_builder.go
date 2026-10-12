@@ -2172,6 +2172,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true
 		}
+		r.ownershipDataMissing = actionable == nil
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}

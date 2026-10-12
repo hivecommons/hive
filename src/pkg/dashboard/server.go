@@ -1009,6 +1009,9 @@ type FrontendRepo struct {
 	// ownershipURLs maps the same keys to each item's GitHub URL, for the
 	// ownership_transition audit entry written by the status refresh.
 	ownershipURLs map[string]string
+	// ownershipDataMissing is set when the snapshot was built without
+	// enumeration data, so the rows cannot show that an item left.
+	ownershipDataMissing bool
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -731,10 +732,11 @@ var ownershipStateMu sync.Mutex
 
 type ownershipState struct {
 	EscalationFirstSeen map[string]time.Time `json:"escalation_first_seen,omitempty"`
-	// Identities is each item's last ownership identity; IdentitiesSeeded is
-	// set once the first refresh has stored them.
-	Identities       map[string]ownershipIdentity `json:"identities,omitempty"`
-	IdentitiesSeeded bool                         `json:"identities_seeded,omitempty"`
+	// Identities is each item's last ownership identity; SeededRepos is the
+	// set of repositories whose identities have been stored by a refresh
+	// that had complete data for them.
+	Identities  map[string]ownershipIdentity `json:"identities,omitempty"`
+	SeededRepos map[string]bool              `json:"seeded_repos,omitempty"`
 }
 
 func loadOwnershipState(path string) ownershipState {
@@ -748,16 +750,16 @@ func loadOwnershipState(path string) ownershipState {
 	return state
 }
 
-func saveOwnershipState(path string, state ownershipState) {
+func saveOwnershipState(path string, state ownershipState) error {
 	data, err := json.Marshal(state)
 	if err != nil {
-		return
+		return err
 	}
 	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o600) != nil {
-		return
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
 	}
-	_ = os.Rename(tmp, path)
+	return os.Rename(tmp, path)
 }
 
 // recordEscalationFirstSeen updates the local record of when each hive
@@ -799,7 +801,9 @@ func recordEscalationFirstSeen(repos []FrontendRepo, now time.Time) func(repo st
 		changed = true
 	}
 	if changed {
-		saveOwnershipState(ownershipStatePath, state)
+		if err := saveOwnershipState(ownershipStatePath, state); err != nil {
+			slog.Warn("could not save ownership state", "path", ownershipStatePath, "error", err)
+		}
 	}
 	firstSeen := state.EscalationFirstSeen
 	ledger := escalation.Load(ownershipEscalationLedgerPath)
