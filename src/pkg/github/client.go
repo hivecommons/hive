@@ -2197,16 +2197,17 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	}
 	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	return c.executeIssueWrite(ctx, effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindIssueComment,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"body": effects.StableDigest(body)},
 	}, func(ctx context.Context) (effects.Result, error) {
 		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
-		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
+		return effects.Result{Provenance: comment.GetHTMLURL()}, issueWriteAPIErrorNotApplied(apiErr)
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observeIssueComment(ctx, owner, repoName, number, body)
 	})
-	return err
 }
 
 // GetPRAuthor returns the current author login for an open PR.
@@ -2392,16 +2393,17 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	return c.executeIssueWrite(ctx, effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"labels": strings.Join(labels, ",")},
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
-		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
+		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, issueWriteAPIErrorNotApplied(apiErr)
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observeIssueLabels(ctx, owner, repoName, number, labels, "")
 	})
-	return err
 }
 
 // RemoveLabel removes one label from an issue or PR. A label that is not
@@ -2414,7 +2416,7 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	return c.executeIssueWrite(ctx, effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
@@ -2424,9 +2426,10 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		if githubStatusError(apiErr, http.StatusNotFound) {
 			apiErr = nil
 		}
-		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
+		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, issueWriteAPIErrorNotApplied(apiErr)
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observeIssueLabels(ctx, owner, repoName, number, nil, label)
 	})
-	return err
 }
 
 func extractLabels(labels []*gh.Label) []string {
