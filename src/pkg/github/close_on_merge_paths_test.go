@@ -3,11 +3,14 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -113,7 +116,15 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 				"head": map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
 				"base": map[string]any{"repo": map[string]string{"full_name": "o/r"}},
 			})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 7, "state": "open", "body": "body", "labels": []map[string]string{}},
+				{"number": 10, "state": "open", "body": "body", "labels": []map[string]string{}},
+				// An open PR is listed by the issues API but never matches a claim.
+				{"number": 12, "state": "open", "pull_request": map[string]string{"url": "x"}},
+			})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+			// CloseIssue's own pre-close read.
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "body": "body", "labels": []map[string]string{}})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
@@ -136,6 +147,10 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 	for _, claim := range []IssueClaim{
 		// Strong merged claim: the only one that should be acted on.
 		{Repo: "o/r", Issue: 7, PRNumber: 42, PRRepo: "o/r", MergedPR: true},
+		// Merged claim whose issue is already closed: skipped before any read (#11538).
+		{Repo: "o/r", Issue: 13, PRNumber: 45, PRRepo: "o/r", MergedPR: true},
+		// Merged claim on a PR number that is not an issue: skipped too.
+		{Repo: "o/r", Issue: 12, PRNumber: 46, PRRepo: "o/r", MergedPR: true},
 		// Open PR claim: not merged, skipped before any API call.
 		{Repo: "o/r", Issue: 8, PRNumber: 43, PRRepo: "o/r"},
 		// Weak (Refs) merged claim: deliberately left alone.
@@ -174,6 +189,227 @@ func TestCloseOnMergeForLedgerFiltersAndCloses(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "could not read merged PR") {
 		t.Fatalf("unreadable PR was not logged: %s", logBuf.String())
+	}
+}
+
+// ledgerSweepServer fakes the requests a close-on-merge ledger sweep makes
+// and counts them per path (#11538). openIssues maps a repo ("o/r") to the
+// numbers its issue list returns; repos in listFail answer the list with 500.
+type ledgerSweepServer struct {
+	t          *testing.T
+	openIssues map[string][]int
+	listFail   map[string]bool
+	mu         sync.Mutex
+	requests   map[string]int
+	patched    []string
+}
+
+func (f *ledgerSweepServer) count(key string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests[key]
+}
+
+func (f *ledgerSweepServer) countPrefix(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for k, v := range f.requests {
+		if strings.HasPrefix(k, prefix) {
+			n += v
+		}
+	}
+	return n
+}
+
+func (f *ledgerSweepServer) server() *httptest.Server {
+	f.requests = map[string]int{}
+	issueDetail := regexp.MustCompile(`^/repos/([^/]+/[^/]+)/issues/(\d+)$`)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		f.mu.Lock()
+		f.requests[r.Method+" "+r.URL.Path]++
+		f.mu.Unlock()
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+		if len(parts) < 3 {
+			f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		repo := parts[0] + "/" + parts[1]
+		switch {
+		case r.Method == "GET" && len(parts) == 3 && parts[2] == "issues":
+			if f.listFail[repo] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			out := []map[string]any{}
+			for _, n := range f.openIssues[repo] {
+				out = append(out, map[string]any{"number": n, "state": "open", "body": "body", "labels": []map[string]string{}})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == "GET" && len(parts) == 4 && parts[2] == "pulls":
+			n, _ := strconvAtoi(parts[3])
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": n, "title": "fix", "body": fmt.Sprintf("Fixes #%d", n-100), "merged": true,
+				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
+				"user": map[string]string{"login": "hive[bot]"},
+				"head": map[string]string{"ref": "scanner/fix", "sha": "headsha"},
+				"base": map[string]any{"repo": map[string]string{"full_name": repo}},
+			})
+		case r.Method == "GET" && issueDetail.MatchString(r.URL.Path):
+			// Only CloseIssue's own pre-close read should reach here.
+			n, _ := strconvAtoi(parts[3])
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": "body", "labels": []map[string]string{}})
+		case r.Method == "GET" && len(parts) == 5 && (parts[4] == "timeline" || parts[4] == "comments"):
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == "POST" && len(parts) == 5 && parts[4] == "comments":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == "PATCH" && issueDetail.MatchString(r.URL.Path):
+			f.mu.Lock()
+			f.patched = append(f.patched, repo+"#"+parts[3])
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 1, "state": "closed"})
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func (f *ledgerSweepServer) snapshot() (map[string]int, []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	requests := make(map[string]int, len(f.requests))
+	for k, v := range f.requests {
+		requests[k] = v
+	}
+	return requests, append([]string(nil), f.patched...)
+}
+
+// issueGets counts GET /repos/{repo}/issues/{n} detail reads.
+func (f *ledgerSweepServer) issueGets() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	issueDetail := regexp.MustCompile(`^GET /repos/[^/]+/[^/]+/issues/\d+$`)
+	n := 0
+	for k, v := range f.requests {
+		if issueDetail.MatchString(k) {
+			n += v
+		}
+	}
+	return n
+}
+
+// recordMergedClaims records merged claims for issues in repo; each issue N is
+// claimed by PR N+100, whose body says "Fixes #N".
+func recordMergedClaims(t *testing.T, ledger *ClaimLedger, repo string, issues ...int) {
+	t.Helper()
+	for _, n := range issues {
+		if err := ledger.Record(IssueClaim{Repo: repo, Issue: n, PRNumber: n + 100, PRRepo: repo, MergedPR: true}); err != nil {
+			t.Fatalf("record %s#%d: %v", repo, n, err)
+		}
+	}
+}
+
+func TestCloseOnMergeForLedgerReadsOnlyOpenIssueClaims(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := &ledgerSweepServer{t: t, openIssues: map[string][]int{"o/r": {7}}}
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	closed := make([]int, 0, 40)
+	for n := 1; n <= 40; n++ {
+		if n != 7 {
+			closed = append(closed, n)
+		}
+	}
+	recordMergedClaims(t, ledger, "o/r", closed...)
+	recordMergedClaims(t, ledger, "o/r", 7)
+
+	c := newTestClient(t, srv, "o", []string{"r"})
+	results := c.CloseOnMergeForLedger(context.Background(), ledger, CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}})
+	if len(results) != 1 || results[0].Issue != 7 || results[0].PR != 107 || results[0].Action != CloseOnMergeClosed {
+		t.Fatalf("results = %+v, want only issue 7 closed by PR 107", results)
+	}
+	if got := f.count("GET /repos/o/r/issues"); got != 1 {
+		t.Fatalf("open-issue list requests = %d, want 1", got)
+	}
+	// The sweep reuses the listed issue; the one remaining detail read is
+	// CloseIssue's own pre-close check on the issue it closes.
+	if got := f.issueGets(); got != 1 || f.count("GET /repos/o/r/issues/7") != 1 {
+		t.Fatalf("GET issues/{n} = %d, want only CloseIssue's read of issues/7", got)
+	}
+	if got := f.countPrefix("GET /repos/o/r/pulls/"); got != 1 || f.count("GET /repos/o/r/pulls/107") != 1 {
+		t.Fatalf("PR GETs = %d (pulls/107 = %d), want only pulls/107", got, f.count("GET /repos/o/r/pulls/107"))
+	}
+	if _, patched := f.snapshot(); len(patched) != 1 || patched[0] != "o/r#7" {
+		t.Fatalf("patched = %v, want o/r#7 only", patched)
+	}
+}
+
+func TestCloseOnMergeForLedgerListsOncePerRepo(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := &ledgerSweepServer{t: t, openIssues: map[string][]int{"o/a": {3}, "o/b": {5}}}
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	recordMergedClaims(t, ledger, "o/a", 1, 2, 3, 4)
+	recordMergedClaims(t, ledger, "o/b", 5, 6, 8, 9)
+
+	c := newTestClient(t, srv, "o", []string{"a", "b"})
+	results := c.CloseOnMergeForLedger(context.Background(), ledger, CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}})
+	if len(results) != 2 {
+		t.Fatalf("results = %+v, want one per open issue", results)
+	}
+	for _, repo := range []string{"o/a", "o/b"} {
+		if got := f.count("GET /repos/" + repo + "/issues"); got != 1 {
+			t.Fatalf("%s open-issue list requests = %d, want 1", repo, got)
+		}
+	}
+	if got := f.issueGets(); got != 2 || f.count("GET /repos/o/a/issues/3") != 1 || f.count("GET /repos/o/b/issues/5") != 1 {
+		t.Fatalf("GET issues/{n} = %d, want only CloseIssue's reads of o/a#3 and o/b#5", got)
+	}
+	if f.count("GET /repos/o/a/pulls/103") != 1 || f.count("GET /repos/o/b/pulls/105") != 1 || f.countPrefix("GET /repos/o/a/pulls/")+f.countPrefix("GET /repos/o/b/pulls/") != 2 {
+		requests, _ := f.snapshot()
+		t.Fatalf("PR GETs = %v, want pulls/103 in o/a and pulls/105 in o/b only", requests)
+	}
+}
+
+func TestCloseOnMergeForLedgerListFailureSkipsRepo(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := &ledgerSweepServer{t: t, openIssues: map[string][]int{"o/a": {3}, "o/b": {5}}, listFail: map[string]bool{"o/a": true}}
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	recordMergedClaims(t, ledger, "o/a", 1, 2, 3, 4)
+	recordMergedClaims(t, ledger, "o/b", 5, 6)
+
+	var logBuf strings.Builder
+	c := newTestClient(t, srv, "o", []string{"a", "b"})
+	results := c.CloseOnMergeForLedger(context.Background(), ledger, CloseOnMergeOptions{
+		Identity: HiveIdentity{AppLogin: "hive[bot]"},
+		Logger:   slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+	if len(results) != 1 || results[0].Repo != "o/b" || results[0].Issue != 5 || results[0].Action != CloseOnMergeClosed {
+		t.Fatalf("results = %+v, want only o/b#5 closed", results)
+	}
+	requests, patched := f.snapshot()
+	if got := f.countPrefix("GET /repos/o/a/") + f.countPrefix("POST /repos/o/a/") + f.countPrefix("PATCH /repos/o/a/"); got != f.count("GET /repos/o/a/issues") {
+		t.Fatalf("o/a made per-claim requests after its list failed: %v", requests)
+	}
+	for _, p := range patched {
+		if strings.HasPrefix(p, "o/a#") {
+			t.Fatalf("closed %s although its repo list failed", p)
+		}
+	}
+	if got := strings.Count(logBuf.String(), "close-on-merge: listing open issues failed"); got != 1 {
+		t.Fatalf("list-failure warnings = %d, want 1:\n%s", got, logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "repo=o/a") {
+		t.Fatalf("warning does not name the repo:\n%s", logBuf.String())
 	}
 }
 

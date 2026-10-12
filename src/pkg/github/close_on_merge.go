@@ -58,11 +58,37 @@ func (c *Client) CloseOnMergeForLedger(ctx context.Context, ledger *ClaimLedger,
 	}
 	claims := ledger.Claims()
 	out := make([]CloseOnMergeResult, 0, len(claims))
+	candidate := func(claim IssueClaim) bool {
+		return claim.MergedPR && !claim.Reference && claim.PRNumber > 0 && claim.Issue > 0 && strings.TrimSpace(claim.Repo) != ""
+	}
+	// #11538: list each claimed repo's open issues once and only spend
+	// per-claim reads on claims whose issue is still open. Merged claims stay
+	// in the ledger for settledClaimRetention, so reading every one of them on
+	// every pass exhausts the App quota after a restart empties the caches.
+	openIssues := map[string]map[int]*gh.Issue{}
 	for _, claim := range claims {
-		if !claim.MergedPR || claim.PRNumber <= 0 || claim.Issue <= 0 || strings.TrimSpace(claim.Repo) == "" {
+		if !candidate(claim) {
 			continue
 		}
-		if claim.Reference {
+		key := c.closeOnMergeRepoKey(claim.Repo)
+		if _, seen := openIssues[key]; seen {
+			continue
+		}
+		open, err := c.closeOnMergeOpenIssues(ctx, claim.Repo)
+		if err != nil {
+			if opts.Logger != nil {
+				opts.Logger.Warn("close-on-merge: listing open issues failed", "repo", claim.Repo, "error", err)
+			}
+			open = map[int]*gh.Issue{}
+		}
+		openIssues[key] = open
+	}
+	for _, claim := range claims {
+		if !candidate(claim) {
+			continue
+		}
+		issue, ok := openIssues[c.closeOnMergeRepoKey(claim.Repo)][claim.Issue]
+		if !ok {
 			continue
 		}
 		pr, err := c.getPullRequestForCloseOnMerge(ctx, claim.PRRepo, claim.PRNumber)
@@ -72,10 +98,44 @@ func (c *Client) CloseOnMergeForLedger(ctx context.Context, ledger *ClaimLedger,
 			}
 			continue
 		}
-		res := c.closeIssueForMergedPRClaim(ctx, claim.Repo, claim.Issue, pr, true, opts)
+		res := c.closeIssueForMergedPRClaimWithIssue(ctx, claim.Repo, claim.Issue, pr, true, opts, issue)
 		out = append(out, res)
 	}
 	return out
+}
+
+func (c *Client) closeOnMergeRepoKey(repo string) string {
+	owner, repoName := c.splitRepo(strings.TrimSpace(repo))
+	return strings.ToLower(owner + "/" + repoName)
+}
+
+// closeOnMergeOpenIssues lists repo's open issues (pull requests excluded),
+// keyed by number. Any list error is returned so the caller skips the repo
+// for this pass instead of falling back to per-claim reads.
+func (c *Client) closeOnMergeOpenIssues(ctx context.Context, repo string) (map[int]*gh.Issue, error) {
+	owner, repoName := c.splitRepo(strings.TrimSpace(repo))
+	out := map[int]*gh.Issue{}
+	issueOpts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for page := 0; page < claimSearchMaxPages; page++ {
+		issues, resp, err := c.client.Issues.ListByRepo(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueOpts)
+		if err != nil {
+			return nil, err
+		}
+		for _, issue := range issues {
+			if issue == nil || issue.IsPullRequest() || issue.GetNumber() <= 0 || !strings.EqualFold(issue.GetState(), "open") {
+				continue
+			}
+			out[issue.GetNumber()] = issue
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		issueOpts.ListOptions.Page = resp.NextPage
+	}
+	return out, nil
 }
 
 func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOptions) []CloseOnMergeResult {
