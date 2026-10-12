@@ -36,6 +36,9 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if issue.IsTracker {
 			tracker = " [TRACKER]"
 		}
+		if issue.FoldedTracker {
+			tracker += " [FOLDED-TRACKER]"
+		}
 		title := issue.Title
 		const maxTitleRunes = 60
 		if runes := []rune(title); len(runes) > maxTitleRunes {
@@ -47,6 +50,11 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 			strings.Join(issue.Labels, ","),
 			title, tracker))
 		shown++
+	}
+
+	if folded := foldedTrackerRefs(scannerIssues); len(folded) > 0 {
+		b.WriteString(fmt.Sprintf("FOLDED-FINDING TRACKERS (%d, issues carrying a <!-- hive-finding-folded --> comment — one structural fix per tracker, not a PR per variant): %s\n",
+			len(folded), strings.Join(folded, ", ")))
 	}
 
 	b.WriteString(fmt.Sprintf("ACTIONABLE PRs (%d):\n", actionable.PRs.Count))
@@ -615,4 +623,16 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 	}
 	return b.String()
+}
+
+// foldedTrackerRefs lists the issues that finding folds landed on, in work-list
+// order, so the scanner sees tracker numbers rather than only the prompt text.
+func foldedTrackerRefs(issues []github.Issue) []string {
+	var refs []string
+	for _, issue := range issues {
+		if issue.FoldedTracker {
+			refs = append(refs, issueDisplayRef(issue))
+		}
+	}
+	return refs
 }

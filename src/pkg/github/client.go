@@ -35,6 +35,8 @@ var ErrNoGitHubClient = errors.New("no github client configured (hive is running
 
 type Client struct {
 	client *gh.Client
+	// foldedTrackers records issues that finding folds landed on (#11587).
+	foldedTrackers foldedTrackerSet
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
@@ -513,6 +515,9 @@ type Issue struct {
 	AgeMinutes int       `json:"age_minutes"`
 	URL        string    `json:"url"`
 	IsTracker  bool      `json:"is_tracker"`
+	// FoldedTracker marks an issue that received a folded finding
+	// (<!-- hive-finding-folded -->, #11239) since this process started.
+	FoldedTracker bool `json:"folded_tracker,omitempty"`
 	// Stage marks staged run work (spec, plan, implement). Empty means a plain
 	// task.
 	Stage string `json:"stage,omitempty"`
@@ -1400,6 +1405,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 	// #8380: decorate the actionable set with any live issue claim. A no-op
 	// (no fetch, no fields) unless governor.claims.enabled is on.
 	c.annotateIssueClaims(ctx, owner, repoName, actionable, now)
+	c.annotateFoldedTrackers(actionable)
 	return actionable, held, totalIssues, breakdown, details, nil
 }
 
