@@ -129,6 +129,8 @@ type Client struct {
 	canaryRegistry            *ioscan.CanaryRegistry
 	canaryLeakFunc            func(ioscan.CanaryLeak)
 	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
+	additionalBotLogins       []string
+	noBotIdentityWarned       sync.Once
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk
@@ -369,6 +371,42 @@ func (c *Client) AppAuth() *AppAuth {
 		return nil
 	}
 	return c.appAuth
+}
+
+// SetAdditionalBotLogins records further App-bot accounts (e.g. a second hive
+// using a different GitHub App on the same repos) whose open issues count as
+// hive-filed for twin, fold and rejected-twin dedupe.
+func (c *Client) SetAdditionalBotLogins(logins []string) {
+	if c == nil {
+		return
+	}
+	var out []string
+	for _, l := range logins {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	c.additionalBotLogins = out
+}
+
+// hiveBotLogins returns every configured hive-filed-issue author login: the
+// client's own App bot plus any additional ones. Empty for PAT-auth clients
+// with nothing configured.
+func (c *Client) hiveBotLogins() []string {
+	var out []string
+	if l := strings.TrimSpace(c.appBotLogin); l != "" {
+		out = append(out, l)
+	}
+	return append(out, c.additionalBotLogins...)
+}
+
+func isHiveBotLogin(logins []string, login string) bool {
+	for _, l := range logins {
+		if strings.EqualFold(l, login) {
+			return true
+		}
+	}
+	return false
 }
 
 // SetAppBotLogin records the GitHub App bot account that authors App-created

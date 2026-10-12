@@ -175,14 +175,20 @@ func equalFileRefSets(a, b map[string]bool) bool {
 // filed issue whose file-reference set exactly matches the pending request's,
 // or nil. An error means the lookup could not tell; the caller files anyway.
 func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body string) (*gh.Issue, error) {
-	botLogin := strings.TrimSpace(c.appBotLogin)
-	if botLogin == "" {
-		return nil, nil
-	}
 	want := issueFileRefSet(title + "\n" + body)
 	if len(want) == 0 {
 		return nil, nil
 	}
+	for _, botLogin := range c.hiveBotLogins() {
+		twin, err := c.findRejectedTwinBy(ctx, owner, repo, botLogin, want)
+		if err != nil || twin != nil {
+			return twin, err
+		}
+	}
+	return nil, nil
+}
+
+func (c *Client) findRejectedTwinBy(ctx context.Context, owner, repo, botLogin string, want map[string]bool) (*gh.Issue, error) {
 	cutoff := time.Now().Add(-issueRejectionWindow)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "closed",

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -783,15 +784,25 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	// same scan also looks for an open App-bot twin over the same file set,
 	// so consolidation costs no extra API calls.
 	var wantFiles map[string]bool
-	if consolidateOpen && strings.TrimSpace(c.appBotLogin) != "" {
-		wantFiles = issueFileRefSet(title + "\n" + body)
+	if consolidateOpen {
+		if len(c.hiveBotLogins()) > 0 {
+			wantFiles = issueFileRefSet(title + "\n" + body)
+		} else {
+			// No App-bot identity (PAT auth, or app_slug unset): hive-filed
+			// issues cannot be told from human ones, so twin, fold and
+			// rejected-twin checks stay off rather than risk folding a
+			// maintainer's issue. Say so instead of disabling silently.
+			c.noBotIdentityWarned.Do(func() {
+				c.logger.Warn("CreateIssue: no App-bot login configured, open-twin, component-fold and rejected-twin dedupe are disabled; set github.additional_bot_logins or use a GitHub App")
+			})
+		}
 	}
 	var fileSetTwin, componentTwin *gh.Issue
 	var componentPath string
 	var componentCount, componentClosed int
 	var openComponent map[string]int
 	var openComponentOldest map[string]*gh.Issue
-	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, wantFiles); err != nil {
+	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles); err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
 		}
@@ -958,6 +969,16 @@ type openIssueMatches struct {
 // stream.
 const sameComponentFoldThreshold = 3
 
+// highConfidenceFoldThreshold is the same threshold counted including the
+// incoming finding (so one open sibling) for a high-confidence pair: the
+// primary cited path is shared and the canonical subject tokens overlap
+// heavily. Path-only overlap keeps sameComponentFoldThreshold.
+const highConfidenceFoldThreshold = 2
+
+// subjectOverlapMin is the Jaccard similarity of canonical subject tokens at
+// which two titles count as the same finding.
+const subjectOverlapMin = 0.6
+
 // sameComponentClosedSiblingWindow is how far back an App-bot issue closed as
 // completed still counts toward sameComponentFoldThreshold (#11239). Without
 // it the count resets every time a variant's PR merges, and a one-bypass,
@@ -990,9 +1011,15 @@ func isUbiquitousFileRef(p string) bool {
 // file-reference set equals wantFiles (#9376). Bounded: agent-filed issues
 // are recent by construction, and an unbounded scan of a busy repo would burn
 // API budget on every create.
-func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, wantFiles map[string]bool) (openIssueMatches, error) {
+func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body string, wantFiles map[string]bool) (openIssueMatches, error) {
 	wantCanonical := canonicalIssueSubject(title)
-	botLogin := strings.TrimSpace(c.appBotLogin)
+	botLogins := c.hiveBotLogins()
+	wantPrimary, wantTokens := "", map[string]bool(nil)
+	if len(wantFiles) > 0 {
+		wantPrimary = primaryFileRef(title+"\n"+body, wantFiles)
+		wantTokens = issueSubjectTokens(title)
+	}
+	var pairOldest *gh.Issue
 	var found openIssueMatches
 	componentCounts := make(map[string]int)
 	componentOldest := make(map[string]*gh.Issue)
@@ -1021,8 +1048,12 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
 				found.subject = is
 			}
-			if len(wantFiles) > 0 && botLogin != "" && is.GetUser().GetLogin() == botLogin {
+			if len(wantFiles) > 0 && isHiveBotLogin(botLogins, is.GetUser().GetLogin()) {
 				have := issueFileRefSet(candidate + "\n" + is.GetBody())
+				if wantPrimary != "" && have[wantPrimary] && primaryFileRef(candidate+"\n"+is.GetBody(), have) == wantPrimary &&
+					subjectTokensOverlap(wantTokens, issueSubjectTokens(candidate)) {
+					pairOldest = is
+				}
 				if equalFileRefSets(wantFiles, have) {
 					found.fileSet = is
 				}
@@ -1039,6 +1070,10 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 		}
 	}
 	found.component, found.componentPath, found.componentCount, _ = pickFoldComponent(componentCounts, nil, componentOldest)
+	if found.component == nil && pairOldest != nil {
+		// High-confidence pair: same primary path and near-identical subject.
+		found.component, found.componentPath, found.componentCount = pairOldest, wantPrimary, highConfidenceFoldThreshold-1
+	}
 	found.componentCounts, found.componentOldest = componentCounts, componentOldest
 	return found, nil
 }
@@ -1072,12 +1107,21 @@ func pickFoldComponent(open, closed map[string]int, oldest map[string]*gh.Issue)
 // and since. not_planned/duplicate closures are skipped: a maintainer
 // rejection is the rejected-twin gate's evidence, not a sign of a stream.
 func (c *Client) recentlyCompletedComponentCounts(ctx context.Context, owner, repo string, wantFiles map[string]bool) (map[string]int, error) {
-	botLogin := strings.TrimSpace(c.appBotLogin)
+	botLogins := c.hiveBotLogins()
 	counts := make(map[string]int)
-	if botLogin == "" || len(wantFiles) == 0 {
+	if len(botLogins) == 0 || len(wantFiles) == 0 {
 		return counts, nil
 	}
 	cutoff := time.Now().Add(-sameComponentClosedSiblingWindow)
+	for _, botLogin := range botLogins {
+		if err := c.countClosedSiblingsBy(ctx, owner, repo, botLogin, cutoff, wantFiles, counts); err != nil {
+			return nil, err
+		}
+	}
+	return counts, nil
+}
+
+func (c *Client) countClosedSiblingsBy(ctx context.Context, owner, repo, botLogin string, cutoff time.Time, wantFiles map[string]bool, counts map[string]int) error {
 	opts := &gh.IssueListByRepoOptions{
 		State:       "closed",
 		Creator:     botLogin,
@@ -1090,7 +1134,7 @@ func (c *Client) recentlyCompletedComponentCounts(ctx context.Context, owner, re
 		opts.ListOptions.Page = page
 		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, is := range issues {
 			if is.IsPullRequest() || is.GetUser().GetLogin() != botLogin {
@@ -1109,7 +1153,7 @@ func (c *Client) recentlyCompletedComponentCounts(ctx context.Context, owner, re
 			break
 		}
 	}
-	return counts, nil
+	return nil
 }
 
 // consolidatedFindingComment renders a finding folded into an open issue that
@@ -1140,7 +1184,10 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 	b.WriteString("<!-- hive-finding-folded -->\n")
 	b.WriteString("**Folded finding.** This was filed as a separate issue, but ")
 	b.WriteString(strconv.Itoa(openSiblings))
-	b.WriteString(" open agent-filed issues")
+	b.WriteString(" open agent-filed issue")
+	if openSiblings != 1 {
+		b.WriteString("s")
+	}
 	if closedSiblings > 0 {
 		b.WriteString(" (plus ")
 		b.WriteString(strconv.Itoa(closedSiblings))
@@ -1182,4 +1229,51 @@ func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name s
 		}
 	}
 	return err
+}
+
+var subjectTokenSplitRE = regexp.MustCompile(`[^a-z0-9]+`)
+var subjectTagRE = regexp.MustCompile(`^\s*\[[^\]]*\]\s*`)
+var subjectParenRE = regexp.MustCompile(`\([^)]*\)`)
+
+// issueSubjectTokens returns the distinctive lowercase words of a title's
+// canonical subject: role prefix, parentheticals and numbers dropped.
+func issueSubjectTokens(title string) map[string]bool {
+	t := subjectTagRE.ReplaceAllString(title, "")
+	t = subjectParenRE.ReplaceAllString(t, " ")
+	if canon := canonicalIssueSubject(t); canon != "" {
+		t = canon
+	}
+	out := make(map[string]bool)
+	for _, w := range subjectTokenSplitRE.Split(strings.ToLower(t), -1) {
+		if len(w) < 3 || strings.Trim(w, "0123456789") == "" {
+			continue
+		}
+		out[w] = true
+	}
+	return out
+}
+
+// subjectTokensOverlap reports whether two token sets overlap heavily enough
+// (Jaccard >= subjectOverlapMin, at least 2 shared tokens) to be one finding.
+func subjectTokensOverlap(a, b map[string]bool) bool {
+	shared := 0
+	for w := range a {
+		if b[w] {
+			shared++
+		}
+	}
+	union := len(a) + len(b) - shared
+	return shared >= 2 && union > 0 && float64(shared)/float64(union) >= subjectOverlapMin
+}
+
+// primaryFileRef is the first non-ubiquitous path, in text order, that is in
+// set: the file a finding is mainly about, as opposed to incidental mentions.
+func primaryFileRef(text string, set map[string]bool) string {
+	for _, tok := range fileRefTokenPattern.FindAllString(urlPattern.ReplaceAllString(text, " "), -1) {
+		tok = lineSuffixPattern.ReplaceAllString(tok, "")
+		if set[tok] && !isUbiquitousFileRef(tok) {
+			return tok
+		}
+	}
+	return ""
 }
