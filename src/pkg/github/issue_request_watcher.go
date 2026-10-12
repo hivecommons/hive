@@ -798,6 +798,15 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
 	} else if existing := found.subject; existing != nil {
+		// A human-filed twin was not created by this hive, so the finding's
+		// detail would otherwise vanish: leave it as a comment (#11576).
+		if consolidateOpen && strings.TrimSpace(c.appBotLogin) != "" && existing.GetUser().GetLogin() != strings.TrimSpace(c.appBotLogin) {
+			if err := c.CreateIssueComment(ctx, owner+"/"+repoName, existing.GetNumber(),
+				consolidatedFindingComment(title, body, wantFiles)); err != nil {
+				return CreateIssueResult{}, fmt.Errorf("CreateIssue: commenting on human-filed issue #%d in %s/%s: %w", existing.GetNumber(), owner, repoName, err)
+			}
+			return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true, Consolidated: true}, nil
+		}
 		c.logger.Info("CreateIssue: open issue with the same subject exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()),
 			slog.String("existing_title", existing.GetTitle()))
@@ -931,7 +940,7 @@ type openIssueMatches struct {
 	// subject is an exact-title match, else the oldest canonical-subject
 	// match (see canonicalIssueSubject).
 	subject *gh.Issue
-	// fileSet is the oldest App-bot-filed open issue whose file-reference set
+	// fileSet is the oldest open issue (any author) whose file-reference set
 	// equals the requested one. Only looked for when wantFiles is non-empty.
 	fileSet *gh.Issue
 
@@ -985,7 +994,7 @@ func isUbiquitousFileRef(p string) bool {
 // recognised as the same finding. Exact matches win; otherwise the OLDEST
 // canonical match is returned so repeats consolidate onto the original issue
 // rather than the newest copy. When wantFiles is non-empty the same pass also
-// records the oldest open issue filed by this hive's App bot whose
+// records the oldest open issue (bot- or human-filed) whose
 // file-reference set equals wantFiles (#9376). Bounded: agent-filed issues
 // are recent by construction, and an unbounded scan of a busy repo would burn
 // API budget on every create.
@@ -1020,10 +1029,16 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
 				found.subject = is
 			}
-			if len(wantFiles) > 0 && botLogin != "" && is.GetUser().GetLogin() == botLogin {
+			if len(wantFiles) > 0 && botLogin != "" {
 				have := issueFileRefSet(candidate + "\n" + is.GetBody())
+				// Human-filed issues are fold targets for an exact file-set
+				// match (#11576), but never count toward the component
+				// stream threshold, which measures bot-filed variants.
 				if equalFileRefSets(wantFiles, have) {
 					found.fileSet = is
+				}
+				if is.GetUser().GetLogin() != botLogin {
+					continue
 				}
 				for p := range have {
 					if wantFiles[p] && !isUbiquitousFileRef(p) {
