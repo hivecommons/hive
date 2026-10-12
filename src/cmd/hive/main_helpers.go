@@ -193,6 +193,11 @@ func enforceHoldGuard(
 				"repo", repo, "pr", pr.Number, "error", err)
 			continue
 		}
+		// Hive's local record of hold sources (#11564): the re-hold leaves no
+		// marker on GitHub, so the status snapshot learns its source here.
+		if err := github.RecordHoldSource(github.HoldKindPR, repo, pr.Number, github.HoldSourceHoldguard); err != nil {
+			logger.Debug("hold guard: hold source not recorded", "repo", repo, "pr", pr.Number, "error", err)
+		}
 		store.ReArm(repo, pr.Number, pr.HeadSHA, current)
 	}
 

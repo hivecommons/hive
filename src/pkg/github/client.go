@@ -765,6 +765,11 @@ type PullRequest struct {
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// HoldSources is the set of sources currently requiring this PR's hold
+	// (HoldSource* constants). Empty when the PR is not held or the sources
+	// have not been recorded. Display only: the dashboard's your-turn
+	// decision reads it; nothing gates on it.
+	HoldSources []string `json:"hold_sources,omitempty"`
 }
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
@@ -950,6 +955,9 @@ type HoldItem struct {
 	// extra API call — and are omitted when unset.
 	Assignees         []string `json:"assignees,omitempty"`
 	HumanAcknowledged bool     `json:"human_acknowledged,omitempty"`
+	// HoldSources is the set of sources currently requiring this hold
+	// (HoldSource* constants), as on PullRequest.HoldSources.
+	HoldSources []string `json:"hold_sources,omitempty"`
 }
 
 type IssueCluster struct {
@@ -1254,6 +1262,9 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		}
 	}
 
+	holdSources := c.newHoldSourceDetector(HoldKindIssue, owner, repoName)
+	defer holdSources.flush()
+
 	for _, issue := range allIssues {
 		if issue.IsPullRequest() {
 			continue
@@ -1293,6 +1304,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 				Labels:            labels,
 				Assignees:         extractAssignees(issue.Assignees),
 				HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
+				HoldSources:       holdSources.issueSources(issue.GetNumber(), labels),
 			})
 			continue
 		}
@@ -1494,6 +1506,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 	}
 	c.prefetchOpenPRDetailsGraphQL(ctx, owner, repoName, repo)
 
+	holdSources := c.newHoldSourceDetector(HoldKindPR, owner, repoName)
+	defer holdSources.flush()
+
 	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
@@ -1512,6 +1527,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			if pr.GetHead() != nil {
 				heldHeadSHA = pr.GetHead().GetSHA()
 			}
+			prHoldSources := holdSources.prSources(ctx, pr.GetNumber(), pr.GetUpdatedAt().Time, labels)
 			held = append(held, HoldItem{
 				Number:      pr.GetNumber(),
 				Repo:        repo,
@@ -1523,6 +1539,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 				ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
 				URL:         pr.GetHTMLURL(),
 				Labels:      labels,
+				HoldSources: prHoldSources,
 			})
 			// Also keep the full PR so the CI-repair path can see whether a
 			// held PR is red (hivecommons/hive#7438). Drafts stay out, exactly
@@ -1561,6 +1578,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 					BaseRef:             prBaseRef(pr),
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
+					HoldSources:         prHoldSources,
 				})
 			}
 			continue
@@ -3324,6 +3342,9 @@ func (c *Client) hold(ctx context.Context, owner, repo string, number int) {
 	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{"hold"})
 	if err != nil {
 		c.logger.Warn("failed to add hold label", "repo", repo, "issue", number, "error", err)
+	} else {
+		// Hive's local record of hold sources (#11564); a local write only.
+		_ = RecordHoldSource(HoldKindIssue, owner+"/"+repo, number, HoldSourceSHAHold)
 	}
 
 	comment := &gh.IssueComment{Body: gh.Ptr(shaHoldComment)}

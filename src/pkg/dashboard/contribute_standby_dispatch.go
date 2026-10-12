@@ -400,5 +400,11 @@ func (h *ContributeWSHub) applyDonatedHold(prURL string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"})
+	if err := h.server.deps.GHClient.AddLabels(ctx, ref.FullName(), ref.Number, []string{"hold"}); err != nil {
+		return err
+	}
+	// Hive's local record of hold sources (#11564): this hold leaves no
+	// marker on GitHub. A local write only; its failure never fails the hold.
+	_ = ghpkg.RecordHoldSource(ghpkg.HoldKindPR, ref.FullName(), ref.Number, ghpkg.HoldSourceStandbyDonation)
+	return nil
 }
