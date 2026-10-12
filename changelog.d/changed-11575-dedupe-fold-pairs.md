@@ -1,0 +1,1 @@
+- Issue dedupe now folds high-confidence pairs (shared primary path and near-identical subject) at two issues instead of three, and twin, fold and rejected-twin checks recognise every login in the new `github.additional_bot_logins`; with no bot identity at all the checks stay off with a warning (#11575).

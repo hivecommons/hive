@@ -83,6 +83,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 		return
 	}
 	client.SetHoldLabels(b.githubHoldLabels())
+	client.SetAdditionalBotLogins(b.cfg.GitHub.AdditionalBotLogins)
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
 	// Per-repo pause (#6203). A live predicate over the shared config, so a

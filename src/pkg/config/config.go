@@ -4088,6 +4088,10 @@ type GitHubConfig struct {
 	DocsInstallationID int64  `yaml:"docs_installation_id"`
 	KeyFile            string `yaml:"key_file"`
 	Token              string `yaml:"token"`
+	// AdditionalBotLogins lists other App-bot accounts (e.g. a second hive's
+	// "<slug>[bot]") whose issues count as hive-filed for twin, fold and
+	// rejected-twin dedupe. Also the only identity source for PAT-auth hives.
+	AdditionalBotLogins []string `yaml:"additional_bot_logins,omitempty" json:"additional_bot_logins,omitempty"`
 	// AgentReserveFloor keeps agents from draining the shared App installation
 	// core bucket below the daemon's merge/scan reserve.
 	AgentReserveFloor int    `yaml:"agent_reserve_floor,omitempty" json:"agent_reserve_floor,omitempty"`

@@ -442,3 +442,98 @@ func TestIssueRequestWatcher_ClosedSiblingsThatDoNotCountFile(t *testing.T) {
 		})
 	}
 }
+
+// A pair is enough when the primary path is shared and the subject matches:
+// the endusers #1210/#1253 and #1267/#1276 shapes.
+func TestIssueRequestWatcher_FoldsHighConfidencePair(t *testing.T) {
+	cases := []struct {
+		name         string
+		openTitle    string
+		openBody     string
+		title, body  string
+		wantFold     bool
+		wantOnNumber int
+	}{
+		{
+			name:      "unreachable guard remeasured",
+			openTitle: "[scanner] Unreachable guard in src/lib/walk.ts (12 branches)",
+			openBody:  "src/lib/walk.ts:40 has an unreachable guard",
+			title:     "[sec-check] Unreachable guard remeasured in src/lib/walk.ts (14 branches)",
+			body:      "src/lib/walk.ts:41 unreachable guard, remeasured",
+			wantFold:  true, wantOnNumber: 1210,
+		},
+		{
+			name:      "unguarded isDirectory at two sites",
+			openTitle: "[scanner] Unguarded isDirectory() call in src/fs/scan.ts",
+			openBody:  "src/fs/scan.ts:10 and src/fs/other.ts",
+			title:     "[scanner]: Unguarded isDirectory() call in src/fs/scan.ts: second site",
+			body:      "src/fs/scan.ts:99 and src/fs/extra.ts",
+			wantFold:  true, wantOnNumber: 1210,
+		},
+		{
+			name:      "path-only overlap keeps the higher bar",
+			openTitle: "[scanner] Missing timeout in src/lib/walk.ts",
+			openBody:  "src/lib/walk.ts:5",
+			title:     "[scanner] Unreachable guard in src/lib/walk.ts",
+			body:      "src/lib/walk.ts:41",
+		},
+		{
+			name:      "shared path is only secondary",
+			openTitle: "[scanner] Unreachable guard in src/lib/a.ts",
+			openBody:  "src/lib/a.ts and src/lib/walk.ts",
+			title:     "[scanner] Unreachable guard in src/lib/b.ts",
+			body:      "src/lib/b.ts and src/lib/walk.ts",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{}
+			srv := consolidationMockServer(t, []openTwin{{number: 1210, author: testBot, title: tc.openTitle, body: tc.openBody}}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{Repo: "o/r", Agent: "scanner", Title: tc.title, Body: tc.body})
+			if tc.wantFold {
+				if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != tc.wantOnNumber || !res.Consolidated {
+					t.Fatalf("created=%d comments=%v result=%+v, want fold into #%d", m.created, m.commentedOn, res, tc.wantOnNumber)
+				}
+				return
+			}
+			if m.created != 1 || len(m.commentedOn) != 0 {
+				t.Fatalf("created=%d comments=%v, want a fresh issue", m.created, m.commentedOn)
+			}
+		})
+	}
+}
+
+// A second hive's App bot is a hive-filed author too; with no identity at all
+// the checks stay off (and say so) instead of folding into a human's issue.
+func TestIssueRequestWatcher_AdditionalBotLoginsAndEmptyIdentity(t *testing.T) {
+	open := []openTwin{{number: 7, author: "other-hive[bot]", title: "[scanner] Unreachable guard in src/lib/walk.ts", body: "src/lib/walk.ts"}}
+	req := IssueRequest{Repo: "o/r", Agent: "scanner", Title: "[scanner] Unreachable guard again in src/lib/walk.ts", Body: "src/lib/walk.ts"}
+
+	t.Run("additional login folds", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, open, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = testBot
+		c.SetAdditionalBotLogins([]string{" Other-Hive[bot] "})
+		_, res := fileRequest(t, c, withIssueDir(t), req)
+		if m.created != 0 || !res.Consolidated || res.Number != 7 {
+			t.Fatalf("created=%d result=%+v, want fold into #7", m.created, res)
+		}
+	})
+	t.Run("empty identity files", func(t *testing.T) {
+		m := &consolidationMock{}
+		srv := consolidationMockServer(t, open, m)
+		defer srv.Close()
+		c := issueTestClient(t, srv.URL)
+		c.appBotLogin = ""
+		_, res := fileRequest(t, c, withIssueDir(t), req)
+		if m.created != 1 || res.Consolidated {
+			t.Fatalf("created=%d result=%+v, want a fresh issue", m.created, res)
+		}
+	})
+}
