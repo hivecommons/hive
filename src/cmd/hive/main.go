@@ -6954,6 +6954,7 @@ func runEvalCycle(
 	escalatedPRs := map[string]bool{}
 	if !budgetDecision.SkipOptional {
 		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+		runDependencyBotConflictSweep(ctx, cfg, governorForge(cfg, ghClient, logger), ghClient, actionable, logger)
 	}
 	runWaitEscalationSweep(cfg, dashSrv, logger)
 
@@ -8210,7 +8211,9 @@ func redPRFixOwner(agent string) string {
 // iterating on them, so a red one is not a fix loop to break: escalating it
 // only pages a human with "1 distinct fix attempts" about a crate bump that
 // renovate will rebase on its own. Mirrors the hub's default contribute
-// deny-authors list (config: hub.contribute_deny_authors).
+// deny-authors list (config: hub.contribute_deny_authors). A conflicting
+// Renovate PR in a `rebaseWhen: never` repo will NOT rebase on its own; that
+// case is handled by runDependencyBotConflictSweep (dependency_bot_conflicts.go).
 var dependencyBots = map[string]bool{
 	"renovate[bot]":    true,
 	"dependabot[bot]":  true,

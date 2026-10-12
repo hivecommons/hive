@@ -2265,6 +2265,23 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 	return st, nil
 }
 
+// GetPRBody fetches a single PR's description. The enumerated PullRequest
+// keeps no body, so the dependency-bot conflict sweep reads it with one GET
+// per PR that already passed every cheaper check (hivecommons/hive#11558).
+// It deliberately skips the PR-detail cache: a GraphQL-prefetched entry need
+// not carry the body.
+func (c *Client) GetPRBody(ctx context.Context, repo string, number int) (string, error) {
+	if c == nil {
+		return "", ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:get_pr_body"), owner, repoName, number)
+	if err != nil {
+		return "", err
+	}
+	return pr.GetBody(), nil
+}
+
 // QueuePRAutoMerge approves a PR as the hive App and marks it for Hive's
 // auto-merge-on-green sweep. The approval body records who queued the PR so
 // the sweep can re-check the self-merge ban before it squashes anything.
