@@ -142,9 +142,7 @@ func (s *Server) selfAuthorizationHoldActiveForRepo(repo string) bool {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return true
 	}
-	cfg := s.deps.Config
-	level := cfg.EffectiveACMMLevelForRepo(repo)
-	return cfg.SelfAuthorizationHoldEnabledForRepoAtLevel(repo, level)
+	return selfAuthorizationHoldActive(s.deps.Config, repo)
 }
 
 func (s *Server) hiveAdviceThresholds() hiveadvisor.Thresholds {

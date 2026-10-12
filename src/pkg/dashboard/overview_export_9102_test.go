@@ -33,7 +33,7 @@ func TestOverviewServerClassifierAndCSVParity9102(t *testing.T) {
 	var script strings.Builder
 	script.WriteString(`
 const REPO_ISSUE_BAND_DEFAULTS = {
-  waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+  waitingLabels: ['needs-human', 'needs-direction', 'needs-decision', 'needs-spec'],
   doneLabels: ['hive/already-done', 'hive/covered-by-pr', 'hive/likely-done'],
   staleDays: 14
 };
