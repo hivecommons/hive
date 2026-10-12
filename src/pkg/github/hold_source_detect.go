@@ -151,7 +151,7 @@ type holdSourceDetector struct {
 	fresh    map[string]holdSourceCheck
 }
 
-func (c *Client) newHoldSourceDetector(kind, owner, repoName string) *holdSourceDetector {
+func (c *Client) newHoldSourceDetector(kind, owner, repoName string, start time.Time) *holdSourceDetector {
 	holdSourcesMu.Lock()
 	ledger := readHoldSourceLedgerLocked(HoldSourcesPath)
 	holdSourcesMu.Unlock()
@@ -161,7 +161,7 @@ func (c *Client) newHoldSourceDetector(kind, owner, repoName string) *holdSource
 		owner:    owner,
 		repoName: repoName,
 		repo:     owner + "/" + repoName,
-		start:    time.Now().UTC(),
+		start:    start.UTC(),
 		ledger:   ledger,
 		held:     map[string]bool{},
 		fresh:    map[string]holdSourceCheck{},
@@ -182,16 +182,18 @@ func (c *Client) classifyHoldLabels(labels []string) holdLabelClass {
 	var out holdLabelClass
 	sentinel := c.sentinelAlertLabel()
 	clanker := ""
+	pause := ""
 	if c != nil {
 		if cc, ok := reporterTrustClankerConfig(c.getIssueFilter()); ok {
 			clanker = strings.TrimSpace(cc.ReporterTrustClankerRequestedLabel())
 		}
+		pause = c.ownPauseLabel()
 	}
 	var rest []string
 	for _, label := range labels {
 		trimmed := strings.TrimSpace(label)
 		switch {
-		case strings.HasPrefix(strings.ToLower(trimmed), "hive-pause/"):
+		case pause != "" && strings.EqualFold(trimmed, pause):
 			out.paused = true
 		case sentinel != "" && strings.EqualFold(trimmed, sentinel):
 		case clanker != "" && strings.EqualFold(trimmed, clanker):
@@ -202,6 +204,21 @@ func (c *Client) classifyHoldLabels(labels []string) holdLabelClass {
 	}
 	out.otherHeld = c.isHeld(rest)
 	return out
+}
+
+// ownPauseLabel returns this hive's own `hive-pause/<hive-id>` label as set
+// through SetHoldLabels, or "" when the client has none. Another hive's pause
+// label is not a hold source here: isHeld ignores it too.
+func (c *Client) ownPauseLabel() string {
+	c.holdLabelsMu.RLock()
+	defer c.holdLabelsMu.RUnlock()
+	for _, label := range c.holdLabels {
+		label = strings.TrimSpace(label)
+		if strings.HasPrefix(strings.ToLower(label), "hive-pause/") {
+			return label
+		}
+	}
+	return ""
 }
 
 // isOtherHoldLabel reports whether a single label is a hold label that
@@ -384,9 +401,9 @@ func (c *Client) holdNoticeSources(comments []*gh.IssueComment) map[string]bool 
 			if strings.Contains(body, SelfAuthorizationNoticeMarker) {
 				set[HoldSourceSelfAuthorization] = true
 			}
-		}
-		if strings.Contains(body, HumanMergePathMarker) {
-			set[HoldSourceHumanMergePath] = true
+			if strings.Contains(body, HumanMergePathMarker) {
+				set[HoldSourceHumanMergePath] = true
+			}
 		}
 	}
 	if hasReporterTrustNotice(comments, c.appBotLogin) {

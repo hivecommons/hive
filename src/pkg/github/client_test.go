@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -1266,6 +1267,10 @@ func TestEnforceSHAHold_HoldWhenNoSHA(t *testing.T) {
 		w.Write([]byte(`[]`))
 	})
 
+	oldSources := HoldSourcesPath
+	HoldSourcesPath = filepath.Join(t.TempDir(), HoldSourcesFile)
+	t.Cleanup(func() { HoldSourcesPath = oldSources })
+
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -1286,6 +1291,14 @@ func TestEnforceSHAHold_HoldWhenNoSHA(t *testing.T) {
 	}
 	if !commentPosted {
 		t.Error("SHA hold comment was not posted")
+	}
+	// The SHA hold leaves no marker the status snapshot can read, so the
+	// hold's source lands in Hive's local record (#11564).
+	holdSourcesMu.Lock()
+	ledger := readHoldSourceLedgerLocked(HoldSourcesPath)
+	holdSourcesMu.Unlock()
+	if _, ok := ledger.Applied[holdSourceKey(HoldKindIssue, org+"/"+repo, 100)][HoldSourceSHAHold]; !ok {
+		t.Errorf("hold-source record = %v, want issue testorg/console#100 -> %s", ledger.Applied, HoldSourceSHAHold)
 	}
 }
 

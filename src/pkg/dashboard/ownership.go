@@ -303,25 +303,6 @@ func holdSourcesHide(sources []string) bool {
 	return false
 }
 
-// prHoldSources returns a held PR's recorded hold sources. Until hold-source
-// detection (part B, hivecommons/hive#11564) records them, a PR hold with no
-// recorded source is unknown.
-func prHoldSources(sources []string) []string {
-	if len(sources) == 0 {
-		return []string{github.HoldSourceUnknown}
-	}
-	return sources
-}
-
-// issueHoldSources returns a held issue's recorded hold sources. A hold that
-// Hive's own record does not attribute to a Hive source counts as a person's.
-func issueHoldSources(sources []string) []string {
-	if len(sources) == 0 {
-		return []string{github.HoldSourcePerson}
-	}
-	return sources
-}
-
 // holdSourcesOwnership maps a held pull request's hold sources to ownership
 // ("Hold sources" in #11507).
 func holdSourcesOwnership(sources []string) Ownership {
@@ -375,7 +356,7 @@ type issueOwnershipInput struct {
 func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	labels := labelSet(in.labels)
 	// (1) a person's hold or the dashboard's pause.
-	if in.held && holdSourcesHide(issueHoldSources(in.holdSources)) {
+	if in.held && holdSourcesHide(in.holdSources) {
 		return notYourTurn()
 	}
 	// (2) sentinel-flagged.
@@ -456,7 +437,7 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	labels := labelSet(pr.Labels)
 	var sources []string
 	if held {
-		sources = prHoldSources(pr.HoldSources)
+		sources = pr.HoldSources
 		// (1) a person's hold or the dashboard's pause.
 		if holdSourcesHide(sources) {
 			return notYourTurn()

@@ -108,7 +108,7 @@ var holdSourceT0 = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
 func detectPRHoldSources(t *testing.T, c *Client, number int, updatedAt time.Time, labels ...string) []string {
 	t.Helper()
-	d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget")
+	d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget", time.Now())
 	got := d.prSources(t.Context(), number, updatedAt, labels)
 	d.flush()
 	return got
@@ -116,7 +116,7 @@ func detectPRHoldSources(t *testing.T, c *Client, number int, updatedAt time.Tim
 
 func detectIssueHoldSources(t *testing.T, c *Client, number int, labels ...string) []string {
 	t.Helper()
-	d := c.newHoldSourceDetector(HoldKindIssue, "acme", "widget")
+	d := c.newHoldSourceDetector(HoldKindIssue, "acme", "widget", time.Now())
 	got := d.issueSources(number, labels)
 	d.flush()
 	return got
@@ -176,6 +176,30 @@ func TestHoldSources_NoticeFromNonAppAuthorIsIgnored(t *testing.T) {
 	f.comments[16] = []map[string]any{holdSourceComment("mallory", levelHoldNotice("quality"))}
 	appHeld(f, 16)
 	assertHoldSources(t, detectPRHoldSources(t, c, 16, holdSourceT0, "hold"), HoldSourceUnknown)
+}
+
+func TestHoldSources_HumanMergePathMarkerFromNonAppAuthorIsIgnored(t *testing.T) {
+	f, c := newHoldSourceTest(t)
+	f.comments[16] = []map[string]any{
+		holdSourceComment(testHiveAppBotLogin, levelHoldNotice("quality")),
+		holdSourceComment("mallory", HumanMergePathComment([]string{".github/workflows/ci.yml"})),
+	}
+	appHeld(f, 16)
+	assertHoldSources(t, detectPRHoldSources(t, c, 16, holdSourceT0, "hold"), HoldSourceLevelGate)
+
+	f.comments[17] = []map[string]any{holdSourceComment("mallory", HumanMergePathComment([]string{"a.yml"}))}
+	appHeld(f, 17)
+	assertHoldSources(t, detectPRHoldSources(t, c, 17, holdSourceT0, "hold"), HoldSourceUnknown)
+}
+
+func TestHoldSources_ForeignHivePauseLabelIsNotASource(t *testing.T) {
+	f, c := newHoldSourceTest(t)
+	c.SetHoldLabels([]string{CanonicalHiveHoldLabel("hive-1")})
+	f.comments[16] = []map[string]any{holdSourceComment(testHiveAppBotLogin, levelHoldNotice("quality"))}
+	appHeld(f, 16)
+	assertHoldSources(t, detectPRHoldSources(t, c, 16, holdSourceT0, "hold", CanonicalHiveHoldLabel("hive-2")), HoldSourceLevelGate)
+	assertHoldSources(t, detectIssueHoldSources(t, c, 33, CanonicalHiveHoldLabel("hive-2")))
+	assertHoldSources(t, detectIssueHoldSources(t, c, 34, "hold", "HIVE-PAUSE/HIVE-1"), HoldSourceDashboardPause, HoldSourcePerson)
 }
 
 func TestHoldSources_DashboardPausedPRListsDashboardPauseWithoutAPICalls(t *testing.T) {
@@ -277,7 +301,7 @@ func TestHoldSources_UnchangedRefreshMakesNoAPICalls(t *testing.T) {
 	f.events[27] = []map[string]any{holdSourceEvent("labeled", "hold", "alice", holdSourceT0)}
 
 	refresh := func(updated26, updated27 time.Time) ([]string, []string) {
-		d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget")
+		d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget", time.Now())
 		a := d.prSources(t.Context(), 26, updated26, []string{"hold"})
 		b := d.prSources(t.Context(), 27, updated27, []string{"hold"})
 		d.flush()
@@ -314,12 +338,26 @@ func TestHoldSources_LocalRecordPrunedWhenNoLongerHeld(t *testing.T) {
 	}
 	// A later pass in which #28 was not held drops its record: the detector's
 	// start is moved past the record's timestamp instead of sleeping.
-	d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget")
-	d.start = d.start.Add(time.Minute)
+	d := c.newHoldSourceDetector(HoldKindPR, "acme", "widget", time.Now().Add(time.Minute))
 	d.flush()
 
 	f.events[28] = []map[string]any{holdSourceEvent("labeled", "hold", "alice", holdSourceT0)}
 	assertHoldSources(t, detectPRHoldSources(t, c, 28, holdSourceT0, "hold"), HoldSourcePerson)
+}
+
+// The prune cut-off is the pass start the caller took before listing: a hold
+// recorded after that moment, while the pass was still working from its list
+// snapshot, is not in the pass's held set and must not be pruned.
+func TestHoldSources_HoldRecordedDuringPassSurvivesPrune(t *testing.T) {
+	f, c := newHoldSourceTest(t)
+	passStart := time.Now().Add(-time.Minute)
+	if err := RecordHoldSource(HoldKindPR, "acme/widget", 29, HoldSourceStandbyDonation); err != nil {
+		t.Fatalf("RecordHoldSource: %v", err)
+	}
+	c.newHoldSourceDetector(HoldKindPR, "acme", "widget", passStart).flush()
+
+	appHeld(f, 29)
+	assertHoldSources(t, detectPRHoldSources(t, c, 29, holdSourceT0, "hold"), HoldSourceStandbyDonation)
 }
 
 func TestHoldSources_HeldIssueHiveDidNotHoldIsPerson(t *testing.T) {

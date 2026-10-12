@@ -340,7 +340,6 @@ func TestOwnershipHoldSources11565(t *testing.T) {
 		{"human merge path", []string{github.HoldSourceHumanMergePath}, want11565{OwnershipVerbReview, OwnershipReasonPolicyHold}, false},
 		{"unknown only", []string{github.HoldSourceUnknown}, want11565{OwnershipVerbReview, OwnershipReasonHoldSourceUnknown}, false},
 		{"level gate and unknown", []string{github.HoldSourceLevelGate, github.HoldSourceUnknown}, want11565{OwnershipVerbReview, OwnershipReasonHoldSourceUnknown}, false},
-		{"interim: no recorded source is unknown", nil, want11565{OwnershipVerbReview, OwnershipReasonHoldSourceUnknown}, false},
 		{"person", []string{github.HoldSourcePerson, github.HoldSourceUnknown}, notYours11565, false},
 		{"dashboard pause", []string{github.HoldSourceDashboardPause}, notYours11565, false},
 	}
@@ -360,12 +359,22 @@ func TestOwnershipHoldSources11565(t *testing.T) {
 		})
 	}
 
-	t.Run("held issue with no Hive source is a person's hold, also after the stale period", func(t *testing.T) {
+	t.Run("held issue Hive's record does not attribute is a person's hold, also after the stale period", func(t *testing.T) {
 		in := freshIssue11565()
 		in.held = true
+		in.holdSources = []string{github.HoldSourcePerson}
 		in.updatedAt = ownershipNow11565.AddDate(0, 0, -60)
 		in.createdAt = in.updatedAt
 		checkOwnership11565(t, decideIssueOwnership(in, ownershipEnv11565(5)), notYours11565)
+	})
+	t.Run("sentinel-only held issue carries no hold source and reaches the sentinel rule", func(t *testing.T) {
+		in := freshIssue11565(config.DefaultSentinelLabel)
+		in.held = true
+		checkOwnership11565(t, decideIssueOwnership(in, ownershipEnv11565(5)), want11565{OwnershipVerbInspect, OwnershipReasonSentinelFlagged})
+	})
+	t.Run("sentinel-only held PR carries no hold source and reaches the sentinel rule", func(t *testing.T) {
+		pr := hivePR11565(config.DefaultSentinelLabel)
+		checkOwnership11565(t, decidePROwnership(pr, true, ownershipEnv11565(5)), want11565{OwnershipVerbInspect, OwnershipReasonSentinelFlagged})
 	})
 	t.Run("dashboard-paused issue is not yours", func(t *testing.T) {
 		in := freshIssue11565("needs-human")

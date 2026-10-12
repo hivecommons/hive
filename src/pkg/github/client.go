@@ -1236,6 +1236,9 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, reporterTrustWaitBudget *reporterTrustWaitBudget) (actionable []Issue, held []HoldItem, totalIssues int, breakdown RepoIssueBreakdown, details []RepoWorkIssue, err error) {
 	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
+	// Taken before the list call: a hold recorded after the listing snapshot
+	// must outlive this pass's prune of the local hold-source record.
+	passStart := time.Now().UTC()
 
 	// #9839: the list call keeps GitHub's issue_dependencies_summary so only
 	// issues that report an open "blocked by" count pay for a per-issue
@@ -1262,7 +1265,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		}
 	}
 
-	holdSources := c.newHoldSourceDetector(HoldKindIssue, owner, repoName)
+	holdSources := c.newHoldSourceDetector(HoldKindIssue, owner, repoName, passStart)
 	defer holdSources.flush()
 
 	for _, issue := range allIssues {
@@ -1506,7 +1509,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 	}
 	c.prefetchOpenPRDetailsGraphQL(ctx, owner, repoName, repo)
 
-	holdSources := c.newHoldSourceDetector(HoldKindPR, owner, repoName)
+	holdSources := c.newHoldSourceDetector(HoldKindPR, owner, repoName, now)
 	defer holdSources.flush()
 
 	for _, pr := range allPRs {
