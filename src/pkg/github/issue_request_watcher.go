@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -905,25 +906,108 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		req.Labels = &usable
 	}
 	var issue *gh.Issue
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
-		Repo:   owner + "/" + repoName,
-		Kind:   effects.KindIssueCreate,
-		Target: effects.StableDigest(title),
-		Inputs: map[string]string{"title": effects.StableDigest(title), "body": effects.StableDigest(body), "labels": strings.Join(usable, ",")},
-	}, func(ctx context.Context) (effects.Result, error) {
-		var apiErr error
-		issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
-		if apiErr != nil {
-			return effects.Result{}, apiErr
-		}
-		return effects.Result{Provenance: issue.GetHTMLURL()}, nil
-	})
+	res, err := effects.Execute(ctx, c.mutationBoundary(), issueCreateClaim(owner+"/"+repoName, title, body, time.Now()),
+		func(ctx context.Context) (effects.Result, error) {
+			var apiErr error
+			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
+			if apiErr != nil {
+				return effects.Result{}, apiErr
+			}
+			return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+		})
 	if err != nil {
 		return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
+	}
+	if issue == nil {
+		// The mutation boundary replayed this create as already applied
+		// (#11579): another filing of the same finding — same canonical
+		// subject and file set, however the title was reworded — landed
+		// inside the idempotency window, so the effect never ran and there
+		// is no API response. Hand back the journaled issue rather than a
+		// zero number with a nil error; an unparsable provenance is an error,
+		// never a fabricated result.
+		number, parseErr := parseIssueNumberFromURL(res.Provenance)
+		if parseErr != nil {
+			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: replayed as already applied but recorded provenance %q is not an issue URL: %w", owner, repoName, res.Provenance, parseErr)
+		}
+		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
+			slog.String("repo", repoName), slog.Int("number", number))
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
 	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
+}
+
+// issueCreateIdempotencyWindow bounds how long the mutation journal treats a
+// second filing of the same finding as a replay of the first (#11579). The
+// window exists to close the scan→create race — two agents whose dedupe scans
+// both passed seconds apart — not to suppress a finding for good: a finding
+// fixed, closed and genuinely re-introduced months later must file again,
+// and the journal otherwise remembers an applied create forever. Within the
+// window the open-issue scan and this key agree; past it the scan (open
+// twins, rejected twins, same-component streams) is the only guard, as it
+// was before.
+const issueCreateIdempotencyWindow = 24 * time.Hour
+
+// issueCreateClaim is the effects claim guarding one issue create. It is
+// keyed on the finding's canonical subject and file-reference set, not its
+// exact title (#11579): a model-authored title varies between two agents
+// filing the same finding seconds apart, so an exact-title key let both
+// pass. The ledger claim (Target) serialises concurrent creators of one
+// finding; the journal inputs make the second one a replay of the first.
+//
+// Body and labels are deliberately NOT inputs: the body is regenerated on
+// every filing and the labels name the filing agent, and either would mint a
+// fresh logical operation for what is the same finding. A title with no
+// trustworthy canonical subject (see canonicalIssueSubject) and no file
+// references falls back to the exact title, which is the pre-#11579 key.
+func issueCreateClaim(repo, title, body string, now time.Time) effects.Claim {
+	subject := canonicalIssueSubject(title)
+	if subject == "" {
+		subject = strings.TrimSpace(title)
+	}
+	files := make([]string, 0)
+	for f := range issueFileRefSet(title + "\n" + body) {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	fileSet := strings.Join(files, "\n")
+	return effects.Claim{
+		Repo:   repo,
+		Kind:   effects.KindIssueCreate,
+		Target: effects.StableDigest(subject, fileSet),
+		Inputs: map[string]string{
+			"subject": effects.StableDigest(subject),
+			"files":   effects.StableDigest(fileSet),
+			"window":  issueCreateIdempotencyBucket(now),
+		},
+	}
+}
+
+// issueCreateIdempotencyBucket is the issueCreateIdempotencyWindow-sized
+// bucket now falls in, as a journal input: creates in the same bucket share a
+// logical operation, creates in different buckets do not.
+func issueCreateIdempotencyBucket(now time.Time) string {
+	return strconv.FormatInt(now.UTC().Unix()/int64(issueCreateIdempotencyWindow/time.Second), 10)
+}
+
+// issueURLPattern matches the "…/{owner}/{repo}/issues/{number}" tail of a
+// GitHub issue URL, host-agnostic like prURLPattern.
+var issueURLPattern = regexp.MustCompile(`[^/\s]+/[^/\s]+/issues/(\d+)`)
+
+// parseIssueNumberFromURL extracts the issue number from a GitHub issue URL,
+// the provenance the issue-create effect journals.
+func parseIssueNumberFromURL(issueURL string) (int, error) {
+	m := issueURLPattern.FindStringSubmatch(strings.TrimSpace(issueURL))
+	if m == nil {
+		return 0, fmt.Errorf("not a recognizable GitHub issue URL: %q", issueURL)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid issue number in URL %q", issueURL)
+	}
+	return n, nil
 }
 
 // openIssueMatches is what one scan of the recent open issues found.
@@ -968,6 +1052,16 @@ const sameComponentClosedMaxPages = 2
 
 // ubiquitousFileRefs are paths so many unrelated findings mention in passing
 // that sharing one says nothing about sharing a root cause.
+//
+// The list is static and ecosystem-level by design (#11579, B.5): it names
+// files every repo has, not a given repo's own hot spots (a monolithic
+// Containerfile, a renovate.json, a top-level config.yml). A repo-specific
+// hot file therefore counts toward the same-component fold, so unrelated
+// findings that each cite it alongside their real subject can be folded
+// together once sameComponentFoldThreshold of them are open at once. The
+// threshold is the mitigation: one or two shared citations never fold. A
+// per-repo exclusion list is a config surface, deliberately out of scope
+// here.
 var ubiquitousFileRefs = map[string]bool{
 	"README.md": true, "CHANGELOG.md": true, "CONTRIBUTING.md": true,
 	"go.mod": true, "go.sum": true, "package.json": true, "package-lock.json": true,
@@ -979,16 +1073,26 @@ func isUbiquitousFileRef(p string) bool {
 	return ubiquitousFileRefs[p[strings.LastIndex(p, "/")+1:]]
 }
 
-// scanOpenIssues scans up to the 3 most recent pages of open issues for an
-// exact (whitespace-trimmed) title match, falling back to a canonical subject
-// match so a finding re-filed with a different model-authored qualifier is
-// recognised as the same finding. Exact matches win; otherwise the OLDEST
-// canonical match is returned so repeats consolidate onto the original issue
-// rather than the newest copy. When wantFiles is non-empty the same pass also
-// records the oldest open issue filed by this hive's App bot whose
-// file-reference set equals wantFiles (#9376). Bounded: agent-filed issues
+// scanOpenIssuesMaxPages bounds scanOpenIssues to the newest
+// scanOpenIssuesMaxPages × 100 open issues (#11579, B.4). Agent-filed issues
 // are recent by construction, and an unbounded scan of a busy repo would burn
-// API budget on every create.
+// API budget on every create. The cost of the bound is known: in a repo with
+// more open issues than the window, a tracker older than the window is
+// invisible to the scan and a new variant files fresh. The guards that do not
+// depend on the window are the rejected-twin gate (its own creator-filtered
+// closed-issue query), the same-component fold (recently-closed siblings are
+// queried separately) and the create claim (issueCreateClaim), which covers
+// the scan→create race regardless of repo size.
+const scanOpenIssuesMaxPages = 3
+
+// scanOpenIssues scans up to the scanOpenIssuesMaxPages most recent pages of
+// open issues for an exact (whitespace-trimmed) title match, falling back to a
+// canonical subject match so a finding re-filed with a different
+// model-authored qualifier is recognised as the same finding. Exact matches
+// win; otherwise the OLDEST canonical match is returned so repeats consolidate
+// onto the original issue rather than the newest copy. When wantFiles is
+// non-empty the same pass also records the oldest open issue filed by this
+// hive's App bot whose file-reference set equals wantFiles (#9376).
 func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, wantFiles map[string]bool) (openIssueMatches, error) {
 	wantCanonical := canonicalIssueSubject(title)
 	botLogin := strings.TrimSpace(c.appBotLogin)
@@ -1001,7 +1105,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 		Direction:   "desc",
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
-	for page := 1; page <= 3; page++ {
+	for page := 1; page <= scanOpenIssuesMaxPages; page++ {
 		opts.ListOptions.Page = page
 		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {

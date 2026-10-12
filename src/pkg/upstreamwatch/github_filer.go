@@ -110,7 +110,11 @@ func (g *GitHubFiler) waitFor(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// File implements Filer.
+// File implements Filer. It does not look for the item's marker itself: the
+// one caller, Watch.handle, runs FindMarker on GitHub immediately before
+// every File, after the local store said the ref is unseen. That is what
+// makes a store loss, or a save failure after a successful create, re-find
+// the existing fork issue instead of filing a second one (#11579).
 func (g *GitHubFiler) File(ctx context.Context, issue Issue) (int, error) {
 	req := &gh.IssueRequest{Title: gh.Ptr(issue.Title), Body: gh.Ptr(issue.Body)}
 	if len(issue.Labels) > 0 {
