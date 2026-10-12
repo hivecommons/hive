@@ -466,7 +466,7 @@ recorded no-merge or deferral reason, and the guarantee in force:
 |---|---|
 | server-enforced | A ruleset on the branch requires up-to-date branches; GitHub closes the window. |
 | Hive-checked | Rulesets require checks but not up-to-date branches; only Hive's own check and the post-merge alert apply. |
-| unknown | No ruleset speaks to it. Classic branch protection carries the flag, but reading it needs the Administration permission the App does not hold. |
+| unknown | No ruleset speaks to it. Classic branch protection carries the flag, but reading it needs the Administration permission the App does not hold. It also appears when Hive could not read the branch rules at that moment (for example while rate limited); the reason is shown and no up-to-date-rule recommendation is shown in that case. |
 
 For Hive-checked and unknown lanes the panel recommends turning the up-to-date
 rule on. The same state is available to scripts, the admin MCP server and

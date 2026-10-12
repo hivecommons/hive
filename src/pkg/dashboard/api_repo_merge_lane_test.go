@@ -81,7 +81,7 @@ func TestRepoMergeLaneViewShowsFrontWaitingAndEnforcement(t *testing.T) {
 			{PR: 13, EligibleAt: now.Add(2 * time.Minute), LastSeen: now},
 		},
 		LastExit: &mergelane.Exit{PR: 10, Reason: exitReason, At: now},
-	}}, github.BranchRulesResult{Known: true, Required: map[string]bool{"build": true}, UpToDate: github.UpToDateHiveChecked, MergeQueueKnown: true})
+	}}, github.BranchRulesResult{Known: true, Required: map[string]bool{"build": true}, UpToDate: github.UpToDateHiveChecked, MergeQueueKnown: true, RulesetsRead: true})
 
 	out := getMergeLane(t, srv, "testrepo")
 	if out["merge_strategy"] != config.MergeStrategyHiveSerialized {
@@ -143,7 +143,7 @@ func TestRepoMergeLaneViewServerEnforcedHasNoRecommendation(t *testing.T) {
 		t.Fatalf("setting hive-serialized: %v", err)
 	}
 	useMergeLaneFixtures(t, []mergelane.Record{{Repo: "testorg/testrepo", Branch: "main"}},
-		github.BranchRulesResult{Known: true, Required: map[string]bool{"build": true}, UpToDate: github.UpToDateServerEnforced, MergeQueueKnown: true})
+		github.BranchRulesResult{Known: true, Required: map[string]bool{"build": true}, UpToDate: github.UpToDateServerEnforced, MergeQueueKnown: true, RulesetsRead: true})
 
 	lane := getMergeLane(t, srv, "testrepo")["lanes"].([]any)[0].(map[string]any)
 	if lane["enforcement_label"] != "server-enforced" || lane["recommend_up_to_date_rule"] != false {
@@ -151,6 +151,44 @@ func TestRepoMergeLaneViewServerEnforcedHasNoRecommendation(t *testing.T) {
 	}
 	if _, ok := lane["front"]; ok {
 		t.Errorf("empty lane reports a front: %v", lane["front"])
+	}
+}
+
+func TestRepoMergeLaneViewRecommendationDependsOnRulesRead(t *testing.T) {
+	tests := []struct {
+		name          string
+		rules         github.BranchRulesResult
+		wantRecommend bool
+		wantUnread    bool
+	}{
+		{"read ok, no ruleset speaks to it", github.BranchRulesResult{Known: true, Required: map[string]bool{"build": true}, UpToDate: github.UpToDateUnknown, MergeQueueKnown: true, RulesetsRead: true}, true, false},
+		{"rulesets unreadable", github.BranchRulesResult{Reason: "branch rulesets unreadable: 403 rate limited", UpToDate: github.UpToDateUnknown}, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			if changed, err := srv.deps.Config.SetRepoMergeStrategyForRepoAndSave("testrepo", config.MergeStrategyHiveSerialized); !changed {
+				t.Fatalf("setting hive-serialized: %v", err)
+			}
+			useMergeLaneFixtures(t, []mergelane.Record{{Repo: "testorg/testrepo", Branch: "main"}}, tt.rules)
+
+			lane := getMergeLane(t, srv, "testrepo")["lanes"].([]any)[0].(map[string]any)
+			if lane["enforcement"] != string(github.UpToDateUnknown) {
+				t.Errorf("enforcement = %v, want unknown", lane["enforcement"])
+			}
+			if got := lane["recommend_up_to_date_rule"] == true; got != tt.wantRecommend {
+				t.Errorf("recommend_up_to_date_rule = %v, want %v", lane["recommend_up_to_date_rule"], tt.wantRecommend)
+			}
+			if _, has := lane["recommendation"]; has != tt.wantRecommend {
+				t.Errorf("recommendation present = %v, want %v", has, tt.wantRecommend)
+			}
+			if got := lane["rules_unreadable"] == true; got != tt.wantUnread {
+				t.Errorf("rules_unreadable = %v, want %v", lane["rules_unreadable"], tt.wantUnread)
+			}
+			if reason, _ := lane["enforcement_reason"].(string); tt.wantUnread && reason == "" {
+				t.Errorf("enforcement_reason is empty for unreadable rules")
+			}
+		})
 	}
 }
 

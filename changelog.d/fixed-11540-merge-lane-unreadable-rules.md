@@ -1,0 +1,1 @@
+- The merge-lane panel no longer tells operators to turn on GitHub's up-to-date rule when Hive simply could not read the branch rules (for example while rate limited); it now says the rules could not be read, shows the reason and omits the recommendation. Fixes #11540.

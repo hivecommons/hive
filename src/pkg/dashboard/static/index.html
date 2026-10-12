@@ -13803,7 +13803,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? 'GitHub requires branches to be up to date on this branch (read from rulesets)'
           : (l.enforcement === 'hive-checked'
               ? 'GitHub does not require up-to-date branches here; Hive checks it before every merge'
-              : 'Hive cannot read whether GitHub requires up-to-date branches here (classic branch protection needs Administration permission)' + (l.enforcement_reason ? ' — ' + l.enforcement_reason : ''));
+              : (l.rules_unreadable
+                  ? 'Hive could not read this branch\'s rules just now' + (l.enforcement_reason ? ' — ' + l.enforcement_reason : '')
+                  : 'Hive cannot read whether GitHub requires up-to-date branches here (classic branch protection needs Administration permission)' + (l.enforcement_reason ? ' — ' + l.enforcement_reason : '')));
         const enf = `<span class="repo-lane-enforcement repo-lane-enforcement-${esc(l.enforcement || 'unknown')}" title="${esc(enfTip)}">${esc(l.enforcement_label || 'unknown')}</span>`;
         const front = l.front
           ? `<div class="repo-lane-row"><span class="repo-lane-key">front</span>${repoLanePRLink(repoUrl, l.front.pr)} <span class="repo-lane-stage">${esc(l.front.stage_label || l.front.stage)}</span>${l.front.reason ? `<div class="repo-lane-muted">${esc(l.front.reason)}</div>` : ''}</div>`

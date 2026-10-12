@@ -156,6 +156,10 @@ func TestReadBranchRules(t *testing.T) {
 			if got.UpToDate != tt.wantUpToDate {
 				t.Fatalf("UpToDate = %q, want %q", got.UpToDate, tt.wantUpToDate)
 			}
+			// The rules endpoint is read exactly when the queue state is known.
+			if got.RulesetsRead != tt.wantQueueOK {
+				t.Fatalf("RulesetsRead = %v, want %v", got.RulesetsRead, tt.wantQueueOK)
+			}
 			if got.MergeQueue != tt.wantQueue || got.MergeQueueKnown != tt.wantQueueOK {
 				t.Fatalf("MergeQueue = (%v,%v), want (%v,%v)", got.MergeQueue, got.MergeQueueKnown, tt.wantQueue, tt.wantQueueOK)
 			}

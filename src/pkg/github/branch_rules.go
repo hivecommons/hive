@@ -43,6 +43,9 @@ type BranchRulesResult struct {
 	// MergeQueueKnown is false when the rules endpoint could not be read.
 	MergeQueue      bool
 	MergeQueueKnown bool
+	// RulesetsRead is true when the rules endpoint answered without error, so
+	// an unknown UpToDate means no ruleset speaks to it rather than a failed read.
+	RulesetsRead bool
 }
 
 // ReadBranchRules reads every required-check source for branch: the operator
@@ -98,6 +101,7 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("branch rulesets unreadable: %v", err))
 	} else if rules != nil {
+		res.RulesetsRead = true
 		res.MergeQueueKnown = true
 		res.MergeQueue = len(rules.MergeQueue) > 0
 		for _, rule := range rules.RequiredStatusChecks {
@@ -118,6 +122,7 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 			}
 		}
 	} else {
+		res.RulesetsRead = true
 		res.MergeQueueKnown = true
 	}
 

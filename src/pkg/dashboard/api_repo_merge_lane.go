@@ -70,9 +70,12 @@ type mergeLaneView struct {
 	EnforcementLabel string                `json:"enforcement_label"`
 	// EnforcementReason is set when the branch rules could not be read.
 	EnforcementReason string `json:"enforcement_reason,omitempty"`
-	NativeMergeQueue  bool   `json:"native_merge_queue"`
-	// RecommendUpToDateRule is true unless GitHub enforces up-to-date
-	// branches on this branch; Recommendation then says why and what it costs.
+	// RulesUnreadable is true when the rules endpoint could not be read, so
+	// unknown means a failed read and no recommendation is made.
+	RulesUnreadable  bool `json:"rules_unreadable,omitempty"`
+	NativeMergeQueue bool `json:"native_merge_queue"`
+	// RecommendUpToDateRule is true when the rules were read and GitHub does
+	// not enforce up-to-date branches on this branch; Recommendation then says why and what it costs.
 	RecommendUpToDateRule bool                  `json:"recommend_up_to_date_rule"`
 	Recommendation        string                `json:"recommendation,omitempty"`
 	Reasons               []mergeLaneReasonView `json:"reasons"`
@@ -153,7 +156,8 @@ func buildMergeLaneView(rec mergelane.Record, rules github.BranchRulesResult) me
 	if !rules.Known && rules.Reason != "" {
 		v.Reasons = append(v.Reasons, mergeLaneReasonView{Reason: "required checks unknown, no merge: " + rules.Reason})
 	}
-	if enforcement != github.UpToDateServerEnforced {
+	v.RulesUnreadable = !rules.RulesetsRead
+	if rules.RulesetsRead && enforcement != github.UpToDateServerEnforced {
 		v.RecommendUpToDateRule = true
 		v.Recommendation = UpToDateRuleRecommendation
 	}
