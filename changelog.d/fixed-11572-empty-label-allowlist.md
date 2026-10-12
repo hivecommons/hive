@@ -1,0 +1,1 @@
+- The kick's `ISSUE FILTER` notice is no longer rendered when no issue-label allowlist is configured (for example when only reporter-trust settings are present), so an empty allowlist means "no label filter" instead of reading as deny-all ([#11572](https://github.com/hivecommons/hive/issues/11572)).

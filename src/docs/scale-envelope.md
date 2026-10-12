@@ -29,7 +29,7 @@ ones to:
 
 1. **A truncated list must say it is truncated.** Every kick list that is cut
    ends with an explicit "… and N more" line
-   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:250-252`). A silent slice
+   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:252-254`). A silent slice
    reads to the agent as "this is the complete list".
 2. **Truncation must preserve the prioritization signal, not cut an arbitrary slice.**
    This holds today and is easy to assume backwards:
