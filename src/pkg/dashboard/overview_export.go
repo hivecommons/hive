@@ -370,7 +370,7 @@ func frontendIssue(raw any) (github.Issue, bool) {
 }
 
 func holdItemIssue(item github.HoldItem) github.Issue {
-	return github.Issue{Repo: item.Repo, Number: item.Number, Title: item.Title, URL: item.URL, Labels: item.Labels, Assignees: item.Assignees, HumanAcknowledged: item.HumanAcknowledged, CreatedAt: item.CreatedAt}
+	return github.Issue{Repo: item.Repo, Number: item.Number, Title: item.Title, URL: item.URL, Labels: item.Labels, Assignees: item.Assignees, HumanAcknowledged: item.HumanAcknowledged, CreatedAt: item.CreatedAt, ReporterConfirmationGate: item.ReporterConfirmationGate}
 }
 
 type frontendPR struct {

@@ -3078,6 +3078,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			b.ghClient,
 			b.ctx,
 			b.metricsCollector,
+			dashboard.WithContributeHub(b.dashSrv.ContributeHub()),
 		)
 		if d := b.dashSrv.GetAdvisoryDigest(); d != nil {
 			payload.AdvisoryDigest = d
@@ -7338,6 +7339,7 @@ func runEvalCycle(
 		ghClient,
 		ctx,
 		metricsCollector,
+		dashboard.WithContributeHub(dashSrv.ContributeHub()),
 	)
 	// Green on a PR pill means "the sweep would merge this now" — the
 	// verdict writeMergeEligible reached for this same actionable set a

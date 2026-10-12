@@ -260,6 +260,17 @@ func BuildAgentOnlyStatus(
 	}
 }
 
+type statusOptions struct{ hub *ContributeWSHub }
+
+// StatusOption adjusts BuildFrontendStatus.
+type StatusOption func(*statusOptions)
+
+// WithContributeHub lets the your-turn decision see the hub's unexpired task
+// leases.
+func WithContributeHub(hub *ContributeWSHub) StatusOption {
+	return func(o *statusOptions) { o.hub = hub }
+}
+
 func BuildFrontendStatus(
 	govState governor.State,
 	actionable *github.ActionableResult,
@@ -271,7 +282,12 @@ func BuildFrontendStatus(
 	ghClient *github.Client,
 	ctx context.Context,
 	metricsCollector *MetricsCollector,
+	opts ...StatusOption,
 ) *StatusPayload {
+	var options statusOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	agentMetrics := map[string]any{}
 	if metricsCollector != nil {
 		agentMetrics = metricsCollector.Get()
@@ -288,7 +304,7 @@ func BuildFrontendStatus(
 
 	repos := buildRepos(cfg, actionable, govState)
 	generatedAt := time.Now().UTC()
-	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt)
+	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub)
 	payload := &StatusPayload{
 		Timestamp:             generatedAt.Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),

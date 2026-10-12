@@ -23,6 +23,7 @@ func ownershipEnv11565(level int) ownershipEnv {
 		sentinelLabel:         config.DefaultSentinelLabel,
 		reviewerLaneAvailable: func(string) bool { return true },
 		escalatedAt:           func(string, int) time.Time { return ownershipNow11565 },
+		laneCanOpenPR:         func(lane string) bool { return lane == "quality" },
 	}
 }
 
@@ -293,7 +294,7 @@ func TestOwnershipPrecedence11565(t *testing.T) {
 		},
 		{
 			name: "actionable likely-done whose lane opens PRs is not yours",
-			got:  decideIssueOwnership(freshIssue11565("hive/likely-done"), env),
+			got:  decideIssueOwnership(inLane11592(freshIssue11565("hive/likely-done"), "quality"), env),
 			want: notYours11565,
 		},
 		{
@@ -307,8 +308,8 @@ func TestOwnershipPrecedence11565(t *testing.T) {
 			want: want11565{OwnershipVerbClose, OwnershipReasonVerifiedDone},
 		},
 		{
-			name: "likely-done at L2 is verified done",
-			got:  decideIssueOwnership(freshIssue11565("hive/likely-done"), ownershipEnv11565(2)),
+			name: "likely-done routed to a lane that cannot open PRs is verified done",
+			got:  decideIssueOwnership(inLane11592(freshIssue11565("hive/likely-done"), "scanner"), env),
 			want: want11565{OwnershipVerbClose, OwnershipReasonVerifiedDone},
 		},
 		{
@@ -439,15 +440,16 @@ func TestOwnershipSafetyNet11565(t *testing.T) {
 		got  Ownership
 		want want11565
 	}{
-		{"unclaimed issue at L3", decideIssueOwnership(staleIssue(), ownershipEnv11565(3)), safetyNet},
+		{"unclaimed issue at L3", decideIssueOwnership(inLane11592(staleIssue(), "quality"), ownershipEnv11565(3)), safetyNet},
 		{"claimed band issue (human assignee) at L5", func() Ownership {
-			in := staleIssue()
+			in := inLane11592(staleIssue(), "quality")
 			in.band = "in-progress"
 			return decideIssueOwnership(in, ownershipEnv11565(5))
 		}(), safetyNet},
-		{"backlog issue at L2", decideIssueOwnership(staleIssue(), ownershipEnv11565(2)), notYours11565},
-		{"issue with a lane claim", decideIssueOwnership(staleIssue("hive/claimed-by-scanner"), ownershipEnv11565(5)), notYours11565},
-		{"actionable likely-done issue", decideIssueOwnership(staleIssue("hive/likely-done"), ownershipEnv11565(5)), safetyNet},
+		{"issue routed to a lane that cannot open PRs", decideIssueOwnership(inLane11592(staleIssue(), "scanner"), ownershipEnv11565(4)), notYours11565},
+		{"issue with no lane", decideIssueOwnership(staleIssue(), ownershipEnv11565(4)), notYours11565},
+		{"issue with a lane claim", decideIssueOwnership(inLane11592(staleIssue("hive/claimed-by-scanner"), "quality"), ownershipEnv11565(5)), notYours11565},
+		{"actionable likely-done issue", decideIssueOwnership(inLane11592(staleIssue("hive/likely-done"), "quality"), ownershipEnv11565(5)), safetyNet},
 		{"issue covered by an open PR", func() Ownership {
 			in := nonActionable11565(repoWorkBucketClaimedByPR, "Open external PR #4 covers this issue")
 			in.createdAt, in.updatedAt = stale, stale
@@ -476,13 +478,13 @@ func TestOwnershipSafetyNet11565(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) { checkOwnership11565(t, tt.got, tt.want) })
 	}
 
-	got := decideIssueOwnership(staleIssue(), ownershipEnv11565(3))
+	got := decideIssueOwnership(inLane11592(staleIssue(), "quality"), ownershipEnv11565(3))
 	if got.Reason != "untouched for 20 days" {
 		t.Fatalf("safety-net reason = %q, want untouched for 20 days", got.Reason)
 	}
 	shorter := ownershipEnv11565(3)
 	shorter.staleDays = 30
-	checkOwnership11565(t, decideIssueOwnership(staleIssue(), shorter), notYours11565)
+	checkOwnership11565(t, decideIssueOwnership(inLane11592(staleIssue(), "quality"), shorter), notYours11565)
 }
 
 func TestOwnershipFixedSets11565(t *testing.T) {

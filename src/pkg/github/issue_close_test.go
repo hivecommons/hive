@@ -221,6 +221,29 @@ func TestReporterConfirmationPredicateSharedByPRAndCloseGates(t *testing.T) {
 	}
 }
 
+func TestWorkIssueRecordsReporterConfirmationGate(t *testing.T) {
+	c := &Client{}
+	gated := closeGateIssue("human", "User", "Bug", "plain body\n\nhive: needs-confirmation", []string{"bug"})
+	plain := closeGateIssue("human", "User", "Bug", "plain body", []string{"bug"})
+	if !c.workIssue("o/r", gated, []string{"bug"}, "filtered", "x").ReporterConfirmationGate {
+		t.Fatal("a needs-confirmation body marker should set the gate flag")
+	}
+	if c.workIssue("o/r", plain, []string{"bug"}, "filtered", "x").ReporterConfirmationGate {
+		t.Fatal("an ungated human bug must not set the gate flag")
+	}
+	if c.reporterConfirmationGateApplies(nil) {
+		t.Fatal("a nil issue is never gated")
+	}
+	c.SetReporterConfirmationEnabledFunc(func() bool { return true })
+	if !c.reporterConfirmationGateApplies(plain) {
+		t.Fatal("the operator switch should gate a human-filed bug")
+	}
+	row := repoWorkIssueFromIssue(Issue{ReporterConfirmationGate: true}, "claimed", "x")
+	if !row.ReporterConfirmationGate {
+		t.Fatal("repoWorkIssueFromIssue should carry the gate flag")
+	}
+}
+
 func TestReporterConfirmationConfigReenablesGate(t *testing.T) {
 	c := &Client{}
 	c.SetReporterConfirmationEnabledFunc(func() bool { return true })

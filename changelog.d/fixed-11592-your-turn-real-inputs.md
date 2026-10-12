@@ -1,0 +1,1 @@
+- The "your turn" safety net and likely-done rule now use the routed lane's real push rights, live claims and task leases, and the reporter-confirmation gate, so ordinary backlog no longer shows a stale-issue review marker and likely-done issues routed to a lane that cannot push are closed ([#11592](https://github.com/hivecommons/hive/issues/11592)).

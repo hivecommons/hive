@@ -1594,6 +1594,28 @@ func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) 
 	return keys
 }
 
+func leaseItemKey(repo string, number int) string {
+	return strings.ToLower(repo) + "#" + strconv.Itoa(number)
+}
+
+// leasedWorkItems is the set of repo#number items with an unexpired task
+// lease, for the your-turn safety net. It reads the in-memory registry only.
+func (h *ContributeWSHub) leasedWorkItems(now time.Time) map[string]bool {
+	items := make(map[string]bool)
+	if h == nil {
+		return items
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	for _, l := range h.leases {
+		if l == nil || l.number <= 0 || l.expiresAt.IsZero() || now.After(l.expiresAt) || l.identity == runAdmissionIdentity {
+			continue
+		}
+		items[leaseItemKey(l.repo, l.number)] = true
+	}
+	return items
+}
+
 // taskLeasesFile is the durable home of the server-issued task-lease registry
 // (#5681). It sits beside the other contributor ledgers, but is written 0600: it is
 // the C4 authorization record a resume is matched against, not a report.
