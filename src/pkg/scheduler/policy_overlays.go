@@ -227,9 +227,11 @@ const heldRedPRExemptAgent = "outreach"
 // non-escalated red or conflicted PRs it can repair. A held red PR
 // (hivecommons/hive#7438) is listed like any other — with heldRedPRNote —
 // except for outreach's. A red PR already deferred to a still-open shared-CI
-// incident (deferred_incident, hivecommons/hive#10528) has nothing to repair:
-// it is named in one line without repair instructions, and when every red PR
-// the agent owns is deferred there is no section — and no banner — at all.
+// incident (deferred_incident, hivecommons/hive#10528), or triaged as failing
+// upstream at its current head (deferred_external, hivecommons/hive#11609),
+// has nothing to repair: it is named in one line without repair instructions,
+// and when every red PR the agent owns is deferred there is no section — and
+// no banner — at all.
 func formatRedPRFixData(data []byte, agent string) string {
 	type ciFailingRow struct {
 		Number           int      `json:"number"`
@@ -246,6 +248,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Conflict         bool     `json:"conflict"`
 		ReroutedFrom     string   `json:"rerouted_from"`
 		DeferredIncident int      `json:"deferred_incident"`
+		DeferredExternal bool     `json:"deferred_external"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -253,7 +256,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 	if json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
-	var mine, deferred []ciFailingRow
+	var mine, deferred, external []ciFailingRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -282,6 +285,10 @@ func formatRedPRFixData(data []byte, agent string) string {
 			deferred = append(deferred, pr)
 			continue
 		}
+		if pr.DeferredExternal {
+			external = append(external, pr)
+			continue
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -299,6 +306,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 			refs = append(refs, fmt.Sprintf("%s#%d → incident #%d", pr.Repo, pr.Number, pr.DeferredIncident))
 		}
 		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already deferred to a still-open shared-CI incident — do not repair or re-triage them; they return here when the incident closes: %s)\n", len(deferred), strings.Join(refs, ", ")))
+	}
+	if len(external) > 0 {
+		refs := make([]string, 0, len(external))
+		for _, pr := range external {
+			refs = append(refs, fmt.Sprintf("%s#%d", pr.Repo, pr.Number))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already triaged as failing upstream at their current head — do not repair or re-triage them; they return here when the head changes or another check fails: %s)\n", len(external), strings.Join(refs, ", ")))
 	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")

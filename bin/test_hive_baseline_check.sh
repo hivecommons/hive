@@ -20,7 +20,19 @@ if [[ "${MOCK_GH_FAIL:-}" == "1" ]]; then
 fi
 case "$1:$2" in
   api:repos/acme/widgets)
-    printf '{"default_branch":"trunk"}\n'
+    # MOCK_PARENT makes acme/widgets a GitHub fork of that repository.
+    if [[ -n "${MOCK_PARENT:-}" ]]; then
+      printf '{"default_branch":"trunk","fork":true,"parent":{"full_name":"%s"}}\n' "$MOCK_PARENT"
+    else
+      printf '{"default_branch":"trunk"}\n'
+    fi
+    ;;
+  api:repos/upstream/widgets)
+    [[ -n "${MOCK_UPSTREAM_RUNS:-}" ]] || exit 1
+    printf '{"default_branch":"main"}\n'
+    ;;
+  api:repos/upstream/widgets/commits/main/check-runs\?*)
+    cat "$MOCK_UPSTREAM_RUNS"
     ;;
   api:repos/acme/widgets/commits/trunk/check-runs?per_page=100)
     cat "$MOCK_BASE_RUNS"
@@ -227,6 +239,65 @@ check_status 2 "GitHub lookup failures are unknown, never isolated"
 
 run_helper not-a-repo build
 check_status 2 "malformed repository names are rejected"
+
+# --- hivecommons/hive#11609: upstream baseline for a fork ---
+
+# A fork's PR fails a check that is also red on the upstream default branch,
+# and the fork's own default branch has no run of it: the failure is
+# upstream's. The verdict is DEFER_EXTERNAL with a marker pinned to the PR's
+# head and the URL-encoded check name.
+UP_HEAD=54ff622aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export MOCK_UPSTREAM_RUNS="$TMP_ROOT/upstream.json"
+printf '%s\n' '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"failure","completed_at":"2026-08-30T01:00:00Z"}]}' >"$MOCK_UPSTREAM_RUNS"
+write_base '{"check_runs":[]}'
+write_prs '[]'
+printf '{"number":66,"headRefOid":"%s","isCrossRepository":false}\n' "$UP_HEAD" >"$MOCK_PR_VIEW"
+MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
+check_status 0 "a check red on the upstream default branch is shared"
+check_output '"action":"DEFER_EXTERNAL"' "red upstream defers as external"
+check_output '"reason":"upstream"' "JSON names the upstream evidence"
+check_output '"upstream":{"repo":"upstream/widgets","branch":"main","conclusion":"failure"' "JSON carries the upstream baseline"
+check_output "\"external_marker\":\"<!-- hive-ci-external head=$UP_HEAD check=Check%20ogc-lts%20%2844%29 -->\"" \
+  "the marker pins the PR head and the encoded check name"
+MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66
+check_output 'is red (failure) on upstream upstream/widgets default branch "main"' "human output names the upstream"
+check_output "End that comment with this marker: <!-- hive-ci-external head=$UP_HEAD" "human output prints the marker"
+
+# Without a PR there is no head to pin: the verdict stands, no marker.
+MOCK_PARENT=upstream/widgets run_helper acme/widgets "Check ogc-lts (44)" --json
+check_status 0 "red upstream is shared without a PR argument"
+if [[ "$OUTPUT" == *external_marker* ]]; then
+  echo "  FAIL: no marker without a PR head (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no marker without a PR head"; PASS=$((PASS + 1))
+fi
+
+# --upstream names the upstream of a repository GitHub does not call a fork.
+MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --upstream upstream/widgets --json
+check_output '"action":"DEFER_EXTERNAL"' "--upstream supplies the upstream for a non-fork"
+
+# A fresh green on the fork's own default branch proves the check can pass
+# here: upstream red does not excuse the PR.
+write_base '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"success","completed_at":"2026-08-30T01:00:00Z"}]}'
+MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
+check_status 1 "a fresh green fork base keeps the PR-local verdict despite red upstream"
+check_output '"action":"FIX_DIFF"' "fresh green fork base means fix the diff"
+check_output '"conclusion":"failure"' "the upstream evidence is still reported"
+
+# A green upstream adds nothing.
+write_base '{"check_runs":[]}'
+printf '%s\n' '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"success","completed_at":"2026-08-30T01:00:00Z"}]}' >"$MOCK_UPSTREAM_RUNS"
+MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
+check_status 1 "green upstream leaves the verdict PR-local"
+
+# An unreadable upstream is never evidence: the local verdict stands.
+MOCK_PARENT=upstream/widgets MOCK_UPSTREAM_RUNS='' MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
+check_status 1 "an unreadable upstream keeps the local verdict"
+check_output '"conclusion":"unknown"' "JSON reports the upstream as unknown"
+
+run_helper acme/widgets build --upstream not-a-repo
+check_status 2 "a malformed --upstream is rejected"
+unset MOCK_UPSTREAM_RUNS
 
 check_file_contains "$ROOT_DIR/src/Dockerfile" \
   'COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh' \

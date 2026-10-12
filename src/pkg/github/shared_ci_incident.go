@@ -30,33 +30,45 @@ func newestSharedCIMarker(texts []string) int {
 	return newest
 }
 
+// redPRCommentTexts lists a red PR's comment bodies, oldest first, for the
+// marker lookups that keep it out of the repair lists: the shared-CI
+// incident marker (hivecommons/hive#10528) and the external-CI marker
+// (hivecommons/hive#11609). One listing serves both. ok is false when the
+// comments cannot be read; the PR then stays listed.
+func (c *Client) redPRCommentTexts(ctx context.Context, pr *PullRequest) (texts []string, ok bool) {
+	owner, repo := c.splitRepo(pr.Repo)
+	ctx = WithRESTCaller(ctx, "hive:shared_ci_incident")
+	comments, err := c.listIssueComments(ctx, owner, repo, pr.Number)
+	if err != nil {
+		c.logger.Debug("CI deferral marker lookup failed; PR stays in the repair list", "repo", pr.Repo, "pr", pr.Number, "error", err)
+		return nil, false
+	}
+	texts = make([]string, 0, len(comments))
+	for _, comment := range comments {
+		texts = append(texts, comment.GetBody())
+	}
+	return texts, true
+}
+
 // openSharedCIIncident returns the shared-CI incident a red PR has already
 // been deferred to, when that incident issue is still open; otherwise 0
-// (hivecommons/hive#10528). A PR deferred to an open incident has no repair
-// an agent can make, so the kick builders keep it out of their repair lists;
-// once the incident closes the marker is stale and the PR is listed again.
+// (hivecommons/hive#10528). texts are the PR's comment bodies, oldest first.
+// A PR deferred to an open incident has no repair an agent can make, so the
+// kick builders keep it out of their repair lists; once the incident closes
+// the marker is stale and the PR is listed again.
 //
 // Every lookup failure returns 0: listing a deferred PR costs one redundant
 // triage, hiding a PR that is not deferred stalls it, so the error side is
 // the listed side. states memoizes incident-open lookups for one enrichment
 // pass, keyed "owner/repo#n", so N PRs deferred to one incident cost one
 // issue GET.
-func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, states map[string]bool) int {
-	owner, repo := c.splitRepo(pr.Repo)
-	ctx = WithRESTCaller(ctx, "hive:shared_ci_incident")
-	comments, err := c.listIssueComments(ctx, owner, repo, pr.Number)
-	if err != nil {
-		c.logger.Debug("shared-CI marker lookup failed; PR stays in the repair list", "repo", pr.Repo, "pr", pr.Number, "error", err)
-		return 0
-	}
-	texts := make([]string, 0, len(comments))
-	for _, comment := range comments {
-		texts = append(texts, comment.GetBody())
-	}
+func (c *Client) openSharedCIIncident(ctx context.Context, pr *PullRequest, texts []string, states map[string]bool) int {
 	incident := newestSharedCIMarker(texts)
 	if incident == 0 {
 		return 0
 	}
+	owner, repo := c.splitRepo(pr.Repo)
+	ctx = WithRESTCaller(ctx, "hive:shared_ci_incident")
 	key := fmt.Sprintf("%s/%s#%d", owner, repo, incident)
 	open, known := states[key]
 	if !known {

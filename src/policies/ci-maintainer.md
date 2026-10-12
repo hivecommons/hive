@@ -59,6 +59,18 @@ exactly one marker per PR per incident, only for a `DEFER_TO_INCIDENT` verdict
 (never for `FIX_DIFF`, `MERGE_BASE`, or `RERUN_BASELINE`), and never edit or
 remove it while the incident is open.
 
+`DEFER_EXTERNAL` (exit `0`, reason `upstream`) means the repository syncs
+from an upstream project (its GitHub fork parent, or `--upstream`) and the same
+check is red on the upstream default branch too: the failure comes from
+upstream and nothing in this repository can fix it. Do not repair, retry, or
+open a `[shared-ci]` incident for it. Leave one PR comment with the upstream
+evidence and end it with the helper's `external_marker` value verbatim, for
+example `<!-- hive-ci-external head=<40-char head sha> check=<encoded check name> -->`.
+That marker keeps the PR out of FIX-BEFORE-NEW and the CI_FAILING repair list
+once every failing check at that head carries one; a push or a newly failing
+check brings it back. Never re-stamp a head and check that already carry a
+marker.
+
 ## After You Push: Do Not Wait for CI (MANDATORY)
 
 Opening or updating a PR ends your work on that item for this kick. **Never

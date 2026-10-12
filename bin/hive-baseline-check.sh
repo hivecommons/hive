@@ -17,6 +17,12 @@
 # are behind the default branch, and (c) whether the PR's head lives in a
 # fork the hive cannot push to. It emits the action the agent needs, not just
 # a bit.
+#
+# hivecommons/hive#11609: a fork that syncs from an upstream project fails
+# whenever upstream is broken, and nothing in the fork can repair that. The
+# helper now also reads the same check on the upstream repository's default
+# branch (the GitHub fork parent, or --upstream) and, when it is red there,
+# returns DEFER_EXTERNAL with a head-pinned marker the hive honours.
 
 set -u -o pipefail
 
@@ -31,11 +37,14 @@ Options:
                              before it stops counting as evidence when every
                              red sibling is behind the default branch
                              (default 24, or HIVE_BASELINE_MAX_AGE_HOURS)
+  --upstream OWNER/REPO      repository this one syncs from (default: the
+                             GitHub fork parent, when the repository is a fork)
   --json                     machine-readable output
 
 Exit status:
   0  shared failure: red on the default branch, or red on N sibling PRs at
-     least one of which is up to date with the default branch
+     least one of which is up to date with the default branch, or red on the
+     upstream repository's default branch (DEFER_EXTERNAL)
   1  PR-local: the evidence does not point at a repository incident. The
      `action` says what to do — FIX_DIFF, MERGE_BASE (the branch is behind
      the default branch; merge it before diagnosing), or NOT_REACHABLE_FORK
@@ -48,6 +57,8 @@ Exit status:
 
 Actions (also in --json as "action"):
   DEFER_TO_INCIDENT  shared: one repository incident, not one failure per PR
+  DEFER_EXTERNAL     red upstream too: nothing in this repository can fix it;
+                     comment once with the evidence and the external_marker
   MERGE_BASE         the branch is behind the default branch; merge it first
   FIX_DIFF           PR-local: diagnose this PR's own diff
   NOT_REACHABLE_FORK the head is in a fork; you cannot push — comment only
@@ -77,6 +88,7 @@ MAX_AGE_HOURS="${HIVE_BASELINE_MAX_AGE_HOURS:-24}"
 # "someone up to date is red too".
 DRIFT_SAMPLE="${HIVE_BASELINE_DRIFT_SAMPLE:-10}"
 JSON_OUTPUT=false
+UPSTREAM=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --threshold)
@@ -87,6 +99,11 @@ while [[ $# -gt 0 ]]; do
     --max-baseline-age-hours)
       [[ $# -ge 2 ]] || error "--max-baseline-age-hours requires a value"
       MAX_AGE_HOURS="$2"
+      shift 2
+      ;;
+    --upstream)
+      [[ $# -ge 2 ]] || error "--upstream requires a value"
+      UPSTREAM="$2"
       shift 2
       ;;
     --json)
@@ -115,6 +132,7 @@ done
 [[ "$MAX_AGE_HOURS" =~ ^[0-9]+$ ]] || error "max baseline age must be a non-negative integer (hours)"
 [[ "$DRIFT_SAMPLE" =~ ^[0-9]+$ ]] || error "HIVE_BASELINE_DRIFT_SAMPLE must be a non-negative integer"
 [[ -z "$PR_NUMBER" || "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || error "PR number must be a positive integer"
+[[ -z "$UPSTREAM" || "$UPSTREAM" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || error "--upstream must be owner/name"
 command -v gh >/dev/null 2>&1 || error "gh is required"
 command -v jq >/dev/null 2>&1 || error "jq is required"
 
@@ -219,6 +237,7 @@ fi
 # it behind base (merge base before diagnosing anything)?
 PR_FORK=false
 PR_BEHIND_BY="unknown"
+PR_OID=""
 if [[ -n "$PR_NUMBER" ]]; then
   if ! PR_JSON="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json number,headRefOid,isCrossRepository)"; then
     error "could not read PR $REPO#$PR_NUMBER"
@@ -228,6 +247,40 @@ if [[ -n "$PR_NUMBER" ]]; then
   if [[ -n "$PR_OID" ]]; then
     PR_BEHIND_BY="$(behind_by "$REPO" "$BASE_BRANCH" "$PR_OID")"
   fi
+fi
+
+# The upstream repository this one syncs from (hivecommons/hive#11609): the
+# GitHub fork parent unless --upstream names one. The same check, red on the
+# upstream default branch, means the failure arrives from upstream and no
+# change in this repository can turn it green. Upstream evidence is extra:
+# any lookup failure leaves it "unknown" and the local verdict stands.
+if [[ -z "$UPSTREAM" ]]; then
+  UPSTREAM="$(jq -r '.parent.full_name // ""' <<<"$REPO_JSON")"
+fi
+UPSTREAM_BRANCH=""
+UPSTREAM_CONCLUSION=""
+UPSTREAM_COMPLETED_AT=""
+UPSTREAM_RED=false
+CHECK_URI="$(jq -rn --arg s "$CHECK_NAME" '$s | @uri')"
+if [[ -n "$UPSTREAM" ]]; then
+  UPSTREAM_CONCLUSION="unknown"
+  if UPSTREAM_JSON="$(gh api "repos/$UPSTREAM" 2>/dev/null)" &&
+    UPSTREAM_BRANCH="$(jq -er '.default_branch | select(type == "string" and length > 0)' <<<"$UPSTREAM_JSON" 2>/dev/null)" &&
+    UPSTREAM_RUNS_JSON="$(gh api "repos/$UPSTREAM/commits/$UPSTREAM_BRANCH/check-runs?check_name=$CHECK_URI&per_page=100" 2>/dev/null)" &&
+    UPSTREAM_RUN_JSON="$(jq -ce --arg check "$CHECK_NAME" '
+        [.check_runs[]? | select(.name == $check)]
+        | sort_by(.completed_at // .started_at // "")
+        | (last // {})
+      ' <<<"$UPSTREAM_RUNS_JSON" 2>/dev/null)"; then
+    UPSTREAM_CONCLUSION="$(jq -r '(.conclusion // .status // "missing")' <<<"$UPSTREAM_RUN_JSON")"
+    UPSTREAM_CONCLUSION="${UPSTREAM_CONCLUSION,,}"
+    UPSTREAM_COMPLETED_AT="$(jq -r '(.completed_at // .started_at // "")' <<<"$UPSTREAM_RUN_JSON")"
+  fi
+  case "$UPSTREAM_CONCLUSION" in
+    failure|error|cancelled|timed_out|action_required|startup_failure|stale)
+      UPSTREAM_RED=true
+      ;;
+  esac
 fi
 
 BASE_RED=false
@@ -277,6 +330,18 @@ if [[ "$EXIT" -eq 1 && -n "$PR_NUMBER" ]]; then
     [[ "$REASON" == "isolated" ]] && REASON="stale-branch"
   fi
 fi
+# Red upstream outranks every local verdict but one: a fresh green on this
+# repository's own default branch proves the check can pass here, so the
+# PR-local analysis stands. Otherwise the failure is upstream's, and the
+# marker pins that triage to this exact head and check, so the hive stops
+# re-listing the PR until either changes (hivecommons/hive#11609).
+if [[ "$UPSTREAM_RED" == true && ! ( "$BASE_CONCLUSION" == "success" && "$BASE_STALE" == false ) ]]; then
+  SHARED=true; REASON="upstream"; ACTION="DEFER_EXTERNAL"; EXIT=0
+fi
+EXTERNAL_MARKER=""
+if [[ "$ACTION" == "DEFER_EXTERNAL" && "$PR_OID" =~ ^[0-9a-f]{40}$ ]]; then
+  EXTERNAL_MARKER="<!-- hive-ci-external head=$PR_OID check=$CHECK_URI -->"
+fi
 
 if [[ "$JSON_OUTPUT" == true ]]; then
   jq -cn \
@@ -299,17 +364,35 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     --arg pr "$PR_NUMBER" \
     --argjson pr_fork "$PR_FORK" \
     --arg pr_behind_by "$PR_BEHIND_BY" \
+    --arg upstream "$UPSTREAM" \
+    --arg upstream_branch "$UPSTREAM_BRANCH" \
+    --arg upstream_conclusion "$UPSTREAM_CONCLUSION" \
+    --arg upstream_completed_at "$UPSTREAM_COMPLETED_AT" \
+    --arg external_marker "$EXTERNAL_MARKER" \
     '{repo:$repo, check:$check, shared:$shared, reason:$reason, action:$action,
       base_branch:$base_branch, base_conclusion:$base_conclusion,
       base_completed_at:$base_completed_at, base_age_hours:$base_age_hours, base_stale:$base_stale,
       sibling_threshold:$threshold, sibling_prs:$sibling_prs,
-      sibling_drift:{sampled:$siblings_sampled, behind:$siblings_behind, current:$siblings_current, unknown:$siblings_unknown}}
+      sibling_drift:{sampled:$siblings_sampled, behind:$siblings_behind, current:$siblings_current, unknown:$siblings_unknown},
+      upstream:(if $upstream == "" then null else
+          {repo:$upstream, branch:(if $upstream_branch == "" then null else $upstream_branch end),
+           conclusion:$upstream_conclusion,
+           completed_at:(if $upstream_completed_at == "" then null else $upstream_completed_at end)}
+        end)}
      + (if $pr == "" then {} else
           {pr:($pr|tonumber), pr_fork:$pr_fork,
            pr_behind_by:(if $pr_behind_by == "unknown" then null else ($pr_behind_by|tonumber) end)}
-        end)'
+        end)
+     + (if $external_marker == "" then {} else {external_marker:$external_marker} end)'
 else
   case "$REASON" in
+    upstream)
+      printf 'SHARED (%s): check "%s" is red (%s) on upstream %s default branch "%s" as well; the failure comes from upstream and nothing in %s can fix it. Comment once with the evidence; do not repair, retry or open a [shared-ci] incident.\n' \
+        "$ACTION" "$CHECK_NAME" "$UPSTREAM_CONCLUSION" "$UPSTREAM" "$UPSTREAM_BRANCH" "$REPO"
+      if [[ -n "$EXTERNAL_MARKER" ]]; then
+        printf 'End that comment with this marker: %s\n' "$EXTERNAL_MARKER"
+      fi
+      ;;
     default-branch)
       printf 'SHARED (%s): check "%s" on %s default branch "%s" is red (%s).\n' \
         "$ACTION" "$CHECK_NAME" "$REPO" "$BASE_BRANCH" "$BASE_CONCLUSION"

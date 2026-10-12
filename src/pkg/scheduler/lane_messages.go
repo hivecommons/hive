@@ -545,6 +545,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		FailingChecks    []string `json:"failing_checks"`
 		Excerpt          string   `json:"excerpt"`
 		DeferredIncident int      `json:"deferred_incident"`
+		DeferredExternal bool     `json:"deferred_external"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -576,6 +577,11 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// verdict on every kick. It is named under its own heading, without
 	// repair instructions, until the incident closes.
 	var deferred []ciFailingRow
+	// A red PR an agent already triaged as failing upstream at this head
+	// (hivecommons/hive#11609) is in the same position: nothing in this
+	// repository can fix it, so it is named under its own heading until a
+	// push or a newly failing check invalidates the triage.
+	var external []ciFailingRow
 	kept := payload.Items[:0]
 	for _, pr := range payload.Items {
 		if pr.Held {
@@ -584,6 +590,10 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 		if pr.DeferredIncident > 0 {
 			deferred = append(deferred, pr)
+			continue
+		}
+		if pr.DeferredExternal {
+			external = append(external, pr)
 			continue
 		}
 		kept = append(kept, pr)
@@ -627,6 +637,20 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 				break
 			}
 			b.WriteString(fmt.Sprintf("  #%d %s — deferred to incident #%d — %s\n", pr.Number, pr.Repo, pr.DeferredIncident, pr.Title))
+		}
+	}
+	if len(external) > 0 {
+		b.WriteString(fmt.Sprintf("DEFERRED AS FAILING UPSTREAM (%d — no repair: an agent already found the same check red on the upstream repository at this head; do not push, retry, or comment again; each PR returns to the list above when its head changes or another check fails):\n", len(external)))
+		for i, pr := range external {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(external)-i, limit))
+				break
+			}
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s (sha:%s) — %s%s\n", pr.Number, pr.Repo, pr.HeadSHA, pr.Title, checks))
 		}
 	}
 	if len(forks) > 0 {
