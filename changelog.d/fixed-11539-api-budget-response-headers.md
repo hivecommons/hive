@@ -1,0 +1,1 @@
+- The API budget now also uses the remaining count GitHub returns on every response, so it goes to `conserve` / `critical` even when the `/rate_limit` reading is stale (for example after a restart), instead of staying `normal` while GitHub returns 403 rate-limit errors. Fixes #11539.

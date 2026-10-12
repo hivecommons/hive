@@ -71,6 +71,15 @@ func (c *Client) APIBudgetMode() (APIBudgetMode, APIBudgetSnapshot) {
 	}
 	entry := c.rateLimits.snapshot(githubCoreRateLimitResource)
 	now := c.rateLimits.clock()
+	// Per-response headers are never stale after a restart; only a lower
+	// remaining is taken so the #5733 fresh-token artifact cannot raise it.
+	if remaining, reset, ok := CoreRateLimitSnapshot(); ok && now.Before(reset) && (entry.Limit <= 0 || remaining < entry.Remaining) {
+		entry.Remaining = remaining
+		entry.Reset = reset
+		if entry.Limit <= 0 {
+			entry.Limit = 5000
+		}
+	}
 	c.apiBudget.mu.Lock()
 	defer c.apiBudget.mu.Unlock()
 	reserve, critical := c.apiBudget.reserve, c.apiBudget.critical

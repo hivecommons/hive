@@ -3,6 +3,8 @@ package github
 import (
 	"io"
 	"log/slog"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +97,48 @@ func TestAPIBudgetCriticalCanRelaxToConserve(t *testing.T) {
 	}
 	if got := set(400); got != APIBudgetConserve {
 		t.Fatalf("mode at 400 = %v, want conserve", got)
+	}
+}
+
+func TestAPIBudgetModeUsesResponseHeaders(t *testing.T) {
+	now := time.Date(2026, 10, 12, 0, 20, 0, 0, time.UTC)
+	trackerReset := now.Add(40 * time.Minute)
+	cases := []struct {
+		name          string
+		header        bool
+		remaining     string
+		reset         time.Time
+		wantMode      APIBudgetMode
+		wantRemaining int
+	}{
+		{"lower remaining critical", true, "0", now.Add(20 * time.Minute), APIBudgetCritical, 0},
+		{"lower remaining conserve later reset", true, "600", now.Add(60 * time.Minute), APIBudgetConserve, 600},
+		{"higher remaining ignored", true, "4999", now.Add(20 * time.Minute), APIBudgetNormal, 4908},
+		{"past reset ignored", true, "0", now.Add(-time.Minute), APIBudgetNormal, 4908},
+		{"no header snapshot", false, "", time.Time{}, APIBudgetNormal, 4908},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRESTAccountingForTest(t, now)
+			if tc.header {
+				h := http.Header{}
+				h.Set("X-RateLimit-Resource", githubCoreRateLimitResource)
+				h.Set("X-RateLimit-Remaining", tc.remaining)
+				h.Set("X-RateLimit-Reset", strconv.FormatInt(tc.reset.Unix(), 10))
+				RecordRESTRequest("hive", http.MethodGet, "/repos/hivecommons/hive/issues", http.StatusOK, h)
+			}
+			c := &Client{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			c.rateLimits.now = func() time.Time { return now }
+			c.SetAPIBudgetThresholds(800, 250)
+			c.rateLimits.mu.Lock()
+			c.rateLimits.windows = map[string]rateLimitWindow{
+				githubCoreRateLimitResource: {limit: 5000, remaining: 4908, reset: trackerReset, observedAt: now},
+			}
+			c.rateLimits.mu.Unlock()
+			mode, snap := c.APIBudgetMode()
+			if mode != tc.wantMode || snap.Remaining != tc.wantRemaining {
+				t.Fatalf("mode/remaining = %v/%d, want %v/%d", mode, snap.Remaining, tc.wantMode, tc.wantRemaining)
+			}
+		})
 	}
 }
