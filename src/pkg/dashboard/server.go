@@ -1001,6 +1001,11 @@ type FrontendRepo struct {
 	// filtered, reporter triage, and similar named exclusions). They keep the
 	// repo card's total honest without adding anything to the queues.
 	NonActionableIssues []any `json:"nonActionableIssues,omitempty"`
+	// Ownership is the your-turn decision for every issue and PR row above,
+	// keyed by ownershipKey and computed once per status refresh
+	// (applyOwnershipDecisions). Response copies attach each decision to its
+	// row; it is not serialized here.
+	Ownership map[string]Ownership `json:"-"`
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable

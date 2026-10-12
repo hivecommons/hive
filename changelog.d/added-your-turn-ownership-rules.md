@@ -1,0 +1,1 @@
+- The dashboard status payload now carries a server-side "your turn" decision on every issue and PR row (`ownership`: `your_turn`, verb, reason code, reason, resolving action and `inbox_rank`), and the default waiting band now holds only the four parking labels (`needs-human`, `needs-direction`, `needs-decision`, `needs-spec`).

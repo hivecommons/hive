@@ -340,9 +340,11 @@ in exactly one band, while non-winning states remain as badges on the pill:
    satisfies the PR-time gate and is not in the payload). Acknowledge it, or
    close it. Once acknowledged the issue falls through to Unclaimed/Claimed
    with the role badge still on the pill.
-4. **Needs human** (`needs human`) — labels such as `blocked`, `needs-decision`,
-   `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
-   `needs-triage` *label* lands here, not in the Needs triage band.
+4. **Needs human** (`needs human`) — the four parking labels by default:
+   `needs-human`, `needs-direction`, `needs-decision` and `needs-spec`.
+   `blocked`, `2-discussing`, `Epic` and `needs-triage` no longer place an
+   issue here by default; their row glyphs remain. Parked issues listed under
+   `nonActionableIssues` carry band `waiting` too.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
    `hive/covered-by-pr`, and `hive/likely-done`: an agent believes the work
    landed; verify and close.
@@ -358,7 +360,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 ```yaml
 dashboard:
   issue_bands:
-    waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
+    waiting_labels: [needs-human, needs-direction, needs-decision, needs-spec]
     done_labels: [hive/already-done, hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
@@ -391,6 +393,21 @@ band aging without extra GitHub API calls. The existing
 `dashboard.issue_bands.waiting_labels` and `stale_days` settings are reused for
 PR display; changing them does not alter enumeration, holds, review, or merge
 queueing.
+
+## Your-turn decision
+
+Every issue and PR row in the status payload carries an `ownership` object,
+decided on the server once per status refresh (hivecommons/hive#11507):
+`your_turn`, and for your-turn items the `verb` (`INSPECT`, `DECIDE`,
+`STEER`, `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, `CLOSE`), a stable
+`reason_code`, a one-line `reason`, the resolving `action` when the dashboard
+already offers one (`release_hold`), and `inbox_rank`, the item's position in
+the inbox across all repositories (grouped by verb in that order, then least
+recently active first). Consumers read these fields and never re-derive them
+from labels or bands. The decision makes no GitHub API calls; the only local
+write is the first time a refresh saw a hive PR with `needs-human`, kept in
+`/data/ownership-state.json` so the adjudicator's four-hour wait survives a
+restart.
 
 ## Linked PR issue signals
 

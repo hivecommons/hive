@@ -287,8 +287,10 @@ func BuildFrontendStatus(
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
 	repos := buildRepos(cfg, actionable, govState)
+	generatedAt := time.Now().UTC()
+	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt)
 	payload := &StatusPayload{
-		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		Timestamp:             generatedAt.Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
 		HiveID:                cfg.HiveID,
 		HiveIDEditable:        !hiveIDLocked,

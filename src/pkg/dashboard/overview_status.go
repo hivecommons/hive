@@ -18,14 +18,26 @@ type OverviewBands struct {
 type overviewStatusIssue struct {
 	github.Issue
 	IssueBandInfo
+	Ownership *Ownership `json:"ownership,omitempty"`
 }
 type overviewStatusHold struct {
 	github.HoldItem
 	IssueBandInfo
+	Ownership *Ownership `json:"ownership,omitempty"`
 }
 type overviewStatusPR struct {
 	FrontendPR
 	PRBandInfo
+	Ownership *Ownership `json:"ownership,omitempty"`
+}
+
+// overviewStatusNonActionable is a non-actionable issue row with its
+// your-turn decision. Parked rows (the four hard-suppress buckets) carry band
+// waiting; every other non-actionable row keeps no band and its bucket group.
+type overviewStatusNonActionable struct {
+	github.RepoWorkIssue
+	Band      string     `json:"band,omitempty"`
+	Ownership *Ownership `json:"ownership,omitempty"`
 }
 
 // statusWithOverviewBands copies response containers, leaving the cached typed
@@ -39,7 +51,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	out := *status
 	out.OverviewBands = &OverviewBands{Issues: IssueBandSpecs(cfg), PRs: PRBandSpecs(cfg)}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
-	issues := func(items []any, held bool, repoName string) []any {
+	issues := func(items []any, held bool, repoName string, decisions map[string]Ownership) []any {
 		if items == nil {
 			return nil
 		}
@@ -60,18 +72,43 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 					out.OverviewBands.Issues[i].Count++
 				}
 			}
+			ownership := ownershipFor(decisions, ownershipKindIssue, issue.Number)
 			switch v := raw.(type) {
 			case github.HoldItem:
-				result = append(result, overviewStatusHold{v, info})
+				result = append(result, overviewStatusHold{v, info, ownership})
 			case *github.HoldItem:
-				result = append(result, overviewStatusHold{*v, info})
+				result = append(result, overviewStatusHold{*v, info, ownership})
 			default:
-				result = append(result, overviewStatusIssue{issue, info})
+				result = append(result, overviewStatusIssue{issue, info, ownership})
 			}
 		}
 		return result
 	}
-	prs := func(items []any, held bool) []any {
+	nonActionable := func(items []any, decisions map[string]Ownership) []any {
+		if items == nil {
+			return nil
+		}
+		result := make([]any, 0, len(items))
+		for _, raw := range items {
+			item, ok := repoWorkIssueRow(raw)
+			if !ok {
+				result = append(result, raw)
+				continue
+			}
+			row := overviewStatusNonActionable{RepoWorkIssue: item, Ownership: ownershipFor(decisions, ownershipKindIssue, item.Number)}
+			if repoWorkIssueParkingBucket(item) != "" {
+				row.Band = "waiting"
+				for i := range out.OverviewBands.Issues {
+					if out.OverviewBands.Issues[i].Key == row.Band {
+						out.OverviewBands.Issues[i].Count++
+					}
+				}
+			}
+			result = append(result, row)
+		}
+		return result
+	}
+	prs := func(items []any, held bool, decisions map[string]Ownership) []any {
 		if items == nil {
 			return nil
 		}
@@ -88,17 +125,18 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 					out.OverviewBands.PRs[i].Count++
 				}
 			}
-			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info})
+			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info, ownershipFor(decisions, ownershipKindPR, entry.pr.Number)})
 		}
 		return result
 	}
 	for i := range out.Repos {
 		repo := &out.Repos[i]
 		repoName := overviewRepoName(*repo)
-		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName)
-		repo.HeldIssues = issues(repo.HeldIssues, true, repoName)
-		repo.OpenPrs = prs(repo.OpenPrs, false)
-		repo.HeldPrs = prs(repo.HeldPrs, true)
+		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName, repo.Ownership)
+		repo.HeldIssues = issues(repo.HeldIssues, true, repoName, repo.Ownership)
+		repo.NonActionableIssues = nonActionable(repo.NonActionableIssues, repo.Ownership)
+		repo.OpenPrs = prs(repo.OpenPrs, false, repo.Ownership)
+		repo.HeldPrs = prs(repo.HeldPrs, true, repo.Ownership)
 	}
 	out.OverviewTotals = overviewTotals(&out)
 	var fullCfg *config.Config

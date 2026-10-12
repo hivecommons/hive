@@ -934,6 +934,18 @@ func (s *Store) ReviewerPass(repo string, number int) (sha string, at time.Time,
 	return e.ReviewerPassedSHA, e.ReviewerPassedAt, true
 }
 
+// LabelAppliedAt reports when the needs-human label was confirmed applied to a
+// PR (MarkLabelApplied). ok is false when the ledger has no such record.
+func (s *Store) LabelAppliedAt(repo string, number int) (at time.Time, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	if e == nil || !e.LabelApplied || e.LabelAppliedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return e.LabelAppliedAt, true
+}
+
 // nowFn is the store's clock, overridable for tests via SetClock.
 func (s *Store) now() time.Time {
 	if s.clock != nil {

@@ -765,6 +765,11 @@ type PullRequest struct {
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// HoldSources is the set of sources currently requiring this PR's hold
+	// (HoldSource* constants). Empty when the PR is not held or the sources
+	// have not been recorded. Display only: the dashboard's your-turn
+	// decision reads it; nothing gates on it.
+	HoldSources []string `json:"hold_sources,omitempty"`
 }
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
@@ -950,6 +955,9 @@ type HoldItem struct {
 	// extra API call — and are omitted when unset.
 	Assignees         []string `json:"assignees,omitempty"`
 	HumanAcknowledged bool     `json:"human_acknowledged,omitempty"`
+	// HoldSources is the set of sources currently requiring this hold
+	// (HoldSource* constants), as on PullRequest.HoldSources.
+	HoldSources []string `json:"hold_sources,omitempty"`
 }
 
 type IssueCluster struct {
