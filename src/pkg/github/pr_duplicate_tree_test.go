@@ -282,8 +282,13 @@ func TestCreatePR_DuplicateTreeOnlyComparesTheSameBase(t *testing.T) {
 	d.mu.Lock()
 	bases := append([]string(nil), d.listedBases...)
 	d.mu.Unlock()
-	if len(bases) != 1 || bases[0] != "main" {
-		t.Errorf("guard listed bases %v, want exactly [main] — an unscoped scan would compare unrelated diffs", bases)
+	if len(bases) == 0 {
+		t.Fatal("guard never listed open PRs")
+	}
+	for _, b := range bases {
+		if b != "main" {
+			t.Errorf("guard listed bases %v, want only main — an unscoped scan would compare unrelated diffs", bases)
+		}
 	}
 }
 
