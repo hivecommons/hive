@@ -39,7 +39,30 @@ func newTestHoldGuardStore(t *testing.T) *holdguard.Store {
 	t.Helper()
 	s := holdguard.Load(filepath.Join(t.TempDir(), "hold-guard.json"))
 	swapHoldGuardStore(t, s)
+	// Keep the hold-guard's hold-source record off the real data dir.
+	oldSources := github.HoldSourcesPath
+	github.HoldSourcesPath = filepath.Join(t.TempDir(), github.HoldSourcesFile)
+	t.Cleanup(func() { github.HoldSourcesPath = oldSources })
 	return s
+}
+
+// assertHoldguardSourceRecorded checks Hive's local hold-source record for a
+// holdguard entry on repo#number (#11564).
+func assertHoldguardSourceRecorded(t *testing.T, repo string, number int, want bool) {
+	t.Helper()
+	var got bool
+	if data, err := os.ReadFile(github.HoldSourcesPath); err == nil {
+		var ledger struct {
+			Applied map[string]map[string]json.RawMessage `json:"applied"`
+		}
+		if err := json.Unmarshal(data, &ledger); err != nil {
+			t.Fatalf("parsing hold-source record: %v", err)
+		}
+		_, got = ledger.Applied[github.HoldKindPR+":"+repo+"#"+strconv.Itoa(number)][github.HoldSourceHoldguard]
+	}
+	if got != want {
+		t.Fatalf("holdguard source recorded for %s#%d = %v, want %v", repo, number, got, want)
+	}
 }
 
 // holdGuardServer fakes the three GitHub surfaces the guard touches: the PR
@@ -319,6 +342,7 @@ func TestEnforceHoldGuardDriftBlocksCommentsAndReholds(t *testing.T) {
 	if len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
 		t.Fatalf("labels = %v, want exactly the re-applied %q", fake.labels, holdguard.ReHoldLabel)
 	}
+	assertHoldguardSourceRecorded(t, "acme/widgets", 7, true)
 	rec, ok := store.Recorded("acme/widgets", 7)
 	if !ok || rec.HeadSHA != "f2" || rec.Commented {
 		t.Fatalf("snapshot after drift = %+v, want re-armed at f2 with a fresh comment budget", rec)
@@ -569,6 +593,8 @@ func TestEnforceHoldGuardLabelFailureNeverReArmsAndNeverRecomments(t *testing.T)
 	if rec.HeadSHA != "c1" || !rec.Commented {
 		t.Fatalf("snapshot = %+v, want old head kept and comment marked done", rec)
 	}
+	// The source is recorded only once the label landed.
+	assertHoldguardSourceRecorded(t, "acme/widgets", 7, false)
 
 	// Retry: no duplicate comment, label lands, snapshot re-arms.
 	fake.mu.Lock()
@@ -584,6 +610,7 @@ func TestEnforceHoldGuardLabelFailureNeverReArmsAndNeverRecomments(t *testing.T)
 	if rec, _ := store.Recorded("acme/widgets", 7); rec.HeadSHA != "f1" {
 		t.Fatalf("snapshot = %+v, want re-armed after the label landed", rec)
 	}
+	assertHoldguardSourceRecorded(t, "acme/widgets", 7, true)
 }
 
 func TestEnforceHoldGuardNilWriterStillExcludes(t *testing.T) {

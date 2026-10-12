@@ -1,0 +1,1 @@
+- The status snapshot now lists `hold_sources` on every held issue and pull request (level gate, outreach, reporter trust, self-authorization, SHA hold, holdguard, human-merge path, donated standby, dashboard pause, person or unknown), detected read-only and cached per PR so an unchanged refresh makes no extra GitHub API calls (#11564).
