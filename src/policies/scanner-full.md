@@ -69,11 +69,12 @@ check is red on the upstream default branch too: the failure comes from
 upstream and nothing in this repository can fix it. Do not repair, retry, or
 open a `[shared-ci]` incident for it. Leave one PR comment with the upstream
 evidence and end it with the helper's `external_marker` value verbatim, for
-example `<!-- hive-ci-external head=<40-char head sha> check=<encoded check name> -->`.
+example `<!-- hive-ci-external head=<40-char head sha> check=<encoded check name> run=<check run id> -->`.
 That marker keeps the PR out of FIX-BEFORE-NEW and the CI_FAILING repair list
-once every failing check at that head carries one; a push or a newly failing
-check brings it back. Never re-stamp a head and check that already carry a
-marker.
+once every failing check run at that head carries one; a push, a newly failing
+check, or a re-run of the check (a new run id) brings it back. Never re-stamp a
+run that already carries a marker. When the helper prints no `external_marker`
+(its newest run of the check is not red, or could not be read), stamp nothing.
 
 ## Opening Issues
 

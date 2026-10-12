@@ -312,7 +312,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		for _, pr := range external {
 			refs = append(refs, fmt.Sprintf("%s#%d", pr.Repo, pr.Number))
 		}
-		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already triaged as failing upstream at their current head — do not repair or re-triage them; they return here when the head changes or another check fails: %s)\n", len(external), strings.Join(refs, ", ")))
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already triaged as failing upstream at their current head — do not repair or re-triage them; they return here when the head changes, another check fails, or the check fails again in a new run: %s)\n", len(external), strings.Join(refs, ", ")))
 	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")

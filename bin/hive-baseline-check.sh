@@ -303,12 +303,11 @@ UPSTREAM_BRANCH=""
 UPSTREAM_CONCLUSION=""
 UPSTREAM_COMPLETED_AT=""
 UPSTREAM_RED=false
-CHECK_URI="$(jq -rn --arg s "$CHECK_NAME" '$s | @uri')"
 if [[ -n "$UPSTREAM" ]]; then
   UPSTREAM_CONCLUSION="unknown"
   if UPSTREAM_JSON="$(gh api "repos/$UPSTREAM" 2>/dev/null)" &&
     UPSTREAM_BRANCH="$(jq -er '.default_branch | select(type == "string" and length > 0)' <<<"$UPSTREAM_JSON" 2>/dev/null)" &&
-    UPSTREAM_RUNS_JSON="$(gh api "repos/$UPSTREAM/commits/$UPSTREAM_BRANCH/check-runs?check_name=$CHECK_URI&per_page=100" 2>/dev/null)" &&
+    UPSTREAM_RUNS_JSON="$(gh api "repos/$UPSTREAM/commits/$UPSTREAM_BRANCH/check-runs?check_name=$CHECK_NAME_URI&per_page=100" 2>/dev/null)" &&
     UPSTREAM_RUN_JSON="$(jq -ce --arg check "$CHECK_NAME" '
         [.check_runs[]? | select(.name == $check)]
         | sort_by(.completed_at // .started_at // "")
@@ -375,14 +374,27 @@ fi
 # Red upstream outranks every local verdict but one: a fresh green on this
 # repository's own default branch proves the check can pass here, so the
 # PR-local analysis stands. Otherwise the failure is upstream's, and the
-# marker pins that triage to this exact head and check, so the hive stops
-# re-listing the PR until either changes (hivecommons/hive#11609).
+# marker pins that triage to this exact head and failing check run, so the
+# hive stops re-listing the PR until either changes — a re-run of the check
+# is a new run (hivecommons/hive#11609).
 if [[ "$UPSTREAM_RED" == true && ! ( "$BASE_CONCLUSION" == "success" && "$BASE_STALE" == false ) ]]; then
   SHARED=true; REASON="upstream"; ACTION="DEFER_EXTERNAL"; EXIT=0
 fi
+# The PR's newest run of the check must be the red one the marker covers; no
+# marker when it cannot be read or is not red (nothing to defer yet).
 EXTERNAL_MARKER=""
-if [[ "$ACTION" == "DEFER_EXTERNAL" && "$PR_OID" =~ ^[0-9a-f]{40}$ ]]; then
-  EXTERNAL_MARKER="<!-- hive-ci-external head=$PR_OID check=$CHECK_URI -->"
+if [[ "$ACTION" == "DEFER_EXTERNAL" && "$PR_OID" =~ ^[0-9a-f]{40}$ ]] &&
+  PR_RUNS_JSON="$(gh api "repos/$REPO/commits/$PR_OID/check-runs?check_name=$CHECK_NAME_URI&per_page=100" 2>/dev/null)"; then
+  PR_RUN_ID="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
+      [.check_runs[]? | select(.name == $check)]
+      | sort_by(.completed_at // .started_at // "")
+      | last // {}
+      | if ((.conclusion // "") | ascii_downcase) as $s | ($red | index($s)) != null
+        then (.id // "" | tostring) else "" end
+    ' <<<"$PR_RUNS_JSON" 2>/dev/null)"
+  if [[ "$PR_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+    EXTERNAL_MARKER="<!-- hive-ci-external head=$PR_OID check=$CHECK_NAME_URI run=$PR_RUN_ID -->"
+  fi
 fi
 
 if [[ "$JSON_OUTPUT" == true ]]; then

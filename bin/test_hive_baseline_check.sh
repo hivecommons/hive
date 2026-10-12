@@ -54,7 +54,7 @@ case "$1:$2" in
     sha="${2#repos/acme/widgets/commits/}"; sha="${sha%%/*}"
     jq -c --arg sha "$sha" '
       [.[] | select((.headRefOid // "sha-\(.number)") == $sha) | .statusCheckRollup[]? | select(.name != null)
-       | {name, status: ((.status // "") | ascii_downcase), conclusion: ((.conclusion // "") | ascii_downcase | if . == "" then null else . end)}]
+       | {id: (.id // null), name, status: ((.status // "") | ascii_downcase), conclusion: ((.conclusion // "") | ascii_downcase | if . == "" then null else . end), completed_at: (.completedAt // null)}]
       | {total_count: length, check_runs: .}' "$MOCK_PRS"
     ;;
   api:repos/acme/widgets/commits/*/status\?*)
@@ -288,23 +288,37 @@ check_status 2 "malformed repository names are rejected"
 # A fork's PR fails a check that is also red on the upstream default branch,
 # and the fork's own default branch has no run of it: the failure is
 # upstream's. The verdict is DEFER_EXTERNAL with a marker pinned to the PR's
-# head and the URL-encoded check name.
+# head, the URL-encoded check name and the PR's newest (red) run of it.
 UP_HEAD=54ff622aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export MOCK_UPSTREAM_RUNS="$TMP_ROOT/upstream.json"
 printf '%s\n' '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"failure","completed_at":"2026-08-30T01:00:00Z"}]}' >"$MOCK_UPSTREAM_RUNS"
 write_base '{"check_runs":[]}'
-write_prs '[]'
+write_prs "[{\"number\":66,\"headRefOid\":\"$UP_HEAD\",\"statusCheckRollup\":[
+  {\"id\":4400,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"2026-08-30T01:00:00Z\"},
+  {\"id\":4401,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"completedAt\":\"2026-08-30T02:00:00Z\"}]}]"
 printf '{"number":66,"headRefOid":"%s","isCrossRepository":false}\n' "$UP_HEAD" >"$MOCK_PR_VIEW"
 MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
 check_status 0 "a check red on the upstream default branch is shared"
 check_output '"action":"DEFER_EXTERNAL"' "red upstream defers as external"
 check_output '"reason":"upstream"' "JSON names the upstream evidence"
 check_output '"upstream":{"repo":"upstream/widgets","branch":"main","conclusion":"failure"' "JSON carries the upstream baseline"
-check_output "\"external_marker\":\"<!-- hive-ci-external head=$UP_HEAD check=Check%20ogc-lts%20%2844%29 -->\"" \
-  "the marker pins the PR head and the encoded check name"
+check_output "\"external_marker\":\"<!-- hive-ci-external head=$UP_HEAD check=Check%20ogc-lts%20%2844%29 run=4401 -->\"" \
+  "the marker pins the PR head, the encoded check name and the newest red run"
 MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66
 check_output 'is red (failure) on upstream upstream/widgets default branch "main"' "human output names the upstream"
 check_output "End that comment with this marker: <!-- hive-ci-external head=$UP_HEAD" "human output prints the marker"
+
+# The newest run at that head went green (a re-run passed): there is nothing
+# to defer, so no marker — a later red re-run gets its own run id.
+write_prs "[{\"number\":66,\"headRefOid\":\"$UP_HEAD\",\"statusCheckRollup\":[
+  {\"id\":4401,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"completedAt\":\"2026-08-30T02:00:00Z\"},
+  {\"id\":4402,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"2026-08-30T03:00:00Z\"}]}]"
+MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
+if [[ "$OUTPUT" == *external_marker* ]]; then
+  echo "  FAIL: no marker when the PR's newest run is green (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no marker when the PR's newest run is green"; PASS=$((PASS + 1))
+fi
 
 # Without a PR there is no head to pin: the verdict stands, no marker.
 MOCK_PARENT=upstream/widgets run_helper acme/widgets "Check ogc-lts (44)" --json

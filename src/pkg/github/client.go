@@ -675,8 +675,12 @@ type PullRequest struct {
 	// pulled from those runs' annotations — the evidence a fix agent (or an
 	// escalation comment) needs; "CI failed" alone left agents guessing for
 	// four days in the 2026-08 seedMission incident.
-	FailingChecks    []string `json:"failing_checks,omitempty"`
-	CIFailureExcerpt string   `json:"ci_failure_excerpt,omitempty"`
+	FailingChecks []string `json:"failing_checks,omitempty"`
+	// FailingCheckRunIDs are the ids of those same runs, in the same order.
+	// The external-CI marker pins a triage to one run (hivecommons/hive#11609),
+	// so a re-run of the check is a new run the marker does not cover.
+	FailingCheckRunIDs []int64 `json:"-"`
+	CIFailureExcerpt   string  `json:"ci_failure_excerpt,omitempty"`
 	// CIChecksRunning reports that CI has NOT settled: at least one non-meta
 	// check on the head is still running. It is set alongside a "failure"
 	// CIStatus when a shard has already failed while others report — the
@@ -696,13 +700,15 @@ type PullRequest struct {
 	// or the lookup failed. Kick builders keep such a PR out of their repair
 	// lists until the incident closes (hivecommons/hive#10528).
 	SharedCIIncident int `json:"shared_ci_incident,omitempty"`
-	// ExternalCIDeferred reports that every failing check on this red PR's
-	// current head carries a `<!-- hive-ci-external head=<sha> check=<name> -->`
-	// marker for that head: an agent triaged the failure as coming from the
+	// ExternalCIDeferred reports that every failing check run on this red
+	// PR's current head carries a
+	// `<!-- hive-ci-external head=<sha> check=<name> run=<id> -->` marker for
+	// that head and run: an agent triaged the failure as coming from the
 	// upstream repository (hive-baseline-check.sh DEFER_EXTERNAL), which no
 	// change here can fix. Kick builders keep such a PR out of their repair
-	// lists until a new push or a newly failing check invalidates the
-	// markers (hivecommons/hive#11609).
+	// lists until a push, a newly failing check or a re-run of the check (a
+	// new run id, e.g. after it went green and failed again at the same
+	// head) invalidates the markers (hivecommons/hive#11609).
 	ExternalCIDeferred bool `json:"external_ci_deferred,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
@@ -1866,7 +1872,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		if prs[i].CIStatus == "failure" {
 			if texts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
 				prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], texts, incidents)
-				prs[i].ExternalCIDeferred = externalCIDeferred(texts, prs[i].HeadSHA, prs[i].FailingChecks)
+				prs[i].ExternalCIDeferred = externalCIDeferred(texts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
 			}
 		}
 		facts.attach(ctx, &prs[i], reported)
@@ -1985,6 +1991,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	case hasFail:
 		pr.CIStatus = ciStatusFailure
 		pr.FailingChecks = failingNames
+		pr.FailingCheckRunIDs = failingIDs
 		// "Failed, others still running" is a materially different state from
 		// "failed, all done": only the latter means the PR is stuck rather
 		// than still reporting (hivecommons/hive#9472).

@@ -35,7 +35,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
                 contexts(first: 50) {
                   nodes {
                     __typename
-                    ... on CheckRun { name conclusion status detailsUrl }
+                    ... on CheckRun { databaseId name conclusion status detailsUrl }
                     ... on StatusContext { context state targetUrl }
                   }
                 }
@@ -112,7 +112,11 @@ type graphQLPRBatchNode struct {
 }
 
 type graphQLPRBatchContext struct {
-	TypeName   string `json:"__typename"`
+	TypeName string `json:"__typename"`
+	// DatabaseID is the check run's REST id (CheckRun only). The external-CI
+	// marker pins a triage to it (hivecommons/hive#11609), and annotation
+	// lookups need the real id rather than a positional stand-in.
+	DatabaseID int64  `json:"databaseId"`
 	Name       string `json:"name"`
 	Conclusion string `json:"conclusion"`
 	Status     string `json:"status"`
@@ -290,6 +294,9 @@ func graphQLCheckRuns(n graphQLPRBatchNode) ([]*gh.CheckRun, bool) {
 			continue
 		}
 		id := int64(i + 1)
+		if ctx.TypeName == "CheckRun" && ctx.DatabaseID > 0 {
+			id = ctx.DatabaseID
+		}
 		out = append(out, &gh.CheckRun{
 			ID:         gh.Ptr(id),
 			Name:       gh.Ptr(name),

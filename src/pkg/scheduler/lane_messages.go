@@ -580,7 +580,8 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// A red PR an agent already triaged as failing upstream at this head
 	// (hivecommons/hive#11609) is in the same position: nothing in this
 	// repository can fix it, so it is named under its own heading until a
-	// push or a newly failing check invalidates the triage.
+	// push, a newly failing check or a re-run of the check invalidates the
+	// triage.
 	var external []ciFailingRow
 	kept := payload.Items[:0]
 	for _, pr := range payload.Items {
@@ -640,7 +641,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 	}
 	if len(external) > 0 {
-		b.WriteString(fmt.Sprintf("DEFERRED AS FAILING UPSTREAM (%d — no repair: an agent already found the same check red on the upstream repository at this head; do not push, retry, or comment again; each PR returns to the list above when its head changes or another check fails):\n", len(external)))
+		b.WriteString(fmt.Sprintf("DEFERRED AS FAILING UPSTREAM (%d — no repair: an agent already found the same check red on the upstream repository at this head; do not push, retry, or comment again; each PR returns to the list above when its head changes, another check fails, or the check fails again in a new run):\n", len(external)))
 		for i, pr := range external {
 			if i >= limit {
 				b.WriteString(prListOverflowLine(len(external)-i, limit))

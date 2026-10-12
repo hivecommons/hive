@@ -703,12 +703,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// with its conflict instructions once the incident is closed. Kick
 		// builders list such a row as deferred, with no repair instructions.
 		DeferredIncident int `json:"deferred_incident,omitempty"`
-		// DeferredExternal marks a red PR whose every failing check an agent
+		// DeferredExternal marks a red PR whose every failing check run an agent
 		// already triaged, at this head, as failing upstream too
 		// (github.PullRequest.ExternalCIDeferred, hivecommons/hive#11609).
 		// Set on failing rows only: a conflict is this repository's to fix.
 		// Kick builders list such a row as deferred, with no repair
-		// instructions, until the head moves or another check fails.
+		// instructions, until the head moves, another check fails or the
+		// check fails again in a new run.
 		DeferredExternal bool `json:"deferred_external,omitempty"`
 		// Mergeable and CIStatus are set on the escalated rows only
 		// (hivecommons/hive#9477): an escalated PR that is conflicted, green
