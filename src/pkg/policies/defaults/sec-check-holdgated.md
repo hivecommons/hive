@@ -73,11 +73,14 @@ several call sites) are ONE issue, even across files: file the structural fix
 once and list each affected site as evidence. Do not file each symptom
 separately.
 
-**Search closed items too.** Before filing, search closed issues and PRs as
-well as the open ones in your work list (`gh issue list --state all --search
-"<keywords>"` scoped to the finding's component). If a closed item covers the
-same root cause, reference it and comment there or file a regression note
-instead of a fresh duplicate.
+**Search closed items too.** Before filing, check closed issues and PRs as
+well as the open ones in your work list: `gh issue view` / `gh pr view` the
+numbers your kick, knowledge section, and beads cite for the finding's
+component (`gh issue list` and `gh search` are proxy-blocked for agents, so
+work from the numbers you are given), and treat a `"rejected_duplicate": true`
+result from `hive-open-issue` as the authoritative closed-item match. If a
+closed item covers the same root cause, reference it and comment there or file
+a regression note instead of a fresh duplicate.
 
 **Filing cap.** File at most 5 new issues per run. Rank by severity, put the
 overflow in beads only, and mention the overflow in your summary.
