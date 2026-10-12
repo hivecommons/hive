@@ -1594,13 +1594,20 @@ func (h *ContributeWSHub) leasedIssueKeys(exceptIdentity string, now time.Time) 
 	return keys
 }
 
-func leaseItemKey(repo string, number int) string {
-	return strings.ToLower(repo) + "#" + strconv.Itoa(number)
+// leaseItemKey is the canonical repo#number key: lower-cased, with a bare
+// repository name qualified by the project org so leases (recorded under
+// org/repo) match rows enumerated from bare names in the config.
+func leaseItemKey(org, repo string, number int) string {
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if org = strings.ToLower(strings.TrimSpace(org)); org != "" && !strings.Contains(repo, "/") {
+		repo = org + "/" + repo
+	}
+	return repo + "#" + strconv.Itoa(number)
 }
 
 // leasedWorkItems is the set of repo#number items with an unexpired task
 // lease, for the your-turn safety net. It reads the in-memory registry only.
-func (h *ContributeWSHub) leasedWorkItems(now time.Time) map[string]bool {
+func (h *ContributeWSHub) leasedWorkItems(now time.Time, org string) map[string]bool {
 	items := make(map[string]bool)
 	if h == nil {
 		return items
@@ -1611,7 +1618,7 @@ func (h *ContributeWSHub) leasedWorkItems(now time.Time) map[string]bool {
 		if l == nil || l.number <= 0 || l.expiresAt.IsZero() || now.After(l.expiresAt) || l.identity == runAdmissionIdentity {
 			continue
 		}
-		items[leaseItemKey(l.repo, l.number)] = true
+		items[leaseItemKey(org, l.repo, l.number)] = true
 	}
 	return items
 }

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
@@ -175,14 +177,19 @@ type ownershipEnv struct {
 	reviewerLaneAvailable func(repo string) bool
 	escalatedAt           func(repo string, number int) time.Time
 	// laneCanOpenPR reports whether the running agent serving a routed lane
-	// may open pull requests (its mode's CanPush).
-	laneCanOpenPR func(lane string) bool
+	// may open pull requests in repo: its launched mode pushes and its default
+	// mode at the repository's effective level pushes, as processing's
+	// prRepoPolicyGate requires.
+	laneCanOpenPR func(lane, repo string) bool
 	// leased reports an unexpired contribute task lease on repo#number.
 	leased func(repo string, number int) bool
+	// routeLane classifies an issue whose Lane is not yet set (the scheduler
+	// writes it as a side effect of building kicks). Nil leaves it empty.
+	routeLane func(issue github.Issue) string
 }
 
-func (e ownershipEnv) laneCanOpenPRFor(lane string) bool {
-	return lane != "" && e.laneCanOpenPR != nil && e.laneCanOpenPR(lane)
+func (e ownershipEnv) laneCanOpenPRFor(lane, repo string) bool {
+	return lane != "" && e.laneCanOpenPR != nil && e.laneCanOpenPR(lane, repo)
 }
 
 func (e ownershipEnv) leasedFor(repo string, number int) bool {
@@ -450,7 +457,7 @@ func ownershipVerifiedDone(in issueOwnershipInput, labels map[string]bool, env o
 	if labels[ownershipLabelAlreadyDone] {
 		return true
 	}
-	if labels[ownershipLabelLikelyDone] && (in.held || !in.actionable || !env.laneCanOpenPRFor(in.lane)) {
+	if labels[ownershipLabelLikelyDone] && (in.held || !in.actionable || !env.laneCanOpenPRFor(in.lane, in.repo)) {
 		return true
 	}
 	// Rule (3) already returned for an issue an open PR covers.
@@ -462,7 +469,7 @@ func ownershipVerifiedDone(in issueOwnershipInput, labels map[string]bool, env o
 // hive/likely-done issue, whose routed lane may open PRs and which no lane
 // has claimed (label, live claim or unexpired task lease).
 func issueSafetyNetCovers(in issueOwnershipInput, labels map[string]bool, env ownershipEnv) bool {
-	if !in.actionable || in.held || !env.laneCanOpenPRFor(in.lane) {
+	if !in.actionable || in.held || !env.laneCanOpenPRFor(in.lane, in.repo) {
 		return false
 	}
 	if issueClaimed(in.labels) || in.liveClaim || env.leasedFor(in.repo, in.number) {
@@ -599,6 +606,11 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				case *github.HoldItem:
 					sources = v.HoldSources
 				}
+				lane := issue.Lane
+				if lane == "" && !held && env.routeLane != nil {
+					lane = env.routeLane(issue)
+				}
+				_, liveClaim := issue.LiveClaim(env.now)
 				in := issueOwnershipInput{
 					repo:         issue.Repo,
 					number:       issue.Number,
@@ -606,8 +618,8 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 					acknowledged: issue.HumanAcknowledged,
 					createdAt:    issue.CreatedAt,
 					updatedAt:    issue.UpdatedAt,
-					lane:         issue.Lane,
-					liveClaim:    issue.ClaimedBy != "" && issue.ClaimExpiresAt != nil && issue.ClaimExpiresAt.After(env.now),
+					lane:         lane,
+					liveClaim:    liveClaim,
 					reporterGate: issue.ReporterConfirmationGate,
 					actionable:   !held,
 					held:         held,
@@ -702,14 +714,15 @@ func repoWorkIssueRow(raw any) (github.RepoWorkIssue, bool) {
 // agent runtime once per status refresh.
 func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode string, now time.Time, hub *ContributeWSHub) ownershipEnv {
 	env := ownershipEnv{now: now, hiveLevel: 1}
-	env.laneCanOpenPR = func(lane string) bool {
-		proc, ok := agentStatuses[strings.ToLower(strings.TrimSpace(lane))]
-		return ok && proc != nil && proc.State == agent.StateRunning && proc.LaunchedMode.CanPush()
+	org := ""
+	if cfg != nil {
+		org = cfg.Project.Org
 	}
-	if leased := hub.leasedWorkItems(now); len(leased) > 0 {
-		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(repo, number)] }
+	if leased := hub.leasedWorkItems(now, org); len(leased) > 0 {
+		env.leased = func(repo string, number int) bool { return leased[leaseItemKey(org, repo, number)] }
 	}
 	if cfg == nil {
+		env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 		return env
 	}
 	env.hiveLevel = detectACMMLevel(cfg)
@@ -721,7 +734,20 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentPr
 	env.reviewerLaneAvailable = func(repo string) bool {
 		return reviewerLaneAvailable(cfg, agentStatuses, currentMode, repo)
 	}
+	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
+}
+
+// laneCanOpenPRAt builds the lane push-rights check: the lane's agent is
+// running in a mode that pushes, and its default mode at the repository's
+// effective level (which a repository policy can only lower) pushes too.
+func laneCanOpenPRAt(env ownershipEnv, agentStatuses map[string]*agent.AgentProcess) func(lane, repo string) bool {
+	return func(lane, repo string) bool {
+		name := strings.ToLower(strings.TrimSpace(lane))
+		proc, ok := agentStatuses[name]
+		return ok && proc != nil && proc.State == agent.StateRunning && proc.LaunchedMode.CanPush() &&
+			agent.DefaultAgentMode(name, env.levelFor(repo)).CanPush()
+	}
 }
 
 // selfAuthorizationHoldActive resolves the self-authorization hold as
@@ -857,6 +883,11 @@ func recordEscalationFirstSeen(repos []FrontendRepo, now time.Time) func(repo st
 // freshly built snapshot, using the snapshot's generated time as now.
 func applyOwnershipDecisions(cfg *config.Config, repos []FrontendRepo, agentStatuses map[string]*agent.AgentProcess, currentMode string, now time.Time, hub *ContributeWSHub) {
 	env := newOwnershipEnv(cfg, agentStatuses, currentMode, now, hub)
+	sweepCtx, cancelSweep := classify.SweepContext(context.Background())
+	defer cancelSweep()
+	env.routeLane = func(issue github.Issue) string {
+		return classify.ClassifyAll(sweepCtx, []github.Issue{issue})[0].Lane
+	}
 	if env.hiveLevel >= ownershipAdjudicatorMinLevel {
 		env.escalatedAt = recordEscalationFirstSeen(repos, now)
 	}

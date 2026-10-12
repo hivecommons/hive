@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -91,17 +92,81 @@ func TestNewOwnershipEnvLaneAndLeases11592(t *testing.T) {
 	if err := hub.recordLease("alice", "t1", "O/R", 5, "", 1, ownershipNow11565); err != nil {
 		t.Fatalf("recordLease: %v", err)
 	}
-	env := newOwnershipEnv(nil, statuses, "idle", ownershipNow11565, hub)
+	level, low := 5, 2
+	cfg := &config.Config{ACMMLevel: &level, Project: config.ProjectConfig{Org: "o", RepoPolicies: []config.RepoPolicy{{Repo: "low", ACMMLevel: &low}}}}
+	env := newOwnershipEnv(cfg, statuses, "idle", ownershipNow11565, hub)
 	for lane, want := range map[string]bool{"quality": true, "scanner": false, "stopped": false, "missing": false, "": false} {
-		if got := env.laneCanOpenPRFor(lane); got != want {
+		if got := env.laneCanOpenPRFor(lane, "o/r"); got != want {
 			t.Errorf("laneCanOpenPRFor(%q) = %v, want %v", lane, got, want)
 		}
 	}
-	if !env.leasedFor("o/r", 5) || env.leasedFor("o/r", 6) {
-		t.Fatalf("leasedFor did not match the unexpired lease on o/r#5 only")
+	// A repository pinned to L2 lowers the lane's default mode to advisory
+	// even though the hive is at L5 and the agent launched with push rights.
+	if env.laneCanOpenPRFor("quality", "low") {
+		t.Errorf("a lane must not open PRs in a repository whose effective level is L2")
 	}
-	expired := newOwnershipEnv(nil, statuses, "idle", ownershipNow11565.Add(2*leaseTTL), hub)
+	// Both the full and the bare repository spelling match the lease.
+	for _, repo := range []string{"o/r", "O/R", "r", "R"} {
+		if !env.leasedFor(repo, 5) {
+			t.Errorf("leasedFor(%q, 5) = false, want true", repo)
+		}
+	}
+	if env.leasedFor("o/r", 6) || env.leasedFor("other/r", 5) {
+		t.Fatalf("leasedFor matched an item without an unexpired lease")
+	}
+	expired := newOwnershipEnv(cfg, statuses, "idle", ownershipNow11565.Add(2*leaseTTL), hub)
 	if expired.leasedFor("o/r", 5) {
 		t.Fatalf("an expired lease must not count as a claim")
+	}
+}
+
+func TestOwnershipLaneLevelGate11592(t *testing.T) {
+	// L2 hive: no lane may open PRs, so a stale backlog issue shows no marker.
+	checkOwnership11565(t, decideIssueOwnership(staleIssue11592("quality"), ownershipEnv11565(2)), notYours11565)
+	checkOwnership11565(t, decideIssueOwnership(staleIssue11592("quality"), ownershipEnv11565(3)), safetyNet11592)
+
+	// A repository pinned to L2 inside an L5 hive.
+	env := ownershipEnv11565(5)
+	env.repoLevel = func(repo string) int {
+		if repo == "o/r" {
+			return 2
+		}
+		return 5
+	}
+	env.laneCanOpenPR = func(lane, repo string) bool {
+		return agent.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
+	}
+	checkOwnership11565(t, decideIssueOwnership(staleIssue11592("quality"), env), notYours11565)
+	other := staleIssue11592("quality")
+	other.repo = "o/other"
+	checkOwnership11565(t, decideIssueOwnership(other, env), safetyNet11592)
+}
+
+func TestDecideRepoOwnershipRoutesLaneAndClaims11592(t *testing.T) {
+	env := ownershipEnv11565(4)
+	stale := ownershipNow11565.AddDate(0, 0, -20)
+	calls := 0
+	env.routeLane = func(github.Issue) string { calls++; return "quality" }
+	expired, live := ownershipNow11565.Add(-time.Minute), ownershipNow11565.Add(time.Hour)
+	issue := func(n int, lane string, claimedBy string, expires *time.Time) github.Issue {
+		return github.Issue{Repo: "o/r", Number: n, Lane: lane, ClaimedBy: claimedBy, ClaimExpiresAt: expires, CreatedAt: stale, UpdatedAt: stale}
+	}
+	repos := []FrontendRepo{{Name: "o/r", ActionableIssues: []any{
+		issue(1, "", "", nil),                // lane derived by the classifier
+		issue(2, "scanner", "", nil),         // lane already set: not re-routed, cannot push
+		issue(3, "quality", "bob", &live),    // unexpired claim
+		issue(4, "quality", "bob", &expired), // expired claim
+	}}}
+	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, env)
+	got := map[int]Ownership{}
+	for n := 1; n <= 4; n++ {
+		got[n] = repos[0].Ownership[ownershipKey(ownershipKindIssue, n)]
+	}
+	checkOwnership11565(t, got[1], safetyNet11592)
+	checkOwnership11565(t, got[2], notYours11565)
+	checkOwnership11565(t, got[3], notYours11565)
+	checkOwnership11565(t, got[4], safetyNet11592)
+	if calls != 1 {
+		t.Errorf("routeLane called %d times, want 1 (only for the issue with no lane)", calls)
 	}
 }

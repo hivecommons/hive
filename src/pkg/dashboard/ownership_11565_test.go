@@ -16,15 +16,20 @@ import (
 var ownershipNow11565 = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 
 func ownershipEnv11565(level int) ownershipEnv {
-	return ownershipEnv{
+	env := ownershipEnv{
 		now:                   ownershipNow11565,
 		hiveLevel:             level,
 		staleDays:             defaultStaleDays,
 		sentinelLabel:         config.DefaultSentinelLabel,
 		reviewerLaneAvailable: func(string) bool { return true },
 		escalatedAt:           func(string, int) time.Time { return ownershipNow11565 },
-		laneCanOpenPR:         func(lane string) bool { return lane == "quality" },
 	}
+	// Every lane runs in its launched mode; push rights come from the lane's
+	// default mode at the repository's level, as in newOwnershipEnv.
+	env.laneCanOpenPR = func(lane, repo string) bool {
+		return agent.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
+	}
+	return env
 }
 
 func freshIssue11565(labels ...string) issueOwnershipInput {
@@ -309,7 +314,7 @@ func TestOwnershipPrecedence11565(t *testing.T) {
 		},
 		{
 			name: "likely-done routed to a lane that cannot open PRs is verified done",
-			got:  decideIssueOwnership(inLane11592(freshIssue11565("hive/likely-done"), "scanner"), env),
+			got:  decideIssueOwnership(inLane11592(freshIssue11565("hive/likely-done"), "supervisor"), env),
 			want: want11565{OwnershipVerbClose, OwnershipReasonVerifiedDone},
 		},
 		{
