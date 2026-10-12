@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -136,9 +137,42 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if labelExists {
 		req.Labels = &[]string{advisoryLabelName}
 	}
-	issue, _, err := c.client.Issues.Create(ctx, owner, repo, req)
+	// Idempotency across concurrent callers (#11579): findAdvisoryIssue is a
+	// search-then-create with no key, so two EnsureAdvisoryIssue callers
+	// whose searches both came back empty both created. The claim serialises
+	// them on one target per repo and journals the create, so the second
+	// caller is a replay of the first inside issueCreateIdempotencyWindow.
+	// Body and labels are not inputs: the attribution trailer varies and the
+	// label may be missing, and neither changes which issue this is.
+	var issue *gh.Issue
+	res, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueCreate,
+		Target: effects.StableDigest("advisory", advisoryTitle),
+		Inputs: map[string]string{
+			"flow":   "advisory",
+			"title":  effects.StableDigest(advisoryTitle),
+			"window": issueCreateIdempotencyBucket(time.Now()),
+		},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+	})
 	if err != nil {
 		return 0, fmt.Errorf("creating advisory issue: %w", err)
+	}
+	if issue == nil {
+		number, parseErr := parseIssueNumberFromURL(res.Provenance)
+		if parseErr != nil {
+			return 0, fmt.Errorf("creating advisory issue: replayed as already applied but recorded provenance %q is not an issue URL: %w", res.Provenance, parseErr)
+		}
+		c.logger.Info("advisory issue create replayed as already applied, reusing the journaled issue",
+			slog.String("repo", repo), slog.Int("number", number))
+		return number, nil
 	}
 	c.recordWriteAudit(AuditActionHiveIssueCreated, meta,
 		WriteTarget{Repo: owner + "/" + repo, Number: issue.GetNumber()},
