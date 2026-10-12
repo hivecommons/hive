@@ -198,9 +198,9 @@ func TestIssueRequestWatcher_FilesWhenNoOpenTwin(t *testing.T) {
 			title: "[scanner] bug spanning x.go and y.go", body: "pkg/x.go:3 and pkg/y.go:8",
 		},
 		{
-			name:  "human-filed issue",
+			name:  "human-filed issue with a different file set",
 			open:  openTwin{number: 41, author: "maintainer", title: "x.go is confusing", body: "pkg/x.go:3"},
-			title: "[scanner] bug in x.go", body: "pkg/x.go:3",
+			title: "[scanner] bug spanning x.go and y.go", body: "pkg/x.go:3 and pkg/y.go:8",
 		},
 		{
 			name:  "no file references",
@@ -221,6 +221,47 @@ func TestIssueRequestWatcher_FilesWhenNoOpenTwin(t *testing.T) {
 			})
 			if m.created != 1 || len(m.commentedOn) != 0 || res.Consolidated || res.Number != 99 {
 				t.Fatalf("created=%d comments=%v result=%+v, want a fresh issue #99", m.created, m.commentedOn, res)
+			}
+		})
+	}
+}
+
+// dakota #415 (human) vs #1648 (bot): the same firmware bug, once by file set
+// and once by canonical subject. The bot must comment on the human's issue
+// instead of filing a twin or silently skipping.
+func TestIssueRequestWatcher_FoldsIntoHumanFiledIssue(t *testing.T) {
+	cases := []struct {
+		name        string
+		open        openTwin
+		title, body string
+	}{
+		{
+			name:  "file set",
+			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen", body: "see build/esp.sh:12"},
+			title: "[scanner] ESP path length too long", body: "build/esp.sh:40 overflows",
+		},
+		{
+			name:  "canonical subject",
+			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen on boot", body: "no files"},
+			title: "[scanner] HP ZBook black screen on boot", body: "no files either",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{}
+			srv := consolidationMockServer(t, []openTwin{tc.open}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "scanner", Title: tc.title, Body: tc.body,
+			})
+			if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != 415 {
+				t.Fatalf("created=%d comments=%v, want one comment on human issue #415", m.created, m.commentedOn)
+			}
+			if !res.OK || !res.Consolidated || res.Number != 415 {
+				t.Errorf("result = %+v, want consolidated into #415", res)
 			}
 		})
 	}

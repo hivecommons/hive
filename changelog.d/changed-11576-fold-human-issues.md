@@ -1,0 +1,1 @@
+- Scanner dedupe now folds findings into human-filed open issues that share the exact file set or canonical subject, posting a comment instead of filing a twin (#11576).
