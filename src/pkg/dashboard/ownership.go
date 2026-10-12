@@ -539,12 +539,14 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 		repoName := overviewRepoName(*repo)
 		decisions := map[string]Ownership{}
 		activity := map[string]time.Time{}
-		record := func(kind string, number int, decision Ownership, created, updated time.Time) {
+		urls := map[string]string{}
+		record := func(kind string, number int, url string, decision Ownership, created, updated time.Time) {
 			if number <= 0 {
 				return
 			}
 			key := ownershipKey(kind, number)
 			decisions[key] = decision
+			urls[key] = url
 			activity[key] = ownershipActivity(created, updated)
 		}
 		issueRows := func(items []any, held bool) {
@@ -573,7 +575,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 					holdSources:  sources,
 					band:         IssueBand(issue, held, cfg, env.now, env.selfAuthorizationHoldFor).Band,
 				}
-				record(ownershipKindIssue, issue.Number, decideIssueOwnership(in, env), issue.CreatedAt, issue.UpdatedAt)
+				record(ownershipKindIssue, issue.Number, issue.URL, decideIssueOwnership(in, env), issue.CreatedAt, issue.UpdatedAt)
 			}
 		}
 		issueRows(repo.ActionableIssues, false)
@@ -592,7 +594,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				bucket:       item.Bucket,
 				bucketReason: item.Reason,
 			}
-			record(ownershipKindIssue, item.Number, decideIssueOwnership(in, env), item.CreatedAt, item.UpdatedAt)
+			record(ownershipKindIssue, item.Number, item.URL, decideIssueOwnership(in, env), item.CreatedAt, item.UpdatedAt)
 		}
 		prRows := func(items []any, held bool) {
 			for _, raw := range items {
@@ -602,7 +604,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				}
 				pr := entry.pr
 				pr.Repo = nonEmpty(pr.Repo, repoName)
-				record(ownershipKindPR, pr.Number, decidePROwnership(pr, held, env), pr.CreatedAt, pr.UpdatedAt)
+				record(ownershipKindPR, pr.Number, pr.URL, decidePROwnership(pr, held, env), pr.CreatedAt, pr.UpdatedAt)
 			}
 		}
 		prRows(repo.OpenPrs, false)
@@ -617,6 +619,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 			inbox = append(inbox, ranked{repo: i, key: key, verb: bandRank(ownershipVerbOrder, decision.Verb), activity: activity[key], repoName: repoName, number: number, kind: kind})
 		}
 		repo.Ownership = decisions
+		repo.ownershipURLs = urls
 	}
 	// Grouped by verb; within a group least-recently-active first, ties
 	// broken by repository name and then item number.
@@ -728,6 +731,10 @@ var ownershipStateMu sync.Mutex
 
 type ownershipState struct {
 	EscalationFirstSeen map[string]time.Time `json:"escalation_first_seen,omitempty"`
+	// Identities is each item's last ownership identity; IdentitiesSeeded is
+	// set once the first refresh has stored them.
+	Identities       map[string]ownershipIdentity `json:"identities,omitempty"`
+	IdentitiesSeeded bool                         `json:"identities_seeded,omitempty"`
 }
 
 func loadOwnershipState(path string) ownershipState {
@@ -816,4 +823,5 @@ func applyOwnershipDecisions(cfg *config.Config, repos []FrontendRepo, agentStat
 		bandsCfg = cfg.Dashboard.IssueBands
 	}
 	decideRepoOwnership(repos, bandsCfg, env)
+	recordOwnershipTransitions(repos, now)
 }

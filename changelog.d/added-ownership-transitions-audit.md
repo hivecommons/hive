@@ -1,0 +1,1 @@
+- Hive now keeps each issue and PR's last your-turn ownership identity in its local record and writes an `ownership_transition` audit entry when it changes, from the status refresh only; a restart or the first refresh after deployment records nothing.

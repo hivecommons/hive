@@ -1006,6 +1006,9 @@ type FrontendRepo struct {
 	// (applyOwnershipDecisions). Response copies attach each decision to its
 	// row; it is not serialized here.
 	Ownership map[string]Ownership `json:"-"`
+	// ownershipURLs maps the same keys to each item's GitHub URL, for the
+	// ownership_transition audit entry written by the status refresh.
+	ownershipURLs map[string]string
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable
@@ -1305,6 +1308,9 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		startedAt:        time.Now(),
 	}
 	s.registerCoreRoutes()
+	setOwnershipAuditSink(func(at time.Time, repo string, number int, detail string) {
+		s.audit.LogRecordAt(at.UTC().Format(time.RFC3339), "system", ownershipTransitionAction, detail, "", repo, number)
+	})
 	return s
 }
 
