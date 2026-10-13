@@ -3397,6 +3397,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	b.nousState = deps.loadNousState(nousLayout, b.logger)
 	b.nousState.SnapshotDir = nousLayout.SnapshotDir()
 	publishNousDependencyStatus(b.nousState, nousLayout, b.cfg.Nous.ResolvedFetchAllowlist())
+	startNousArtifactSync(b.ctx, b.nousState, b.cfg.Nous.ArtifactRepo.Resolve(os.Getenv), nousLayout.Root, b.ghClient, nousArtifactBudgetGate(b.ghClient), b.dashSrv.AuditLogRecord, nil, b.logger)
 	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
 	wireNousGate(b.nousState, nousLayout, b.notifier, b.logger)
 	wireNousVerdict(b.nousState, b.cfg, nousLayout, os.Getenv, b.logger)

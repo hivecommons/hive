@@ -457,6 +457,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/nous/config/controllables", s.handleNousConfigControllables)
 	s.mux.HandleFunc("PUT /api/nous/config/principles", s.handleNousConfigPrinciples)
 	s.mux.HandleFunc("DELETE /api/nous/principles/{id}", s.handleNousDeletePrinciple)
+	s.mux.HandleFunc("POST /api/nous/artifacts/sync", s.handleNousArtifactSync)
 
 	s.mux.HandleFunc("GET /api/beads", s.handleBeadsList)
 	s.mux.HandleFunc("GET /api/beads/{agent}", s.handleBeadsList)

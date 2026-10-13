@@ -309,6 +309,12 @@ type NousState struct {
 	// PromotionStore, when set, is the durable promotion record (#11699);
 	// Promotions mirrors it. Nil keeps promotions in memory only.
 	PromotionStore NousPromotionStore `json:"-"`
+	// ArtifactSync, when set, triggers one immediate pass of the optional
+	// GitHub artifact mirror (#11701) and returns its result for the
+	// response body; cmd/hive wires it to pkg/nousartifacts only when
+	// nous.artifact_repo is configured. Nil means the mirror is disabled
+	// and POST /api/nous/artifacts/sync answers 404.
+	ArtifactSync func(ctx context.Context) (interface{}, error) `json:"-"`
 	// Now is the clock for decision timestamps; nil means time.Now.
 	Now func() time.Time `json:"-"`
 	Mu  sync.Mutex       `json:"-"`

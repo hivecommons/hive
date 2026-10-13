@@ -565,3 +565,93 @@ pressing Promote.
 **Not in this part.** An owner notification when a new verdict lands, the
 link to an artifact PR (part 8), and verdicts for campaigns other than the
 hive's own governor campaign.
+
+## Optional GitHub artifact repository
+
+RFC #11585 part 8 (#11701). Off by default: a hive with no
+`nous.artifact_repo` behaves exactly as before and
+`GET /api/nous/status` reports `artifact_repo: {"enabled": false}`.
+
+**What it does.** When enabled, the hive mirrors each *finished* campaign
+folder under `<nous_dir>` (`/data/nous`) to a GitHub repository the
+operator owns, one folder per campaign, delivered as a pull request so
+the owner reviews before anything lands on the configured branch. The
+repository — not the pod disk — is then the durable record (RFC §5). The
+`governor/` scope folder (rolling `ledger.json` / `principles.json`) is
+mirrored the same way whenever it has changed and been quiet; its status
+is `ledger`.
+
+**Who pushes.** The hive itself, through its existing GitHub App
+installation identity (`pkg/github`: ETag cache, request accounting,
+effects boundary, GitHub-signed commits via `createCommitOnBranch`).
+The experiment agent never gets a token and the owner's
+`/data/gh-user-token` is never used. Every push and every failure is an
+audit entry (`nous_artifact_push` / `nous_artifact_push_failed`, user
+`hive`) with campaign, status, branch, commit, file counts and PR URL.
+
+**When a campaign is pushed.** Once, at the end: either `meta_findings.json`
+exists (status `completed`) or the folder has not been written for
+30 minutes (status `incomplete` — failed and abandoned runs are kept, as
+the RFC requires). A folder that is still being written is left alone.
+A campaign whose content changes after it was mirrored (for example a
+late `dependencies.json`) is pushed again to the same branch; unchanged
+campaigns cost no API calls beyond the periodic scan of local disk.
+
+**Layout in the repository.** `<path>/<campaign-id>/...` on branch
+`nous/artifacts/<campaign-id>`, with a `hive-sync.json` manifest listing
+every file's sha256, the files omitted and why, and how many redactions
+were applied. The commit headline is deterministic:
+`nous: mirror campaign <id> (<status>, <n> files)`. The PR opens against
+`nous.artifact_repo.branch` or the repository's default branch; an
+existing open PR for the same branch is reused, never duplicated.
+
+**What is never pushed.** `snapshots/`, `gates/`, `cache/` and hidden
+entries at the root; `.git`, `__pycache__`, `node_modules`, `venv`
+directories; symlinks; and any file whose name matches the denylist
+(dotfiles, `*.tmp`, `*.env`, `*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.jks`,
+`id_rsa`-style keys, `.netrc`/`.npmrc`/`.pypirc`, and names containing
+`token`, `secret`, `credential` or `password`). Text files are passed
+through the same secret scrubber the hive uses for logs before upload;
+the manifest records the count. Caps: 2 MiB per file, 20 MiB and 400
+files per commit; anything over is listed in the manifest as omitted,
+never silently dropped.
+
+**Budget and failure handling.** The mirror is optional work: it skips a
+pass whenever the API budget governor is not in `normal` mode and says so
+in `status.artifact_repo.last_skip_reason`. API errors back off
+exponentially from 1 minute to 1 hour (per campaign failures do not block
+other campaigns). A public destination repository is a warning in the log
+and `status.artifact_repo.public: true`, not a block. The sync state is
+`<nous_dir>/artifact-sync-state.json`; deleting it only causes a re-scan,
+and unchanged campaigns are recognised by content fingerprint.
+
+**Configuration.**
+
+```yaml
+nous:
+  artifact_repo:
+    repo: my-org/nous-artifacts   # owner/name the hive's App is installed on
+    branch: main                  # optional; default: the repo's default branch
+    path: campaigns               # optional path prefix inside the repo
+    sync_interval_seconds: 300    # optional; minimum 30
+```
+
+`HIVE_NOUS_ARTIFACT_REPO`, `HIVE_NOUS_ARTIFACT_BRANCH`,
+`HIVE_NOUS_ARTIFACT_PATH` and `HIVE_NOUS_ARTIFACT_SYNC_INTERVAL` (Go
+duration) override the yaml; precedence is env > yaml > default. The App
+installation needs `contents: write` and `pull_requests: write` on that
+repository.
+
+**Status and manual sync.** `GET /api/nous/status` carries
+`artifact_repo` with `enabled`, `repo`, `branch`, `path`, `public`,
+`last_attempt_at`, `last_sync_at`, `last_error`, `last_skip_reason`,
+`next_attempt_at`, `consecutive_failures` and a per-campaign map of what
+was pushed (branch, commit, PR, file count, fingerprint). The owner-only
+`POST /api/nous/artifacts/sync` runs one pass immediately — it bypasses
+the retry backoff but never the API budget — and returns the pass result;
+it answers 404 when no artifact repository is configured.
+
+**Not in this part.** Git LFS for large artifacts (over-cap files are
+listed in the manifest instead), deleting mirrored folders when a campaign
+is removed locally, per-checkpoint pushes during a running campaign, and
+letting the experiment agent push on its own.

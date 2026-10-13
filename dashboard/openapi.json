@@ -17564,6 +17564,66 @@
         }
       }
     },
+    "/api/nous/artifacts/sync": {
+      "post": {
+        "tags": [
+          "Experiment Lab"
+        ],
+        "summary": "Sync Nous artifacts to the GitHub artifact repository now",
+        "description": "Runs one immediate pass of the optional GitHub artifact mirror (RFC #11585 part 8): finished campaign folders under the Nous data dir are pushed as per-campaign PRs by the hive's own GitHub App identity. Bypasses the retry backoff but never the API budget governor. Requires owner role. Returns 404 when nous.artifact_repo is not configured and 502 when the pass was skipped or failed.",
+        "responses": {
+          "200": {
+            "description": "Pass completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "synced"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "pushed": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Campaign ids mirrored in this pass."
+                        },
+                        "failed": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Campaign id to error for campaigns that could not be pushed."
+                        },
+                        "unchanged": {
+                          "type": "integer",
+                          "description": "Campaigns already mirrored at their current content."
+                        },
+                        "running": {
+                          "type": "integer",
+                          "description": "Campaigns still being written and left alone."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Artifact repository not configured"
+          },
+          "502": {
+            "description": "Pass skipped (API budget) or failed; body carries the reason"
+          }
+        }
+      }
+    },
     "/api/nous/config/controllables": {
       "put": {
         "tags": [

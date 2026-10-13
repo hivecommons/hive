@@ -1148,6 +1148,17 @@ nous:
   # `sdk` is the legacy agent-SDK mode and stays selectable. Existing configs
   # without this key get `inline`. HIVE_NOUS_DISPATCHER overrides.
   dispatcher: inline
+  # Optional GitHub artifact repository (RFC #11585 part 8, #11701). Unset
+  # keeps the mirror off. When set, the hive pushes each finished campaign
+  # folder under data.nous_dir to this repository as a PR using its own App
+  # identity (never the agent, never the owner token), after a filename
+  # denylist, secret scrubbing and size caps. HIVE_NOUS_ARTIFACT_REPO /
+  # _BRANCH / _PATH / _SYNC_INTERVAL override.
+  # artifact_repo:
+  #   repo: my-org/nous-artifacts
+  #   branch: main            # default: the repository's default branch
+  #   path: campaigns
+  #   sync_interval_seconds: 300   # minimum 30
 
 # Experimenter role (RFC #11585 part 5). An agent whose name or `role` is
 # `experimenter` runs self-improvement campaigns through an engine implementing
