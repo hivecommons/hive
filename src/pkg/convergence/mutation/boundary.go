@@ -150,6 +150,28 @@ func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effec
 	return err
 }
 
+// LookupApplied implements effects.Lookup: it reports claim's journaled
+// provenance when the SAME logical ID Execute would derive is already
+// Applied. It reads only; it never acquires the ledger claim, journals an
+// attempt or runs the effect. Off mode journals nothing, so nothing is found.
+func (b *Boundary) LookupApplied(_ context.Context, claim effects.Claim) (effects.Result, bool) {
+	if b == nil {
+		return effects.Result{}, false
+	}
+	executor := b.Executor
+	if b.Mode != nil {
+		executor.Mode = b.Mode()
+	}
+	if !JournalingEnabled(executor.Mode) || executor.Journal == nil || claim.Validate() != nil {
+		return effects.Result{}, false
+	}
+	op, ok := executor.Journal.Get(boundaryEffect(claim).LogicalID())
+	if !ok || op.Status != StatusApplied {
+		return effects.Result{}, false
+	}
+	return effects.Result{Provenance: op.Result}, true
+}
+
 // boundaryEffect is the journaled description of claim's external effect;
 // Execute and Reconcile must derive the SAME logical ID from it.
 func boundaryEffect(claim effects.Claim) Effect {

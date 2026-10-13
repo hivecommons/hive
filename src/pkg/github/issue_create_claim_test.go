@@ -155,6 +155,72 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 	}
 }
 
+// The idempotency bucket is epoch-aligned, so a filing at 23:59:59Z and its
+// reworded twin at 00:00:01Z are different logical operations; the exact-ID
+// replay alone would let the second one create. The previous bucket is
+// probed before executing, so the straddling pair is still one issue — and a
+// filing two buckets later is a fresh operation.
+func TestCreateIssue_SameFindingStraddlingBucketBoundaryReplays(t *testing.T) {
+	var creates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/labels/agent/scanner":
+			fmt.Fprint(w, `{"name":"agent/scanner"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			fmt.Fprint(w, `[]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			n := creates.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"number":%d,"id":%d,"html_url":"https://github.example/o/r/issues/%d"}`, 100+n, 5000+n, 100+n)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.SetMutationBoundary(replayTestBoundary(t))
+
+	midnight := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	clock := midnight.Add(-time.Second)
+	prev := issueCreateNow
+	issueCreateNow = func() time.Time { return clock }
+	t.Cleanup(func() { issueCreateNow = prev })
+
+	title := "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers"
+	body := "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts"
+	first, err := c.CreateIssue(context.Background(), "o/r", title, body, []string{"agent/scanner"})
+	if err != nil {
+		t.Fatalf("first CreateIssue: %v", err)
+	}
+	if first.Number != 101 || first.AlreadyExisted {
+		t.Fatalf("first CreateIssue = %+v, want a fresh #101", first)
+	}
+
+	clock = midnight.Add(time.Second)
+	second, err := c.CreateIssue(context.Background(), "o/r",
+		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers",
+		"Different prose: web/e2e/helpers.ts and web/e2e/card-cache.spec.ts:900.", []string{"agent/scanner"})
+	if err != nil {
+		t.Fatalf("second CreateIssue must be idempotent success, got %v", err)
+	}
+	if got := creates.Load(); got != 1 {
+		t.Fatalf("POST /issues ran %d times, want 1 (the straddling twin must replay the previous bucket)", got)
+	}
+	if second.Number != 101 || second.URL != first.URL || !second.AlreadyExisted {
+		t.Fatalf("second CreateIssue = %+v, want #101 reported as AlreadyExisted", second)
+	}
+
+	clock = midnight.Add(issueCreateIdempotencyWindow + time.Second)
+	third, err := c.CreateIssue(context.Background(), "o/r", title, body, []string{"agent/scanner"})
+	if err != nil {
+		t.Fatalf("third CreateIssue: %v", err)
+	}
+	if got := creates.Load(); got != 2 || third.AlreadyExisted || third.Number != 102 {
+		t.Fatalf("a filing two buckets on is a fresh operation: POSTs=%d result=%+v", got, third)
+	}
+}
+
 // Advisory living issue: findAdvisoryIssue is search-then-create with no
 // idempotency key, so two concurrent EnsureAdvisoryIssue callers whose
 // searches both came back empty both created. The create now runs under the

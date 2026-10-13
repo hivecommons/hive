@@ -79,6 +79,26 @@ func Reconcile(ctx context.Context, boundary Boundary, claim Claim, state Extern
 	return r.Reconcile(ctx, claim, state)
 }
 
+// Lookup is implemented by boundaries that journal effects and can report,
+// without running anything, whether claim's logical operation is already
+// applied. Callers use it to recognise an equivalent operation under a
+// neighbouring key (e.g. the previous idempotency bucket) that Execute's
+// exact-ID replay cannot see.
+type Lookup interface {
+	LookupApplied(ctx context.Context, claim Claim) (Result, bool)
+}
+
+// LookupApplied reports whether boundary has claim's operation journaled as
+// applied, with its recorded provenance. Boundaries that do not journal (nil,
+// NoopBoundary) never report an applied operation.
+func LookupApplied(ctx context.Context, boundary Boundary, claim Claim) (Result, bool) {
+	l, ok := boundary.(Lookup)
+	if !ok {
+		return Result{}, false
+	}
+	return l.LookupApplied(ctx, claim)
+}
+
 type Claim struct {
 	Repo   string
 	Kind   string

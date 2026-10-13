@@ -936,26 +936,31 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		req.Labels = &usable
 	}
 	var issue *gh.Issue
-	res, err := effects.Execute(ctx, c.mutationBoundary(), issueCreateClaim(owner+"/"+repoName, title, body, time.Now()),
-		func(ctx context.Context) (effects.Result, error) {
-			var apiErr error
-			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
-			if apiErr != nil {
-				return effects.Result{}, apiErr
-			}
-			return effects.Result{Provenance: issue.GetHTMLURL()}, nil
-		})
-	if err != nil {
-		return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
+	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
+	res, found := c.priorBucketIssueCreate(ctx, claim)
+	if !found {
+		var err error
+		res, err = effects.Execute(ctx, c.mutationBoundary(), claim,
+			func(ctx context.Context) (effects.Result, error) {
+				var apiErr error
+				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
+				if apiErr != nil {
+					return effects.Result{}, apiErr
+				}
+				return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+			})
+		if err != nil {
+			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
+		}
 	}
 	if issue == nil {
 		// The mutation boundary replayed this create as already applied
 		// (#11579): another filing of the same finding — same canonical
 		// subject and file set, however the title was reworded — landed
-		// inside the idempotency window, so the effect never ran and there
-		// is no API response. Hand back the journaled issue rather than a
-		// zero number with a nil error; an unparsable provenance is an error,
-		// never a fabricated result.
+		// inside the idempotency window (this bucket or the previous one),
+		// so the effect never ran and there is no API response. Hand back
+		// the journaled issue rather than a zero number with a nil error; an
+		// unparsable provenance is an error, never a fabricated result.
 		number, parseErr := parseIssueNumberFromURL(res.Provenance)
 		if parseErr != nil {
 			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: replayed as already applied but recorded provenance %q is not an issue URL: %w", owner, repoName, res.Provenance, parseErr)
@@ -979,6 +984,22 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 // twins, rejected twins, same-component streams) is the only guard, as it
 // was before.
 const issueCreateIdempotencyWindow = 24 * time.Hour
+
+// issueCreateNow is the clock the issue-create claims bucket on; tests pin
+// it to place two filings on either side of a bucket boundary.
+var issueCreateNow = time.Now
+
+// scanOpenIssuesMaxPages bounds scanOpenIssues to the newest
+// scanOpenIssuesMaxPages × 100 open issues (#11579, B.4). Agent-filed issues
+// are recent by construction, and an unbounded scan of a busy repo would burn
+// API budget on every create. The cost of the bound is known: in a repo with
+// more open issues than the window, a tracker older than the window is
+// invisible to the scan and a new variant files fresh. The guards that do not
+// depend on the window are the rejected-twin gate (its own creator-filtered
+// closed-issue query), the same-component fold (recently-closed siblings are
+// queried separately) and the create claim (issueCreateClaim), which covers
+// the scan→create race regardless of repo size.
+const scanOpenIssuesMaxPages = 3
 
 // issueCreateClaim is the effects claim guarding one issue create. It is
 // keyed on the finding's canonical subject and file-reference set, not its
@@ -1017,9 +1038,38 @@ func issueCreateClaim(repo, title, body string, now time.Time) effects.Claim {
 
 // issueCreateIdempotencyBucket is the issueCreateIdempotencyWindow-sized
 // bucket now falls in, as a journal input: creates in the same bucket share a
-// logical operation, creates in different buckets do not.
+// logical operation, creates in different buckets do not. Buckets are aligned
+// to the Unix epoch (00:00Z for the 24h window), so two filings seconds apart
+// can straddle a boundary; priorBucketIssueCreate covers that pair.
 func issueCreateIdempotencyBucket(now time.Time) string {
 	return strconv.FormatInt(now.UTC().Unix()/int64(issueCreateIdempotencyWindow/time.Second), 10)
+}
+
+// priorBucketIssueCreate reports the issue the previous idempotency bucket
+// already journaled for claim's finding, if any (#11579). The bucket is
+// epoch-aligned, so a filing at 23:59:59Z and its twin at 00:00:01Z are
+// distinct logical operations and the journal's exact-ID replay alone would
+// let the second one create. Probing the previous bucket's key — a read, no
+// claim is taken and nothing runs — closes that straddle: any two filings
+// less than issueCreateIdempotencyWindow apart are in the same bucket or in
+// adjacent ones. A boundary that does not journal never reports a hit, so
+// the create proceeds exactly as before.
+func (c *Client) priorBucketIssueCreate(ctx context.Context, claim effects.Claim) (effects.Result, bool) {
+	prior := claim
+	prior.Inputs = make(map[string]string, len(claim.Inputs))
+	for k, v := range claim.Inputs {
+		prior.Inputs[k] = v
+	}
+	bucket, err := strconv.ParseInt(claim.Inputs["window"], 10, 64)
+	if err != nil {
+		return effects.Result{}, false
+	}
+	prior.Inputs["window"] = strconv.FormatInt(bucket-1, 10)
+	res, ok := effects.LookupApplied(ctx, c.mutationBoundary(), prior)
+	if !ok || strings.TrimSpace(res.Provenance) == "" {
+		return effects.Result{}, false
+	}
+	return res, true
 }
 
 // issueURLPattern matches the "…/{owner}/{repo}/issues/{number}" tail of a
@@ -1112,18 +1162,6 @@ var ubiquitousFileRefs = map[string]bool{
 func isUbiquitousFileRef(p string) bool {
 	return ubiquitousFileRefs[p[strings.LastIndex(p, "/")+1:]]
 }
-
-// scanOpenIssuesMaxPages bounds scanOpenIssues to the newest
-// scanOpenIssuesMaxPages × 100 open issues (#11579, B.4). Agent-filed issues
-// are recent by construction, and an unbounded scan of a busy repo would burn
-// API budget on every create. The cost of the bound is known: in a repo with
-// more open issues than the window, a tracker older than the window is
-// invisible to the scan and a new variant files fresh. The guards that do not
-// depend on the window are the rejected-twin gate (its own creator-filtered
-// closed-issue query), the same-component fold (recently-closed siblings are
-// queried separately) and the create claim (issueCreateClaim), which covers
-// the scan→create race regardless of repo size.
-const scanOpenIssuesMaxPages = 3
 
 // scanOpenIssues scans up to the 3 most recent pages of open issues for an
 // exact (whitespace-trimmed) title match, falling back to a canonical subject
