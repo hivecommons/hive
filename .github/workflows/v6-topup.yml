@@ -104,13 +104,13 @@ jobs:
           # conflicts, other deletions) still fails loudly below.
           elif unmerged="$(git status --porcelain | grep -E '^(DD|AU|UD|UA|DU|AA|UU) ' || true)" \
                && [ -n "$unmerged" ] \
-               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/|^DU \.github/workflows/discord-syntax\.yml$|^UU src/pkg/config/config\.go$'; then
+               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/|^(DU|UD) \.github/workflows/discord-syntax\.yml$|^UU src/pkg/config/config\.go$'; then
             resolved=0
             while IFS= read -r entry; do
               [ -n "$entry" ] || continue
               status="${entry%% *}"
               file="${entry#* }"
-              if [ "$status" = "DU" ]; then
+              if [ "$status" = "DU" ] || [ "$status" = "UD" ]; then
                 git rm -q -- "$file"
               else
                 git checkout --ours -- "$file"
