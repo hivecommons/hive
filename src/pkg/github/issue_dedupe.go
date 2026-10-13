@@ -21,6 +21,12 @@ var issueTitleQualifierRE = regexp.MustCompile(`\s+(?:\x{2014}|\x{2013}|--)\s+.*
 
 var issueTitleWhitespaceRE = regexp.MustCompile(`\s+`)
 
+// Agent titles open with the filing agent's tag ("[scanner] ..."). The tag
+// names the filer, not the finding, so it is stripped before comparison: a
+// human-filed "HP ZBook black screen on boot" and the scanner's
+// "[scanner] HP ZBook black screen on boot" are the same subject (#11576).
+var issueTitleAgentTagRE = regexp.MustCompile(`^\[[^\]\n]{1,40}\]\s*`)
+
 const (
 	// A canonical subject is only trusted as a dedupe key when enough of the
 	// title survives stripping. Without this, short/generic stems (e.g.
@@ -30,11 +36,13 @@ const (
 )
 
 // canonicalIssueSubject reduces an issue title to the stable subject used for
-// duplicate detection: qualifier stripped, lowercased, whitespace collapsed.
+// duplicate detection: agent tag and qualifier stripped, lowercased,
+// whitespace collapsed.
 // It returns "" when the result is too short or too generic to be a safe
 // dedupe key, which callers must treat as "no canonical match possible".
 func canonicalIssueSubject(title string) string {
 	t := strings.TrimSpace(title)
+	t = issueTitleAgentTagRE.ReplaceAllString(t, "")
 	t = issueTitleQualifierRE.ReplaceAllString(t, "")
 	t = issueTitleWhitespaceRE.ReplaceAllString(strings.ToLower(t), " ")
 	t = strings.TrimSpace(t)

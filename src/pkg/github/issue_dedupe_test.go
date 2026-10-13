@@ -18,6 +18,10 @@ func TestCanonicalIssueSubject_CollapsesModelAuthoredQualifiers(t *testing.T) {
 		base + " -- extract helpers module",
 		base + " – extract helpers module",
 		"  " + base + "   ",
+		// The agent tag names the filer, not the finding: a human-filed or
+		// differently-tagged copy of the same subject is the same finding.
+		"Split web/e2e/compliance/card-cache-compliance.spec.ts (1237 lines)",
+		"[quality] Split web/e2e/compliance/card-cache-compliance.spec.ts (1237 lines) — extract helpers",
 	}
 	want := canonicalIssueSubject(base)
 	if want == "" {

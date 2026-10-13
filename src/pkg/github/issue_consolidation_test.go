@@ -37,7 +37,8 @@ type consolidationMock struct {
 	commentBodies  []string
 	commentsStatus int // non-zero, non-200: every comment POST fails with it
 	closed         []closedTwin
-	closedLists    int // closed-issue list requests served
+	closedLists    int      // closed-issue list requests served
+	priorComments  []string // bodies served for every GET .../comments
 }
 
 // consolidationMockServer serves open issues newest-first (the order the
@@ -51,6 +52,13 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 		switch {
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			out := make([]map[string]any, 0, len(m.priorComments))
+			for i, body := range m.priorComments {
+				out = append(out, map[string]any{"id": i + 1, "body": body})
+			}
+			b, _ := json.Marshal(out)
+			_, _ = w.Write(b)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
 			if m.commentsStatus != 0 && m.commentsStatus != http.StatusOK {
 				w.WriteHeader(m.commentsStatus)
@@ -234,16 +242,23 @@ func TestIssueRequestWatcher_FoldsIntoHumanFiledIssue(t *testing.T) {
 		name        string
 		open        openTwin
 		title, body string
+		wantComment []string
+		noComment   []string
 	}{
 		{
 			name:  "file set",
 			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen", body: "see build/esp.sh:12"},
 			title: "[scanner] ESP path length too long", body: "build/esp.sh:40 overflows",
+			wantComment: []string{hiveFindingFoldedMarker, "exactly the same files", "`build/esp.sh`"},
 		},
 		{
+			// Matched by subject, not by file set: the comment must not
+			// claim a file-set match it never made.
 			name:  "canonical subject",
 			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen on boot", body: "no files"},
 			title: "[scanner] HP ZBook black screen on boot", body: "no files either",
+			wantComment: []string{hiveFindingFoldedMarker, "on the same subject as this one"},
+			noComment:   []string{"exactly the same files"},
 		},
 	}
 	for _, tc := range cases {
@@ -262,6 +277,56 @@ func TestIssueRequestWatcher_FoldsIntoHumanFiledIssue(t *testing.T) {
 			}
 			if !res.OK || !res.Consolidated || res.Number != 415 {
 				t.Errorf("result = %+v, want consolidated into #415", res)
+			}
+			for _, want := range tc.wantComment {
+				if !strings.Contains(m.commentBodies[0], want) {
+					t.Errorf("comment missing %q:\n%s", want, m.commentBodies[0])
+				}
+			}
+			for _, bad := range tc.noComment {
+				if strings.Contains(m.commentBodies[0], bad) {
+					t.Errorf("comment wrongly contains %q:\n%s", bad, m.commentBodies[0])
+				}
+			}
+		})
+	}
+}
+
+// Scanner re-files are reworded each sweep, so the body-digest Effects claim
+// never dedupes them: a human-filed issue that already carries a folded
+// finding is reused silently rather than collecting a comment per sweep.
+func TestIssueRequestWatcher_HumanFiledIssueCommentedAtMostOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		open        openTwin
+		title, body string
+	}{
+		{
+			name:  "file set",
+			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen", body: "see build/esp.sh:12"},
+			title: "[scanner] ESP path overflows (reworded)", body: "build/esp.sh:41 still overflows",
+		},
+		{
+			name:  "canonical subject",
+			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen on boot", body: "no files"},
+			title: "[scanner] HP ZBook black screen on boot", body: "reworded on the second sweep",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{priorComments: []string{"a human reply", subjectMatchFindingComment("earlier finding", "earlier body")}}
+			srv := consolidationMockServer(t, []openTwin{tc.open}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "scanner", Title: tc.title, Body: tc.body,
+			})
+			if m.created != 0 || len(m.commentedOn) != 0 {
+				t.Fatalf("created=%d comments=%v, want neither: issue #415 already carries a folded finding", m.created, m.commentedOn)
+			}
+			if !res.OK || !res.Consolidated || res.Number != 415 {
+				t.Errorf("result = %+v, want reused #415", res)
 			}
 		})
 	}
