@@ -536,6 +536,7 @@
     .nps-admin-response-meta { font-size: var(--fs-xs); color: var(--muted); }
     .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
       .upgrade-ctl[aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.5; pointer-events: auto; }
+      .version-missing { font-size: var(--fs-2xs); white-space: nowrap; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -7443,7 +7444,7 @@
             ? 'The hub last heard from this hive ' + vmSeen + ' (' + fmtUserTS(h.lastHeartbeat) + ') and the heartbeat carried no build version — the spoke build predates version reporting, or the pod that replaced it has not come up.'
             : 'The hub has never received a heartbeat from this hive, so it knows nothing about the build it runs. ' +
               (vmReason.indexOf('push-only') === 0 ? 'Its cluster is push-only: the hub cannot reach in to look, so the spoke must come up and report in.' : 'Check that the spoke pod is running and can reach the hub.');
-          versionCell = '<span class="text-muted" style="font-size:var(--fs-2xs);white-space:nowrap" title="' + escAttr(vmTitle) + '">' + esc(vmLabel) + '</span>' + (driftDot ? ' ' + driftDot : '');
+          versionCell = '<span class="version-missing" title="' + escAttr(vmTitle) + '">' + esc(vmLabel) + '</span>' + (driftDot ? ' ' + driftDot : '');
         }
         var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))
           ? '<span title="' + escAttr(h.pendingRequestCount + (h.pendingRequestCount === 1 ? ' pending access request' : ' pending access requests')) + '" style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:var(--fs-2xs);display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
