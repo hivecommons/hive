@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/nousstore"
 )
 
 // Filesystem layout of spoke state.
@@ -103,6 +104,12 @@ const (
 	// they are why the archive must be encrypted, and they must never be
 	// logged or written anywhere world-readable.
 	appKeyGlob = "gh-app-key*.pem"
+
+	// nousSubdir is the durable Nous (Experiment/Strategy Lab) tree,
+	// relative to the data dir (#11694): governor ledger and principles plus
+	// the dashboard panel configuration. Its snapshots/ subtree — hundreds of
+	// MB of regenerable baseline samples — is excluded; see nousSkip.
+	nousSubdir = "nous"
 )
 
 // Archive layout: top-level directories inside the tarball.
@@ -112,6 +119,9 @@ const (
 
 	// beadsPrefix holds the agent work ledger.
 	beadsPrefix = "beads"
+
+	// nousPrefix holds the durable Nous tree (minus snapshots).
+	nousPrefix = "nous"
 )
 
 // Size guards. A backup is streamed through the dashboard to a browser, so it
@@ -142,8 +152,10 @@ const BuildTimeout = 2 * time.Minute
 //
 // Everything not listed here is excluded deliberately:
 //
-//   - nous/    287MB of timestamped learned-context snapshots. Regenerable,
-//     and the single largest directory on the PVC.
+//   - nous/snapshots/  287MB of timestamped baseline snapshots. Regenerable,
+//     and the single largest directory on the PVC. The REST of nous/ — the
+//     governor experiment ledger, learned principles and the panel
+//     configuration — is small, not regenerable, and IS included (#11694).
 //   - home/    agent CLI state and credential caches. Bulk, regenerable, and
 //     carries third-party tokens that should not be duplicated into an
 //     archive the owner will store outside the cluster.
@@ -215,10 +227,27 @@ type Result struct {
 	// BeadDirs lists the per-agent bead directories captured.
 	BeadDirs []string
 
+	// NousIncluded is true when the durable Nous tree was captured (#11694).
+	NousIncluded bool
+
 	// Skipped records files that could not be read or were too large, so a
 	// gap is visible in the result rather than silently absent.
 	Skipped map[string]string
 }
+
+// nousSkip prunes the regenerable snapshots subtree from the Nous backup and
+// drops in-flight temp files left by an atomic write.
+func nousSkip(rel string) bool {
+	parts := strings.SplitN(filepath.ToSlash(rel), "/", 2)
+	if parts[0] == nousstore.SnapshotsSubdir {
+		return true
+	}
+	return strings.HasSuffix(rel, nousTmpSuffix)
+}
+
+// nousTmpSuffix matches the temporary file nousstore writes before its atomic
+// rename; a backup racing that write must not capture a half-written file.
+const nousTmpSuffix = ".tmp"
 
 // Build assembles and seals a backup of this spoke.
 //
@@ -289,6 +318,20 @@ func Build(key []byte, hiveID string, logger *slog.Logger) (*Result, error) {
 			}
 			res.BeadDirs = append(res.BeadDirs, agent)
 		}
+	}
+
+	// 4. Nous experiment state (#11694): ledger, principles and the panel
+	//    configuration, skipping the bulk snapshots. A hive that has never
+	//    run Nous has no nous/ dir at all; that is recorded, not fatal.
+	nousDir := filepath.Join(dataDir, nousSubdir)
+	if _, err := os.Stat(nousDir); err != nil {
+		res.Skipped[nousSubdir] = err.Error()
+		logger.Info("spoke backup: no nous dir", "dir", nousDir, "err", err)
+	} else if err := b.AddTree(nousDir, nousPrefix, nousSkip, logger); err != nil {
+		res.Skipped[nousSubdir] = err.Error()
+		logger.Warn("spoke backup: nous dir failed", "dir", nousDir, "err", err)
+	} else {
+		res.NousIncluded = true
 	}
 
 	man := &hubbackup.Manifest{

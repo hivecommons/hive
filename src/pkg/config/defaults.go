@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/nousstore"
 )
 
 const (
@@ -34,6 +36,10 @@ const (
 	defaultLogMaxAgeDays          = 7
 	defaultLogMaxBackups          = 10
 	defaultLogLevel               = "info"
+
+	// DefaultNousDir is the durable Nous root applied when data.nous_dir is
+	// unset (#11694).
+	DefaultNousDir = nousstore.DefaultRoot
 
 	// defaultAdvisoryMaxFindings is the digest's default top-N cap. Ten fits
 	// in a screenful, which is the point: the digest is a "what should I look
@@ -177,6 +183,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Data.LogsDir == "" {
 		c.Data.LogsDir = "/data/logs"
+	}
+	if c.Data.NousDir == "" {
+		c.Data.NousDir = DefaultNousDir
 	}
 	if c.Data.ClaudeSessionsDir == "" {
 		c.Data.ClaudeSessionsDir = "/data/home/.claude/projects"

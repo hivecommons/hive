@@ -61,6 +61,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/persona"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
@@ -3367,9 +3368,11 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 
 	deps.startWorkspaceCleanup(b.ctx, b.logger, b.dashSrv.GetAudit())
 
-	deps.ensureNousDirs(b.logger)
-	b.nousState = deps.loadNousState(b.logger)
-	b.nousState.SnapshotDir = nousSnapshotDir
+	nousLayout := nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv)
+	deps.ensureNousDirs(nousLayout, b.logger)
+	b.nousState = deps.loadNousState(nousLayout, b.logger)
+	b.nousState.SnapshotDir = nousLayout.SnapshotDir()
+	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
 
 	b.inceptionEngine = deps.newInceptionEngine(b.knowledgeAPI, b.logger)
 	b.sched.SetInception(b.inceptionEngine)
@@ -10071,13 +10074,62 @@ func applyConfigOverrides(cfg *config.Config, o *snapshot.ConfigOverrides) {
 	}
 }
 
-const (
-	nousGovernorDir = "/var/run/nous/governor"
-	nousSnapshotDir = "/data/nous/snapshots"
-)
+// legacyNousGovernorDir is the pre-#11694 tmpfs location of the governor
+// ledger and principles, migrated forward into the durable layout at boot
+// and read as a fallback when the durable copy is absent.
+const legacyNousGovernorDir = nousstore.LegacyGovernorDir
 
-func loadNousState(logger *slog.Logger) *dashboard.NousState {
-	return loadNousStateFromPaths(logger, nousGovernorDir, nousSnapshotDir)
+// ensureNousDirs creates the durable Nous tree and carries any legacy
+// governor state forward into it (#11694). Failures are logged, not fatal:
+// Nous is observational and must never block a boot.
+func ensureNousDirs(layout nousstore.Layout, logger *slog.Logger) {
+	ensureNousDirsFrom(layout, legacyNousGovernorDir, logger)
+}
+
+func ensureNousDirsFrom(layout nousstore.Layout, legacyDir string, logger *slog.Logger) {
+	if err := layout.EnsureDirs(); err != nil {
+		logger.Warn("failed to create nous dirs", "root", layout.Root, "error", err)
+	}
+	res, err := layout.MigrateLegacy(legacyDir, logger)
+	if err != nil {
+		logger.Warn("nous legacy state migration incomplete", "from", legacyDir, "to", layout.GovernorDir(), "error", err)
+	}
+	if len(res.Copied) > 0 {
+		logger.Info("nous legacy state migrated", "copied", len(res.Copied), "to", layout.GovernorDir())
+	}
+}
+
+// loadNousState builds the panel state from the durable layout: ledger and
+// principles from <root>/governor (or the legacy dir as a read-only
+// fallback), the snapshot count from <root>/snapshots, and the persisted
+// panel configuration from <root>/panel-config.json.
+func loadNousState(layout nousstore.Layout, logger *slog.Logger) *dashboard.NousState {
+	return loadNousStateFrom(layout, legacyNousGovernorDir, logger)
+}
+
+func loadNousStateFrom(layout nousstore.Layout, legacyDir string, logger *slog.Logger) *dashboard.NousState {
+	governorDir, fallback := layout.ResolveGovernorDir(legacyDir)
+	if fallback {
+		logger.Warn("nous: reading governor state from legacy location", "dir", governorDir, "durable", layout.GovernorDir())
+	}
+	state := loadNousStateFromPaths(logger, governorDir, layout.SnapshotDir())
+	pc, ok, err := layout.LoadPanelConfig()
+	switch {
+	case err != nil:
+		logger.Warn("nous: ignoring unreadable panel config", "path", layout.PanelConfigPath(), "error", err)
+	case ok:
+		state.ApplyPanelConfig(dashboard.NousPanelSnapshot{Mode: pc.Mode, Scope: pc.Scope, Config: pc.Config})
+		logger.Info("nous panel config restored", "path", layout.PanelConfigPath(), "mode", state.Mode, "scope", state.Scope)
+	}
+	return state
+}
+
+// nousPanelPersister adapts nousstore's on-disk panel config to the
+// dashboard's NousState.PersistPanel seam, stamping SavedAt with now.
+func nousPanelPersister(layout nousstore.Layout, now func() time.Time) func(dashboard.NousPanelSnapshot) error {
+	return func(snap dashboard.NousPanelSnapshot) error {
+		return layout.SavePanelConfig(nousstore.PanelConfig{Mode: snap.Mode, Scope: snap.Scope, Config: snap.Config}, now())
+	}
 }
 
 func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {

@@ -6,9 +6,10 @@ designs experiments against governor (and optionally repo) parameters, and
 measures each one against that baseline before anything is applied for real.
 
 **There is no `nous:` block in `hive.yaml` or `hive.yaml.example`.** Despite
-what `src/README.md` used to say, Nous has no YAML config surface — it is
-configured entirely at runtime through the dashboard (Strategy Lab panel, ACMM
-level 4+) or directly through the `/api/nous/*` endpoints. This page documents
+what `src/README.md` used to say, Nous has no YAML config surface beyond the
+`data.nous_dir` storage root — it is configured at runtime through the
+dashboard (Strategy Lab panel, ACMM level 4+) or directly through the
+`/api/nous/*` endpoints. This page documents
 that runtime configuration and the experiment lifecycle, verified against
 `pkg/dashboard/api.go`, `pkg/dashboard/deps.go`, `cmd/hive/main.go`, and the
 dashboard's `renderNousConfig()`/`renderNous()` UI code.
@@ -23,21 +24,39 @@ panel shows an explainer card instead of empty stats.
 
 ## State and storage
 
-Nous state lives in three places, none of which is `hive.yaml`:
+All Nous state lives under one durable root on the PVC — `/data/nous` by
+default, configurable with `data.nous_dir` and overridable at runtime with
+`HIVE_NOUS_DATA_DIR` (RFC #11585 part 1, #11694). Nothing Nous-specific is in
+`hive.yaml` beyond that one path:
 
-| What | Where | Written by |
+| What | Where (relative to `data.nous_dir`) | Written by |
 |---|---|---|
-| Experiment ledger | `/var/run/nous/governor/ledger.json` | governor experiment loop, read at boot |
-| Learned principles | `/var/run/nous/governor/principles.json` | governor experiment loop, read at boot |
-| Baseline snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
-| Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
+| Experiment ledger | `governor/ledger.json` | governor experiment loop, read at boot |
+| Learned principles | `governor/principles.json` | governor experiment loop, read at boot |
+| Baseline snapshots | `snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
+| Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | `panel-config.json` (mirrors `NousState.Mode`/`Scope`/`Config`) | every `PUT /api/nous/mode`, `PUT /api/nous/scope` and `PUT /api/nous/config/*`; re-applied at boot |
 
-The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
-controllables/principles sections) is **not currently persisted back to disk
-across a process restart** — it is rebuilt from defaults each time the hive
-boots, while `loadNousState()` in `cmd/hive/main.go` reseeds only the ledger,
-principles, and snapshot count from the files above. Re-apply dashboard
-configuration after a restart if you rely on non-default values.
+Panel configuration therefore **survives a process restart**: `loadNousState()`
+in `cmd/hive/main.go` reseeds the ledger, principles and snapshot count from
+the files above and then overlays `panel-config.json` onto the defaults. A
+corrupt `panel-config.json` is logged and ignored (defaults apply) rather than
+blocking boot.
+
+**Migration from the previous layout.** Before #11694 the ledger and
+principles were read from `/var/run/nous/governor`, a tmpfs that is wiped on
+every container restart. On each boot the hive now copies any
+`ledger.json`/`principles.json` found there into `<nous_dir>/governor/` when
+the durable copy is missing or older, and never copies backwards or deletes.
+If the durable copy cannot be written, the loader falls back to reading the
+legacy directory for that boot and logs a warning. The legacy path is still
+created in the image so an older governor loop keeps working; its output is
+simply carried forward on the next restart.
+
+**Backups.** The owner-triggered spoke backup (`POST /api/backup`) captures
+`<data-dir>/nous/` **except** `snapshots/` (hundreds of MB of regenerable
+baseline samples), and `hive-backup restore` puts it back under
+`<data-dir>/nous/`. See [backup-restore.md](backup-restore.md#owner-triggered-spoke-backup).
+The nightly hub DR backup is unchanged and still excludes `nous/` entirely.
 
 ## Experiment lifecycle
 
@@ -157,7 +176,7 @@ an unreinforced principle loses confidence over time.
   entries) and the experiment history timeline in the dashboard.
 - **`GET /api/nous/principles`** returns the current principle list
   independently of the ledger; principles persist (via
-  `/var/run/nous/governor/principles.json`) even as ledger entries age out of
+  `<nous_dir>/governor/principles.json`) even as ledger entries age out of
   the recent-history view.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
   everything above in one call — mode, scope, phase, per-scope phase detail,
@@ -187,10 +206,8 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 ## What does not exist today
 
 - No `nous:` key in `hive.yaml` or `hive.yaml.example` — do not add one to an
-  operator's config expecting it to be read; it is ignored.
-- No persistence of the `goals`/`output`/`fast_fail`/`schedule`/
-  `controllables` config sections across a process restart beyond the ledger,
-  principles, and snapshot count already described above.
+  operator's config expecting it to be read; it is ignored. The only
+  Nous-related YAML key is `data.nous_dir`.
 - No environment-variable override for the confidence threshold or decay
   rate shown in the dashboard's Principle Store section — those fields exist
   in the UI but are not wired to `NOUS_CONFIDENCE_THRESHOLD` /

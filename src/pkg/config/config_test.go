@@ -232,6 +232,20 @@ func TestApplyDefaults_DataDirs(t *testing.T) {
 	if cfg.Data.BobSessionsDir != "/data/home/.bob" {
 		t.Errorf("Data.BobSessionsDir = %q, want %q", cfg.Data.BobSessionsDir, "/data/home/.bob")
 	}
+	if cfg.Data.NousDir != "/data/nous" {
+		t.Errorf("Data.NousDir = %q, want %q", cfg.Data.NousDir, "/data/nous")
+	}
+}
+
+func TestApplyDefaults_NousDirNotOverridden(t *testing.T) {
+	path := writeTempConfig(t, minimalValidYAML("my-org", "ghp_tok")+"\ndata:\n  nous_dir: /mnt/nous\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Data.NousDir != "/mnt/nous" {
+		t.Errorf("Data.NousDir = %q, want explicit /mnt/nous", cfg.Data.NousDir)
+	}
 }
 
 func TestApplyDefaults_AgentBeadsDir(t *testing.T) {

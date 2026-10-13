@@ -316,6 +316,7 @@ section requires for lookups.
 | `HIVE_HUB_NAMESPACE` | No | current/default namespace | Hub namespace override for backup collection. |
 | `HIVE_KUBECONFIG_DIR` | No | `/etc/hive/kubeconfigs` | Directory containing per-cluster kubeconfigs for remote spoke backup collection. |
 | `HIVE_SPOKE_BACKUP_DATA_DIR` | No | `/data` | Spoke data directory for on-demand spoke backup. |
+| `HIVE_NOUS_DATA_DIR` | No | `data.nous_dir`, then `/data/nous` | Durable root for Nous (Strategy Lab) state — governor ledger and principles, baseline snapshots, dashboard panel config. Overrides `data.nous_dir`. The spoke backup always captures `<data-dir>/nous`, so relocating the root outside `/data` takes it out of the owner backup. |
 | `OCI_TENANCY_OCID` | Required for OCI FSS/Object Storage flows | none | OCI tenancy OCID. |
 | `OCI_USER_OCID` | Required for OCI FSS/Object Storage flows | none | OCI user OCID. |
 | `OCI_FINGERPRINT` | Required for OCI FSS/Object Storage flows | none | OCI API key fingerprint. |

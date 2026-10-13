@@ -119,13 +119,13 @@ There are two verbs, and the difference matters:
 | | `hive-backup extract` | `hive-backup restore` |
 | --- | --- | --- |
 | Output | a plain directory still carrying the archive's `spoke/` and `beads/` prefixes | a populated spoke data directory |
-| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/` |
+| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/`, `nous/` → `<data-dir>/nous/` |
 | Identity guard | none | refuses a destination that belongs to a different hive |
 | Use it for | inspecting an archive; a **hub** disaster-recovery archive, whose Secret/PVC reassembly is manual | putting a **spoke** archive back on a deployment |
 
 ### What the archive contains, and where each path goes on restore
 
-The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-116`):
+The archive has three top-level directories (`spoke/`, `beads/`, `nous/`; see `src/pkg/spokebackup/backup.go`):
 
 | Archive path | Container path (relative to `HIVE_SPOKE_BACKUP_DATA_DIR`, default `/data`) | Source |
 | --- | --- | --- |
@@ -136,9 +136,10 @@ The archive has two top-level directories (`src/pkg/spokebackup/backup.go:111-11
 | `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:100` |
 | `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:255`) |
 | `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
+| `nous/governor/ledger.json`, `nous/governor/principles.json`, `nous/panel-config.json` | `/data/nous/**` | `nousSubdir`/`nousPrefix` — the durable Nous (Strategy Lab) state from #11694. `nous/snapshots/` and `*.tmp` are skipped (`nousSkip`): snapshots are regenerable bulk data. A missing `nous/` dir is recorded in `Skipped`, not fatal. |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
-The mapping is a flat rename of the two archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).
+The mapping is a flat rename of the three archive prefixes (`spoke/` → data-dir root, `beads/` → data-dir `beads/`, `nous/` → data-dir `nous/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).
 
 ### Decrypting the archive — executed
 
@@ -272,11 +273,12 @@ On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth
 - `hive-id`;
 - `hive-state.json`;
 - `gh-app-key*.pem`, the GitHub App private keys;
-- `beads/`, the agent work ledger.
+- `beads/`, the agent work ledger;
+- `nous/`, durable Nous (Strategy Lab) state — governor ledger, principles and panel config (snapshots excluded from the spoke backup).
 
 Hub deployments also keep `hub-registry.json` and `clusters.json` in `/data`. A standalone Compose spoke has neither.
 
-Regenerable bulk state such as `nous/`, `home/`, and `logs/` can be excluded from a backup. `docker compose down -v` deletes the named volume.
+Regenerable bulk state such as `nous/snapshots/`, `home/`, and `logs/` can be excluded from a backup. `docker compose down -v` deletes the named volume.
 
 ### `hive-backup run` does not apply
 
@@ -297,7 +299,7 @@ Managing the key from the dashboard is also owner-only:
 - `PUT /api/config/governor/backup` — `{"encryptionKey":"<64 hex>","keyName":"escrowed in 1Password"}`.
 - `DELETE /api/config/governor/backup` — removes the stored key; backups are refused again.
 
-The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, and `beads/`. It is encrypted and sized for browser download, not nightly fleet DR.
+The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, `beads/`, and `nous/` (minus snapshots). It is encrypted and sized for browser download, not nightly fleet DR.
 
 ### Host-level backup pattern
 

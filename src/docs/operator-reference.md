@@ -119,7 +119,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `notifications` | ntfy, Slack, and Discord webhooks. | All optional; see [notifications.md](notifications.md). |
 | `dashboard` | Web UI port, snapshots, auth token, frame allowlist, authorized users. | `auth_token` can come from `HIVE_DASHBOARD_TOKEN`. |
 | `agent_sandbox` | Podman-rootless sandbox launcher for hub/pod agents (`pkg/sandbox`). | Opt-in and **two-gate**: this block's own `enabled: true` sandboxes nothing by itself — each agent also needs `sandbox.enabled: true` under `agents.<name>`. The dashboard's Security tab writes only this global flag, so enabling it there alone can leave every agent unconfined — but the tab now shows this: `security.sandboxWarnings` in `GET /api/config/governor` carries `config.AgentSandboxGateWarnings`'s diagnosis (also logged at WARN at boot/reload), rendered both in the page's coherence-warnings box and inline under the toggle, naming the still-unconfined agents and the fixing key (#4918). See [sandbox-isolation.md](sandbox-isolation.md) and the [getting-started confinement section](getting-started.md#where-agents-actually-run-read-this-before-l3). |
-| `data` | Metrics, logs, session, and agent overlay directories. | Defaults are `/data/...` in containers. |
+| `data` | Metrics, logs, session, agent overlay and Nous (`data.nous_dir`) directories. | Defaults are `/data/...` in containers. |
 | `knowledge` | Wiki layers, vaults, git/document sources, connectors (`knowledge.connectors`, see [knowledge-connectors.md](knowledge-connectors.md)), primer, curator, bead synthesizer. | Disabled unless `enabled: true`. |
 | `hub` | Hub/spoke hosted-hive metadata. | Usually provisioner-owned. |
 | `hive_id` | Stable spoke identifier. | Usually provisioner-owned. |
@@ -141,6 +141,7 @@ Top-level YAML keys accepted by `config.Config`:
 
 | Field | Default / behavior | Operator note |
 |---|---|---|
+| `data.nous_dir` | `/data/nous`. `HIVE_NOUS_DATA_DIR` overrides. | Durable root for all Nous (Strategy Lab) state: `governor/ledger.json`, `governor/principles.json`, `snapshots/`, `panel-config.json`. Legacy `/var/run/nous/governor` files are copied forward at boot when newer. Everything but `snapshots/` is in the owner spoke backup. See [strategy-lab.md](strategy-lab.md#state-and-storage). |
 | `github.pr_detail_ttl_s` | `1800` seconds. `HIVE_GITHUB_PR_DETAIL_TTL` overrides for tests/experiments. | Reuses `GET /pulls/{number}` detail responses while the cheap PR list still reports the same `head.sha` and `updated_at`, and GitHub has resolved `mergeable_state`. |
 | `github.graphql_pr_batch` | `true` | Uses one paginated GraphQL query per repository scan to populate the PR detail cache and CI rollup cache, replacing most per-PR `GET /pulls/{number}` and `check-runs` reads. Set `false` to return to the REST-only scan path. |
 | `github.graphql_pr_batch_page_size` | `50` | Page size for the GraphQL `pullRequests(first:)` batch. Values above GitHub's `100` maximum are rejected. |

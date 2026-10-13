@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -32,6 +33,7 @@ type bootKnowledgeFake struct {
 	graphWired       bool
 	cleanupAudit     *dashboard.AuditLog
 	nousDirs         int
+	nousLayout       nousstore.Layout
 	inceptionDir     string
 	restarts         []string
 	restartErr       error
@@ -60,8 +62,10 @@ func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
 			wire(f.graphStore, f.graphErr)
 		},
 		startWorkspaceCleanup: func(_ context.Context, _ *slog.Logger, a *dashboard.AuditLog) { f.cleanupAudit = a },
-		ensureNousDirs:        func(*slog.Logger) { f.nousDirs++ },
-		loadNousState:         func(*slog.Logger) *dashboard.NousState { return &dashboard.NousState{Mode: "observe"} },
+		ensureNousDirs:        func(l nousstore.Layout, _ *slog.Logger) { f.nousDirs++; f.nousLayout = l },
+		loadNousState: func(nousstore.Layout, *slog.Logger) *dashboard.NousState {
+			return &dashboard.NousState{Mode: "observe"}
+		},
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(f.inceptionDir, api, logger)
 		},
@@ -137,8 +141,12 @@ func TestBootKnowledgeWithMinimalConfigAutoEnablesFileAPI(t *testing.T) {
 	if !f.graphWired || f.cleanupAudit != b.dashSrv.GetAudit() || f.nousDirs != 1 {
 		t.Fatalf("background wiring: graph=%v cleanup=%v nous=%d", f.graphWired, f.cleanupAudit != nil, f.nousDirs)
 	}
-	if b.nousState == nil || b.nousState.SnapshotDir != nousSnapshotDir {
-		t.Fatalf("nous state = %+v", b.nousState)
+	wantLayout := nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv)
+	if f.nousLayout != wantLayout {
+		t.Fatalf("nous layout = %+v, want %+v (resolved from data.nous_dir)", f.nousLayout, wantLayout)
+	}
+	if b.nousState == nil || b.nousState.SnapshotDir != wantLayout.SnapshotDir() || b.nousState.PersistPanel == nil {
+		t.Fatalf("nous state = %+v, want snapshot dir %s and a PersistPanel seam", b.nousState, wantLayout.SnapshotDir())
 	}
 	if b.inceptionEngine == nil || b.sched.GetInception() != b.inceptionEngine {
 		t.Fatal("inception engine not wired into scheduler")

@@ -208,6 +208,11 @@ type DataConfig struct {
 	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
 	BobSessionsDir     string `yaml:"bob_sessions_dir"`
 	AgentsDir          string `yaml:"agents_dir"`
+	// NousDir is the durable root for Nous (Experiment/Strategy Lab) state:
+	// governor ledger and principles, baseline snapshots and the dashboard
+	// panel configuration (#11694). Default /data/nous; HIVE_NOUS_DATA_DIR
+	// overrides it at runtime.
+	NousDir string `yaml:"nous_dir,omitempty"`
 
 	// SessionRetentionDays is how many days of CLI session-state directories to
 	// keep. Session directories are created per CLI invocation and were never

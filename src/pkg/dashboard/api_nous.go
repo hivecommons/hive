@@ -103,6 +103,7 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 
 	if s.deps.Nous != nil {
 		s.deps.Nous.Mode = body.Mode
+		s.persistNousPanel()
 	}
 
 	s.auditFromRequest(r, "nous_set_mode", auditDetail("mode", body.Mode), "")
@@ -130,6 +131,7 @@ func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
 
 	if s.deps.Nous != nil {
 		s.deps.Nous.Scope = body.Scope
+		s.persistNousPanel()
 	}
 
 	s.auditFromRequest(r, "nous_set_scope", auditDetail("scope", body.Scope), "")
@@ -303,6 +305,7 @@ func (s *Server) handleNousConfigSection(w http.ResponseWriter, r *http.Request,
 	}
 	s.deps.Nous.Config[section] = body
 	s.deps.Nous.Mu.Unlock()
+	s.persistNousPanel()
 
 	s.auditFromRequest(r, "nous_config_update", auditDetail("section", section), "")
 	s.refreshAndPersist()

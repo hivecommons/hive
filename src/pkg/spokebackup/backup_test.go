@@ -49,8 +49,14 @@ func seedSpoke(t *testing.T) string {
 	mustWrite(t, filepath.Join(dir, "dashboard-sessions.json"), `{"sess":"secret"}`)
 	mustWrite(t, filepath.Join(dir, "audit.jsonl"), "{}\n")
 	mustWrite(t, filepath.Join(dir, "nous", "snapshots", "1.json"), "bulk")
+	mustWrite(t, filepath.Join(dir, "nous", "panel-config.json.tmp"), "half-written")
 	mustWrite(t, filepath.Join(dir, "logs", "hive.log"), "noise")
 	mustWrite(t, filepath.Join(dir, "home", "agent", "creds"), "token")
+
+	// Durable Nous state (#11694): small, not regenerable, included.
+	mustWrite(t, filepath.Join(dir, "nous", "governor", "ledger.json"), `{"iterations":[{"id":"one"}]}`)
+	mustWrite(t, filepath.Join(dir, "nous", "governor", "principles.json"), `{"principles":[]}`)
+	mustWrite(t, filepath.Join(dir, "nous", "panel-config.json"), `{"mode":"suggest"}`)
 
 	// The bead ledger: one dir per agent, more than the original five.
 	for _, agent := range []string{"scanner", "quality", "ci-maintainer", "sec-check", "strategist"} {
@@ -182,10 +188,71 @@ func TestBackupExcludesBulkAndLiveCredentials(t *testing.T) {
 	files, _, _ := buildTestBackup(t)
 
 	for path := range files {
-		for _, banned := range []string{"nous/", "logs/", "home/", "dashboard-sessions", "audit.jsonl"} {
+		for _, banned := range []string{"nous/snapshots/", "logs/", "home/", "dashboard-sessions", "audit.jsonl", ".tmp"} {
 			if strings.Contains(path, banned) {
 				t.Errorf("archive must not contain %q (matched %q)", path, banned)
 			}
+		}
+	}
+}
+
+// TestBackupIncludesNousState (#11694): the governor ledger, principles and
+// the panel configuration ride along under nous/, while the bulk snapshots
+// subtree stays out (checked above).
+func TestBackupIncludesNousState(t *testing.T) {
+	files, _, res := buildTestBackup(t)
+	for key, want := range map[string]string{
+		"nous/governor/ledger.json":     `{"iterations":[{"id":"one"}]}`,
+		"nous/governor/principles.json": `{"principles":[]}`,
+		"nous/panel-config.json":        `{"mode":"suggest"}`,
+	} {
+		if got, ok := files[key]; !ok || got != want {
+			t.Errorf("%s = %q (present=%v), want %q", key, got, ok, want)
+		}
+	}
+	if !res.NousIncluded {
+		t.Error("NousIncluded = false, want true")
+	}
+	if _, skipped := res.Skipped[nousSubdir]; skipped {
+		t.Errorf("nous recorded as skipped: %v", res.Skipped)
+	}
+}
+
+// A hive that never ran Nous has no nous/ dir; the backup records the gap
+// and still succeeds.
+func TestBackupWithoutNousDirIsRecordedNotFatal(t *testing.T) {
+	dir := seedSpoke(t)
+	if err := os.RemoveAll(filepath.Join(dir, nousSubdir)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvDataDir, dir)
+	res, err := Build(testKey(), "hive-abc123", testLogger())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if res.NousIncluded {
+		t.Error("NousIncluded = true with no nous dir")
+	}
+	if _, ok := res.Skipped[nousSubdir]; !ok {
+		t.Errorf("missing nous dir must be recorded in Skipped: %v", res.Skipped)
+	}
+}
+
+func TestNousSkip(t *testing.T) {
+	cases := map[string]bool{
+		"snapshots":                 true,
+		"snapshots/1.json":          true,
+		"panel-config.json.tmp":     true,
+		"governor/ledger.json.tmp":  true,
+		"governor":                  false,
+		"governor/ledger.json":      false,
+		"panel-config.json":         false,
+		"snapshots-archive/x.json":  false,
+		"governor/snapshots/x.json": false,
+	}
+	for rel, want := range cases {
+		if got := nousSkip(rel); got != want {
+			t.Errorf("nousSkip(%q) = %v, want %v", rel, got, want)
 		}
 	}
 }

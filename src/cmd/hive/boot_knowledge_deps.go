@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
+	"github.com/hivecommons/hive/pkg/nousstore"
 )
 
 const (
@@ -37,10 +37,12 @@ type bootKnowledgeDeps struct {
 	startPromotion        func(ctx context.Context, p *knowledge.PromotionScheduler)
 	openGraphStoreAsync   func(logger *slog.Logger, wire func(*knowledge.GraphStore, error))
 	startWorkspaceCleanup func(ctx context.Context, logger *slog.Logger, audit *dashboard.AuditLog)
-	ensureNousDirs        func(logger *slog.Logger)
-	loadNousState         func(logger *slog.Logger) *dashboard.NousState
-	newInceptionEngine    func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
-	restartBrainstorm     func(ctx context.Context, mgr *agent.Manager, msg string) error
+	// ensureNousDirs creates the durable Nous tree and migrates legacy
+	// /var/run/nous state into it (#11694); loadNousState reads it.
+	ensureNousDirs     func(layout nousstore.Layout, logger *slog.Logger)
+	loadNousState      func(layout nousstore.Layout, logger *slog.Logger) *dashboard.NousState
+	newInceptionEngine func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
+	restartBrainstorm  func(ctx context.Context, mgr *agent.Manager, msg string) error
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
 	// nil leaves it built but not started.
 	startConnectorSyncer func(ctx context.Context, s *connector.Syncer)
@@ -64,15 +66,8 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 		startWorkspaceCleanup: func(ctx context.Context, logger *slog.Logger, audit *dashboard.AuditLog) {
 			go dashboard.StartWorkspaceCleanup(ctx, logger, audit)
 		},
-		ensureNousDirs: func(logger *slog.Logger) {
-			if err := os.MkdirAll(nousSnapshotDir, 0o755); err != nil {
-				logger.Warn("failed to create nous snapshot dir", "path", nousSnapshotDir, "error", err)
-			}
-			if err := os.MkdirAll(nousGovernorDir, 0o755); err != nil {
-				logger.Warn("failed to create nous governor dir", "path", nousGovernorDir, "error", err)
-			}
-		},
-		loadNousState: loadNousState,
+		ensureNousDirs: ensureNousDirs,
+		loadNousState:  loadNousState,
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(inceptionDataDir, api, logger)
 		},

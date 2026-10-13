@@ -279,7 +279,12 @@ type NousState struct {
 	GatePending  map[string]interface{}   `json:"gate_pending,omitempty"`
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
-	Mu           sync.Mutex               `json:"-"`
+	// PersistPanel, when set, receives the operator-set panel state (Mode,
+	// Scope, Config) after every mutating /api/nous call so it survives a
+	// restart (#11694); cmd/hive wires it to pkg/nousstore. Nil keeps the
+	// pre-#11694 in-memory-only behaviour.
+	PersistPanel func(NousPanelSnapshot) error `json:"-"`
+	Mu           sync.Mutex                    `json:"-"`
 }
 
 type NousPrinciple struct {

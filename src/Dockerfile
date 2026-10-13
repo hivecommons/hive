@@ -626,7 +626,7 @@ RUN (apt-get update && apt-get install -y --no-install-recommends \
 COPY bin/nous-runner.sh bin/nous-sync.py bin/nous-hive-gate.py bin/nous-install.sh /tmp/hive/bin/
 RUN chmod +x /tmp/hive/bin/*.sh
 COPY examples/kubestellar/nous-campaign.yaml examples/kubestellar/nous-governor-campaign.yaml examples/kubestellar/nous-repo-campaign.yaml /etc/hive/
-RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/snapshots /opt/nous
+RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/governor /data/nous/snapshots /opt/nous
 # Pinned (issue #6479 — the #3340 pins were lost in the v2→src migration):
 # unpinned pip installs pull whatever PyPI serves at build time, breaking
 # reproducibility and exposing every image build to a malicious release.
