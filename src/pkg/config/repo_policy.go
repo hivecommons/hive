@@ -82,9 +82,11 @@ const DefaultLabelDrivenApprovalLabel = "triage/accepted"
 
 // DefaultLabelDrivenTrustedBots are the command bots whose label additions
 // count as an acceptance on a label-driven repo when
-// project.label_driven_trusted_bots is unset: the Prow GitHub Actions port
-// and the Prow instance hivecommons runs (hivecommons/hive#11313).
-var DefaultLabelDrivenTrustedBots = []string{"github-actions[bot]", "kubestellar-prow[bot]"}
+// project.label_driven_trusted_bots is unset: the Prow instance hivecommons
+// runs (hivecommons/hive#11313). github-actions[bot] is deliberately absent:
+// it is the shared identity of every workflow in a repo, so operators must
+// opt in per deployment (hivecommons/hive#11737).
+var DefaultLabelDrivenTrustedBots = []string{"kubestellar-prow[bot]"}
 
 // LabelDrivenApprovalLabels returns the labels whose trusted addition approves
 // an issue on repo (hivecommons/hive#11313), or nil when repo is not

@@ -149,7 +149,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `project.repo_policies[].label_driven_approval_labels` | Unset: inherits `project.label_driven_approval_labels`. | Per-repo approval-label list; only read when `label_driven` is set. Editable from the dashboard sub-row of the repo's label-driven toggle. |
 | `project.label_driven_approval_labels` | `["triage/accepted"]` | Labels whose trusted addition approves an issue on every label-driven repo without its own list. Ignored by repos without `label_driven: true`. Dashboard: Settings → Repos → "Default approval labels". |
 | `project.label_driven_trust_org_members` | `true` | Whether a public member of the repo's owning org who applies an approval label is trusted (Prow's own rule). Dashboard: Settings → Repos → "trust public org members". |
-| `project.label_driven_trusted_bots` | `["github-actions[bot]", "kubestellar-prow[bot]"]` | Bot logins whose label additions count as a trusted triager (Prow command bots relaying `/triage accepted`). Dashboard: Settings → Repos → "Trusted bots". |
+| `project.label_driven_trusted_bots` | `["kubestellar-prow[bot]"]` | Bot logins whose label additions count as a trusted triager (Prow command bots relaying `/triage accepted`). `github-actions[bot]` is not in the default because it is the shared identity of every workflow in the repo, including ones triggered by untrusted events; operators whose Prow emulation runs as `github-actions[bot]` must add it explicitly per deployment. Dashboard: Settings → Repos → "Trusted bots". |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
@@ -203,7 +203,7 @@ behaves exactly as before. With it set:
 
 **Who is trusted to apply the label.** Only the actor of the *latest*
 `labeled` timeline event for that label is checked, in this order: a bot in
-`label_driven_trusted_bots`; a collaborator whose `role_name` is `triage`,
+`label_driven_trusted_bots` (default `kubestellar-prow[bot]` only); a collaborator whose `role_name` is `triage`,
 `write`, `maintain` or `admin`; a public member of the owning org when
 `label_driven_trust_org_members` is on. Any other actor, a label Hive applied
 itself, or a timeline that cannot be read → not approved (fail closed, logged

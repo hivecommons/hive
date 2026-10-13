@@ -36405,8 +36405,8 @@ function burnAreaChart() {
               <input type="text" id="cfg-label-driven-approval-labels" ${ldLocked ? 'disabled' : ''} value="${esc(ldDefaultLabels.join(', '))}" placeholder="triage/accepted" data-change-action="setLabelDrivenApprovalDefault" data-arg-types="v">
             </div>
             <div class="config-field">
-              <label>Trusted bots ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example github-actions[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
-              <input type="text" id="cfg-label-driven-trusted-bots" ${ldLocked ? 'disabled' : ''} value="${esc((ldApproval.trustedBots || []).join(', '))}" placeholder="github-actions[bot]" data-change-action="setLabelDrivenTrustedBots" data-arg-types="v">
+              <label>Trusted bots ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example kubestellar-prow[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
+              <input type="text" id="cfg-label-driven-trusted-bots" ${ldLocked ? 'disabled' : ''} value="${esc((ldApproval.trustedBots || []).join(', '))}" placeholder="kubestellar-prow[bot]" data-change-action="setLabelDrivenTrustedBots" data-arg-types="v">
             </div>
           </div>
           <p class="config-help">Only the last <em>labeled</em> event counts; an unreadable timeline fails closed. <code>hold</code> and <code>do-not-merge</code> still park. Nothing changes for repos without the toggle.</p>

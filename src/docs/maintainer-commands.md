@@ -85,7 +85,7 @@ or from the dashboard (Settings → Repos → "Label-driven approvals
 project:
   label_driven_approval_labels: [triage/accepted]   # default
   label_driven_trust_org_members: true              # default (Prow's rule)
-  label_driven_trusted_bots: [github-actions[bot], kubestellar-prow[bot]]
+  label_driven_trusted_bots: [kubestellar-prow[bot]]   # default
   repo_policies:
     - repo: projectbluefin/common
       label_driven: true
@@ -122,7 +122,10 @@ Only the actor of the most recent `labeled` event for the label is checked
 (removing and re-adding re-evaluates the newest event). Trusted, in order:
 
 1. a bot in `label_driven_trusted_bots` (Prow command bots relaying
-   `/triage accepted`);
+   `/triage accepted`). The default list is only `kubestellar-prow[bot]`.
+   `github-actions[bot]` is not trusted by default because it is the shared
+   identity of every workflow in the repo; if your Prow emulation runs as
+   `github-actions[bot]`, add it explicitly per deployment;
 2. a collaborator whose GitHub `role_name` is `triage`, `write`, `maintain` or
    `admin` (custom roles that build on triage count as triage);
 3. a public member of the repository's owning org, when
