@@ -23,20 +23,22 @@ import (
 type bootKnowledgeFake struct {
 	deps bootKnowledgeDeps
 
-	inited, seeded   []string
-	initErr, seedErr error
-	gitSyncer        *knowledge.GitSyncer
-	beadSynthStarted bool
-	promotionStarted bool
-	graphStore       *knowledge.GraphStore
-	graphErr         error
-	graphWired       bool
-	cleanupAudit     *dashboard.AuditLog
-	nousDirs         int
-	nousLayout       nousstore.Layout
-	inceptionDir     string
-	restarts         []string
-	restartErr       error
+	inited, seeded    []string
+	initErr, seedErr  error
+	gitSyncer         *knowledge.GitSyncer
+	beadSynthStarted  bool
+	promotionStarted  bool
+	graphStore        *knowledge.GraphStore
+	graphErr          error
+	graphWired        bool
+	cleanupAudit      *dashboard.AuditLog
+	nousDirs          int
+	nousLayout        nousstore.Layout
+	gateWatchState    *dashboard.NousState
+	gateWatchInterval time.Duration
+	inceptionDir      string
+	restarts          []string
+	restartErr        error
 }
 
 func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
@@ -65,6 +67,9 @@ func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
 		ensureNousDirs:        func(l nousstore.Layout, _ *slog.Logger) { f.nousDirs++; f.nousLayout = l },
 		loadNousState: func(nousstore.Layout, *slog.Logger) *dashboard.NousState {
 			return &dashboard.NousState{Mode: "observe"}
+		},
+		startNousGateWatch: func(_ context.Context, st *dashboard.NousState, interval time.Duration, _ *slog.Logger) {
+			f.gateWatchState, f.gateWatchInterval = st, interval
 		},
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(f.inceptionDir, api, logger)
@@ -147,6 +152,9 @@ func TestBootKnowledgeWithMinimalConfigAutoEnablesFileAPI(t *testing.T) {
 	}
 	if b.nousState == nil || b.nousState.SnapshotDir != wantLayout.SnapshotDir() || b.nousState.PersistPanel == nil {
 		t.Fatalf("nous state = %+v, want snapshot dir %s and a PersistPanel seam", b.nousState, wantLayout.SnapshotDir())
+	}
+	if b.nousState.GateStore == nil || f.gateWatchState != b.nousState || f.gateWatchInterval != b.cfg.Nous.GatePollInterval() {
+		t.Fatalf("gate wiring: store=%v watched=%v interval=%v", b.nousState.GateStore != nil, f.gateWatchState == b.nousState, f.gateWatchInterval)
 	}
 	if b.inceptionEngine == nil || b.sched.GetInception() != b.inceptionEngine {
 		t.Fatal("inception engine not wired into scheduler")

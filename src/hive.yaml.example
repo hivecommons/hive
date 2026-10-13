@@ -1132,3 +1132,11 @@ data:
   agents_dir: /data/agent-configs
   # Durable root for Nous (Strategy Lab) state; HIVE_NOUS_DATA_DIR overrides.
   nous_dir: /data/nous
+
+# Nous (Experiment Lab) runtime knobs. Durable state lives under data.nous_dir.
+nous:
+  # How often the hive checks <data.nous_dir>/gates/pending.json for a gate
+  # the experiment agent is waiting on (RFC #11585 part 3, #11696). The
+  # dashboard also checks on every GET /api/nous/gate-pending, so this only
+  # bounds the owner-ping latency. HIVE_NOUS_GATE_POLL_INTERVAL overrides.
+  gate_poll_seconds: 15

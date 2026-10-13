@@ -162,6 +162,9 @@ type Config struct {
 	// ReleaseSentinel is the opt-in bounded repair loop for failed release CI
 	// (hivecommons/hive#9585). Default off → nothing is watched or dispatched.
 	ReleaseSentinel ReleaseSentinelConfig `yaml:"release_sentinel,omitempty" json:"release_sentinel,omitempty"`
+	// Nous tunes the experimentation agent integration (RFC #11585). Every
+	// field has a default; an absent key changes nothing.
+	Nous NousConfig `yaml:"nous,omitempty" json:"nous,omitempty"`
 	// Classification mirrors the Go-consumed subset of hive-project.yaml's
 	// `classification:` block (currently review_bots, hivecommons/hive#7360).
 	// Default empty → the review-thread reconciler is off.

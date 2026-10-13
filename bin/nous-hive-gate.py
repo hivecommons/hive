@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """
-nous-hive-gate.py — Custom Nous Gate for Hive
+nous-hive-gate.py — Nous gate bridge for Hive (RFC #11585 part 3, #11696)
 
-Implements the Nous Gate protocol, bridging experiment approval decisions
-to the hive dashboard.
+Implements the Nous Gate protocol so an experiment's design and findings
+gates are answered by a hive owner from the Experiment Lab.
+
+The agent cannot hold an owner credential, so it never calls the owner-only
+dashboard API. It publishes the pending question as a file under the durable
+Nous root and waits for the hive to record the owner's answer next to it:
+
+  <nous_dir>/gates/pending.json    written here, read by the hive
+  <nous_dir>/gates/decision.json   written by the hive, read here
+
+The hive mirrors pending.json into GET /api/nous/gate-pending, pings the
+owner once, and PUT /api/nous/gate-decision records decision.json (with the
+gate id, so a stale answer can never approve a newer gate).
 
 Modes:
   observe  → auto-approve (dry-run semantics handled upstream)
-  suggest  → POST to dashboard, long-poll for operator decision
+  suggest  → publish the gate, wait for the owner's decision
   evolve   → auto-approve (autonomous loop)
 
 Repo scope always forces suggest mode regardless of setting.
@@ -17,13 +28,49 @@ import json
 import os
 import sys
 import time
-import urllib.request
-import urllib.error
+import uuid
 
-DASHBOARD_URL = os.environ.get("HIVE_DASHBOARD_URL", "http://localhost:3001")
-GATE_TIMEOUT_SEC = 1800
-GATE_POLL_INTERVAL_SEC = 5
-DASHBOARD_TOKEN = os.environ.get("HIVE_DASHBOARD_TOKEN", "").strip()
+DEFAULT_NOUS_DIR = "/data/nous"
+GATES_SUBDIR = "gates"
+PENDING_FILE = "pending.json"
+DECISION_FILE = "decision.json"
+
+DEFAULT_GATE_TIMEOUT_SEC = 1800
+DEFAULT_GATE_POLL_INTERVAL_SEC = 5
+
+DECISIONS = ("approve", "reject", "abort")
+TIMEOUT_DECISION = "reject"
+
+
+def nous_dir():
+    for var in ("HIVE_NOUS_DATA_DIR", "NOUS_DATA_DIR"):
+        value = os.environ.get(var, "").strip()
+        if value:
+            return value
+    return DEFAULT_NOUS_DIR
+
+
+def gates_dir():
+    return os.path.join(nous_dir(), GATES_SUBDIR)
+
+
+def _env_number(name, default, cast=float):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = cast(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def gate_timeout_sec():
+    return _env_number("NOUS_GATE_TIMEOUT_SEC", DEFAULT_GATE_TIMEOUT_SEC)
+
+
+def gate_poll_interval_sec():
+    return _env_number("NOUS_GATE_POLL_INTERVAL_SEC", DEFAULT_GATE_POLL_INTERVAL_SEC)
 
 
 def get_effective_mode():
@@ -34,90 +81,117 @@ def get_effective_mode():
     return mode
 
 
-def post_pending(question, artifact_path=None, reviews=None, summary_path=None):
+def _utc_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _write_atomic(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def build_request(question, gate=None, artifact_path=None, reviews=None, summary_path=None):
+    gate = gate or os.environ.get("NOUS_GATE_KIND", "").strip() or None
+    gate_id = f"{gate or 'gate'}-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     payload = {
+        "id": gate_id,
         "question": question,
         "scope": os.environ.get("NOUS_HIVE_SCOPE", "governor"),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "requested_at": _utc_now(),
     }
+    if gate:
+        payload["gate"] = gate
     if artifact_path and os.path.exists(artifact_path):
         try:
             with open(artifact_path) as f:
                 payload["artifact"] = json.load(f)
         except Exception:
             payload["artifact_path"] = artifact_path
-
     if reviews:
         payload["reviews"] = reviews
-
     if summary_path and os.path.exists(summary_path):
         try:
             with open(summary_path) as f:
                 payload["summary"] = f.read()
         except Exception:
             payload["summary_path"] = summary_path
+    return payload
 
-    data = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    if DASHBOARD_TOKEN:
-        headers["Authorization"] = "Bearer " + DASHBOARD_TOKEN
-    req = urllib.request.Request(
-        f"{DASHBOARD_URL}/api/nous/gate-decision",
-        data=data,
-        headers=headers,
-        method="PUT",
-    )
+
+def post_pending(request):
+    """Publish the gate for the hive. Returns True when the file is in place."""
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            return result.get("ok", False)
+        os.makedirs(gates_dir(), exist_ok=True)
+        _write_atomic(os.path.join(gates_dir(), PENDING_FILE), json.dumps(request, indent=2))
+        return True
     except Exception as e:
-        print(f"[nous-gate] failed to post pending decision: {e}", file=sys.stderr)
+        print(f"[nous-gate] failed to publish pending gate: {e}", file=sys.stderr)
         return False
 
 
-def poll_response(timeout_sec=GATE_TIMEOUT_SEC):
-    start = time.time()
-    while time.time() - start < timeout_sec:
-        try:
-            req = urllib.request.Request(
-                f"{DASHBOARD_URL}/api/nous/gate-response",
-                method="GET",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                decision = result.get("decision")
-                if decision in ("approve", "reject", "abort"):
-                    return decision
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                pass
-            else:
-                print(f"[nous-gate] poll error: {e}", file=sys.stderr)
-        except Exception as e:
-            print(f"[nous-gate] poll error: {e}", file=sys.stderr)
-
-        time.sleep(GATE_POLL_INTERVAL_SEC)
-
-    print("[nous-gate] timeout waiting for operator decision — auto-rejecting", file=sys.stderr)
-    return "reject"
+def clear_pending():
+    try:
+        os.remove(os.path.join(gates_dir(), PENDING_FILE))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[nous-gate] failed to clear pending gate: {e}", file=sys.stderr)
 
 
-def prompt(question, artifact_path=None, reviews=None, summary_path=None):
-    """Nous Gate protocol entry point."""
+def read_decision(gate_id):
+    """Return the owner's decision for gate_id, or None while still pending."""
+    path = os.path.join(gates_dir(), DECISION_FILE)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"[nous-gate] unreadable decision file: {e}", file=sys.stderr)
+        return None
+    if not isinstance(data, dict) or data.get("gate_id") != gate_id:
+        return None
+    decision = data.get("decision")
+    return decision if decision in DECISIONS else None
+
+
+def poll_response(gate_id, timeout_sec=None, poll_interval_sec=None, sleep=time.sleep, clock=time.monotonic):
+    timeout_sec = gate_timeout_sec() if timeout_sec is None else timeout_sec
+    poll_interval_sec = gate_poll_interval_sec() if poll_interval_sec is None else poll_interval_sec
+    start = clock()
+    while True:
+        decision = read_decision(gate_id)
+        if decision:
+            return decision
+        if clock() - start >= timeout_sec:
+            break
+        sleep(poll_interval_sec)
+
+    print(
+        f"[nous-gate] timeout waiting for operator decision — {TIMEOUT_DECISION}ing",
+        file=sys.stderr,
+    )
+    clear_pending()
+    return TIMEOUT_DECISION
+
+
+def prompt(question, artifact_path=None, reviews=None, summary_path=None, gate=None):
+    """Nous Gate protocol entry point: returns approve, reject or abort."""
     mode = get_effective_mode()
 
     if mode in ("observe", "evolve"):
         print(f"[nous-gate] auto-approving (mode={mode})")
         return "approve"
 
-    print(f"[nous-gate] posting to dashboard for approval (mode={mode})")
-    posted = post_pending(question, artifact_path, reviews, summary_path)
-    if not posted:
-        print("[nous-gate] failed to post — rejecting", file=sys.stderr)
+    request = build_request(question, gate=gate, artifact_path=artifact_path, reviews=reviews, summary_path=summary_path)
+    print(f"[nous-gate] publishing gate {request['id']} for owner approval (mode={mode}, dir={gates_dir()})")
+    if not post_pending(request):
+        print("[nous-gate] failed to publish — rejecting", file=sys.stderr)
         return "reject"
 
-    return poll_response()
+    return poll_response(request["id"])
 
 
 if __name__ == "__main__":

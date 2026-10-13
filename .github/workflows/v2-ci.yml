@@ -504,6 +504,16 @@ jobs:
         working-directory: .
         run: bash bin/test_issue_classifier.sh
 
+      # bin/nous-hive-gate.py is the agent side of the Nous gate protocol
+      # (RFC #11585 part 3, #11696): it publishes <nous_dir>/gates/pending.json
+      # and waits for the owner's decision.json written by the hive. Before
+      # #11696 it PUT to the owner-only gate-decision endpoint and every gate
+      # silently rejected. Hermetic (temp Nous root, sub-second polling, no
+      # network); 24 assertions, ~5s.
+      - name: nous-hive-gate contract tests (file-based gate protocol)
+        working-directory: .
+        run: bash bin/test_nous_hive_gate.sh
+
       # bin/kick-governor.sh (923 lines, called from bin/hive.sh, run every 15
       # min via kick-governor.timer) is the adaptive kick decision engine that
       # reads enumerate-actionable's actionable.json: it measures the backlog,

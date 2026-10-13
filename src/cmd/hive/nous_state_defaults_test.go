@@ -3,10 +3,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/nousstore"
 )
 
@@ -241,4 +244,91 @@ func TestNousPanelPersisterRoundTripsThroughLoad(t *testing.T) {
 	if state.Status["mode"] != "suggest" {
 		t.Fatalf("status mirror = %+v", state.Status)
 	}
+}
+
+type fakeGateNotifier struct{ sent []string }
+
+func (f *fakeGateNotifier) Send(title, message string, _ notify.Priority) {
+	f.sent = append(f.sent, title+": "+message)
+}
+
+// The gate protocol end to end through the real on-disk store (#11696):
+// the agent publishes <root>/gates/pending.json, the hive mirrors it, pings
+// once, and the owner's decision lands in decision.json + history.jsonl.
+func TestWireNousGateRoundTripsThroughStore(t *testing.T) {
+	layout := nousstore.New(filepath.Join(t.TempDir(), "nous"))
+	fixed := time.Date(2026, 10, 13, 17, 0, 0, 0, time.UTC)
+	notifier := &fakeGateNotifier{}
+	state := &dashboard.NousState{Status: map[string]interface{}{}}
+	wireNousGateWith(state, layout, notifier, restoreTestLogger(), func() time.Time { return fixed })
+	if state.GateStore == nil || state.GateNotify == nil || state.Now == nil {
+		t.Fatalf("wiring incomplete: %+v", state)
+	}
+
+	// Agent side.
+	if err := layout.WriteGatePending(nousstore.GateRequest{ID: "design-1", Gate: "design", Question: "run it?", Scope: "repo"}, fixed); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := state.SyncGate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state.GatePending["id"] != "design-1" || state.GatePending["question"] != "run it?" {
+		t.Fatalf("mirrored pending = %v", state.GatePending)
+	}
+	if len(notifier.sent) != 1 || !strings.Contains(notifier.sent[0], "design gate (repo scope)") {
+		t.Fatalf("pings = %q", notifier.sent)
+	}
+	if layout.LastNotifiedGate() != "design-1" {
+		t.Fatalf("marker = %q", layout.LastNotifiedGate())
+	}
+
+	// Owner side.
+	d, err := state.RecordGateDecision("", dashboard.NousGateApprove, "ship", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.GateID != "design-1" || !d.DecidedAt.Equal(fixed) {
+		t.Fatalf("decision = %+v", d)
+	}
+	stored, ok, err := layout.LoadGateDecision()
+	if err != nil || !ok || stored.GateID != "design-1" || stored.Decision != "approve" || stored.DecidedBy != "alice" || !stored.DecidedAt.Equal(fixed) {
+		t.Fatalf("stored decision = %+v ok=%v err=%v", stored, ok, err)
+	}
+	if _, ok, _ := layout.LoadGatePending(); ok {
+		t.Fatal("pending.json must be gone after the decision")
+	}
+	hist, _ := layout.GateHistory()
+	if len(hist) != 1 {
+		t.Fatalf("history = %+v", hist)
+	}
+
+	// A "restart" over the same store does not ping again for an unanswered gate.
+	if err := layout.WriteGatePending(nousstore.GateRequest{ID: "findings-1", Question: "promote?"}, fixed); err != nil {
+		t.Fatal(err)
+	}
+	fresh := &dashboard.NousState{Status: map[string]interface{}{}}
+	wireNousGateWith(fresh, layout, notifier, restoreTestLogger(), func() time.Time { return fixed })
+	_ = fresh.SyncGate()
+	again := &dashboard.NousState{Status: map[string]interface{}{}}
+	wireNousGateWith(again, layout, notifier, restoreTestLogger(), func() time.Time { return fixed })
+	_ = again.SyncGate()
+	if len(notifier.sent) != 2 {
+		t.Fatalf("restart re-pinged: %q", notifier.sent)
+	}
+
+	// Production wrapper: nil notifier and nil state are safe.
+	wireNousGate(nil, layout, nil, restoreTestLogger())
+	bare := &dashboard.NousState{}
+	wireNousGate(bare, layout, nil, restoreTestLogger())
+	if bare.GateStore == nil || bare.GateNotify != nil {
+		t.Fatalf("nil notifier wiring = %+v", bare)
+	}
+	withNotifier := &dashboard.NousState{}
+	wireNousGate(withNotifier, layout, notify.New(config.NotificationsConfig{}, restoreTestLogger()), restoreTestLogger())
+	if withNotifier.GateNotify == nil {
+		t.Fatal("real notifier must enable pings")
+	}
+	withNotifier.GateNotify("t", "m") // no channels configured: a no-op send
 }

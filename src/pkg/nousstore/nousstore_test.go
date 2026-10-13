@@ -79,7 +79,7 @@ func TestEnsureDirs(t *testing.T) {
 	if err := l.EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{l.GovernorDir(), l.SnapshotDir()} {
+	for _, dir := range []string{l.GovernorDir(), l.SnapshotDir(), l.GatesDir()} {
 		info, err := os.Stat(dir)
 		if err != nil || !info.IsDir() {
 			t.Fatalf("%s not a directory: %v", dir, err)

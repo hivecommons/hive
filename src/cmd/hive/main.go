@@ -3373,6 +3373,10 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	b.nousState = deps.loadNousState(nousLayout, b.logger)
 	b.nousState.SnapshotDir = nousLayout.SnapshotDir()
 	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
+	wireNousGate(b.nousState, nousLayout, b.notifier, b.logger)
+	if deps.startNousGateWatch != nil {
+		deps.startNousGateWatch(b.ctx, b.nousState, b.cfg.Nous.GatePollInterval(), b.logger)
+	}
 
 	b.inceptionEngine = deps.newInceptionEngine(b.knowledgeAPI, b.logger)
 	b.sched.SetInception(b.inceptionEngine)
@@ -10129,6 +10133,70 @@ func loadNousStateFrom(layout nousstore.Layout, legacyDir string, logger *slog.L
 func nousPanelPersister(layout nousstore.Layout, now func() time.Time) func(dashboard.NousPanelSnapshot) error {
 	return func(snap dashboard.NousPanelSnapshot) error {
 		return layout.SavePanelConfig(nousstore.PanelConfig{Mode: snap.Mode, Scope: snap.Scope, Config: snap.Config}, now())
+	}
+}
+
+// nousGateStore adapts nousstore's gate files to the dashboard's
+// NousGateStore seam (#11696), stamping clocks from now.
+type nousGateStore struct {
+	layout nousstore.Layout
+	now    func() time.Time
+}
+
+func (g nousGateStore) PendingGate() (dashboard.NousGateRequest, bool, error) {
+	req, ok, err := g.layout.LoadGatePending()
+	if err != nil || !ok {
+		return dashboard.NousGateRequest{}, ok, err
+	}
+	return dashboard.NousGateRequest{
+		ID:          req.ID,
+		Gate:        req.Gate,
+		Question:    req.Question,
+		Scope:       req.Scope,
+		Summary:     req.Summary,
+		Artifact:    req.Artifact,
+		Reviews:     req.Reviews,
+		RequestedAt: req.RequestedAt,
+	}, true, nil
+}
+
+func (g nousGateStore) RecordGateDecision(d dashboard.NousGateDecision) error {
+	return g.layout.RecordGateDecision(nousstore.GateDecision{
+		GateID:    d.GateID,
+		Decision:  d.Decision,
+		Reason:    d.Reason,
+		DecidedBy: d.DecidedBy,
+		DecidedAt: d.DecidedAt,
+	}, g.now())
+}
+
+func (g nousGateStore) LastNotifiedGate() string         { return g.layout.LastNotifiedGate() }
+func (g nousGateStore) MarkGateNotified(id string) error { return g.layout.MarkGateNotified(id) }
+
+// nousGateNotifier is the subset of *notify.Notifier the gate ping needs.
+type nousGateNotifier interface {
+	Send(title, message string, priority notify.Priority)
+}
+
+// wireNousGate attaches the durable gate store, the owner notifier and a
+// logger to state. A nil notifier leaves pings off.
+func wireNousGate(state *dashboard.NousState, layout nousstore.Layout, notifier *notify.Notifier, logger *slog.Logger) {
+	var n nousGateNotifier
+	if notifier != nil {
+		n = notifier
+	}
+	wireNousGateWith(state, layout, n, logger, time.Now)
+}
+
+func wireNousGateWith(state *dashboard.NousState, layout nousstore.Layout, notifier nousGateNotifier, logger *slog.Logger, now func() time.Time) {
+	if state == nil {
+		return
+	}
+	state.GateStore = nousGateStore{layout: layout, now: now}
+	state.GateLogger = logger
+	state.Now = now
+	if notifier != nil {
+		state.GateNotify = func(title, message string) { notifier.Send(title, message, notify.PriorityHigh) }
 	}
 }
 

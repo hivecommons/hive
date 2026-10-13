@@ -14,6 +14,9 @@
 //	<root>/governor/principles.json   learned principles
 //	<root>/snapshots/<epoch-ms>.json  baseline snapshots (bulk, regenerable)
 //	<root>/panel-config.json          dashboard panel configuration
+//	<root>/gates/pending.json         the gate the agent is waiting on (#11696)
+//	<root>/gates/decision.json        the owner's answer to that gate
+//	<root>/gates/history.jsonl        every gate decision ever recorded
 //
 // The root is configurable (data.nous_dir, overridden by HIVE_NOUS_DATA_DIR).
 // On every boot MigrateLegacy copies any ledger/principles file from the
@@ -64,6 +67,9 @@ const (
 
 	// PanelConfigFile persists the dashboard panel configuration at the root.
 	PanelConfigFile = "panel-config.json"
+
+	// GatesSubdir holds the gate protocol files; see gates.go.
+	GatesSubdir = "gates"
 )
 
 // File modes for everything this package creates.
@@ -122,7 +128,7 @@ func (l Layout) PanelConfigPath() string { return filepath.Join(l.Root, PanelCon
 
 // EnsureDirs creates the governor and snapshot directories (and the root).
 func (l Layout) EnsureDirs() error {
-	for _, dir := range []string{l.GovernorDir(), l.SnapshotDir()} {
+	for _, dir := range []string{l.GovernorDir(), l.SnapshotDir(), l.GatesDir()} {
 		if err := os.MkdirAll(dir, dirMode); err != nil {
 			return fmt.Errorf("create nous dir %s: %w", dir, err)
 		}

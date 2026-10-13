@@ -156,9 +156,13 @@ func (s *Server) handleNousGateDecision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// `note` is accepted as an alias of `reason` (the issue's wording);
+	// `gate_id` lets a caller refuse to answer a gate it has not seen.
 	var body struct {
 		Decision string `json:"decision"`
 		Reason   string `json:"reason"`
+		Note     string `json:"note"`
+		GateID   string `json:"gate_id"`
 	}
 	if err := decodeBody(r, &body); err != nil || body.Decision == "" {
 		jsonError(w, "decision is required", http.StatusBadRequest)
@@ -167,21 +171,25 @@ func (s *Server) handleNousGateDecision(w http.ResponseWriter, r *http.Request) 
 
 	body.Decision = sanitizeString(body.Decision)
 	body.Reason = sanitizeString(body.Reason)
+	body.Note = sanitizeString(body.Note)
+	body.GateID = sanitizeString(body.GateID)
 	if body.Decision == "" {
 		jsonError(w, "decision is required", http.StatusBadRequest)
 		return
 	}
-
-	if s.deps.Nous.GatePending == nil {
-		s.deps.Nous.GatePending = make(map[string]interface{})
-	}
-	s.deps.Nous.GateResponse = map[string]interface{}{
-		"decision": body.Decision,
-		"reason":   body.Reason,
+	if body.Reason == "" {
+		body.Reason = body.Note
 	}
 
-	s.auditFromRequest(r, "nous_gate_decision", auditDetail("decision", body.Decision), "")
-	okResponse(w, map[string]string{"status": "decided", "decision": body.Decision})
+	d, err := s.deps.Nous.RecordGateDecision(body.GateID, body.Decision, body.Reason, requestUser(r))
+	if err != nil {
+		s.auditFromRequest(r, "nous_gate_decision_failed", auditDetail("decision", body.Decision, "gate_id", body.GateID, "error", err.Error()), "")
+		jsonError(w, err.Error(), nousGateStatus(err))
+		return
+	}
+
+	s.auditFromRequest(r, "nous_gate_decision", auditDetail("decision", d.Decision, "gate_id", d.GateID, "reason", d.Reason), "")
+	okResponse(w, map[string]string{"status": "decided", "decision": d.Decision, "gate_id": d.GateID})
 }
 
 func (s *Server) handleNousGatePending(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +197,15 @@ func (s *Server) handleNousGatePending(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]interface{}{})
 		return
 	}
-	jsonResponse(w, s.deps.Nous.GatePending)
+	// Re-read the agent's pending gate on demand so the panel never waits
+	// a full poll interval after the agent publishes (#11696).
+	if err := s.deps.Nous.SyncGate(); err != nil && s.logger != nil {
+		s.logger.Warn("nous: pending gate unreadable", "error", err)
+	}
+	s.deps.Nous.Mu.Lock()
+	pending := s.deps.Nous.GatePending
+	s.deps.Nous.Mu.Unlock()
+	jsonResponse(w, pending)
 }
 
 func (s *Server) handleNousGateRespond(w http.ResponseWriter, r *http.Request) {

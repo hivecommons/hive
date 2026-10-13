@@ -6,7 +6,9 @@ set -euo pipefail
 NOUS_DIR="${NOUS_DIR:-/opt/nous}"
 NOUS_PYTHON="${NOUS_DIR}/venv/bin/python3"
 NOUS_RUN_DIR="${NOUS_RUN_DIR:-/var/run/nous}"
-NOUS_DATA_DIR="${NOUS_DATA_DIR:-/data/nous}"
+# Durable Nous root (#11694). HIVE_NOUS_DATA_DIR is the hive's own override
+# and wins so the gate bridge publishes where the dashboard is reading.
+NOUS_DATA_DIR="${HIVE_NOUS_DATA_DIR:-${NOUS_DATA_DIR:-/data/nous}}"
 CAMPAIGN_PATH="${NOUS_CAMPAIGN_PATH:-/etc/hive/nous-campaign.yaml}"
 HIVE_METRICS_DIR="${HIVE_METRICS_DIR:-/var/run/hive-metrics}"
 GOV_STATE_DIR="${GOV_STATE_DIR:-/var/run/kick-governor}"
@@ -160,6 +162,7 @@ echo "[nous-runner] invoking run_campaign.py (agent=$NOUS_AGENT, auto_approve=$A
 NOUS_HIVE_MODE="$EFFECTIVE_MODE" \
 NOUS_HIVE_SCOPE="$EFFECTIVE_SCOPE" \
 NOUS_GATE_SCRIPT="$GATE_SCRIPT" \
+NOUS_DATA_DIR="$NOUS_DATA_DIR" \
 "$NOUS_PYTHON" "$NOUS_DIR/run_campaign.py" \
   "$CAMPAIGN_CONFIG" \
   --run-id "$(basename "$WORK_DIR")" \

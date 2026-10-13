@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -39,8 +40,11 @@ type bootKnowledgeDeps struct {
 	startWorkspaceCleanup func(ctx context.Context, logger *slog.Logger, audit *dashboard.AuditLog)
 	// ensureNousDirs creates the durable Nous tree and migrates legacy
 	// /var/run/nous state into it (#11694); loadNousState reads it.
-	ensureNousDirs     func(layout nousstore.Layout, logger *slog.Logger)
-	loadNousState      func(layout nousstore.Layout, logger *slog.Logger) *dashboard.NousState
+	ensureNousDirs func(layout nousstore.Layout, logger *slog.Logger)
+	loadNousState  func(layout nousstore.Layout, logger *slog.Logger) *dashboard.NousState
+	// startNousGateWatch polls the agent's pending gate file and pings the
+	// owner (#11696); nil leaves the state wired but unpolled.
+	startNousGateWatch func(ctx context.Context, state *dashboard.NousState, interval time.Duration, logger *slog.Logger)
 	newInceptionEngine func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
 	restartBrainstorm  func(ctx context.Context, mgr *agent.Manager, msg string) error
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
@@ -66,8 +70,9 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 		startWorkspaceCleanup: func(ctx context.Context, logger *slog.Logger, audit *dashboard.AuditLog) {
 			go dashboard.StartWorkspaceCleanup(ctx, logger, audit)
 		},
-		ensureNousDirs: ensureNousDirs,
-		loadNousState:  loadNousState,
+		ensureNousDirs:     ensureNousDirs,
+		loadNousState:      loadNousState,
+		startNousGateWatch: dashboard.StartNousGateWatch,
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(inceptionDataDir, api, logger)
 		},

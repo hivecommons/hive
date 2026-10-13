@@ -26,14 +26,15 @@ panel shows an explainer card instead of empty stats.
 
 All Nous state lives under one durable root on the PVC — `/data/nous` by
 default, configurable with `data.nous_dir` and overridable at runtime with
-`HIVE_NOUS_DATA_DIR` (RFC #11585 part 1, #11694). Nothing Nous-specific is in
-`hive.yaml` beyond that one path:
+`HIVE_NOUS_DATA_DIR` (RFC #11585 part 1, #11694). The only other Nous key in
+`hive.yaml` is `nous.gate_poll_seconds` (see [Gate protocol](#gate-protocol)):
 
 | What | Where (relative to `data.nous_dir`) | Written by |
 |---|---|---|
 | Experiment ledger | `governor/ledger.json` | governor experiment loop, read at boot |
 | Learned principles | `governor/principles.json` | governor experiment loop, read at boot |
 | Baseline snapshots | `snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
+| Pending gate question, owner decision, decision history | `gates/pending.json`, `gates/decision.json`, `gates/history.jsonl` | `bin/nous-hive-gate.py` writes `pending.json`; `PUT /api/nous/gate-decision` writes the other two (see [Gate protocol](#gate-protocol)) |
 | Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | `panel-config.json` (mirrors `NousState.Mode`/`Scope`/`Config`) | every `PUT /api/nous/mode`, `PUT /api/nous/scope` and `PUT /api/nous/config/*`; re-applied at boot |
 
 Panel configuration therefore **survives a process restart**: `loadNousState()`
@@ -76,18 +77,81 @@ The nightly hub DR backup is unchanged and still excludes `nous/` entirely.
    through. Phase and iteration are reported per scope (`governor`, `repo`)
    through `GET /api/nous/phase` and the `phases` field the governor process
    publishes into `NousState.Status`.
-4. **Gate decision** — a phase can pause for an operator decision. The
-   dashboard surfaces this via `GET /api/nous/gate-pending`; an operator (or
-   an owner-role automation) responds with
-   `PUT /api/nous/gate-decision {"decision": "...", "reason": "..."}`. The
-   decision is recorded in `NousState.GateResponse` and audited as
-   `nous_gate_decision`. `POST /api/nous/gate-respond` accepts a free-form
-   body for the same purpose and is audited as `nous_gate_respond`.
+4. **Gate decision** — the design and findings phases pause for an owner
+   decision. The experiment agent publishes the question to
+   `<nous_dir>/gates/pending.json`; the hive mirrors it into
+   `GET /api/nous/gate-pending` and pings the owner once. An owner responds
+   with `PUT /api/nous/gate-decision {"decision": "approve|reject|abort",
+   "reason": "..."}`; the decision is recorded on disk for the agent, kept in
+   `NousState.GateResponse`, and audited as `nous_gate_decision`. See
+   [Gate protocol](#gate-protocol). `POST /api/nous/gate-respond` accepts a
+   free-form body for the same purpose and is audited as `nous_gate_respond`.
 5. **Approve / Reject / Abort** — while in **Suggest** mode, a pending
    proposal (`NousState.Status["pending"]`) shows Apply/Reject buttons in the
    dashboard, backed by `POST /api/nous/approve` and `POST /api/nous/abort`.
    A running experiment can be stopped early with the same Abort action,
    which reverts the governor to its pre-experiment configuration.
+
+## Gate protocol
+
+A Nous gate is the point where an experiment stops and asks "may I run this
+design?" or "do these findings hold?". Only an owner may answer, and the
+answer must reach the agent that asked (RFC #11585 part 3, #11696).
+
+Before #11696 the agent-side bridge (`bin/nous-hive-gate.py`) tried to *PUT*
+its question to `/api/nous/gate-decision`. That endpoint is owner-only and
+the agent holds no owner credential, so the write always failed, nothing ever
+appeared in `GET /api/nous/gate-pending`, and every gate silently timed out as
+a reject. The fix keeps the HTTP API unchanged and moves the agent→hive leg
+onto the durable Nous root from part 1:
+
+```
+agent (nous-hive-gate.py)              hive (pkg/dashboard + pkg/nousstore)            owner
+        │  write gates/pending.json              │                                       │
+        │ ──────────────────────────────────────▶│  poll (nous.gate_poll_seconds) or     │
+        │                                        │  on GET /api/nous/gate-pending        │
+        │                                        │  → NousState.GatePending, ping once ─▶│
+        │                                        │◀── PUT /api/nous/gate-decision ───────│
+        │                                        │  append gates/history.jsonl           │
+        │                                        │  write  gates/decision.json           │
+        │                                        │  remove gates/pending.json            │
+        │  poll gates/decision.json (gate_id)    │                                       │
+        │◀───────────────────────────────────────│                                       │
+        ▼ approve | reject | abort
+```
+
+**Files** (all under `<nous_dir>/gates/`, written atomically via `.tmp` +
+rename, included in the owner spoke backup):
+
+| File | Written by | Contents |
+|---|---|---|
+| `pending.json` | agent | `id`, `gate` (`design`/`findings`), `question`, `scope`, optional `summary`, `artifact`, `reviews`, `requested_at` |
+| `decision.json` | hive | `gate_id`, `decision`, `reason`, `decided_by`, `decided_at` — replaced on every decision |
+| `history.jsonl` | hive | one `decision.json` record per line, append-only |
+| `notified` | hive | id of the last gate the owner was pinged for, so a restart does not re-ping |
+
+**Decision vocabulary.** `decision` must be `approve`, `reject` or `abort`;
+anything else is `400`. `reason` (alias `note`) is optional free text. An
+optional `gate_id` must match the pending gate or the request is `409` — a
+stale answer can never approve a newer gate. With no pending gate the request
+is `409` too. The agent ignores a `decision.json` whose `gate_id` is not the
+one it published.
+
+**Timing.** The hive checks for a new `pending.json` every
+`nous.gate_poll_seconds` (`15` by default, `HIVE_NOUS_GATE_POLL_INTERVAL`
+overrides) *and* on every `GET /api/nous/gate-pending`, so the Experiment Lab
+page is never behind the file. The agent polls `decision.json` every
+`NOUS_GATE_POLL_INTERVAL_SEC` (5) for up to `NOUS_GATE_TIMEOUT_SEC` (1800);
+on timeout it withdraws `pending.json` and treats the gate as `reject`.
+
+**Modes.** In `observe` and `evolve` mode the bridge auto-approves and writes
+nothing. `suggest` mode — and `repo` scope in any mode — always waits for the
+owner.
+
+**Notification.** The owner is pinged through the configured notifier
+(ntfy/Slack/Discord) once per gate id with the question; the `notified`
+marker is written *before* the ping so a crash between the two drops a ping
+rather than duplicating it.
 
 ## Trust ladder (mode)
 
@@ -205,9 +269,9 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 
 ## What does not exist today
 
-- No `nous:` key in `hive.yaml` or `hive.yaml.example` — do not add one to an
-  operator's config expecting it to be read; it is ignored. The only
-  Nous-related YAML key is `data.nous_dir`.
+- The `nous:` block in `hive.yaml` carries only `gate_poll_seconds`. Goals,
+  bounds, schedule and the trust ladder are **not** read from YAML — they live
+  in `panel-config.json` under `data.nous_dir` and are set through the API.
 - No environment-variable override for the confidence threshold or decay
   rate shown in the dashboard's Principle Store section — those fields exist
   in the UI but are not wired to `NOUS_CONFIDENCE_THRESHOLD` /

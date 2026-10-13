@@ -284,7 +284,21 @@ type NousState struct {
 	// restart (#11694); cmd/hive wires it to pkg/nousstore. Nil keeps the
 	// pre-#11694 in-memory-only behaviour.
 	PersistPanel func(NousPanelSnapshot) error `json:"-"`
-	Mu           sync.Mutex                    `json:"-"`
+	// GateStore, when set, is the durable gate protocol store (#11696):
+	// GatePending mirrors its pending gate and gate decisions are recorded
+	// through it. Nil keeps the pre-#11696 in-memory-only behaviour.
+	GateStore NousGateStore `json:"-"`
+	// GateNotify, when set, is called once per newly pending gate id with
+	// a title and message (cmd/hive wires the notifier). Nil disables pings.
+	GateNotify func(title, message string) `json:"-"`
+	// GateLogger receives gate protocol warnings; nil silences them.
+	GateLogger *slog.Logger `json:"-"`
+	// Now is the clock for decision timestamps; nil means time.Now.
+	Now func() time.Time `json:"-"`
+	Mu  sync.Mutex       `json:"-"`
+
+	gateNotifyMu     sync.Mutex
+	lastNotifiedGate string
 }
 
 type NousPrinciple struct {
