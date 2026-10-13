@@ -1031,7 +1031,17 @@ func NewClaimLedger(path string, logger *slog.Logger) *ClaimLedger {
 // A missing file is not an error — it yields an empty ledger, which is the
 // correct state on a hive's very first boot.
 func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
+	return loadClaimLedgerAt(path, logger, nil)
+}
+
+// loadClaimLedgerAt is LoadClaimLedger with an injectable clock, so the
+// retention decisions made while reading the file are testable without
+// depending on the wall clock. A nil clock means time.Now.
+func loadClaimLedgerAt(path string, logger *slog.Logger, clock func() time.Time) (*ClaimLedger, error) {
 	l := NewClaimLedger(path, logger)
+	if clock != nil {
+		l.now = clock
+	}
 	data, err := os.ReadFile(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1045,12 +1055,20 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		// an empty one; the next successful fetch repopulates it.
 		return l, fmt.Errorf("parsing claim ledger %s: %w", l.path, err)
 	}
-	cutoff := l.now().Add(-l.ttl)
+	now := l.now()
+	cutoff := now.Add(-l.ttl)
 	for _, c := range file.Claims {
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
-		if c.ObservedAt.Before(cutoff) {
+		// Mirror pruneLocked (#8003, #11580): a settled claim's evidence does
+		// not decay with the TTL, only its retention bound retires it, so a
+		// restart must not drop a claim the running hub would have kept.
+		if c.Settled() {
+			if !settledRetained(c, now) {
+				continue
+			}
+		} else if c.ObservedAt.Before(cutoff) {
 			continue
 		}
 		// Ledgers written before FirstObservedAt existed carry a zero anchor.
@@ -1062,7 +1080,7 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		}
 		l.insertLocked(c)
 	}
-	churnCutoff := l.now().Add(-l.churnTTL)
+	churnCutoff := now.Add(-l.churnTTL)
 	for _, r := range file.History {
 		if r.ObservedAt.Before(churnCutoff) {
 			continue
@@ -1375,10 +1393,16 @@ func (l *ClaimLedger) pruneLocked() {
 	for k, c := range l.claims {
 		if c.Settled() {
 			// #8003: a settled claim's evidence does not decay with the API's
-			// reachability; only its retention bound retires it here.
+			// reachability; only its retention bound retires it here. A
+			// retained claim takes a fresh ObservedAt, as the authoritative
+			// carry-forward does, so the on-disk TTL field agrees with the
+			// in-memory retention across Save/Load.
 			if !settledRetained(c, now) {
 				delete(l.claims, k)
+				continue
 			}
+			c.ObservedAt = now
+			l.claims[k] = c
 			continue
 		}
 		if c.ObservedAt.Before(cutoff) {

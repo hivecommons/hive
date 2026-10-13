@@ -284,14 +284,18 @@ func TestSettledClaim_OpenAnchorHoldsThroughOutageAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reloaded, err := LoadClaimLedger(path, testLogger())
+	// Load with the same frozen clock: the running hub kept this claim on
+	// its open-sighting anchor, so a restart at the same instant must too.
+	reloaded, err := loadClaimLedgerAt(path, testLogger(), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded.SetClock(func() time.Time { return now })
 	got, ok := reloaded.Lookup(claim.Repo, claim.Issue)
 	if !ok || !got.IssueOpenAt.Equal(now) {
 		t.Fatalf("IssueOpenAt must survive Save/Load, got %+v", got)
+	}
+	if !got.ObservedAt.Equal(now) {
+		t.Fatalf("non-authoritative retention must refresh ObservedAt so the TTL agrees, got %v", got.ObservedAt)
 	}
 	now = now.Add(time.Hour)
 	reloaded.ReconcileOpen(nil, true, nil)
@@ -344,5 +348,44 @@ func TestOpenIssuesOf(t *testing.T) {
 	}
 	if _, ok := got[mergedStrongClaim(time.Time{}).Key()]; !ok {
 		t.Fatalf("set must be keyed like the ledger (repo#number), got %v", got)
+	}
+}
+
+// TestLoadClaimLedger_SettledClaimOutlivesTTL: on disk a settled claim is
+// kept by its retention bound, not the raw TTL (#8003, #11580) — a hub that
+// restarts after a long outage must come back with the same claims the
+// running hub would have kept, while an unsettled claim past the TTL is
+// still dropped on load exactly as before.
+func TestLoadClaimLedger_SettledClaimOutlivesTTL(t *testing.T) {
+	saved := time.Date(2026, 9, 17, 4, 24, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "l.json")
+	l := NewClaimLedger(path, testLogger())
+	l.SetClock(func() time.Time { return saved })
+	settled := mergedStrongClaim(saved)
+	unsettled := IssueClaim{Repo: "o/r", Issue: 7, PRNumber: 8, PRRepo: "o/r", ObservedAt: saved, FirstObservedAt: saved}
+	l.ReconcileOpen([]IssueClaim{settled, unsettled}, true, nil)
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	later := saved.Add(claimLedgerTTL + 24*time.Hour) // past the TTL, inside retention
+	reloaded, err := loadClaimLedgerAt(path, testLogger(), func() time.Time { return later })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.Lookup(settled.Repo, settled.Issue); !ok {
+		t.Fatal("a settled claim inside retention must survive load past the TTL")
+	}
+	if _, ok := reloaded.Lookup(unsettled.Repo, unsettled.Issue); ok {
+		t.Fatal("an unsettled claim past the TTL must still be dropped on load")
+	}
+
+	expired := saved.Add(settledClaimRetention + time.Hour)
+	reloaded, err = loadClaimLedgerAt(path, testLogger(), func() time.Time { return expired })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.Lookup(settled.Repo, settled.Issue); ok {
+		t.Fatal("a settled claim past retention must be dropped on load")
 	}
 }
