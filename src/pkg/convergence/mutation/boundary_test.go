@@ -207,3 +207,42 @@ func TestBoundaryAlreadyAppliedIsIdempotentSuccess(t *testing.T) {
 		t.Fatalf("entry = %+v ok=%v, want released after replay", entry, ok)
 	}
 }
+
+func TestBoundaryLookupAppliedReadsJournalWithoutExecuting(t *testing.T) {
+	b := testBoundary(t, "enforce")
+	claim := effects.Claim{Repo: "acme/widget", Kind: effects.KindIssueCreate, Target: "finding", Inputs: map[string]string{"window": "1"}}
+	if _, ok := b.LookupApplied(context.Background(), claim); ok {
+		t.Fatal("nothing journaled yet: lookup must miss")
+	}
+	if _, err := b.Execute(context.Background(), claim, func(context.Context) (effects.Result, error) {
+		return effects.Result{Provenance: "https://github.com/acme/widget/issues/9"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, ok := b.LookupApplied(context.Background(), claim)
+	if !ok || res.Provenance != "https://github.com/acme/widget/issues/9" {
+		t.Fatalf("applied operation must be found with its provenance: ok=%v res=%+v", ok, res)
+	}
+	neighbour := claim
+	neighbour.Inputs = map[string]string{"window": "2"}
+	if _, ok := b.LookupApplied(context.Background(), neighbour); ok {
+		t.Fatal("a different input set is a different logical operation and must miss")
+	}
+	if entry, held := b.Executor.Ledger.Get(TaskClaim("acme/widget", claimSubject(claim)).Key()); held && entry.State == StateActiveMutation {
+		t.Fatal("lookup must not acquire the ledger claim")
+	}
+	var generic effects.Boundary = b
+	if _, ok := effects.LookupApplied(context.Background(), generic, claim); !ok {
+		t.Fatal("effects.LookupApplied must reach the boundary through the Lookup interface")
+	}
+	if _, ok := effects.LookupApplied(context.Background(), effects.NoopBoundary{}, claim); ok {
+		t.Fatal("a non-journaling boundary never reports an applied operation")
+	}
+	if _, ok := testBoundary(t, "off").LookupApplied(context.Background(), claim); ok {
+		t.Fatal("off mode journals nothing and must miss")
+	}
+	var nilBoundary *Boundary
+	if _, ok := nilBoundary.LookupApplied(context.Background(), claim); ok {
+		t.Fatal("nil boundary must miss")
+	}
+}

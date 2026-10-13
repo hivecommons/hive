@@ -145,25 +145,30 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	// Body and labels are not inputs: the attribution trailer varies and the
 	// label may be missing, and neither changes which issue this is.
 	var issue *gh.Issue
-	res, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	claim := effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueCreate,
 		Target: effects.StableDigest("advisory", advisoryTitle),
 		Inputs: map[string]string{
 			"flow":   "advisory",
 			"title":  effects.StableDigest(advisoryTitle),
-			"window": issueCreateIdempotencyBucket(time.Now()),
+			"window": issueCreateIdempotencyBucket(issueCreateNow()),
 		},
-	}, func(ctx context.Context) (effects.Result, error) {
-		var apiErr error
-		issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
-		if apiErr != nil {
-			return effects.Result{}, apiErr
+	}
+	res, found := c.priorBucketIssueCreate(ctx, claim)
+	if !found {
+		var err error
+		res, err = effects.Execute(ctx, c.mutationBoundary(), claim, func(ctx context.Context) (effects.Result, error) {
+			var apiErr error
+			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repo, req)
+			if apiErr != nil {
+				return effects.Result{}, apiErr
+			}
+			return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+		})
+		if err != nil {
+			return 0, fmt.Errorf("creating advisory issue: %w", err)
 		}
-		return effects.Result{Provenance: issue.GetHTMLURL()}, nil
-	})
-	if err != nil {
-		return 0, fmt.Errorf("creating advisory issue: %w", err)
 	}
 	if issue == nil {
 		number, parseErr := parseIssueNumberFromURL(res.Provenance)
