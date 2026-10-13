@@ -183,8 +183,16 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				existing.KickTemplate = pa.KickTemplate
 				changed = true
 			}
-			if pa.Mode != "" && existing.Mode != pa.Mode {
+			// An explicit level change (forceGovernor) hands mode back to the
+			// pack, since mode is most of what a level means; a same-level
+			// restart leaves an operator-owned mode alone.
+			if forceGovernor && existing.ModeIsOperatorOwned() {
+				existing.ModeOwner = config.FieldOwnerPack
+				changed = true
+			}
+			if pa.Mode != "" && existing.Mode != pa.Mode && !existing.ModeIsOperatorOwned() {
 				existing.Mode = pa.Mode
+				existing.ModeOwner = config.FieldOwnerPack
 				changed = true
 			}
 			// Model is reconciled to the pack ONLY while the pack still owns
@@ -356,6 +364,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// the pack owns them until an operator overrides in the grid.
 			ModelOwner:   config.FieldOwnerPack,
 			BackendOwner: config.FieldOwnerPack,
+			ModeOwner:    config.FieldOwnerPack,
 			Enabled:      true,
 			DisplayName:  pa.DisplayName,
 			Description:  pa.Description,

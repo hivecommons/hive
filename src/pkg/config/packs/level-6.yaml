@@ -248,8 +248,8 @@ agents:
 - name: architect
   display_name: architect
   role: architect
-  description: 'Full autonomous architecture. Implements RFCs and auto-merges structural
-    changes.
+  description: 'Full autonomous architecture. Implements RFCs and files issues and PRs
+    for structural changes; merging is left to a person.
 
     '
   emoji: 🏗

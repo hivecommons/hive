@@ -126,6 +126,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"cliPinned":           pinnedCLI,
 			"cliPinValue":         cli,
 			"modelOwner":          agentCfg.ModelOwner,
+			"modeOwner":           agentCfg.ModeOwner,
 			"backendOwner":        agentCfg.BackendOwner,
 			"staleTimeout":        staleTimeout,
 			"restartStrategy":     restartStrategy,
@@ -563,6 +564,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				}
 			}
 			agentCfg.Mode = s
+			agentCfg.ModeOwner = config.FieldOwnerOperator
 		}
 	}
 	if v, ok := body["includeRepos"]; ok {

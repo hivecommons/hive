@@ -228,6 +228,13 @@ type AgentConfig struct {
 	// of hives whose config predates this field.
 	ModelOwner   string `yaml:"model_owner" json:"model_owner,omitempty"`
 	BackendOwner string `yaml:"backend_owner" json:"backend_owner,omitempty"`
+	// ModeOwner records WHO last set Mode, with the same FieldOwner*
+	// vocabulary as ModelOwner. Without it, a pack re-apply — which happens on
+	// EVERY hive restart — reconciled Mode back to the pack value, so an
+	// operator's deliberate mode change in the dashboard (e.g. giving architect
+	// ISSUES_PRS_MERGE) silently reverted on the next restart. An explicit
+	// level change resets it to the pack so the new level's mode applies.
+	ModeOwner string `yaml:"mode_owner" json:"mode_owner,omitempty"`
 	// PauseOwner records WHO owns this agent's pause/run state, with the same
 	// FieldOwner* vocabulary as ModelOwner/BackendOwner. It is stamped
 	// FieldOwnerOperator when the operator creates the agent by hand via the
@@ -770,6 +777,12 @@ const (
 // agent's model, which makes it immune to pack reconciliation.
 func (a AgentConfig) ModelIsOperatorOwned() bool {
 	return a.ModelOwner == FieldOwnerOperator
+}
+
+// ModeIsOperatorOwned reports whether an operator explicitly chose this
+// agent's mode, which makes it immune to pack reconciliation on restart.
+func (a AgentConfig) ModeIsOperatorOwned() bool {
+	return a.ModeOwner == FieldOwnerOperator
 }
 
 // OnDemandIsOperatorOwned reports whether an operator explicitly set this
