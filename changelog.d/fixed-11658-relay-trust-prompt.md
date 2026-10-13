@@ -1,0 +1,1 @@
+- The contributor relay now answers Claude Code's folder trust prompt by selecting "Yes, I trust this folder" instead of a bare Enter that picked "No, exit". It also relaunches the CLI once if it exited during onboarding, and stops after a bounded number of dismiss attempts with an error naming the manual-trust workaround, rather than looping forever (#11658).

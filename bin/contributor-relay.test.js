@@ -14874,3 +14874,23 @@ test('#10597 a manual pause outranks the reset-backed exception', () => {
   assert.strictEqual(d.admit, false);
   assert.strictEqual(d.reason, 'explicit_pause');
 });
+
+test('claude trust prompt: Down moves off "No, exit" onto the trust option', () => {
+  const noDefault = [
+    ' Do you trust the files in this folder?',
+    '',
+    ' ❯ 1. No, exit',
+    '   2. Yes, I trust this folder',
+    '',
+    ' Enter to confirm · Esc to cancel',
+  ].join('\n');
+  const yesDefault = noDefault.replace('❯ 1. No, exit', '  1. No, exit').replace('  2. Yes', '❯ 2. Yes');
+  const cases = [
+    ['cursor on No, exit', 'claude', noDefault, 'Down'],
+    ['cursor already on Yes', 'claude', yesDefault, null],
+    ['non-claude backend', 'codex', noDefault, null],
+  ];
+  for (const [name, backend, pane, want] of cases) {
+    assert.strictEqual(paneClassifier.blockingPromptKey(pane, backend), want, name);
+  }
+});

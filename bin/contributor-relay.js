@@ -4187,8 +4187,14 @@ function typeLaunchCommand() {
   return launchCmd;
 }
 
+// Bounds the onboarding auto-dismiss loop so a dialog that never clears (or a
+// CLI that exited back to a shell) fails loudly instead of looping forever.
+const MAX_ONBOARDING_DISMISS_ATTEMPTS = 8;
+
 function waitForCLI() {
   let loginMessageShown = false;
+  let dismissAttempts = 0;
+  let relaunchedAfterExit = false;
   let needsLoginTicks = 0;
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -4228,6 +4234,22 @@ function waitForCLI() {
         else setTimeout(check, CLI_READY_POLL_MS);
       } else if (state === 'onboarding') {
         needsLoginTicks = 0;
+        if (paneIsRunningShell()) {
+          // The dismissal ended the CLI (e.g. "No, exit"); Enter into a bare shell helps nothing.
+          if (relaunchedAfterExit) {
+            reject(new Error(`${BACKEND} exited during onboarding twice and the pane is back at a shell prompt. Trust the folder manually once (run \`${BACKEND}\` in ${AGENT_CWD || 'the agent cwd'} and accept the trust prompt), then restart the relay.`));
+            return;
+          }
+          relaunchedAfterExit = true;
+          console.error(`${BACKEND} exited during onboarding (pane is at a shell prompt) — relaunching once.`);
+          try { typeLaunchCommand(); } catch (_) {}
+          setTimeout(check, CLI_READY_POLL_MS);
+          return;
+        }
+        if (++dismissAttempts > MAX_ONBOARDING_DISMISS_ATTEMPTS) {
+          reject(new Error(`Trust/onboarding dialog did not clear after ${MAX_ONBOARDING_DISMISS_ATTEMPTS} auto-dismiss attempts. Workaround: trust the folder manually once (run \`${BACKEND}\` in ${AGENT_CWD || 'the agent cwd'} and choose "Yes, I trust this folder"), then restart the relay.`));
+          return;
+        }
         // A numbered menu needs its option typed before Enter; a yes/no confirm
         // takes a bare Enter. blockingPromptKey() tells the two apart from the
         // pane text, so this no longer loops uselessly on menu-shaped prompts.
