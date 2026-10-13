@@ -1,5 +1,5 @@
 // Package nousstore resolves and manages the durable on-disk layout of the
-// Nous (Experiment/Strategy Lab) subsystem (RFC #11585 part 1, #11694).
+// Nous (Experiment Lab) subsystem (RFC #11585 part 1, #11694).
 //
 // Before this package, Nous state was split across two roots: baseline
 // snapshots lived on the PVC under /data/nous/snapshots, while the governor

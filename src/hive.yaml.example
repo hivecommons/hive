@@ -1133,7 +1133,7 @@ data:
   claude_sessions_dir: /data/home/.claude/projects
   copilot_sessions_dir: /data/home/.copilot/session-state
   agents_dir: /data/agent-configs
-  # Durable root for Nous (Strategy Lab) state; HIVE_NOUS_DATA_DIR overrides.
+  # Durable root for Nous (Experiment Lab) state; HIVE_NOUS_DATA_DIR overrides.
   nous_dir: /data/nous
 
 # Nous (Experiment Lab) runtime knobs. Durable state lives under data.nous_dir.

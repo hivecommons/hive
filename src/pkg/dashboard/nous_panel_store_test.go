@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The Strategy Lab panel configuration must survive a restart (#11694):
+// The Experiment Lab panel configuration must survive a restart (#11694):
 // every mutating /api/nous call hands Mode, Scope and Config to
 // PersistPanel, and a fresh NousState re-applies that snapshot at boot.
 func TestNousPanelConfigPersistsAcrossRestart(t *testing.T) {

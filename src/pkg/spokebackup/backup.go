@@ -105,7 +105,7 @@ const (
 	// logged or written anywhere world-readable.
 	appKeyGlob = "gh-app-key*.pem"
 
-	// nousSubdir is the durable Nous (Experiment/Strategy Lab) tree,
+	// nousSubdir is the durable Nous (Experiment Lab) tree,
 	// relative to the data dir (#11694): governor ledger and principles plus
 	// the dashboard panel configuration. Its snapshots/ subtree — hundreds of
 	// MB of regenerable baseline samples — is excluded; see nousSkip.

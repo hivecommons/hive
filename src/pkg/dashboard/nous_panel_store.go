@@ -1,6 +1,6 @@
 package dashboard
 
-// NousPanelSnapshot is the operator-set Strategy Lab panel state that must
+// NousPanelSnapshot is the operator-set Experiment Lab panel state that must
 // survive a restart (#11694): Mode, Scope and the section Config map. The
 // dashboard owns the shape; cmd/hive wires the on-disk format via
 // NousState.PersistPanel so this package stays free of storage concerns.

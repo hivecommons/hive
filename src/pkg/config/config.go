@@ -211,7 +211,7 @@ type DataConfig struct {
 	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
 	BobSessionsDir     string `yaml:"bob_sessions_dir"`
 	AgentsDir          string `yaml:"agents_dir"`
-	// NousDir is the durable root for Nous (Experiment/Strategy Lab) state:
+	// NousDir is the durable root for Nous (Experiment Lab) state:
 	// governor ledger and principles, baseline snapshots and the dashboard
 	// panel configuration (#11694). Default /data/nous; HIVE_NOUS_DATA_DIR
 	// overrides it at runtime.
