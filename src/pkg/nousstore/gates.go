@@ -192,16 +192,8 @@ func (l Layout) RecordGateDecision(d GateDecision, now time.Time) error {
 	if err := os.MkdirAll(l.GatesDir(), dirMode); err != nil {
 		return fmt.Errorf("create nous gates dir %s: %w", l.GatesDir(), err)
 	}
-	f, err := os.OpenFile(l.GateHistoryPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
-	if err != nil {
-		return fmt.Errorf("open nous gate history: %w", err)
-	}
-	_, werr := f.Write(append(line, '\n'))
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return fmt.Errorf("append nous gate history: %w", werr)
+	if err := appendLine(l.GateHistoryPath(), "nous gate history", line); err != nil {
+		return err
 	}
 	if err := writeAtomic(l.GateDecisionPath(), append(line, '\n')); err != nil {
 		return err

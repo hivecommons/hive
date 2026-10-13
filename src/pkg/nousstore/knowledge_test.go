@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -390,5 +391,25 @@ func TestKnowledgeReaderUnreadableFile(t *testing.T) {
 	k, _, err := l.KnowledgeReader("").Load()
 	if err == nil || len(k.Ledger) != 1 {
 		t.Fatalf("unreadable principles: ledger=%d err=%v", len(k.Ledger), err)
+	}
+}
+
+// A directory where a knowledge file should be is a read error (not "no
+// file"), reported for both files and surfaced through the reader.
+func TestKnowledgeReaderDirectoryInPlaceOfFile(t *testing.T) {
+	l := New(filepath.Join(t.TempDir(), "nous"))
+	for _, path := range []string{l.LedgerPath(), l.PrinciplesPath()} {
+		if err := os.MkdirAll(path, dirMode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, err := l.KnowledgeReader("").Load()
+	if err == nil {
+		t.Fatal("Load over directories must fail")
+	}
+	for _, want := range []string{"read ledger", "read principles"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to mention %q", err, want)
+		}
 	}
 }

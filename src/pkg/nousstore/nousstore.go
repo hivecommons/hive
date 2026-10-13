@@ -17,6 +17,7 @@
 //	<root>/gates/pending.json         the gate the agent is waiting on (#11696)
 //	<root>/gates/decision.json        the owner's answer to that gate
 //	<root>/gates/history.jsonl        every gate decision ever recorded
+//	<root>/promotions/history.jsonl   every owner promotion of a verdict (#11699)
 //
 // The root is configurable (data.nous_dir, overridden by HIVE_NOUS_DATA_DIR).
 // On every boot MigrateLegacy copies any ledger/principles file from the
@@ -257,6 +258,23 @@ func (l Layout) LoadPanelConfig() (PanelConfig, bool, error) {
 		return pc, false, fmt.Errorf("parse nous panel config %s: %w", l.PanelConfigPath(), err)
 	}
 	return pc, true, nil
+}
+
+// appendLine appends line (plus a newline) to the JSONL file at path,
+// creating it when missing. what names the file in error messages.
+func appendLine(path, what string, line []byte) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", what, err)
+	}
+	_, werr := f.Write(append(line, '\n'))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("append %s: %w", what, werr)
+	}
+	return nil
 }
 
 func writeAtomic(path string, data []byte) error {
