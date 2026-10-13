@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +34,11 @@ const duplicateGuardMarker = "<!-- hive:create-pr-duplicate-guard -->"
 // maxMergedFixCandidates bounds how many recently closed PRs the merged-fix
 // check reads.
 const maxMergedFixCandidates = 50
+
+// guardHeadSentinelNumber stands in for the not-yet-opened head PR when it is
+// clustered with dupsweep, which drops members with Number <= 0. No real PR
+// number reaches it.
+const guardHeadSentinelNumber = math.MaxInt32
 
 var closingRefRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:https://github\.com/([\w.-]+/[\w.-]+)/issues/|([\w.-]+/[\w.-]+)#|#)(\d+)`)
 
@@ -120,9 +126,21 @@ func (c *Client) findDuplicatePR(ctx context.Context, owner, repo, head, base, b
 		if pr == nil || pr.MergedAt == nil {
 			continue
 		}
-		if n, ok := sharedIssue(mine, closingIssueRefs(pr.GetBody(), owner, repo)); ok {
-			return &duplicateFinding{pr: pr, reason: DuplicateReasonMergedFix, issue: n}, nil
+		n, ok := sharedIssue(mine, closingIssueRefs(pr.GetBody(), owner, repo))
+		if !ok {
+			continue
 		}
+		// A merged Closes #N closed N; if N is open again it was reopened
+		// (incomplete fix or revert) and a follow-up PR is exactly what is
+		// wanted, so only a still-closed issue counts as already fixed.
+		issue, _, err := c.client.Issues.Get(ctx, owner, repo, n)
+		if err != nil {
+			return nil, err
+		}
+		if issue.GetState() != "closed" {
+			continue
+		}
+		return &duplicateFinding{pr: pr, reason: DuplicateReasonMergedFix, issue: n}, nil
 	}
 	return nil, nil
 }
@@ -171,7 +189,7 @@ func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, ba
 		}
 		cluster := dupsweep.Find([]dupsweep.PR{
 			{Repo: owner + "/" + repo, Number: pr.GetNumber(), Files: fp.files},
-			{Repo: owner + "/" + repo, Number: -1, Files: headFiles},
+			{Repo: owner + "/" + repo, Number: guardHeadSentinelNumber, Files: headFiles},
 		}, dupsweep.Options{})
 		if len(cluster) > 0 || fileSetContained(headSet, fp.files) {
 			return &duplicateFinding{pr: pr, reason: DuplicateReasonOverlappingFiles}, nil
