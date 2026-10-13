@@ -187,6 +187,35 @@ func TestBuildGovernorNextRunAnchorsToLastEval(t *testing.T) {
 	}
 }
 
+func TestBuildGovernorNextRunUsesEffectiveEvalInterval(t *testing.T) {
+	lastEval := time.Date(2026, 9, 25, 16, 10, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Governor: config.GovernorConfig{
+			EvalIntervalS:              120,
+			EvalIntervalMaxS:           1800,
+			ConserveIntervalMultiplier: 3,
+			Modes:                      map[string]config.ModeConfig{},
+		},
+	}
+	state := governor.State{Mode: governor.ModeIdle, LastEval: lastEval}
+
+	conserve := buildGovernor(state, cfg, map[string]any{"mode": "conserve"})
+	if want := "2026-09-25T16:16:00Z"; conserve.NextKickAt != want {
+		t.Fatalf("conserve nextKickAt = %q, want %q", conserve.NextKickAt, want)
+	}
+
+	critical := buildGovernor(state, cfg, map[string]any{"mode": "critical"})
+	if want := "2026-09-25T16:18:00Z"; critical.NextKickAt != want {
+		t.Fatalf("critical nextKickAt = %q, want %q", critical.NextKickAt, want)
+	}
+
+	cfg.Governor.EvalIntervalMaxS = 300
+	capped := buildGovernor(state, cfg, map[string]any{"mode": "critical"})
+	if want := "2026-09-25T16:15:00Z"; capped.NextKickAt != want {
+		t.Fatalf("capped critical nextKickAt = %q, want %q", capped.NextKickAt, want)
+	}
+}
+
 func TestBuildTokens_NilCollector(t *testing.T) {
 	ft := buildTokens(nil)
 	if ft.LookbackHours != defaultLookbackHours {

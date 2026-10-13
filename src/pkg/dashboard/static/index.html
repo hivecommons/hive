@@ -12991,7 +12991,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             const valTxt = awaiting > 0 ? `${awaiting} to review` : String(active);
             return `<div class="gov-stat" style="cursor:pointer" data-action="openPlanList" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
           })()}
-          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the last governor evaluation plus the configured evaluation interval. If that moment has already passed, this tile says due now / overdue instead of showing a stale past timestamp."><div class="label">next run</div><div class="val">${escapeHtml(formatGovernorNextRun(gov))}</div></div>
+          <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the last governor evaluation plus the effective evaluation interval, including API-budget stretch. If that moment has already passed while the timer is active, this tile says delayed instead of showing a stale past timestamp."><div class="label">next run</div><div class="val">${escapeHtml(formatGovernorNextRun(gov))}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" data-action="gh5" title="Click to adjust governor thresholds">
           <div class="temp-gauge-label"><span>Pressure: ${govPressure} (${issueCount} issues + ${prCount} PRs)</span><span>max ${maxQ}</span></div>
@@ -24629,7 +24629,8 @@ function burnAreaChart() {
       const nextMs = new Date(gov.nextKickAt || '').getTime();
       if (Number.isFinite(nextMs) && nextMs <= nowMs) {
         const overdueMs = nowMs - nextMs;
-        return overdueMs < 60000 ? 'due now' : `overdue ${formatStatusPayloadAge(overdueMs)}`;
+        if (overdueMs < 60000) return 'due now';
+        return `${gov.active ? 'delayed' : 'overdue'} ${formatStatusPayloadAge(overdueMs)}`;
       }
       return formatDashboardDateTime(gov.nextKickAt || gov.nextKick, { month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZoneName:'short' }, gov.nextKick);
     }
