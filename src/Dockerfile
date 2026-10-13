@@ -11,6 +11,9 @@
 #     https://registry-1.docker.io/v2/library/golang/manifests/1.27-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
 FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+# No --platform: resolves to the target platform so the agent Go toolchain
+# copied into the runtime image matches its arch (#11726).
+FROM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS agent-go
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -486,8 +489,9 @@ ARG GIT_HASH=unknown
 
 # Go toolchain for agents. The wrapper below blocks in-pod test/vet
 # execution by agents while preserving build/fmt/mod/etc.
-COPY --from=builder /usr/local/go /usr/local/go
+COPY --from=agent-go /usr/local/go /usr/local/go
 RUN mv /usr/local/go/bin/go /usr/local/go/bin/go-real
+RUN /usr/local/go/bin/go-real version
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=builder /hive /usr/local/bin/hive
