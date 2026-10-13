@@ -3648,6 +3648,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Prevent proxies from buffering the stream (nginx honours this).
+	w.Header().Set("X-Accel-Buffering", "no")
 	// No CORS header — SSE is same-origin only.
 	// The dashboard loads from the same host, so no cross-origin needed.
 
