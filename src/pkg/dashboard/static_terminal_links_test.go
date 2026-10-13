@@ -65,3 +65,53 @@ func TestStaticTerminalHostedApexWiring(t *testing.T) {
 		t.Fatal("isHostedHiveHost still hardcodes a single hosted apex; assertion renewal no-ops on every other apex")
 	}
 }
+
+// TestStaticTerminalOpensDirectlyWithModalFallbackOnly pins the regression in
+// #11738: #11262 swept openTerminal() into the export-viewer rewrite and made
+// the "Terminal URL for <agent>" modal the UNCONDITIONAL result of clicking a
+// terminal action. The terminal must open directly: window.open() is issued
+// synchronously inside the click handler, before any await (a window.open
+// after an await has lost user activation and is popup-blocked), and the tab
+// is navigated once the handoff code is minted. The URL modal is only the
+// fallback for a genuinely blocked popup.
+func TestStaticTerminalOpensDirectlyWithModalFallbackOnly(t *testing.T) {
+	body, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	start := strings.Index(html, "async function openTerminal(agentName, href) {")
+	if start < 0 {
+		t.Fatal("openTerminal() missing from static dashboard")
+	}
+	end := strings.Index(html[start:], "window.hiveOpenAuthenticatedChildLink")
+	if end < 0 {
+		t.Fatal("could not delimit openTerminal()")
+	}
+	fn := html[start : start+end]
+
+	open := strings.Index(fn, "const tab = window.open('about:blank', '_blank');")
+	if open < 0 {
+		t.Fatal("openTerminal() no longer reserves the terminal tab with a synchronous window.open")
+	}
+	for _, line := range strings.Split(fn[:open], "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "//") || strings.HasPrefix(code, "*") || strings.HasPrefix(code, "/*") {
+			continue
+		}
+		if strings.Contains(code, "await ") {
+			t.Fatalf("openTerminal() awaits before window.open (%q) — the click's user activation is lost and the popup is blocked", code)
+		}
+	}
+	for _, want := range []string{
+		"if (tab && !tab.closed) tab.location.href = url;",
+		"else hiveExportViewer({title:'Terminal URL for ' + agentName, text:url, sourceURL:url, allowOpen:true});",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Fatalf("openTerminal() missing %q", want)
+		}
+	}
+	if n := strings.Count(fn, "hiveExportViewer("); n != 1 {
+		t.Fatalf("openTerminal() calls hiveExportViewer %d times; the URL modal must be the single popup-blocked fallback, not the primary path", n)
+	}
+}

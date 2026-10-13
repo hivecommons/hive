@@ -11421,6 +11421,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     async function openTerminal(agentName, href) {
       const baseUrl = href || terminalUrl(agentName);
+      // Open the tab synchronously, while the click's user activation is
+      // still live. Browsers treat a window.open issued after an await as
+      // non-user-initiated and block it, so the tab is reserved first and
+      // navigated once the handoff code is minted. The URL modal below is
+      // only the fallback for a genuinely blocked popup — it is not the
+      // primary path, and it is still an in-app dialog, never a native one.
+      const tab = window.open('about:blank', '_blank');
+      if (tab) tab.opener = null;
+      const navigate = url => {
+        if (tab && !tab.closed) tab.location.href = url;
+        else hiveExportViewer({title:'Terminal URL for ' + agentName, text:url, sourceURL:url, allowOpen:true});
+      };
       const renewal = await renewTerminalAssertion();
       // Token-secured self-hosted hives do not have a hive_session cookie for
       // assertion renewal, but the handoff POST authenticates with the
@@ -11429,14 +11441,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (code) {
         const url = new URL(baseUrl, window.location.href);
         url.searchParams.set('code', code);
-        hiveExportViewer({title:'Terminal URL for ' + agentName, text:url.toString(), sourceURL:url.toString(), allowOpen:true});
+        navigate(url.toString());
         return;
       }
       // The handoff could not mint the assertion either, so the renewal's
       // verdict is now the actionable one — surface it.
       if (renewal.message) showToast(renewal.message, 'error');
       if (!(await dashboardTokenConfigured())) {
-        hiveExportViewer({title:'Terminal URL for ' + agentName, text:baseUrl, sourceURL:baseUrl, allowOpen:true});
+        navigate(baseUrl);
+      } else if (tab && !tab.closed) {
+        tab.close();
       }
     }
 
