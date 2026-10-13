@@ -389,6 +389,7 @@ func (c *Config) applyDefaults() {
 		c.Governor.Sensing.PullbackSeconds = defaultSensingPullbackSeconds
 	}
 	c.migrateDeprecatedHealthSettings()
+	c.migrateDeprecatedStrategyLab()
 	if c.Governor.Budget.PeriodDays == 0 {
 		c.Governor.Budget.PeriodDays = defaultBudgetPeriodDays
 	}

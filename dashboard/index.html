@@ -1253,7 +1253,7 @@
       .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
     }
 
-    /* Strategy Lab (Nous) */
+    /* Experiment Lab (Nous) */
     .nous-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
     .nous-card h3 { font-size: 0.85rem; margin: 0 0 8px 0; color: var(--fg); }
     .nous-mode-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
@@ -1426,7 +1426,7 @@
   </div>
 
   <div id="nous-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="font-size: 0.95rem; color: var(--muted); margin-bottom: 8px;">🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
+    <h2 style="font-size: 0.95rem; color: var(--muted); margin-bottom: 8px;">🧪 Experiment Lab <span id="nous-mode-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
     <div id="nous-panel"></div>
   </div>
 
@@ -2116,7 +2116,7 @@
         }
       }
 
-      html += `<a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')">🧪 Strategy Lab</a>`;
+      html += `<a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')">🧪 Experiment Lab</a>`;
       html += `<div id="nous-sidebar-config" style="padding:2px 8px 6px 24px;font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">`;
       html += `<div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>`;
       html += `<div id="nous-sb-phase" style="opacity:0.8"></div></div>`;
@@ -3373,7 +3373,7 @@ function burnAreaChart() {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
 
-    // ── Strategy Lab (Nous) rendering ──────────────────────────────────────
+    // ── Experiment Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
     const NOUS_POLL_MS = 30000;
     const NOUS_CONFIDENCE_THRESHOLD = 0.8;

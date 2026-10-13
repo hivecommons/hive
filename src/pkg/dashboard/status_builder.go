@@ -430,8 +430,10 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	if cfg == nil {
 		return FrontendFeatures{}
 	}
+	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		StrategyLab: cfg.Dashboard.StrategyLab,
+		ExperimentLab: enabled,
+		StrategyLab:   enabled,
 	}
 }
 

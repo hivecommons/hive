@@ -421,22 +421,52 @@ func TestStaticDashboardDefaultLayoutOrder(t *testing.T) {
 	}
 }
 
-func TestStaticStrategyLabFeatureGateWiring(t *testing.T) {
+func TestStaticExperimentLabFeatureGateWiring(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	html := string(body)
 	for _, want := range []string{
-		`id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden`,
-		`data-section="nous-section" data-feature="strategy_lab" hidden`,
-		`function strategyLabEnabled()`,
+		`id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden`,
+		`data-section="nous-section" data-feature="experiment_lab" hidden`,
+		`function experimentLabEnabled()`,
 		`function applyDashboardFeatureVisibility()`,
-		`if (!strategyLabEnabled()) return;`,
+		`if (!experimentLabEnabled()) return;`,
 		`() => ensureNousPolling()`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("static dashboard Strategy Lab feature gate missing %q", want)
+			t.Fatalf("static dashboard Experiment Lab feature gate missing %q", want)
+		}
+	}
+}
+
+// TestStaticNoStrategyLabCopy pins the Strategy Lab → Experiment Lab rename
+// (RFC #11585 part 2, #11695): no user-facing copy, feature gate or helper in
+// the static dashboard may still use the old name. The section id and the
+// /api/nous/* routes keep their Nous names by decision.
+func TestStaticNoStrategyLabCopy(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(body))
+	for _, stale := range []string{"strategy lab", "strategy_lab", "strategylab", "strategy-lab"} {
+		if idx := strings.Index(lower, stale); idx >= 0 {
+			end := idx + 120
+			if end > len(lower) {
+				end = len(lower)
+			}
+			t.Fatalf("static dashboard still contains %q: %q", stale, lower[idx:end])
+		}
+	}
+	for _, want := range []string{
+		`<span class="oc-nav-text">Experiment Lab</span>`,
+		`🧪 Experiment Lab`,
+		`Experiment Lab Configuration`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("static dashboard missing Experiment Lab copy %q", want)
 		}
 	}
 }

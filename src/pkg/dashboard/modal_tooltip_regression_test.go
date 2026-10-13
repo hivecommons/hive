@@ -34,7 +34,7 @@ func TestTabbedModalShellsStayFixedSize11268(t *testing.T) {
 			bodyWant: []string{"flex:1 1 auto", "min-height:0", "overflow:auto"},
 		},
 		{
-			name:     "strategy lab and knowledge modal shell",
+			name:     "experiment lab and knowledge modal shell",
 			shell:    ".nous-config-dialog",
 			body:     ".nous-config-dialog > .nous-config-body",
 			strip:    ".nous-config-output-modes",

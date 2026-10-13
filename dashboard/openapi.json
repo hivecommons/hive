@@ -45,7 +45,7 @@
       "description": "Agent configuration and state"
     },
     {
-      "name": "Strategy Lab",
+      "name": "Experiment Lab",
       "description": "Nous experiment engine"
     },
     {
@@ -3352,9 +3352,9 @@
     "/api/nous/status": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
-        "summary": "Strategy Lab status",
+        "summary": "Experiment Lab status",
         "description": "Returns the current Nous experiment engine state including mode, active experiment, pending proposals, snapshot progress, and recommendations.",
         "responses": {
           "200": {
@@ -3465,7 +3465,7 @@
     "/api/nous/ledger": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Experiment history",
         "description": "Returns the last 200 experiment ledger entries (JSONL).",
@@ -3503,7 +3503,7 @@
     "/api/nous/principles": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Accumulated principles",
         "description": "Returns the accumulated knowledge base of principles learned from experiments.",
@@ -3541,7 +3541,7 @@
     "/api/nous/phase": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Experiment phase state",
         "description": "Returns the current phase and iteration for governor and repo experiments.",
@@ -3586,7 +3586,7 @@
     "/api/nous/gate-pending": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Pending gate decisions",
         "description": "Returns any pending experiment gate decisions waiting for approval.",
@@ -3608,7 +3608,7 @@
     "/api/nous/gate-response": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Gate response",
         "description": "Returns the current gate response state for a given experiment.",
@@ -17409,7 +17409,7 @@
     "/api/nous/principles/{id}": {
       "delete": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Delete a Nous principle",
         "description": "Removes an accumulated principle by id from the Nous knowledge base. Requires owner role.",
@@ -17453,7 +17453,7 @@
     "/api/nous/config": {
       "get": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Get Nous configuration",
         "description": "Returns the raw Nous config map (sections such as goals, repos, output, fast_fail, schedule, controllables, principles). Shape is dynamic/section-keyed and not owner-gated for reads.",
@@ -17475,7 +17475,7 @@
     "/api/nous/abort": {
       "post": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Abort the active Nous experiment",
         "description": "Marks the current experiment as aborted. Requires owner role.",
@@ -17502,7 +17502,7 @@
     "/api/nous/approve": {
       "post": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Approve the pending Nous proposal",
         "description": "Approves the current Nous proposal/experiment. Requires owner role.",
@@ -17529,7 +17529,7 @@
     "/api/nous/gate-respond": {
       "post": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Respond to a Nous gate prompt",
         "description": "Records a free-form response to the currently pending Nous gate (approval checkpoint). Requires owner role. Request body is stored verbatim as the gate response.",
@@ -17567,7 +17567,7 @@
     "/api/nous/config/controllables": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous controllables config",
         "description": "Replaces the 'controllables' section of the Nous config with the request body. Requires owner role. Body shape is caller-defined (stored as an opaque JSON value under this section).",
@@ -17611,7 +17611,7 @@
     "/api/nous/config/fast-fail": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous fast-fail config",
         "description": "Replaces the 'fast_fail' section of the Nous config with the request body. Requires owner role.",
@@ -17655,7 +17655,7 @@
     "/api/nous/config/goals": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous goals config",
         "description": "Replaces the 'goals' section of the Nous config with the request body. Requires owner role.",
@@ -17699,7 +17699,7 @@
     "/api/nous/config/output": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous output config",
         "description": "Replaces the 'output' section of the Nous config with the request body. Requires owner role.",
@@ -17743,7 +17743,7 @@
     "/api/nous/config/principles": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous principles config",
         "description": "Replaces the 'principles' section of the Nous config with the request body. Requires owner role.",
@@ -17787,7 +17787,7 @@
     "/api/nous/config/repos": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous repos config",
         "description": "Replaces the 'repos' section of the Nous config with the request body. Requires owner role.",
@@ -17831,7 +17831,7 @@
     "/api/nous/config/schedule": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Update Nous schedule config",
         "description": "Replaces the 'schedule' section of the Nous config with the request body. Requires owner role.",
@@ -17875,7 +17875,7 @@
     "/api/nous/gate-decision": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Decide a pending Nous gate",
         "description": "Records a decision (e.g. approve/reject) plus optional reason for the currently pending Nous gate. Requires owner role.",
@@ -17933,7 +17933,7 @@
     "/api/nous/mode": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Set Nous mode",
         "description": "Sets the Nous engine mode (e.g. observe/suggest/auto). Requires owner role.",
@@ -17984,7 +17984,7 @@
     "/api/nous/scope": {
       "put": {
         "tags": [
-          "Strategy Lab"
+          "Experiment Lab"
         ],
         "summary": "Set Nous scope",
         "description": "Sets the Nous engine scope (e.g. governor/repo). Requires owner role.",

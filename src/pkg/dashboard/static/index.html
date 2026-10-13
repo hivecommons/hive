@@ -3392,7 +3392,7 @@
       .audit-controls-row { padding-right: 52px; }
     }
 
-    /* Strategy Lab (Nous) */
+    /* Experiment Lab (Nous) */
     .nous-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: var(--sp-5); }
     .nous-card h3 { font-size: var(--fs-md); margin: var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0); color: var(--fg); }
     .nous-mode-toggle { display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
@@ -4010,7 +4010,7 @@
     @media (max-width: 600px) {
       /* .config-modal already goes fullscreen (incl. border-radius:0) in the
          600px block above; the duplicate rule that used to live here was dead.
-         The Strategy Lab dialog never got the same treatment — at 900px wide
+         The Experiment Lab dialog never got the same treatment — at 900px wide
          with only max-width:95vw it is cramped on a phone. */
       .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
       .nous-config-dialog {
@@ -5111,7 +5111,7 @@
       <div class="oc-tree-children" id="oc-agent-tree">
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
       </div>
-      <div id="nous-sidebar-config" data-feature="strategy_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
+      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
         <div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>
         <div id="nous-sb-phase" style="opacity:0.8"></div>
       </div>
@@ -5131,7 +5131,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="nous-section" data-feature="strategy_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Admin</div>
@@ -5509,8 +5509,8 @@
     </div>
   </div>
 
-  <div id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+  <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -6385,11 +6385,11 @@
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
-      'nous-section': { title: '🧪 Strategy Lab', summary: '—' },
+      'nous-section': { title: '🧪 Experiment Lab', summary: '—' },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
-      'nous-section': { title: '🧪 Strategy Lab', summary: '—', settingsHtml: sectionSettingsGear('Strategy Lab', 'openNousConfig', 'Strategy Lab Configuration') },
+      'nous-section': { title: '🧪 Experiment Lab', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
@@ -6425,7 +6425,7 @@
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
-      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
+      'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
@@ -7850,8 +7850,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
-    function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
+    function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
@@ -8404,9 +8404,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function applyDashboardFeatureVisibility() {
-      const strategyOn = strategyLabEnabled();
-      document.querySelectorAll('[data-feature="strategy_lab"]').forEach(el => {
-        if (strategyOn) {
+      const experimentOn = experimentLabEnabled();
+      document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
+        if (experimentOn) {
           el.hidden = false;
           if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
         } else {
@@ -8414,7 +8414,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           el.style.display = 'none';
         }
       });
-      if (!strategyOn) {
+      if (!experimentOn) {
         if (_nousPollTimer) { clearInterval(_nousPollTimer); _nousPollTimer = null; }
         _nousPollStarted = false;
         const panel = document.getElementById('nous-panel');
@@ -21484,7 +21484,7 @@ function burnAreaChart() {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
 
-    // ── Strategy Lab (Nous) rendering ──────────────────────────────────────
+    // ── Experiment Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
     let _nousPollTimer = null;
     let _nousPollStarted = false;
@@ -21493,7 +21493,7 @@ function burnAreaChart() {
     const NOUS_PRINCIPLE_HIGH_CONFIDENCE = 5;
 
     async function fetchNousStatus() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       try {
         const [statusRes, ledgerRes, principlesRes] = await Promise.all([
           fetch('/api/nous/status'), fetch('/api/nous/ledger'), fetch('/api/nous/principles'),
@@ -21513,20 +21513,20 @@ function burnAreaChart() {
     }
 
     function ensureNousPolling() {
-      if (!strategyLabEnabled() || _nousPollStarted) return Promise.resolve();
+      if (!experimentLabEnabled() || _nousPollStarted) return Promise.resolve();
       _nousPollStarted = true;
-      return fetchNousStatus().then(() => { if (strategyLabEnabled() && !_nousPollTimer) _nousPollTimer = dashboardSetInterval('nous-status', fetchNousStatus, NOUS_POLL_MS); });
+      return fetchNousStatus().then(() => { if (experimentLabEnabled() && !_nousPollTimer) _nousPollTimer = dashboardSetInterval('nous-status', fetchNousStatus, NOUS_POLL_MS); });
     }
 
     function _nousExplainerCard() {
-      return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your hive’s strategy',
-        'The Strategy Lab is the hive’s strategist: it designs controlled experiments on governor strategy — cadences, model assignments, thresholds — and measures each one against a recorded baseline of hive behavior. ' +
+      return emptyStateCard('🧪', 'Experiment Lab — controlled experiments on your hive’s strategy',
+        'The Experiment Lab is the hive’s strategist: it designs controlled experiments on governor strategy — cadences, model assignments, thresholds — and measures each one against a recorded baseline of hive behavior. ' +
         '<strong>Observe</strong> only collects baseline data, <strong>Suggest</strong> proposes experiments for your approval, and <strong>Evolve</strong> runs them autonomously, distilling proven changes into principles. ' +
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
     function renderNous() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
       const badge = document.getElementById('nous-mode-badge');
       if (!panel || !_nousCache) return;
@@ -21813,7 +21813,7 @@ function burnAreaChart() {
     }
 
     async function nousSetMode(mode) {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
       const modeOrder = { observe: 0, suggest: 1, evolve: 2 };
       let force = false;
@@ -21831,7 +21831,7 @@ function burnAreaChart() {
     }
 
     async function nousSetScope(scope) {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       try {
         await fetch('/api/nous/scope', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
@@ -21843,7 +21843,7 @@ function burnAreaChart() {
     }
 
     async function nousApprove() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
@@ -21853,7 +21853,7 @@ function burnAreaChart() {
     }
 
     async function nousReject() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Reject this experiment proposal?'))) return;
       try {
         await fetch('/api/nous/abort', { method: 'POST' });
@@ -21863,7 +21863,7 @@ function burnAreaChart() {
     }
 
     async function nousAbort() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Abort the active experiment? This will revert governor to default behavior.'))) return;
       try {
         const r = await fetch('/api/nous/abort', { method: 'POST' });
@@ -21877,7 +21877,7 @@ function burnAreaChart() {
     let _nousConfig = null;
 
     async function fetchNousConfig() {
-      if (!strategyLabEnabled()) return null;
+      if (!experimentLabEnabled()) return null;
       try {
         const r = await fetch('/api/nous/config');
         _nousConfig = await r.json();
@@ -21886,7 +21886,7 @@ function burnAreaChart() {
     }
 
     async function openNousConfig() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const overlay = document.getElementById('nous-config-overlay');
       if (!overlay) return;
       overlay.style.display = 'flex';
@@ -21928,7 +21928,7 @@ function burnAreaChart() {
 
       let h = '';
       h += '<div class="nous-config-dialog">';
-      h += '<h2>⚙️ Strategy Lab Configuration</h2>';
+      h += '<h2>⚙️ Experiment Lab Configuration</h2>';
 
       // Trust Ladder
       h += '<div class="nous-config-section">';
@@ -22088,7 +22088,7 @@ function burnAreaChart() {
     }
 
     async function deleteNousPrinciple(id) {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Invalidate this principle? It will be removed from the store.'))) return;
       try {
         const r = await fetch('/api/nous/principles/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -22104,7 +22104,7 @@ function burnAreaChart() {
     }
 
     async function saveNousConfig() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const errors = [];
 
       // Goals
@@ -32793,9 +32793,9 @@ function burnAreaChart() {
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
-        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
+        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
         const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
+        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -32811,7 +32811,7 @@ function burnAreaChart() {
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
-          if (section === 'nous-section' && (!strategyLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
+          if (section === 'nous-section' && (!experimentLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
         });
 
         // #7099: the pack-roster gate is NOT re-applied here. The server already

@@ -90,11 +90,11 @@ const AGENT_COMPACT_LS_PREFIX='hive-agent-compact-';
 const ALL_AGENTS_COMPACT_KEY='hive-all-agents-compact';
 var dashboardDragState=null;
 var dashboardKeyboardSnapshot=null;
-var window={_lastStatus:{features:{strategy_lab:true}}};
+var window={_lastStatus:{features:{experiment_lab:true}}};
 function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
-function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
+function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
 function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
-function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
+function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!experimentLabEnabled();}
 `
 }
 
@@ -204,15 +204,15 @@ if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normaliz
 	}
 }
 
-func TestDashboardLayoutNormalizeDropsStrategyLabWhenFeatureHidden(t *testing.T) {
+func TestDashboardLayoutNormalizeDropsExperimentLabWhenFeatureHidden(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not on PATH — dashboard layout normalization was NOT executed by this run")
 	}
 	html := indexHTML(t)
-	script := strings.Replace(dashboardLayoutPreamble9062(), "strategy_lab:true", "strategy_lab:false", 1) + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
+	script := strings.Replace(dashboardLayoutPreamble9062(), "experiment_lab:true", "experiment_lab:false", 1) + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:1, main:['nous-section','overview-section','unknown']}).main;
-if (got.includes('nous-section')) throw new Error('hidden Strategy Lab survived normalization: '+JSON.stringify(got));
+if (got.includes('nous-section')) throw new Error('hidden Experiment Lab survived normalization: '+JSON.stringify(got));
 if (got[0] !== 'overview-section') throw new Error('unexpected first section: '+JSON.stringify(got));
 `
 	cmd := exec.Command(node, "-e", script)

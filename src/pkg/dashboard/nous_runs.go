@@ -21,7 +21,7 @@ type nousRunTarget struct {
 	title  string
 }
 
-// nousRunApproval is the outcome of a Strategy Lab approve in
+// nousRunApproval is the outcome of an Experiment Lab approve in
 // spektacular-run output mode. handled is false when the mode is not active;
 // existing marks a proposal whose run was already admitted, so a repeated
 // approve reports that run instead of admitting it again (hivecommons/hive#10115).
@@ -160,7 +160,7 @@ func nousPendingTarget(status map[string]interface{}) (nousRunTarget, map[string
 	}
 	title := firstString(pending, "title", "hypothesis", "summary", "id")
 	if strings.TrimSpace(title) == "" {
-		title = fmt.Sprintf("Strategy Lab campaign for %s#%d", repo, number)
+		title = fmt.Sprintf("Experiment Lab campaign for %s#%d", repo, number)
 	}
 	return nousRunTarget{repo: repo, number: number, title: title}, pending, nil
 }

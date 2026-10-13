@@ -309,7 +309,7 @@ async function main() {
     var _snapStatus = ${statusRaw};
     render(_snapStatus);
 
-    // Render Strategy Lab (Nous)
+    // Render Experiment Lab (Nous)
     _nousCache = {
       status: ${nousStatusRaw},
       ledger: ${nousLedgerRaw},

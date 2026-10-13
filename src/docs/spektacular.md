@@ -298,7 +298,7 @@ On hosted hives the same no-file path is used to start work. Operators can:
   `run/spec` label path;
 - use chat (`!runs spec owner/repo#123`, `!runs status`, `!runs approve`,
   `!runs reject`, `!runs list`) for the same run lane; or
-- set the Strategy Lab campaign output mode to **Spektacular Run**. When a
+- set the Experiment Lab campaign output mode to **Spektacular Run**. When a
   pending repo campaign is approved, Hive reads its `owner/repo#number` target,
   calls the same `AdmitRun` lease path, and records the resulting run key back
   onto the campaign/pending proposal so the dashboard detail links to the run.

@@ -78,8 +78,17 @@ type DashboardConfig struct {
 	// ThemeOverrides are layered on the selected built-in theme and are mutable
 	// through the owner-only dashboard appearance API.
 	ThemeOverrides dashboardtheme.Overrides `yaml:"theme_overrides,omitempty" json:"theme_overrides,omitempty"`
-	// StrategyLab exposes the experimental Nous/Strategy Lab dashboard section.
-	// It stays hidden by default while the v6 workstream remains experimental.
+	// ExperimentLab exposes the experimental Nous/Experiment Lab dashboard
+	// section. It stays hidden by default while the v6 workstream remains
+	// experimental.
+	ExperimentLab bool `yaml:"experiment_lab,omitempty" json:"experiment_lab,omitempty"`
+	// StrategyLab is the pre-rename alias of ExperimentLab (RFC #11585 part
+	// 2, #11695). It is read ONLY so an operator's explicit
+	// dashboard.strategy_lab: true keeps working for one release; applyDefaults
+	// folds it into ExperimentLab via migrateDeprecatedStrategyLab and clears
+	// it so a re-save writes the documented key.
+	//
+	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
 	// IssueBands configures the Repositories card's display-only issue taxonomy.
 	// It is intentionally separate from governor/project eligibility labels:

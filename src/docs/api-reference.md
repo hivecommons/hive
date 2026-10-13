@@ -459,7 +459,7 @@ always resolved server-side from the validated token.
 | `GET`/`POST` | `/api/v1/me` | GitHub token (self-scoped, no allowlist) | Current contributor profile | `pkg/dashboard/api_contribute.go:1536` |
 | `POST` | `/api/v1/prs/{owner}/{repo}/{number}/queue-automerge` | GitHub token + merger/owner role (POST only; GET returns 405) | Queue PR auto-merge using the validated actor and current PR head | `pkg/dashboard/api_contribute.go` |
 
-## Nous / strategy lab
+## Nous / Experiment Lab
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|

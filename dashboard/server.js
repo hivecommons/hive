@@ -2275,7 +2275,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ── Nous (Strategy Lab) API endpoints ──────────────────────────────────────
+// ── Nous (Experiment Lab) API endpoints ──────────────────────────────────────
 const NOUS_CAMPAIGN_PATH = process.env.NOUS_CAMPAIGN_PATH || '/etc/hive/nous-campaign.yaml';
 const NOUS_OVERLAY_PATH = '/etc/hive/governor-experiment.env';
 const NOUS_STATE_DIR = '/var/run/nous';

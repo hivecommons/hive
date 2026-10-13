@@ -57,10 +57,12 @@ The main dashboard layout is browser-local and display-only. Use the `⠿` grip 
 
 To hide a dashboard section, hover or focus its left-menu row and press the small eye-off control. The row remains in the sidebar in a muted state, while the matching dashboard card is removed from the main layout. The same control changes to **Unhide <section>** with an eye icon; choosing it, or clicking the hidden row, restores the card in its saved order and jumps to it. Hidden sections are stored locally as `hive.dashboard.hiddenSections`; Overview cannot be hidden.
 
-The Strategy Lab (`dashboard.strategy_lab`) is hidden by default while that
-surface is being reworked. Set `dashboard.strategy_lab: true` to show the
-Strategy Lab dashboard section, its sidebar navigation item, and its Nous
-status controls.
+The Experiment Lab (`dashboard.experiment_lab`) is hidden by default while
+that surface is being reworked. Set `dashboard.experiment_lab: true` to show
+the Experiment Lab dashboard section, its sidebar navigation item, and its
+Nous status controls. The pre-rename key `dashboard.strategy_lab` is still
+accepted as an alias for one release and logs a one-line deprecation; see
+[Experiment Lab](experiment-lab.md).
 
 ## Governor card
 
