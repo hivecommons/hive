@@ -111,12 +111,59 @@ func cachedGHCRTagGeneration(repo, tag string, logger *slog.Logger) int {
 }
 
 // stablePromotionRuns returns the recent docker.yml runs, cached for
-// channelDigestTTL. A failed fetch (nil) is not cached.
-func stablePromotionRuns(logger *slog.Logger) []stablePromotionWorkflowRun {
+// channelDigestTTL. A failed fetch is not cached; the last good list is served
+// for channelRevisionStaleGrace instead.
+func stablePromotionRuns(cutoff stablePromotionRunsCutoff, logger *slog.Logger) []stablePromotionWorkflowRun {
 	return stablePromotionRunsCache.get("runs", channelDigestTTL, channelRevisionStaleGrace, func() ([]stablePromotionWorkflowRun, bool) {
-		runs := stablePromotionFetchRuns(logger)
-		return runs, runs != nil
+		runs, err := stablePromotionFetchRuns(cutoff, logger)
+		recordStablePromotionRunsFetch(err, logger)
+		if err != nil {
+			return nil, false
+		}
+		return runs, true
 	})
+}
+
+// stablePromotionRunsFetch is the outcome of the latest runs fetch. It is
+// surfaced on the stable-promotion status and gates the WARN so a persistent
+// failure logs once per transition rather than every cycle (#11684).
+var stablePromotionRunsFetch struct {
+	sync.Mutex
+	ran bool
+	ok  bool
+	err string
+	at  string
+}
+
+func recordStablePromotionRunsFetch(err error, logger *slog.Logger) {
+	st := &stablePromotionRunsFetch
+	st.Lock()
+	wasOK, ran := st.ok, st.ran
+	st.ran = true
+	st.ok = err == nil
+	st.err = ""
+	if err != nil {
+		st.err = err.Error()
+	}
+	st.at = time.Now().UTC().Format(time.RFC3339)
+	st.Unlock()
+	switch {
+	case err != nil && (!ran || wasOK):
+		logger.Warn("stable promotion: GitHub runs fetch failed; serving the last good run list and not promoting on partial data", "error", err)
+	case err == nil && ran && !wasOK:
+		logger.Info("stable promotion: GitHub runs fetch recovered")
+	}
+}
+
+func stablePromotionRunsFetchState() (*bool, string, *string) {
+	st := &stablePromotionRunsFetch
+	st.Lock()
+	defer st.Unlock()
+	if !st.ran {
+		return nil, "", nil
+	}
+	ok, at := st.ok, st.at
+	return &ok, st.err, &at
 }
 
 // stablePromotionVerifyBuild checks that the image tagged with short is the
@@ -138,4 +185,7 @@ func resetStablePromotionCaches() {
 	ghcrTagGenerationCache.reset()
 	stablePromotionRunsCache.reset()
 	stablePromotionBuildCache.reset()
+	stablePromotionRunsFetch.Lock()
+	stablePromotionRunsFetch.ran, stablePromotionRunsFetch.ok, stablePromotionRunsFetch.err, stablePromotionRunsFetch.at = false, false, "", ""
+	stablePromotionRunsFetch.Unlock()
 }

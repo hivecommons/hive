@@ -7998,6 +7998,7 @@
         if (overdue) base += ' crossed it at ' + st.eligible_at + ' (' + stablePromotionAge(st.eligible_at) + ') and is waiting on the promotion workflow';
         else if (st.eligible_at) base += ' at ' + st.eligible_at;
       }
+      if (st.last_runs_fetch_ok === false) base += ' — GitHub runs fetch failing' + (st.last_runs_fetch_at ? ' (' + stablePromotionAge(st.last_runs_fetch_at) + ')' : '') + ': ' + (st.last_runs_fetch_error || 'unknown error');
       if (!on && ct && ct.behind) base = '↓' + ct.behind + ' behind — ' + base;
       var title = base;
       if (st.maintained_hives && st.maintained_hives.length) {

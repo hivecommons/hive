@@ -56,6 +56,12 @@ type StablePromotionStatus struct {
 	EligibleAt      *string                 `json:"eligible_at"`
 	EligibleBuild   *StablePromotionBuild   `json:"eligible_build,omitempty"`
 	MaintainedHives []MaintainedHiveSummary `json:"maintained_hives,omitempty"`
+
+	// LastRunsFetch* report the most recent GitHub docker.yml runs fetch;
+	// LastRunsFetchOK is null until a fetch has run (#11684).
+	LastRunsFetchOK    *bool   `json:"last_runs_fetch_ok"`
+	LastRunsFetchError string  `json:"last_runs_fetch_error,omitempty"`
+	LastRunsFetchAt    *string `json:"last_runs_fetch_at"`
 }
 
 var stablePromotionMu sync.Mutex
@@ -124,7 +130,7 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, s.logger), PromotedAt: t.CommittedAt}
 		}
 	}
-	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, time.Now().UTC(), s.logger); eligibleAt != "" {
+	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, status.Stable.PromotedAt, time.Now().UTC(), s.logger); eligibleAt != "" {
 		status.EligibleAt = &eligibleAt
 		if build.Generation != 0 || build.SHA != "" {
 			status.EligibleBuild = &build
@@ -136,6 +142,7 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 			status.EligibleBuild = &candidate
 		}
 	}
+	status.LastRunsFetchOK, status.LastRunsFetchError, status.LastRunsFetchAt = stablePromotionRunsFetchState()
 	status.MaintainedHives = s.maintainedCandidateHives(status.Candidate)
 	return status
 }
@@ -152,53 +159,80 @@ type stablePromotionWorkflowRun struct {
 const stablePromotionRunsPerPage = 100
 const stablePromotionRunPages = 5
 
-// stablePromotionFetchRuns lists recent docker.yml runs on v5. Callers go
-// through stablePromotionRuns, which caches the answer.
-var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkflowRun {
+// stablePromotionRunsFetchTimeout bounds the whole runs fetch (every page and
+// any GitHub pacing wait in front of it). A 5s budget per page timed out on
+// every cycle once pacing delayed a slot (#11684).
+var stablePromotionRunsFetchTimeout = 30 * time.Second
+
+// stablePromotionRunsCutoff marks where paging can stop: runs arrive
+// newest-first, so once a page reaches the current stable build (by generation
+// or by its PromotedAt time) older pages cannot hold an eligible build.
+type stablePromotionRunsCutoff struct {
+	generation int
+	promotedAt time.Time
+}
+
+func newStablePromotionRunsCutoff(generation int, promotedAt string) stablePromotionRunsCutoff {
+	c := stablePromotionRunsCutoff{generation: generation}
+	if t, err := time.Parse(time.RFC3339, promotedAt); err == nil {
+		c.promotedAt = t.UTC()
+	}
+	return c
+}
+
+func (c stablePromotionRunsCutoff) reached(run stablePromotionWorkflowRun) bool {
+	if c.generation > 0 && run.RunNumber > 0 && run.RunNumber <= c.generation {
+		return true
+	}
+	if c.promotedAt.IsZero() {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339, run.CreatedAt)
+	return err == nil && created.Before(c.promotedAt)
+}
+
+// stablePromotionFetchRuns lists recent docker.yml runs on v5, newest-first,
+// stopping at the page that reaches cutoff. Any error fails the whole fetch:
+// a truncated list must not drive eligibility. Callers go through
+// stablePromotionRuns, which caches the answer and keeps serving the last good
+// list when a refresh fails.
+var stablePromotionFetchRuns = func(cutoff stablePromotionRunsCutoff, _ *slog.Logger) ([]stablePromotionWorkflowRun, error) {
 	client := hubGitHubHTTPClient()
-	var runs []stablePromotionWorkflowRun
+	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "stable_promotion"), stablePromotionRunsFetchTimeout)
+	defer cancel()
+	runs := []stablePromotionWorkflowRun{}
 	for page := 1; page <= stablePromotionRunPages; page++ {
-		ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "stable_promotion"), 5*time.Second)
 		runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/docker.yml/runs?branch=v5&per_page=%d&page=%d", githubAPIBase, stablePromotionRunsPerPage, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, runsURL, nil)
 		if err != nil {
-			cancel()
-			return runs
+			return nil, err
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		authGitHubRequest(req)
 		resp, err := client.Do(req)
 		if err != nil {
-			cancel()
-			logger.Warn("stable promotion: GitHub runs fetch failed", "error", err)
-			return runs
+			return nil, fmt.Errorf("page %d: %w", page, err)
 		}
 		var body struct {
 			WorkflowRuns []stablePromotionWorkflowRun `json:"workflow_runs"`
 		}
 		err = json.NewDecoder(io.LimitReader(resp.Body, ghcrManifestMaxBytes)).Decode(&body)
 		_ = resp.Body.Close()
-		cancel()
 		if resp.StatusCode != http.StatusOK {
-			logger.Warn("stable promotion: GitHub runs fetch returned non-OK", "status", resp.StatusCode)
-			return runs
+			return nil, fmt.Errorf("page %d: GitHub returned status %d", page, resp.StatusCode)
 		}
 		if err != nil {
-			logger.Warn("stable promotion: GitHub runs response was not decodable", "error", err)
-			return runs
+			return nil, fmt.Errorf("page %d: undecodable response: %w", page, err)
 		}
 		if len(body.WorkflowRuns) == 0 {
 			break
 		}
 		runs = append(runs, body.WorkflowRuns...)
-		if len(body.WorkflowRuns) < stablePromotionRunsPerPage {
+		if len(body.WorkflowRuns) < stablePromotionRunsPerPage || cutoff.reached(body.WorkflowRuns[len(body.WorkflowRuns)-1]) {
 			break
 		}
 	}
-	if runs == nil {
-		runs = []stablePromotionWorkflowRun{}
-	}
-	return runs
+	return runs, nil
 }
 
 // stablePromotionEligibleBuild returns the newest verified build newer than
@@ -206,14 +240,14 @@ var stablePromotionFetchRuns = func(logger *slog.Logger) []stablePromotionWorkfl
 // verified build that will finish soaking soonest and when. Runs and GHCR
 // verifications are cached, and at most stablePromotionMaxVerifiedRuns runs
 // are verified per call.
-func stablePromotionEligibleBuild(stableGeneration int, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
+func stablePromotionEligibleBuild(stableGeneration int, stablePromotedAt string, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
 	type pending struct {
 		run      stablePromotionWorkflowRun
 		built    time.Time
 		eligible time.Time
 	}
 	var soaked, soaking []pending
-	for _, run := range stablePromotionRuns(logger) {
+	for _, run := range stablePromotionRuns(newStablePromotionRunsCutoff(stableGeneration, stablePromotedAt), logger) {
 		if run.Status != "" && run.Status != "completed" {
 			continue
 		}

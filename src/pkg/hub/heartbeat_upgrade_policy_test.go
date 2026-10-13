@@ -273,8 +273,8 @@ func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 		}
 		return ""
 	}
-	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun {
-		return []stablePromotionWorkflowRun{{RunNumber: 101, HeadSHA: "d5a638e", UpdatedAt: builtAt, Status: "completed", Conclusion: "success"}}
+	stablePromotionFetchRuns = func(stablePromotionRunsCutoff, *slog.Logger) ([]stablePromotionWorkflowRun, error) {
+		return []stablePromotionWorkflowRun{{RunNumber: 101, HeadSHA: "d5a638e", UpdatedAt: builtAt, Status: "completed", Conclusion: "success"}}, nil
 	}
 	s := newHubServerForTest(t, withHubLogger(targetingLogger()))
 	got, status := s.stableNextPromotion(queued)
@@ -282,7 +282,9 @@ func TestStableNextPromotionAtUnknownWhenNothingQueued(t *testing.T) {
 		t.Fatalf("queued candidate: got %q/%q, want %q/queued", got, status, want)
 	}
 
-	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun { return nil }
+	stablePromotionFetchRuns = func(stablePromotionRunsCutoff, *slog.Logger) ([]stablePromotionWorkflowRun, error) {
+		return []stablePromotionWorkflowRun{}, nil
+	}
 	resetStablePromotionCaches()
 	for name, targets := range map[string][]ChannelTarget{
 		"same digest": {

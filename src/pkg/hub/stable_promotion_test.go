@@ -46,12 +46,12 @@ func seedStablePromotionChannels(t *testing.T) {
 		}
 	}
 	origRuns := stablePromotionFetchRuns
-	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun {
+	stablePromotionFetchRuns = func(stablePromotionRunsCutoff, *slog.Logger) ([]stablePromotionWorkflowRun, error) {
 		return []stablePromotionWorkflowRun{{
 			RunNumber: 200,
 			HeadSHA:   "d5a638e",
 			UpdatedAt: now.Add(-2 * time.Hour).Format(time.RFC3339),
-		}}
+		}}, nil
 	}
 	t.Cleanup(func() {
 		waitChannelTargetRefreshes(t)
@@ -103,6 +103,9 @@ func TestStablePromotionDefaultTruePublicGETAndMaintainedSummary(t *testing.T) {
 	}
 	if got.MaintainedHives[0].Generation != 200 {
 		t.Fatalf("maintained hive generation = %d, want 200 from its short-SHA tag", got.MaintainedHives[0].Generation)
+	}
+	if got.LastRunsFetchOK == nil || !*got.LastRunsFetchOK || got.LastRunsFetchError != "" || got.LastRunsFetchAt == nil {
+		t.Fatalf("runs fetch status = ok %v err %q at %v, want a successful fetch reported", got.LastRunsFetchOK, got.LastRunsFetchError, got.LastRunsFetchAt)
 	}
 }
 
@@ -193,11 +196,11 @@ func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testi
 	t.Cleanup(resetStablePromotionCaches)
 	now := time.Date(2033, 5, 18, 3, 30, 0, 0, time.UTC)
 	origRuns := stablePromotionFetchRuns
-	stablePromotionFetchRuns = func(*slog.Logger) []stablePromotionWorkflowRun {
+	stablePromotionFetchRuns = func(stablePromotionRunsCutoff, *slog.Logger) ([]stablePromotionWorkflowRun, error) {
 		return []stablePromotionWorkflowRun{
 			{RunNumber: 300, HeadSHA: "new123456789", UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339)},
 			{RunNumber: 200, HeadSHA: "old123456789", UpdatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339)},
-		}
+		}, nil
 	}
 	origDigest := ghcrTagDigest
 	ghcrTagDigest = func(_ string, tag string, _ *slog.Logger) string {
@@ -221,7 +224,7 @@ func TestStablePromotionEligibleBuildChoosesNewestSoakedSupersededBuild(t *testi
 		ghcrTagGeneration = origGen
 	})
 
-	build, eligibleAt := stablePromotionEligibleBuild(100, now, slog.Default())
+	build, eligibleAt := stablePromotionEligibleBuild(100, "", now, slog.Default())
 	if build.Generation != 200 || build.SHA != "old1234" {
 		t.Fatalf("eligible build = %+v, want superseded soaked generation 200", build)
 	}

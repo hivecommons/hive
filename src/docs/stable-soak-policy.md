@@ -126,7 +126,11 @@ resumes.
 
 The public GET endpoint exposes only non-secret channel state, `eligible_at`, an
 `eligible_build` object (`sha`, `generation`, `built_at`, and digest when known),
-and maintained-hive smoke summaries; the PUT toggle is hub-admin gated and audit
+maintained-hive smoke summaries, and the outcome of the latest GitHub
+`docker.yml` runs fetch (`last_runs_fetch_ok`, `last_runs_fetch_error`,
+`last_runs_fetch_at`). The runs fetch has one 30-second deadline, stops paging
+at the current stable build, and a fetch that fails part-way never drives
+eligibility; the last good run list keeps being served. The PUT toggle is hub-admin gated and audit
 logged. Stable-channel hive rows and spoke dashboards use this same `eligible_at`
 calculation for their "Next update" ETA. When there is no eligible or soaking
 build ahead of stable, they say that no update is queued instead of hiding the
