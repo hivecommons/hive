@@ -21492,6 +21492,27 @@ function burnAreaChart() {
     const NOUS_POLL_MS = 30000;
     const NOUS_CONFIDENCE_THRESHOLD = 0.8;
     const NOUS_PRINCIPLE_HIGH_CONFIDENCE = 5;
+    // Shared ledger/principle schema (#11697, pkg/nousstore): every entry
+    // carries `type` (what it is) and `status` (where it is). Status maps
+    // onto the design system's status tones; type is always neutral.
+    const NOUS_STATUS_TONES = {
+      pending: 'warn', active: 'info', completed: 'ok', aborted: 'error',
+      updated: 'info', pruned: 'neutral',
+    };
+    const NOUS_RECENT_ROUNDS = 8;
+    function nousEntryLabel(entry) {
+      if (entry.id) return String(entry.id);
+      const parts = [];
+      if (entry.iteration != null) parts.push('round ' + entry.iteration);
+      if (entry.candidate_id) parts.push(String(entry.candidate_id));
+      else if (entry.family) parts.push(String(entry.family));
+      return parts.join(' · ') || '?';
+    }
+    function nousChip(kind, value) {
+      if (!value) return '';
+      const tone = kind === 'status' ? (NOUS_STATUS_TONES[value] || 'neutral') : 'neutral';
+      return `<span class="status-badge nous-${kind}-chip" data-status="${tone}" data-nous-${kind}="${escapeHtml(value)}" title="${kind}: ${escapeHtml(value)}">${escapeHtml(String(value).replace(/_/g, ' '))}</span>`;
+    }
 
     async function fetchNousStatus() {
       if (!experimentLabEnabled()) return;
@@ -21764,9 +21785,10 @@ function burnAreaChart() {
         for (const p of sorted) {
           const conf = Math.round((p.confidence || 0) * 100);
           const barColor = conf >= 80 ? 'var(--green)' : conf >= 50 ? 'var(--yellow)' : 'var(--red)';
-          html += '<div class="nous-principle">';
+          html += `<div class="nous-principle" data-nous-principle="${escapeHtml(p.id || '')}">`;
           html += `<div class="nous-confidence-bar"><div class="nous-confidence-fill" style="width:${conf}%;background:${barColor}"></div></div>`;
           html += `<div class="nous-principle-text">${escapeHtml(p.text || p.id)}</div>`;
+          html += nousChip('type', p.type) + nousChip('status', p.status);
           html += `<div class="nous-principle-score">${conf}%</div>`;
           html += '</div>';
         }
@@ -21781,18 +21803,30 @@ function burnAreaChart() {
         const TIMELINE_MAX_BARS = 30;
         const recent = ledger.slice(-TIMELINE_MAX_BARS);
         for (const entry of recent) {
-          const colors = { dry_run: 'var(--muted)', active: 'var(--blue)', completed: 'var(--green)', aborted: 'var(--red)', analysis: '#7c3aed', shadow_analysis: '#a78bfa' };
-          const color = colors[entry.type] || 'var(--muted)';
-          const outcome = entry.outcome || entry.type;
-          html += `<div class="nous-timeline-bar" style="height:${20 + Math.random() * 20}px;background:${color}" title="${escapeHtml((entry.id || '?') + ': ' + outcome)}"></div>`;
+          const statusColors = { pending: 'var(--muted)', active: 'var(--blue)', completed: 'var(--green)', aborted: 'var(--red)' };
+          const typeColors = { dry_run: 'var(--muted)', analysis: '#7c3aed', shadow_analysis: '#a78bfa' };
+          const color = typeColors[entry.type] || statusColors[entry.status] || 'var(--muted)';
+          const outcome = entry.outcome || entry.status || entry.type;
+          html += `<div class="nous-timeline-bar" data-nous-type="${escapeHtml(entry.type || '')}" data-nous-status="${escapeHtml(entry.status || '')}" style="height:${20 + Math.random() * 20}px;background:${color}" title="${escapeHtml(nousEntryLabel(entry) + ': ' + outcome)}"></div>`;
         }
         html += '</div>';
         html += '<div style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:flex;gap:var(--sp-5)">';
-        html += '<span><span class="text-muted">■</span> dry run</span>';
+        html += '<span><span class="text-muted">■</span> dry run / pending</span>';
         html += '<span><span class="text-info">■</span> active</span>';
         html += '<span><span class="text-success">■</span> completed</span>';
         html += '<span><span class="text-danger">■</span> aborted</span>';
         html += '<span><span style="color:#7c3aed">■</span> analysis</span>';
+        html += '</div>';
+        // Recent rounds, newest first, with the schema's type and status.
+        html += '<div class="nous-recent-rounds mt-4">';
+        for (const entry of ledger.slice(-NOUS_RECENT_ROUNDS).reverse()) {
+          html += '<div class="nous-principle nous-round">';
+          html += `<div class="nous-principle-text">${escapeHtml(nousEntryLabel(entry))}`;
+          if (entry.outcome) html += ` <span class="text-muted">— ${escapeHtml(String(entry.outcome).replace(/_/g, ' '))}</span>`;
+          html += '</div>';
+          html += nousChip('type', entry.type) + nousChip('status', entry.status);
+          html += '</div>';
+        }
         html += '</div></div>';
       }
 

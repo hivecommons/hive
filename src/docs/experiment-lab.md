@@ -39,17 +39,66 @@ default, configurable with `data.nous_dir` and overridable at runtime with
 
 | What | Where (relative to `data.nous_dir`) | Written by |
 |---|---|---|
-| Experiment ledger | `governor/ledger.json` | governor experiment loop, read at boot |
-| Learned principles | `governor/principles.json` | governor experiment loop, read at boot |
+| Experiment ledger | `governor/ledger.json` | the experimentation agent (Nous); read live — see [Live ledger and principles](#live-ledger-and-principles) |
+| Learned principles | `governor/principles.json` | the experimentation agent (Nous); read live |
 | Baseline snapshots | `snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
 | Pending gate question, owner decision, decision history | `gates/pending.json`, `gates/decision.json`, `gates/history.jsonl` | `bin/nous-hive-gate.py` writes `pending.json`; `PUT /api/nous/gate-decision` writes the other two (see [Gate protocol](#gate-protocol)) |
 | Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | `panel-config.json` (mirrors `NousState.Mode`/`Scope`/`Config`) | every `PUT /api/nous/mode`, `PUT /api/nous/scope` and `PUT /api/nous/config/*`; re-applied at boot |
 
 Panel configuration therefore **survives a process restart**: `loadNousState()`
-in `cmd/hive/main.go` reseeds the ledger, principles and snapshot count from
-the files above and then overlays `panel-config.json` onto the defaults. A
-corrupt `panel-config.json` is logged and ignored (defaults apply) rather than
-blocking boot.
+in `cmd/hive/main.go` seeds the snapshot count from the files above, performs
+the first live load of the ledger and principles, and then overlays
+`panel-config.json` onto the defaults. A corrupt `panel-config.json` is logged
+and ignored (defaults apply) rather than blocking boot.
+
+### Live ledger and principles
+
+The ledger and principles are **not** a boot-time snapshot (RFC #11585 part
+4, #11697). Every `GET /api/nous/status`, `GET /api/nous/ledger` and
+`GET /api/nous/principles` asks `pkg/nousstore`'s `KnowledgeReader` for the
+current content. The reader stats the two files (one `stat` each, no read)
+and re-parses only a file whose size or mtime changed, so the panel's 30s
+poll picks up a round the agent just finished without a restart and without
+re-reading unchanged files. Rules:
+
+- A missing file is empty. A file that exists but does not parse (the agent
+  is mid-write) is logged and the **last good copy** keeps being served; the
+  repaired file is picked up on the next read.
+- When the durable `governor/` directory has neither file, the legacy
+  `/var/run/nous/governor` is read instead; the reader switches to the
+  durable directory as soon as a file appears there.
+- `NousState.KnowledgeStore` is the seam (`SyncKnowledge()`); with it unset
+  (older wiring, tests) the handlers serve whatever is in `NousState.Ledger`
+  / `Principles`, exactly as before.
+
+### Ledger and principle schema: `type` and `status`
+
+Nous's own `ledger.schema.json` has no `type` or `status` — a row is "one
+record per completed iteration" whose result is `h_main_result` — while its
+`principles.schema.json` has `status` (`active`/`updated`/`pruned`) and
+`category` (`domain`/`meta`). The panel, written against the earlier
+governor experiment loop, grouped ledger rows by a `type` whose values mixed
+kinds (`dry_run`, `analysis`) with states (`active`, `completed`, `aborted`).
+`pkg/nousstore` now defines **one schema both sides use**, applied on read:
+
+| Entry | Field | Values | Default when absent |
+|---|---|---|---|
+| Ledger | `type` | `baseline`, `experiment`, `dry_run`, `analysis`, `shadow_analysis` | `baseline` when Nous's `family` or `candidate_id` is `baseline`, else `experiment` |
+| Ledger | `status` | `pending`, `active`, `completed`, `aborted` | `completed`; a legacy row whose `type` was `active`/`completed`/`aborted` becomes `type: experiment` with that `status` |
+| Ledger | `outcome` | free text | lowercase `h_main_result` (`confirmed`, `refuted`, `partially_confirmed`) when the row has one |
+| Principle | `type` | `domain`, `meta` | Nous's `category` when it is one of those, else `domain`; the raw category is still served as `source` |
+| Principle | `status` | `active`, `updated`, `pruned` | `active` |
+
+Existing files load unchanged. A row that carries an **unknown** `type` or
+`status` is logged (`nous: ledger/principles entry off schema`), served with
+the default, and never hides the rest of the file. A writer that emits the
+normalized shape round-trips through the reader unchanged (pinned by
+`TestKnowledgeRoundTrip`). In the panel, each principle and each entry in
+the **recent rounds** list under the history timeline shows its `type` and
+`status` as chips (`status` uses the design system's tones: pending = warn,
+active = info, completed = ok, aborted = error, pruned = neutral); the
+timeline bars are keyed by `status` (and by `type` for analyses). The
+"Would Have Tested" list still filters on `type: dry_run`.
 
 **Migration from the previous layout.** Before #11694 the ledger and
 principles were read from `/var/run/nous/governor`, a tmpfs that is wiped on
@@ -242,14 +291,16 @@ an unreinforced principle loses confidence over time.
 
 ## Relationship to the ledger and principles endpoints
 
-- **`GET /api/nous/ledger`** returns the full experiment history — dry runs,
-  active runs, completed runs, aborts, and analysis entries — used both for
-  the "Would Have Tested" / "Recent Proposals" list (filtered to `dry_run`
-  entries) and the experiment history timeline in the dashboard.
-- **`GET /api/nous/principles`** returns the current principle list
-  independently of the ledger; principles persist (via
-  `<nous_dir>/governor/principles.json`) even as ledger entries age out of
-  the recent-history view.
+- **`GET /api/nous/ledger`** returns the full experiment history, read live
+  from `<nous_dir>/governor/ledger.json`, every entry carrying `type`,
+  `status` and (when recorded) `outcome` per the
+  [schema above](#ledger-and-principle-schema-type-and-status). It feeds the
+  "Would Have Tested" / "Recent Proposals" list (filtered to
+  `type: dry_run`), the history timeline and the recent-rounds list.
+- **`GET /api/nous/principles`** returns the current principle list, read
+  live from `<nous_dir>/governor/principles.json`, independently of the
+  ledger; each carries `id`, `text`, `confidence` (0–1), `source` (raw
+  category), `type` and `status`.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
   everything above in one call — mode, scope, phase, per-scope phase detail,
   snapshot counts, and any pending proposal or active experiment.

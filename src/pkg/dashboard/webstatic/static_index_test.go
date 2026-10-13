@@ -471,6 +471,53 @@ func TestStaticNoStrategyLabCopy(t *testing.T) {
 	}
 }
 
+// TestStaticExperimentLabTypeStatusChips pins the live ledger/principles
+// rendering (RFC #11585 part 4, #11697): every principle and recent round
+// shows the shared schema's type and status as status-badge chips keyed by
+// the design system's data-status tones (no new inline styles, no native
+// dialogs), and the history timeline is keyed by status rather than the
+// old type/state mix.
+func TestStaticExperimentLabTypeStatusChips(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`const NOUS_STATUS_TONES = {`,
+		`pending: 'warn', active: 'info', completed: 'ok', aborted: 'error',`,
+		`updated: 'info', pruned: 'neutral',`,
+		`function nousChip(kind, value) {`,
+		`<span class="status-badge nous-${kind}-chip" data-status="${tone}" data-nous-${kind}="${escapeHtml(value)}"`,
+		`function nousEntryLabel(entry) {`,
+		`html += nousChip('type', p.type) + nousChip('status', p.status);`,
+		`html += nousChip('type', entry.type) + nousChip('status', entry.status);`,
+		`<div class="nous-recent-rounds mt-4">`,
+		`<div class="nous-principle nous-round">`,
+		`data-nous-type="${escapeHtml(entry.type || '')}" data-nous-status="${escapeHtml(entry.status || '')}"`,
+		`const color = typeColors[entry.type] || statusColors[entry.status] || 'var(--muted)';`,
+		`const dryRuns = ledger.filter(e => e.type === 'dry_run')`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Experiment Lab type/status rendering missing %q", want)
+		}
+	}
+	// The pre-#11697 timeline keyed colours on entry.type alone, which
+	// conflated kinds with states.
+	if strings.Contains(html, `const color = colors[entry.type]`) {
+		t.Fatal("static dashboard still keys the experiment timeline on entry.type alone")
+	}
+	// Chips must not open native dialogs or carry their own inline styles.
+	start := strings.Index(html, `function nousChip(kind, value) {`)
+	end := strings.Index(html[start:], "\n    }\n") + start
+	chip := html[start:end]
+	for _, forbidden := range []string{"style=", "alert(", "confirm(", "prompt("} {
+		if strings.Contains(chip, forbidden) {
+			t.Fatalf("nousChip must not use %q: %s", forbidden, chip)
+		}
+	}
+}
+
 // TestStaticPlanReviewWiring pins the plan-review view the governor PLANNING
 // tile promises (#7537).
 //

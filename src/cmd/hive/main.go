@@ -10128,11 +10128,13 @@ func loadNousState(layout nousstore.Layout, logger *slog.Logger) *dashboard.Nous
 }
 
 func loadNousStateFrom(layout nousstore.Layout, legacyDir string, logger *slog.Logger) *dashboard.NousState {
-	governorDir, fallback := layout.ResolveGovernorDir(legacyDir)
-	if fallback {
-		logger.Warn("nous: reading governor state from legacy location", "dir", governorDir, "durable", layout.GovernorDir())
+	if _, fallback := layout.ResolveGovernorDir(legacyDir); fallback {
+		logger.Warn("nous: reading governor state from legacy location", "dir", legacyDir, "durable", layout.GovernorDir())
 	}
-	state := loadNousStateFromPaths(logger, governorDir, layout.SnapshotDir())
+	state := newNousState(layout.SnapshotDir())
+	// Ledger and principles are served live from here on (#11697): this
+	// first sync is the boot snapshot, every /api/nous read re-syncs.
+	wireNousKnowledge(state, layout, legacyDir, logger)
 	pc, ok, err := layout.LoadPanelConfig()
 	switch {
 	case err != nil:
@@ -10216,7 +10218,10 @@ func wireNousGateWith(state *dashboard.NousState, layout nousstore.Layout, notif
 	}
 }
 
-func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
+// newNousState is the panel state before any knowledge or panel config is
+// applied: observe/governor/collecting, with the snapshot count from
+// snapshotDir and the Status map's legacy and new key spellings in step.
+func newNousState(snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
 		Mode:   "observe",
 		Scope:  "governor",
@@ -10225,44 +10230,9 @@ func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string
 		Config: make(map[string]interface{}),
 	}
 
-	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {
-		var ledger struct {
-			Iterations []map[string]interface{} `json:"iterations"`
-		}
-		if err := json.Unmarshal(ledgerData, &ledger); err == nil {
-			state.Ledger = ledger.Iterations
-			logger.Info("nous ledger loaded", "iterations", len(state.Ledger))
-		}
-	}
-
-	if principlesData, err := os.ReadFile(filepath.Join(governorDir, "principles.json")); err == nil {
-		var pFile struct {
-			Principles []json.RawMessage `json:"principles"`
-		}
-		if err := json.Unmarshal(principlesData, &pFile); err == nil {
-			for _, raw := range pFile.Principles {
-				var p map[string]interface{}
-				if json.Unmarshal(raw, &p) == nil {
-					state.Principles = append(state.Principles, dashboard.NousPrinciple{
-						ID:         stringFromMap(p, "id"),
-						Text:       stringFromMap(p, "statement"),
-						Confidence: confidenceToFloat(stringFromMap(p, "confidence")),
-						Source:     stringFromMap(p, "category"),
-					})
-				}
-			}
-			logger.Info("nous principles loaded", "count", len(state.Principles))
-		}
-	}
-
 	snapshotCount := 0
 	if entries, err := os.ReadDir(snapshotDir); err == nil {
 		snapshotCount = len(entries)
-	}
-
-	iterationCount := len(state.Ledger)
-	if iterationCount > 0 {
-		state.Phase = "observing"
 	}
 
 	state.Status = map[string]interface{}{
@@ -10272,9 +10242,9 @@ func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string
 		"phase":           state.Phase,
 		"snapshots":       snapshotCount,
 		"snapshotCount":   snapshotCount,
-		"iterations":      iterationCount,
-		"principles":      len(state.Principles),
-		"principleCount":  len(state.Principles),
+		"iterations":      0,
+		"principles":      0,
+		"principleCount":  0,
 		"baseline_target": dashboard.NousBaselineTarget,
 		"snapshotTarget":  dashboard.NousBaselineTarget,
 		"baseline_pct":    dashboard.NousBaselinePct(snapshotCount),
@@ -10290,19 +10260,6 @@ func stringFromMap(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
-}
-
-func confidenceToFloat(s string) float64 {
-	switch s {
-	case "high":
-		return 0.9
-	case "medium":
-		return 0.7
-	case "low":
-		return 0.4
-	default:
-		return 0.5
-	}
 }
 
 const logFilename = "hive.log"

@@ -293,6 +293,10 @@ type NousState struct {
 	GateNotify func(title, message string) `json:"-"`
 	// GateLogger receives gate protocol warnings; nil silences them.
 	GateLogger *slog.Logger `json:"-"`
+	// KnowledgeStore, when set, serves the ledger and principles live
+	// (#11697): the read handlers refresh Ledger/Principles from it on
+	// every request. Nil keeps the boot-snapshot behaviour.
+	KnowledgeStore NousKnowledgeStore `json:"-"`
 	// Now is the clock for decision timestamps; nil means time.Now.
 	Now func() time.Time `json:"-"`
 	Mu  sync.Mutex       `json:"-"`
@@ -301,11 +305,17 @@ type NousState struct {
 	lastNotifiedGate string
 }
 
+// NousPrinciple is one learned principle as served by GET /api/nous/principles.
+// Type and Status follow the shared schema (NousPrincipleType*,
+// NousPrincipleStatus*); Source is the writer's raw category, kept for
+// provenance.
 type NousPrinciple struct {
 	ID         string  `json:"id"`
 	Text       string  `json:"text"`
 	Confidence float64 `json:"confidence"`
 	Source     string  `json:"source"`
+	Type       string  `json:"type"`
+	Status     string  `json:"status"`
 }
 
 const NousBaselineTarget = 672

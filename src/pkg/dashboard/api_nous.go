@@ -9,6 +9,7 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "not_configured"})
 		return
 	}
+	s.syncNousKnowledge()
 	s.deps.Nous.Mu.Lock()
 	status := make(map[string]interface{}, len(s.deps.Nous.Status))
 	for k, v := range s.deps.Nous.Status {
@@ -23,6 +24,7 @@ func (s *Server) handleNousLedger(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, []interface{}{})
 		return
 	}
+	s.syncNousKnowledge()
 	s.deps.Nous.Mu.Lock()
 	ledger := s.deps.Nous.Ledger
 	s.deps.Nous.Mu.Unlock()
@@ -38,6 +40,7 @@ func (s *Server) handleNousPrinciples(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, []interface{}{})
 		return
 	}
+	s.syncNousKnowledge()
 	s.deps.Nous.Mu.Lock()
 	principles := s.deps.Nous.Principles
 	s.deps.Nous.Mu.Unlock()

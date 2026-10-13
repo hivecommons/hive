@@ -76,29 +76,153 @@ func TestLoadNousStateStatusConsistency(t *testing.T) {
 	}
 }
 
-func TestLoadNousStateFromPathsLoadsHermeticArtifacts(t *testing.T) {
-	governorDir := t.TempDir()
-	snapshotDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(governorDir, "ledger.json"), []byte(`{"iterations":[{"id":"one"},{"id":"two"}]}`), 0o600); err != nil {
+func TestLoadNousStateLoadsHermeticArtifacts(t *testing.T) {
+	layout := nousstore.New(filepath.Join(t.TempDir(), "nous"))
+	if err := layout.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.LedgerPath(), []byte(`{"iterations":[{"id":"one"},{"id":"two"}]}`), 0o600); err != nil {
 		t.Fatalf("write ledger: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(governorDir, "principles.json"), []byte(`{"principles":[{"id":"p1","statement":"Prefer seams","confidence":"high","category":"testing"}]}`), 0o600); err != nil {
+	if err := os.WriteFile(layout.PrinciplesPath(), []byte(`{"principles":[{"id":"p1","statement":"Prefer seams","confidence":"high","category":"testing"}]}`), 0o600); err != nil {
 		t.Fatalf("write principles: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(snapshotDir, "snapshot.json"), []byte(`{}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(layout.SnapshotDir(), "snapshot.json"), []byte(`{}`), 0o600); err != nil {
 		t.Fatalf("write snapshot: %v", err)
 	}
 
-	state := loadNousStateFromPaths(restoreTestLogger(), governorDir, snapshotDir)
+	state := loadNousStateFrom(layout, "", restoreTestLogger())
 	if state.Phase != "observing" || len(state.Ledger) != 2 {
 		t.Fatalf("phase/ledger = %q/%d, want observing/2", state.Phase, len(state.Ledger))
 	}
-	if len(state.Principles) != 1 || state.Principles[0].ID != "p1" || state.Principles[0].Confidence != 0.9 {
+	// Rows without type/status load with the schema defaults (#11697).
+	for _, e := range state.Ledger {
+		if e[nousstore.KeyType] != nousstore.DefaultLedgerType || e[nousstore.KeyStatus] != nousstore.DefaultLedgerStatus {
+			t.Fatalf("legacy row not defaulted: %v", e)
+		}
+	}
+	if len(state.Principles) != 1 || state.Principles[0].ID != "p1" || state.Principles[0].Confidence != nousstore.ConfidenceHigh {
 		t.Fatalf("principles = %+v, want parsed p1 with confidence", state.Principles)
+	}
+	if p := state.Principles[0]; p.Text != "Prefer seams" || p.Source != "testing" || p.Type != nousstore.DefaultPrincipleType || p.Status != nousstore.DefaultPrincipleStatus {
+		t.Fatalf("principle = %+v, want text/source kept and type/status defaulted", p)
 	}
 	if state.Status["snapshotCount"] != 1 || state.Status["iterations"] != 2 || state.Status["principles"] != 1 {
 		t.Fatalf("status counts = %+v, want one snapshot, two iterations, one principle", state.Status)
 	}
+}
+
+// Live ledger/principles (#11697): a round the agent writes after boot is
+// visible on the next SyncKnowledge — what every /api/nous read performs —
+// with no restart, and the Status counts and phase follow. Change detection
+// is driven by the file's mtime, so the test sets it explicitly instead of
+// sleeping.
+func TestLoadNousStateServesKnowledgeLive(t *testing.T) {
+	layout := nousstore.New(filepath.Join(t.TempDir(), "nous"))
+	if err := layout.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	state := loadNousStateFrom(layout, "", restoreTestLogger())
+	if len(state.Ledger) != 0 || state.Phase != "collecting" || state.KnowledgeStore == nil {
+		t.Fatalf("fresh state = %d/%q store=%v", len(state.Ledger), state.Phase, state.KnowledgeStore)
+	}
+
+	writeAt := func(path, data string, at time.Time) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeAt(layout.LedgerPath(), `{"iterations":[{"iteration":0,"family":"baseline","candidate_id":"baseline"},{"iteration":1,"family":"routing","h_main_result":"CONFIRMED"}]}`, t0)
+	writeAt(layout.PrinciplesPath(), `{"principles":[{"id":"p1","statement":"s","confidence":"medium","category":"meta","status":"updated"}]}`, t0)
+
+	if err := state.SyncKnowledge(); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Ledger) != 2 || state.Ledger[0][nousstore.KeyType] != nousstore.LedgerTypeBaseline || state.Ledger[1][nousstore.KeyOutcome] != "confirmed" {
+		t.Fatalf("live ledger = %v", state.Ledger)
+	}
+	if len(state.Principles) != 1 || state.Principles[0].Type != nousstore.PrincipleTypeMeta || state.Principles[0].Status != nousstore.PrincipleStatusUpdated || state.Principles[0].Confidence != nousstore.ConfidenceMedium {
+		t.Fatalf("live principles = %+v", state.Principles)
+	}
+	if state.Phase != "observing" || state.Status["phase"] != "observing" || state.Status["iterations"] != 2 || state.Status["principleCount"] != 1 {
+		t.Fatalf("status did not follow: phase=%q %+v", state.Phase, state.Status)
+	}
+
+	// A half-written ledger keeps the last good copy and is not an error
+	// that reaches the panel as empty data.
+	writeAt(layout.LedgerPath(), `{"iterations":[`, t0.Add(time.Minute))
+	if err := state.SyncKnowledge(); err == nil || len(state.Ledger) != 2 {
+		t.Fatalf("corrupt ledger: err=%v len=%d", err, len(state.Ledger))
+	}
+	// Off-schema rows are logged, defaulted, and still served.
+	writeAt(layout.LedgerPath(), `{"iterations":[{"type":"nous_kick"}]}`, t0.Add(2*time.Minute))
+	if err := state.SyncKnowledge(); err != nil || len(state.Ledger) != 1 || state.Ledger[0][nousstore.KeyType] != nousstore.DefaultLedgerType {
+		t.Fatalf("off-schema: err=%v ledger=%v", err, state.Ledger)
+	}
+}
+
+// The dashboard mirrors nousstore's schema constants without importing the
+// package (the same arrangement as the gate decisions); this pins the two
+// spellings together so neither side can drift.
+func TestNousSchemaConstantsAgreeAcrossPackages(t *testing.T) {
+	for name, pair := range map[string][2]string{
+		"key type":               {dashboard.NousKeyType, nousstore.KeyType},
+		"key status":             {dashboard.NousKeyStatus, nousstore.KeyStatus},
+		"key outcome":            {dashboard.NousKeyOutcome, nousstore.KeyOutcome},
+		"ledger baseline":        {dashboard.NousLedgerTypeBaseline, nousstore.LedgerTypeBaseline},
+		"ledger experiment":      {dashboard.NousLedgerTypeExperiment, nousstore.LedgerTypeExperiment},
+		"ledger dry_run":         {dashboard.NousLedgerTypeDryRun, nousstore.LedgerTypeDryRun},
+		"ledger analysis":        {dashboard.NousLedgerTypeAnalysis, nousstore.LedgerTypeAnalysis},
+		"ledger shadow_analysis": {dashboard.NousLedgerTypeShadowAnalysis, nousstore.LedgerTypeShadowAnalysis},
+		"status pending":         {dashboard.NousLedgerStatusPending, nousstore.LedgerStatusPending},
+		"status active":          {dashboard.NousLedgerStatusActive, nousstore.LedgerStatusActive},
+		"status completed":       {dashboard.NousLedgerStatusCompleted, nousstore.LedgerStatusCompleted},
+		"status aborted":         {dashboard.NousLedgerStatusAborted, nousstore.LedgerStatusAborted},
+		"principle domain":       {dashboard.NousPrincipleTypeDomain, nousstore.PrincipleTypeDomain},
+		"principle meta":         {dashboard.NousPrincipleTypeMeta, nousstore.PrincipleTypeMeta},
+		"principle active":       {dashboard.NousPrincipleStatusActive, nousstore.PrincipleStatusActive},
+		"principle updated":      {dashboard.NousPrincipleStatusUpdated, nousstore.PrincipleStatusUpdated},
+		"principle pruned":       {dashboard.NousPrincipleStatusPruned, nousstore.PrincipleStatusPruned},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s: dashboard %q != nousstore %q", name, pair[0], pair[1])
+		}
+	}
+	for _, v := range []string{dashboard.NousLedgerTypeBaseline, dashboard.NousLedgerTypeExperiment, dashboard.NousLedgerTypeDryRun, dashboard.NousLedgerTypeAnalysis, dashboard.NousLedgerTypeShadowAnalysis} {
+		if !nousstore.ValidLedgerType(v) {
+			t.Errorf("dashboard ledger type %q not valid in nousstore", v)
+		}
+	}
+	for _, v := range []string{dashboard.NousLedgerStatusPending, dashboard.NousLedgerStatusActive, dashboard.NousLedgerStatusCompleted, dashboard.NousLedgerStatusAborted} {
+		if !nousstore.ValidLedgerStatus(v) {
+			t.Errorf("dashboard ledger status %q not valid in nousstore", v)
+		}
+	}
+	if !nousstore.ValidPrincipleType(dashboard.NousPrincipleTypeDomain) || !nousstore.ValidPrincipleType(dashboard.NousPrincipleTypeMeta) {
+		t.Error("dashboard principle types not valid in nousstore")
+	}
+	for _, v := range []string{dashboard.NousPrincipleStatusActive, dashboard.NousPrincipleStatusUpdated, dashboard.NousPrincipleStatusPruned} {
+		if !nousstore.ValidPrincipleStatus(v) {
+			t.Errorf("dashboard principle status %q not valid in nousstore", v)
+		}
+	}
+}
+
+func TestNousPrinciplesForPanelMapsFields(t *testing.T) {
+	if got := nousPrinciplesForPanel(nil); got != nil {
+		t.Fatalf("nil in, %v out", got)
+	}
+	got := nousPrinciplesForPanel([]nousstore.Principle{{ID: "p", Statement: "s", Confidence: 0.4, Category: "meta", Type: "meta", Status: "pruned"}})
+	want := dashboard.NousPrinciple{ID: "p", Text: "s", Confidence: 0.4, Source: "meta", Type: "meta", Status: "pruned"}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	wireNousKnowledge(nil, nousstore.New(t.TempDir()), "", restoreTestLogger())
 }
 
 // Durable layout (#11694): ensureNousDirs creates <root>/governor and
