@@ -151,7 +151,11 @@ elif [ "$EFFECTIVE_MODE" = "observe" ]; then
   AUTO_APPROVE="true"
 fi
 
-NOUS_AGENT="${NOUS_AGENT:-inline}"
+# Dispatcher (RFC #11585 part 5): the hive exports its resolved nous.dispatcher
+# as HIVE_NOUS_DISPATCHER (inline by default; sdk is the legacy agent-SDK
+# mode). A NOUS_AGENT already set in the environment wins so operators who
+# pinned a mode before the hive owned the setting keep it.
+NOUS_AGENT="${NOUS_AGENT:-${HIVE_NOUS_DISPATCHER:-inline}}"
 
 APPROVE_FLAG=""
 if [ "$AUTO_APPROVE" = "true" ]; then

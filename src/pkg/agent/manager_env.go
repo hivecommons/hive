@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -463,6 +464,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// an invalid value). Always exported, off included, so a script can branch on
 	// it without having to re-derive the precedence rules itself.
 	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config, m.explainModeDefault()), false})
+	vars = append(vars, m.experimentEnvPairs(agent)...)
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
@@ -555,4 +557,28 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 
 	return vars
+}
+
+// experimentEnvPairs exports the experimentation-engine settings to an agent
+// carrying the experimenter role, and nothing to any other agent: the
+// agent's own engine (config.NousEngineEnv, from its config) and the hive's
+// resolved dispatcher and data root (ProjectContext.ExperimentEnv). Keys are
+// sorted so the launch command is deterministic.
+func (m *Manager) experimentEnvPairs(agent *AgentProcess) []agentEnvPair {
+	if agent == nil || !agent.Config.IsExperimenter() {
+		return nil
+	}
+	pairs := []agentEnvPair{{config.NousEngineEnv, agent.Config.ExperimentEngine(), false}}
+	keys := make([]string, 0, len(m.project.ExperimentEnv))
+	for k := range m.project.ExperimentEnv {
+		if k == config.NousEngineEnv {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		pairs = append(pairs, agentEnvPair{k, m.project.ExperimentEnv[k], false})
+	}
+	return pairs
 }

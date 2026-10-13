@@ -224,6 +224,11 @@ func (c *Config) applyDefaults() {
 		if agent.Role == "" {
 			agent.Role = name
 		}
+		// Role-based, not name-based: any agent that opts into the
+		// experimenter role runs the default engine unless it names one.
+		if agent.IsExperimenter() && agent.Engine == "" {
+			agent.Engine = DefaultExperimentEngine
+		}
 		applyKnownAgentDefaults(name, &agent)
 		c.Agents[name] = agent
 	}
@@ -555,6 +560,12 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 			Emoji: "🧠", Color: "#f39c12", Aliases: []string{"sg"},
 			DetectKeywords: []string{"strategist", "strategy"},
 			BeadRole:       "worker", SortOrder: 70, IncludeRepos: true,
+		},
+		RoleExperimenter: {
+			Emoji: "⚗️", Color: "#16a085", Aliases: []string{"ex"},
+			LaneKeywords:   []string{"experiment", "campaign", "hypothesis", "benchmark"},
+			DetectKeywords: []string{"experimenter", "experiment", "campaign", "nous"},
+			BeadRole:       "worker", SortOrder: 72, IncludeRepos: true,
 		},
 		"guide": {
 			Emoji: "📖", Color: "#8e44ad", Aliases: []string{"gu"},

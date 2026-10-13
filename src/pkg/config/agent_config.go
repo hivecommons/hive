@@ -291,7 +291,12 @@ type AgentConfig struct {
 	BobDisplayName string `yaml:"bob_display_name,omitempty" json:"bob_display_name,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
-	Role           string              `yaml:"role" json:"role,omitempty"`
+	Role string `yaml:"role" json:"role,omitempty"`
+	// Engine names the experimentation engine an agent with role
+	// experimenter runs (RFC #11585 part 5). Empty on an experimenter means
+	// DefaultExperimentEngine (nous); it is rejected on any other role. See
+	// ValidExperimentEngines.
+	Engine         string              `yaml:"engine,omitempty" json:"engine,omitempty"`
 	SortOrder      int                 `yaml:"sort_order" json:"sort_order,omitempty"`
 	Emoji          string              `yaml:"emoji" json:"emoji,omitempty"`
 	Color          string              `yaml:"color" json:"color,omitempty"`

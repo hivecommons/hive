@@ -60,6 +60,7 @@ func TestResolveAlias_KnownAliases(t *testing.T) {
 		{"ci", "ci-maintainer"},
 		{"se", "sec-check"},
 		{"sg", "strategist"},
+		{"ex", "experimenter"},
 		{"te", "quality"},
 		{"tm", "telemetry"},
 		{"op", "operations"},

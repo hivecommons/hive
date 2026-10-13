@@ -1,0 +1,1 @@
+- Nous: `experimenter` agent role with a Go engine contract (`pkg/nousengine`), `agents.<name>.engine` (default `nous`), and `nous.dispatcher` / `HIVE_NOUS_DISPATCHER` making Nous run `inline` by default while `sdk` stays selectable (RFC #11585 part 5, #11698)

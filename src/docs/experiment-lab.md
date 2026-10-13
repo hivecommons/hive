@@ -289,3 +289,54 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 
 If any of the above changes, update this page (and the config/output/schedule
 table) in the same change that lands the feature.
+
+## Experimenter role and engine contract
+
+RFC #11585 part 5 (#11698) adds the `experimenter` agent role and makes Nous
+the default engine running through the `inline` dispatcher. The strategist
+is unchanged, and nothing an experiment produces is promoted automatically.
+
+**Role.** An agent named `experimenter`, or any agent with `role: experimenter`,
+runs Experiment Lab campaigns. It gets the usual catalog defaults (⚗️, lane
+keywords `experiment`/`campaign`/`hypothesis`/`benchmark`, chat alias `ex`),
+the embedded policy template `experimenter.md`, and one extra field:
+
+```yaml
+agents:
+  experimenter:
+    role: experimenter
+    engine: nous     # default; the only engine today
+    interval: 24h
+```
+
+`engine` is only valid on this role — setting it on any other agent is a
+load-time error rather than a silent no-op. The role is **not** added to any
+ACMM pack; opt in by hand.
+
+**Engine contract.** `pkg/nousengine` defines the `Engine` interface every
+engine implements: `Invocation` (the command the agent runs), `Layout`
+(where the ledger, principles, verdict, gates and other artifacts live),
+`Progress`, `Principles` and `Verdict`. Nous is the registered default; an
+empty engine name resolves to it. A `Fake` engine exists for tests only and
+cannot be selected from config. The verdict vocabulary is
+`deploy` / `deploy_with_caveats` / `fall_back_to_baseline`, and a verdict
+carries `measured_against_baseline` so a score produced against a zero
+baseline can never read as "better".
+
+**Dispatcher.** `nous.dispatcher` (env `HIVE_NOUS_DISPATCHER`) selects how
+Nous drives model calls: `inline` (default) runs the campaign loop
+in-process; `sdk` is the legacy agent-SDK mode and remains selectable.
+Precedence is env > yaml > default, and an unknown value falls through to the
+next tier. Existing configs without the key resolve to `inline`. Inside
+`bin/nous-runner.sh` a `NOUS_AGENT` already present in the agent's environment
+still wins, so operators who pinned a mode before the hive owned the setting
+keep it.
+
+**What the agent sees.** Only experimenter-role agents receive
+`HIVE_NOUS_ENGINE`, `HIVE_NOUS_DISPATCHER` and `HIVE_NOUS_DATA_DIR` at launch,
+resolved by the hive with the same precedence its own readers use, so the
+agent and the dashboard never disagree about where a campaign's files live.
+Every other role launches exactly as before.
+
+**Not in this part.** Promotion of a winning configuration (part 6), dashboard
+campaign cards driven by the contract, and any pack inclusion of the role.

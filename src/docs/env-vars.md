@@ -318,6 +318,8 @@ section requires for lookups.
 | `HIVE_SPOKE_BACKUP_DATA_DIR` | No | `/data` | Spoke data directory for on-demand spoke backup. |
 | `HIVE_NOUS_DATA_DIR` | No | `data.nous_dir`, then `/data/nous` | Durable root for Nous (Experiment Lab) state — governor ledger and principles, baseline snapshots, dashboard panel config. Overrides `data.nous_dir`. The spoke backup always captures `<data-dir>/nous`, so relocating the root outside `/data` takes it out of the owner backup. |
 | `HIVE_NOUS_GATE_POLL_INTERVAL` | No | `nous.gate_poll_seconds`, then `15s` | Go duration between checks of `<nous_dir>/gates/pending.json` for a gate the experiment agent is waiting on (RFC #11585 part 3). Overrides `nous.gate_poll_seconds`; `GET /api/nous/gate-pending` also checks on demand. |
+| `HIVE_NOUS_DISPATCHER` | No | `nous.dispatcher`, then `inline` | How Nous drives model calls: `inline` (in-process campaign loop via `bin/nous-runner.sh`) or `sdk` (legacy agent-SDK mode). The hive resolves it once and exports the result to agents with the `experimenter` role only; `bin/nous-runner.sh` reads it when `NOUS_AGENT` is not already set. Unknown values are ignored (RFC #11585 part 5). |
+| `HIVE_NOUS_ENGINE` | No | `agents.<name>.engine`, then `nous` | Set by the hive on `experimenter` agents only: the experimentation engine that agent runs. Not read from the hive's own environment. |
 | `OCI_TENANCY_OCID` | Required for OCI FSS/Object Storage flows | none | OCI tenancy OCID. |
 | `OCI_USER_OCID` | Required for OCI FSS/Object Storage flows | none | OCI user OCID. |
 | `OCI_FINGERPRINT` | Required for OCI FSS/Object Storage flows | none | OCI API key fingerprint. |

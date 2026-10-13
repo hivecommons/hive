@@ -527,6 +527,13 @@ type ProjectContext struct {
 	// ProjectContext literal still gets.
 	AgentRepos       func(agent string) []string
 	AgentPrimaryRepo func(agent string) string
+	// ExperimentEnv is the hive-wide experimentation environment (RFC
+	// #11585 part 5, pkg/nousengine.HiveEnv): the Nous dispatcher and data
+	// root as the hive resolved them (env > yaml > default). It is exported
+	// ONLY to agents whose role is config.RoleExperimenter — alongside that
+	// agent's own engine name — so the strategist and every other role
+	// launch byte-for-byte as before. Nil exports only the engine name.
+	ExperimentEnv map[string]string
 }
 
 func (p ProjectContext) PrimaryRepo() string {

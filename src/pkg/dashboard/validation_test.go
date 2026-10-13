@@ -145,6 +145,11 @@ func TestValidateAgentGeneralInput(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid experimenter role",
+			body:    map[string]interface{}{"role": "experimenter"},
+			wantErr: false,
+		},
+		{
 			name:    "negative sortOrder",
 			body:    map[string]interface{}{"sortOrder": float64(-1)},
 			wantErr: true,

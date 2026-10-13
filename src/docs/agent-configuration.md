@@ -24,7 +24,7 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 - `clear_on_kick: true` — the session context is cleared before each kick
 - `id` and `role` default to the agent's name (`scanner`)
 - `bead_role: worker`, `beads_dir: /data/beads/scanner`
-- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `outreach`, `telemetry`, `operations`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
+- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `experimenter`, `outreach`, `telemetry`, `operations`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
@@ -717,6 +717,7 @@ The L5 roster is the canonical worked example — twelve agents, nine on the gov
 | reviewer 🔬 | repo-grounded PR review; routes to a human, never merges | ADVISORY | 30m |
 | architect 🏗 | RFCs, refactors | ISSUES_AND_PRS | 4h |
 | strategist 🧠 | cross-agent coordination | ISSUES_AND_PRS | 4h |
+| experimenter ⚗️ | self-improvement experiment campaigns through an engine (default Nous, inline); never files issues/PRs, never promotes | not in any pack — opt in by hand | 24h suggested |
 | telemetry 📡 | managed-project instrumentation | ISSUES_AND_PRS | paused |
 | operations 🚨 | managed-project operational practice | ISSUES_AND_PRS | paused |
 | brainstorm 💡 | ideation | ADVISORY | on demand |

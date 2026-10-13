@@ -143,6 +143,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
+	if err := c.Nous.Validate(); err != nil {
+		return err
+	}
 	if err := c.Runs.ValidateEngine(); err != nil {
 		return err
 	}
@@ -388,6 +391,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		}
 		if !ValidateCadenceScope(agent.CadenceScope) {
 			return fmt.Errorf("agent %s: invalid cadence_scope %q (must be aggregate or per_repo)", name, agent.CadenceScope)
+		}
+		if err := ValidateExperimentEngine(effectiveRole(name, agent), agent.Engine); err != nil {
+			return fmt.Errorf("agent %s: %w", label, err)
 		}
 		if agent.ContinuousCooldown < 0 {
 			return fmt.Errorf("agent %s: continuous_cooldown must be positive", name)

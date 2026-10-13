@@ -107,6 +107,9 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 		return err
 	}
+	if err := ValidateExperimentEngine(effectiveRole(name, agent), agent.Engine); err != nil {
+		return err
+	}
 	if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
 		return err
 	}
@@ -273,6 +276,9 @@ func (c *Config) ApplyAgentDefaults(name string) {
 	}
 	if agent.Role == "" {
 		agent.Role = name
+	}
+	if agent.IsExperimenter() && agent.Engine == "" {
+		agent.Engine = DefaultExperimentEngine
 	}
 	applyKnownAgentDefaults(name, &agent)
 	c.Agents[name] = agent

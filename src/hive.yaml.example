@@ -1143,3 +1143,19 @@ nous:
   # dashboard also checks on every GET /api/nous/gate-pending, so this only
   # bounds the owner-ping latency. HIVE_NOUS_GATE_POLL_INTERVAL overrides.
   gate_poll_seconds: 15
+  # How Nous drives model calls (RFC #11585 part 5, #11698). `inline` (the
+  # default) runs the campaign loop in-process through bin/nous-runner.sh;
+  # `sdk` is the legacy agent-SDK mode and stays selectable. Existing configs
+  # without this key get `inline`. HIVE_NOUS_DISPATCHER overrides.
+  dispatcher: inline
+
+# Experimenter role (RFC #11585 part 5). An agent whose name or `role` is
+# `experimenter` runs self-improvement campaigns through an engine implementing
+# pkg/nousengine; `engine` defaults to `nous` and is only valid on this role.
+# The strategist is unchanged and nothing is promoted automatically.
+#
+# agents:
+#   experimenter:
+#     role: experimenter
+#     engine: nous
+#     interval: 24h

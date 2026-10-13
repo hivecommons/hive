@@ -61,6 +61,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/nousengine"
 	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/persona"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -2101,8 +2102,23 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		TaskMCPURL:         b.taskMCPURLForAgents(),
 		TaskMCPLaunchToken: b.taskMCPLaunchTokenForAgents,
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		ExperimentEnv:      experimentAgentEnv(b.cfg, os.Getenv),
 	}
 	return true
+}
+
+// experimentAgentEnv resolves the hive-wide experimentation settings an
+// experimenter agent is handed at launch (RFC #11585 part 5): the Nous
+// dispatcher (HIVE_NOUS_DISPATCHER > nous.dispatcher > inline) and the
+// durable Nous root (HIVE_NOUS_DATA_DIR > data.nous_dir > /data/nous). Both
+// use the same precedence as the hive's own readers so the agent and the
+// dashboard never disagree about where a campaign's files live.
+func experimentAgentEnv(cfg *config.Config, getenv func(string) string) map[string]string {
+	if cfg == nil {
+		return nil
+	}
+	layout := nousstore.Resolve(cfg.Data.NousDir, getenv)
+	return nousengine.HiveEnv(nousengine.Settings{Root: layout.Root, Dispatcher: cfg.Nous.ResolveDispatcher(getenv)})
 }
 
 // taskMCPURLForAgents is the bare task MCP endpoint handed to hub-launched

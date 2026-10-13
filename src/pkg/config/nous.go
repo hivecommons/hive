@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +22,66 @@ const (
 	NousGatePollIntervalEnv = "HIVE_NOUS_GATE_POLL_INTERVAL"
 )
 
+// Experimenter role and engine contract (RFC #11585 part 5, #11698).
+//
+// The experimenter is the agent role that runs one experiment campaign end
+// to end: it takes a campaign definition, runs the rounds, pauses at gates
+// for an owner, and writes results and a verdict. It never files issues,
+// opens PRs or admits runs on its own — promotion is an owner's decision.
+// The role is defined by the engine contract in pkg/nousengine, not by Nous;
+// Nous is the default (and, in this part, the only) engine.
+const (
+	// RoleExperimenter is the agent role name. An agent named "experimenter"
+	// gets it by the usual role-defaults-to-name rule; any other name may
+	// opt in with `role: experimenter`.
+	RoleExperimenter = "experimenter"
+
+	// ExperimentEngineNous names the Nous engine.
+	ExperimentEngineNous = "nous"
+
+	// DefaultExperimentEngine is what an experimenter runs when
+	// `engine:` is absent: a hive with no engine configured runs Nous.
+	DefaultExperimentEngine = ExperimentEngineNous
+
+	// NousDispatcherInline runs Nous inside the experimenter agent's own CLI
+	// session. The agent's CLI does the LLM work, so Hive's scheduling,
+	// token budget, scoped tokens, GitHub proxy and cost tracking all apply
+	// unchanged. This is the default.
+	NousDispatcherInline = "inline"
+
+	// NousDispatcherSDK has Nous call the model API directly. That spend is
+	// invisible to Hive's cost tracking; it remains selectable for operators
+	// who ran Nous that way before this part.
+	NousDispatcherSDK = "sdk"
+
+	// DefaultNousDispatcher is the dispatcher used when nous.dispatcher is
+	// absent and NousDispatcherEnv is unset.
+	DefaultNousDispatcher = NousDispatcherInline
+
+	// NousDispatcherEnv overrides nous.dispatcher at runtime (env > yaml >
+	// default). It is also the name the hive exports the RESOLVED dispatcher
+	// under to experimenter agents, so bin/nous-runner.sh reads one answer.
+	NousDispatcherEnv = "HIVE_NOUS_DISPATCHER"
+
+	// NousEngineEnv is the name the hive exports an experimenter agent's
+	// resolved engine under.
+	NousEngineEnv = "HIVE_NOUS_ENGINE"
+)
+
+// ValidExperimentEngines is the closed set `agents.<name>.engine` may name.
+var ValidExperimentEngines = map[string]bool{ExperimentEngineNous: true}
+
+// ValidNousDispatchers is the closed set nous.dispatcher may name.
+var ValidNousDispatchers = map[string]bool{NousDispatcherInline: true, NousDispatcherSDK: true}
+
 // NousConfig is the `nous:` section of hive.yaml.
 type NousConfig struct {
 	// GatePollSeconds is the pending-gate poll cadence in seconds. Zero or
 	// absent applies DefaultNousGatePollInterval.
 	GatePollSeconds int `yaml:"gate_poll_seconds,omitempty" json:"gate_poll_seconds,omitempty"`
+	// Dispatcher selects how Nous performs its LLM work: inline (default)
+	// or sdk. See NousDispatcherInline / NousDispatcherSDK.
+	Dispatcher string `yaml:"dispatcher,omitempty" json:"dispatcher,omitempty"`
 }
 
 // GatePollInterval resolves the pending-gate poll cadence with precedence
@@ -43,4 +100,96 @@ func (n NousConfig) GatePollInterval() time.Duration {
 		return time.Duration(n.GatePollSeconds) * time.Second
 	}
 	return DefaultNousGatePollInterval
+}
+
+// ResolvedDispatcher resolves the Nous dispatcher with precedence env > yaml
+// > default. An unknown value in either source falls through to the next so
+// a typo degrades to the inline default rather than to an unrunnable engine;
+// Validate reports the yaml typo at load time.
+func (n NousConfig) ResolvedDispatcher() string {
+	return n.ResolveDispatcher(os.Getenv)
+}
+
+// ResolveDispatcher is ResolvedDispatcher with an injectable environment
+// reader (nil skips the env tier).
+func (n NousConfig) ResolveDispatcher(getenv func(string) string) string {
+	if getenv != nil {
+		if v := normalizeNousDispatcher(getenv(NousDispatcherEnv)); ValidNousDispatchers[v] {
+			return v
+		}
+	}
+	if v := normalizeNousDispatcher(n.Dispatcher); ValidNousDispatchers[v] {
+		return v
+	}
+	return DefaultNousDispatcher
+}
+
+func normalizeNousDispatcher(v string) string {
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+// Validate rejects a yaml dispatcher outside ValidNousDispatchers. Empty is
+// valid and means "default".
+func (n NousConfig) Validate() error {
+	if v := normalizeNousDispatcher(n.Dispatcher); v != "" && !ValidNousDispatchers[v] {
+		return fmt.Errorf("nous: invalid dispatcher %q (must be %s, or empty for %s)", n.Dispatcher, sortedKeys(ValidNousDispatchers), DefaultNousDispatcher)
+	}
+	return nil
+}
+
+// ValidateExperimentEngine checks an agent's `engine:` field. Empty is valid
+// (the role default applies). A non-empty engine on an agent whose role is
+// not experimenter is an error: nothing else reads the field, so it would be
+// a silent no-op the operator believes is in force.
+func ValidateExperimentEngine(role, engine string) error {
+	e := strings.ToLower(strings.TrimSpace(engine))
+	if e == "" {
+		return nil
+	}
+	if role != RoleExperimenter {
+		return fmt.Errorf("engine %q is only meaningful with role %s (role is %q)", engine, RoleExperimenter, role)
+	}
+	if !ValidExperimentEngines[e] {
+		return fmt.Errorf("invalid engine %q (must be %s)", engine, sortedKeys(ValidExperimentEngines))
+	}
+	return nil
+}
+
+// effectiveRole is the role an agent will carry once defaults are applied:
+// the explicit Role, else the agent's name. Validation runs on overlay files
+// before defaulting, so it must not mistake a bare `experimenter:` entry for
+// a role-less agent.
+func effectiveRole(name string, agent AgentConfig) string {
+	if agent.Role != "" {
+		return agent.Role
+	}
+	return name
+}
+
+// IsExperimenter reports whether this agent carries the experimenter role.
+func (a *AgentConfig) IsExperimenter() bool {
+	return a != nil && a.Role == RoleExperimenter
+}
+
+// ExperimentEngine returns the engine this agent runs, or "" when it is not
+// an experimenter. Load-time defaults fill an experimenter's empty Engine
+// with DefaultExperimentEngine; this accessor applies the same fallback for
+// a directly constructed AgentConfig.
+func (a *AgentConfig) ExperimentEngine() string {
+	if !a.IsExperimenter() {
+		return ""
+	}
+	if e := strings.ToLower(strings.TrimSpace(a.Engine)); e != "" {
+		return e
+	}
+	return DefaultExperimentEngine
+}
+
+func sortedKeys(set map[string]bool) string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
