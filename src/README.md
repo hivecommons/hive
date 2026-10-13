@@ -11,7 +11,12 @@ git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
-# Edit src/hive.yaml — set your org, repos, and agent config
+# REQUIRED: set project.org and project.repos (optionally primary_repo and
+# ai_author) in src/hive.yaml — the placeholders do not work as shipped. See
+# docs/operator-reference.md#minimum-required-configuration
+# REQUIRED: the example ships dashboard.port 3001 for local source runs; the
+# container healthcheck probes 3002, so keeping 3001 never becomes healthy.
+sed -i 's/^  port: 3001$/  port: 3002/' src/hive.yaml
 
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
