@@ -2,7 +2,9 @@ package github
 
 // Tests for the sentinel sweep: label + one comment per head on a finding,
 // nothing on a clean PR, no re-application once a maintainer clears the
-// label for an unchanged head, fail-closed on an incomplete file list.
+// label for an unchanged head (including across a restart, where the
+// clearance is read back from the alert comment), fail-closed on an
+// incomplete file list.
 
 import (
 	"context"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
@@ -317,25 +320,87 @@ func TestSweepSentinelSkipsLabelledExemptAndNewHeadRecomments(t *testing.T) {
 	}
 }
 
-func TestSweepSentinelExistingMarkerCommentNotReposted(t *testing.T) {
+// A blocking alert comment for the current head with the label absent is a
+// maintainer clearance. A fresh client (empty sentinelHeads, as after a hub
+// restart or on a second replica) must not re-apply the label or touch the
+// comment; the previous behaviour re-labelled #11614 on the first pass after
+// a restart.
+func TestSweepSentinelMaintainerClearanceSurvivesRestart(t *testing.T) {
+	alert := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "h9", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
 	f := &sentinelFixture{
 		prs:         []map[string]any{sentinelPR(9, "eve", "h9")},
 		files:       map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
 		labelExists: true,
-		comments:    map[int][]string{9: {SentinelMarker + " h9\nolder alert"}},
+		comments:    map[int][]string{9: {alert}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	for pass := 0; pass < 2; pass++ {
+		c := newTestClient(t, srv, "o", []string{"o/r"}) // fresh sentinelHeads each time
+		res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+			t.Fatalf("pass %d: cleared alert must stay quiet: res=%+v err=%v", pass, res, err)
+		}
+		if got := f.labels[9]; len(got) != 0 {
+			t.Fatalf("pass %d: label re-applied after maintainer removed it: %v", pass, got)
+		}
+		if len(f.comments[9]) != 1 || f.comments[9][0] != alert {
+			t.Fatalf("pass %d: alert comment must be left alone: %v", pass, f.comments[9])
+		}
+	}
+
+	// A new push gets a fresh alert and the label again.
+	f.mu.Lock()
+	f.prs[0] = sentinelPR(9, "eve", "h10")
+	f.mu.Unlock()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" h10") {
+		t.Fatalf("new head must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+}
+
+// A trusted-author notice for the head is not a clearance: when the operator
+// turns on trusted_authors_block, the head still gets the label, and the
+// existing marker comment is rewritten as the alert rather than reposted.
+func TestSweepSentinelNoticeForHeadIsNotAClearance(t *testing.T) {
+	f := &sentinelFixture{
+		prs:         []map[string]any{sentinelPR(9, "eve", "h9")},
+		files:       map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists: true,
+		comments:    map[int][]string{9: {SentinelMarker + " h9\n" + sentinelNoticeHeading + " (trusted bot), merge is not blocked\n"}},
 	}
 	srv := newSentinelServer(t, f)
 	defer srv.Close()
 	c := newTestClient(t, srv, "o", []string{"o/r"})
-	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	opts := defaultSentinelOpts(nil)
+	opts.TrustedAuthor = func(string, string) SentinelAuthorTrust {
+		return SentinelAuthorTrust{Trusted: true, Reason: "trusted bot"}
+	}
+	opts.TrustedAuthorsBlock = true
+	res, err := c.SweepSentinel(context.Background(), opts)
 	if err != nil || len(res.Flagged) != 1 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	if len(f.comments[9]) != 1 {
-		t.Fatalf("marker already present for this head; comments=%v", f.comments[9])
-	}
 	if got := f.labels[9]; len(got) != 1 {
-		t.Fatalf("label should still be (re)applied: %v", got)
+		t.Fatalf("label must be applied when only a notice exists: %v", got)
+	}
+	if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], sentinelAlertHeading) {
+		t.Fatalf("marker comment should be rewritten in place as the alert: %v", f.comments[9])
+	}
+}
+
+func TestSentinelClearedByMaintainer(t *testing.T) {
+	alert := &gh.IssueComment{Body: gh.Ptr(SentinelMarker + " h\n" + sentinelAlertHeading + "\n")}
+	notice := &gh.IssueComment{Body: gh.Ptr(SentinelMarker + " h\n" + sentinelNoticeHeading + " (x), merge is not blocked\n")}
+	if !sentinelClearedByMaintainer(alert, true) {
+		t.Fatal("alert comment present without label is a clearance")
+	}
+	if sentinelClearedByMaintainer(alert, false) || sentinelClearedByMaintainer(nil, true) {
+		t.Fatal("no comment is not a clearance")
+	}
+	if sentinelClearedByMaintainer(notice, true) {
+		t.Fatal("a trusted-author notice is not a clearance")
 	}
 }
 

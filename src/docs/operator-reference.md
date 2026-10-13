@@ -381,7 +381,9 @@ or trusted authors). Trusted authors (the Hive App, configured trusted bots and
 owner/trusted-author allow-list entries) default to an informational notice and
 audit/dashboard finding only; no alert label is added unless the operator opts
 into blocking them. A maintainer who removes the label keeps the PR clear until
-the author pushes again.
+the author pushes again: the sweep reads the clearance back from the alert
+comment it left for that head (alert comment present, label absent), so it
+survives a hub restart or a second replica and nothing else needs to be posted.
 
 | Behavior | Fires when |
 |---|---|

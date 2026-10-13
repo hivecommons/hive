@@ -24,6 +24,12 @@ const (
 	SentinelMarker = "<!-- hive-sentinel -->"
 	// SentinelConfigKey is the config block named in the comment.
 	SentinelConfigKey = "sentinel"
+	// sentinelAlertHeading opens a blocking alert comment; the trusted-author
+	// notice uses sentinelNoticeHeading. The sweep reads the heading back to
+	// tell "a maintainer cleared this alert" from "this head only ever got a
+	// notice" (see sentinelClearedByMaintainer).
+	sentinelAlertHeading  = "## ⚠️ Sentinel alert — maintainer review required"
+	sentinelNoticeHeading = "## ℹ️ Sentinel notice — informational; author is trusted"
 )
 
 // SentinelSweepOptions parameterizes one pass.
@@ -101,9 +107,10 @@ type SentinelSweepResult struct {
 }
 
 // sentinelHeadsSeen remembers the head SHA each PR was last evaluated at so
-// an unchanged PR costs one list call per pass, not a files fetch. A
-// maintainer removing the label is respected: nothing is re-applied until a
-// new push changes the head.
+// an unchanged PR costs one list call per pass, not a files fetch. It is
+// in-memory only: a restart or a second replica starts empty and re-evaluates
+// every open PR once, so it is a cost optimisation, not the record of a
+// maintainer's clearance — that lives on GitHub (sentinelClearedByMaintainer).
 type sentinelHeadsSeen struct {
 	mu   sync.Mutex
 	seen map[string]string
@@ -219,6 +226,16 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
+	if decision.Block && !hasAlertLabel && sentinelClearedByMaintainer(comment, posted) {
+		// The alert for this exact head is on the PR but the label is not:
+		// only a maintainer removes it, and the comment promised "Hive will
+		// not re-apply it unless new commits are pushed". The in-memory
+		// heads map honoured that until a hub restart emptied it, after
+		// which the first pass re-evaluated the unchanged head and
+		// re-labelled the cleared PR (#11686, seen on #11614). The clearance is remembered
+		// where it is durable: the marker comment itself.
+		return SentinelSweepEvent{}, false, nil
+	}
 	if !decision.Block {
 		body := SentinelComment(decision, head, author, findings)
 		if hasAlertLabel {
@@ -257,6 +274,20 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		}
 	}
 	return event, true, nil
+}
+
+// sentinelClearedByMaintainer reports whether the marker comment found for
+// the PR's current head is a blocking alert. The sweep adds the label before
+// it posts that comment and never removes the label itself on the blocking
+// path, so "alert comment for this head present, label absent" can only mean a
+// human removed it. A trusted-author notice for the same head does not count:
+// if the operator later turns on trusted_authors_block the head still owes a
+// label.
+func sentinelClearedByMaintainer(comment *gh.IssueComment, posted bool) bool {
+	if !posted || comment == nil {
+		return false
+	}
+	return strings.Contains(comment.GetBody(), sentinelAlertHeading)
 }
 
 func prHasLabel(pr *gh.PullRequest, label string) bool {
@@ -334,13 +365,13 @@ func SentinelComment(decision SentinelDecision, head, author string, findings []
 	var b strings.Builder
 	b.WriteString(SentinelMarker + " " + head + "\n")
 	if decision.Block {
-		b.WriteString("## ⚠️ Sentinel alert — maintainer review required\n\n")
+		b.WriteString(sentinelAlertHeading + "\n\n")
 	} else {
 		reason := decision.TrustedReason
 		if strings.TrimSpace(reason) == "" {
 			reason = "trusted author"
 		}
-		fmt.Fprintf(&b, "## ℹ️ Sentinel notice — informational; author is trusted (%s), merge is not blocked\n\n", reason)
+		fmt.Fprintf(&b, "%s (%s), merge is not blocked\n\n", sentinelNoticeHeading, reason)
 	}
 	fmt.Fprintf(&b, "Hive flagged this PR (author @%s, head `%s`) because it matches behaviors that can override security controls, escalate privileges or damage the codebase. This is a heuristic, not an accusation — a maintainer should confirm the change is intended before it merges.\n\n", author, shortSHA(head))
 	for _, f := range findings {
