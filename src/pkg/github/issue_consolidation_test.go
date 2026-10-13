@@ -472,11 +472,13 @@ func TestIssueRequestWatcher_FoldsHighConfidencePair(t *testing.T) {
 			wantFold:  true, wantOnNumber: 1210,
 		},
 		{
+			// File sets differ (an identical set is already the #9376
+			// file-set twin), so only the shared primary path links them.
 			name:      "path-only overlap keeps the higher bar",
 			openTitle: "[scanner] Missing timeout in src/lib/walk.ts",
-			openBody:  "src/lib/walk.ts:5",
+			openBody:  "src/lib/walk.ts:5 and src/lib/timer.ts:9",
 			title:     "[scanner] Unreachable guard in src/lib/walk.ts",
-			body:      "src/lib/walk.ts:41",
+			body:      "src/lib/walk.ts:41 and src/lib/guard.ts:3",
 		},
 		{
 			name:      "shared path is only secondary",
