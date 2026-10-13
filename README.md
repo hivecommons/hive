@@ -272,6 +272,8 @@ request a hosted hive, and finish first-run setup.
 If you need to run your own private hub instead, see the
 [self-hosted hub deployment guide](src/docs/hub-deployment.md).
 
+Just want to try it locally? See [Try Hive on kind](src/docs/try-hive-on-kind.md).
+
 ### Self-Hosted Deployment
 
 #### 1. Create the namespace

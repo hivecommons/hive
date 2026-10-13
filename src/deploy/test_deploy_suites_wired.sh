@@ -58,6 +58,7 @@ NOT_A_SUITE=(
 # specific enough that a reviewer can judge whether it still holds; an empty
 # list is the healthy state.
 UNWIRED_ON_PURPOSE=(
+  "test_kind_quickstart.sh|creates a kind cluster and pulls the full Hive image; manual/opt-in smoke test (#11657), skips when kind is absent"
 )
 
 failures=0

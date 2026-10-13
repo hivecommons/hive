@@ -1,0 +1,61 @@
+# Strategic-merge patch replacing the base `hive-config` ConfigMap's hive.yaml
+# for a local kind cluster. The `data` value is an opaque string, so this block
+# REPLACES the base one — keep it complete. Keys are the same ones the
+# standalone overlay uses (governor.litellm.*, agents.*.backend: litellm).
+#
+# SWAP the YOUR_* placeholders before applying. The API key is NOT set here:
+# put it in the `hive-secrets` Secret as `litellm_api_key` (mounted at
+# /secrets/litellm_api_key, the default api_key_file path).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-config
+  namespace: hive
+data:
+  hive.yaml: |
+    project:
+      org: YOUR_ORG
+      repos:
+        - YOUR_REPO
+      ai_author: YOUR_BOT_LOGIN
+      primary_repo: YOUR_REPO
+
+    acmm_level: 2
+
+    hub:
+      enabled: false
+
+    agents:
+      supervisor:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/supervisor
+        clear_on_kick: true
+      scanner:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/scanner
+        clear_on_kick: true
+      architect:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/architect
+        clear_on_kick: false
+
+    governor:
+      eval_interval_s: 300
+      litellm:
+        # Any OpenAI-compatible endpoint reachable from the pod.
+        endpoint: https://api.openai.com/v1
+        default_model: gpt-4o-mini
+
+    dashboard:
+      port: 3002
+      hub_proxied: false
+      authorized_users:
+        - YOUR_GITHUB_LOGIN:owner
+
+    github:
+      oauth_client_id: YOUR_OAUTH_CLIENT_ID
+
+    notifications: {}
